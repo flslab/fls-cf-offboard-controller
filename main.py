@@ -1,6 +1,7 @@
 import datetime
 import json
 import logging
+import os
 import sys
 import time
 from threading import Event
@@ -92,6 +93,9 @@ def log_motor_callback(timestamp, data, logconf):
 
 
 def plot_metrics():
+    if not os.path.exists('metrics'):
+        os.makedirs('metrics', exist_ok=True)
+
     filename = f"{datetime.datetime.now():%Y_%m_%d_%H_%M_%S}"
     fig, ax = plt.subplots()
     ax.plot((np.array(_time) - _time[0]) / 1000, np.array(_thrust) / 0xffff * 100, label='thrust (%)')
