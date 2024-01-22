@@ -1,3 +1,7 @@
+# sample usage for plotting
+# python3 main.py -p [path_to_json_file]
+
+
 import datetime
 import json
 import logging
@@ -11,23 +15,37 @@ from cflib.crazyflie import Crazyflie
 from cflib.crazyflie.log import LogConfig
 from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.positioning.motion_commander import MotionCommander
+from cflib.utils.multiranger import Multiranger
 from cflib.utils import uri_helper
 import matplotlib.pyplot as plt
 import numpy as np
+import argparse
 
 
-URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E701')
-DEFAULT_HEIGHT = 0.5
+URI = uri_helper.uri_from_env(default='radio://0/100/2M/E7E7E7E701')
+DEFAULT_HEIGHT = 0.60
+DURATION = 20
 deck_attached_event = Event()
 logging.basicConfig(level=logging.ERROR)
 _time = []
 _thrust = []
+_x = []
+_y = []
 _z = []
+_m1 = []
+_m2 = []
+_m3 = []
+_m4 = []
+_roll = []
+_pitch = []
+_yaw = []
+_delta_x = []
+_delta_y = []
 
 
 def param_deck_flow(_, value_str):
     value = int(value_str)
-    print(value)
+    # print(value)
     if value:
         deck_attached_event.set()
         print('Deck is attached!')
@@ -37,7 +55,7 @@ def param_deck_flow(_, value_str):
 
 def take_off_simple(scf):
     with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
-        time.sleep(20)
+        time.sleep(DURATION)
         # mc.up(0.25)
         # time.sleep(5)
         mc.stop()
@@ -45,7 +63,14 @@ def take_off_simple(scf):
 
 def move_circle(scf):
     with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
-        mc.circle_right(.5, velocity=1.6)
+        mc.circle_right(.4)
+
+
+def test(scf):
+    with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
+        time.sleep(2)
+        mc.forward(.5)
+        time.sleep(2)
 
 
 def set_pid_values():
@@ -81,10 +106,20 @@ def set_controller():
 
 def log_motor_callback(timestamp, data, logconf):
     # print(timestamp, data)
-    global _time, _thrust, _z
+    global _time, _thrust, _z, _m1, _m2, _m3, _m4
     _time.append(timestamp)
-    _thrust.append(data['stabilizer.thrust'])
+    # _thrust.append(data['stabilizer.thrust'])
+    # _roll.append(data['stabilizer.roll'])
+    # _m1.append(data['motor.m1'])
+    # _m2.append(data['motor.m2'])
+    # _m3.append(data['motor.m3'])
+    # _m4.append(data['motor.m4'])
+    _x.append(data['stateEstimate.x'])
+    _y.append(data['stateEstimate.y'])
     _z.append(data['stateEstimate.z'])
+    _delta_x.append(data['motion.deltaX'])
+    _delta_y.append(data['motion.deltaY'])
+
 
     # motor_thrusts[0].append(data['motor.m1'])
     # motor_thrusts[1].append(data['motor.m2'])
@@ -92,50 +127,141 @@ def log_motor_callback(timestamp, data, logconf):
     # motor_thrusts[3].append(data['motor.m2'])
 
 
-def plot_metrics():
+def plot_metrics(file=""):
     if not os.path.exists('metrics'):
         os.makedirs('metrics', exist_ok=True)
 
+    if file:
+        with open(file) as f:
+            log_data = json.load(f)
+            _time = log_data["time"]
+            _x = log_data["x"]
+            _y = log_data["y"]
+            _z = log_data["z"]
+            _delta_x = log_data["delta x"]
+            _delta_y = log_data["delta y"]
+
     filename = f"{datetime.datetime.now():%Y_%m_%d_%H_%M_%S}"
     fig, ax = plt.subplots()
-    ax.plot((np.array(_time) - _time[0]) / 1000, np.array(_thrust) / 0xffff * 100, label='thrust (%)')
-    ax.plot((np.array(_time) - _time[0]) / 1000, np.array(_z) * 100, label='z (cm)')
+    time_axis = (np.array(_time) - _time[0]) / 1000
+    # ax.plot(time_axis, np.array(_thrust) / 0xffff * 100, label='thrust (%)')
+    # ax.plot(time_axis, np.array(_roll), label='roll')
+    # ax.plot(time_axis, np.array(_m1) / 0xffff * 100, label='m1 (%)')
+    # ax.plot(time_axis, np.array(_m2) / 0xffff * 100, label='m2 (%)')
+    # ax.plot(time_axis, np.array(_m3) / 0xffff * 100, label='m3 (%)')
+    # ax.plot(time_axis, np.array(_m4) / 0xffff * 100, label='m4 (%)')
+    ax.plot(time_axis, np.array(_x) * 100, label='x (cm)')
+    ax.plot(time_axis, np.array(_y) * 100, label='y (cm)')
+    ax.plot(time_axis, np.array(_z) * 100, label='z (cm)')
+    ax.plot(time_axis, np.array(_delta_x), label='delta x (flow/fr)')
+    ax.plot(time_axis, np.array(_delta_y), label='delta y (flow/fr)')
     ax.set_xlabel('Time (s)')
-    ax.set_ylim([0, 150])
+    # ax.set_ylim([-15, 105])
     plt.legend()
-    plt.savefig(f'metrics/{filename}.png', dpi=300)
-    with open(f'metrics/{filename}.json', 'w') as f:
-        json.dump([_time, _thrust, _z], f)
+
+    if not file:
+        plt.savefig(f'metrics/{filename}.png', dpi=300)
+        with open(f'metrics/{filename}.json', 'w') as f:
+            json.dump({
+                "num_samples": len(_time),
+                "time": _time,
+                "x": _x,
+                "y": _y,
+                "z": _z,
+                "delta x": _delta_x,
+                "delta y": _delta_y}, f)
+    else:
+        image_name = "".join(file.split('.')[:-1])
+        plt.savefig(f'{image_name}.png', dpi=300)
+
+
+def is_close(range):
+    print(range)
+    MIN_DISTANCE = 0.3  # m
+
+    if range is None:
+        return False
+    else:
+        return max(min(1.25 * (range - MIN_DISTANCE), 1), -1)
+
+
+def wall_spring(scf):
+    with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as motion_commander:
+        with Multiranger(scf) as multiranger:
+            keep_flying = True
+
+            while keep_flying:
+                VELOCITY = 0.5
+                velocity_x = 0.0
+                velocity_y = 0.0
+
+                # print(f"front:{multiranger.front}, back:{multiranger.back}, left:{multiranger.left}, right:{multiranger.right}")
+
+                velocity_x = is_close(multiranger.front)
+
+                # if is_close(multiranger.left):
+                #     velocity_y -= VELOCITY
+                # if is_close(multiranger.right):
+                #     velocity_y += VELOCITY
+
+                if multiranger.up is not None and multiranger.up < .20:
+                    keep_flying = False
+
+                motion_commander.start_linear_motion(
+                    velocity_x, velocity_y, 0)
+
+                time.sleep(0.01)
 
 
 if __name__ == '__main__':
-    cflib.crtp.init_drivers()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-p", "--plot", help="path to json log file")
+    args = vars(ap.parse_args())
 
-    # set_controller()
-    # set_pid_values()
+    if not args['plot']:
 
-    with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
+        cflib.crtp.init_drivers()
 
-        cf = scf.cf
+        # set_controller()
+        # set_pid_values()
 
-        scf.cf.param.add_update_callback(group='deck', name='bcFlow2',
-                                         cb=param_deck_flow)
-        time.sleep(1)
+        with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
 
-        logconf = LogConfig(name='Motor', period_in_ms=10)
-        logconf.add_variable('stabilizer.thrust', 'float')
-        logconf.add_variable('stateEstimate.z', 'float')
-        # logconf.add_variable('motor.m3', 'float')
-        # logconf.add_variable('motor.m4', 'float')
-        scf.cf.log.add_config(logconf)
-        logconf.data_received_cb.add_callback(log_motor_callback)
+            cf = scf.cf
 
-        if not deck_attached_event.wait(timeout=5):
-            print('No flow deck detected!')
-            sys.exit(1)
+            scf.cf.param.add_update_callback(group='deck', name='bcFlow2',
+                                             cb=param_deck_flow)
+            time.sleep(1)
 
-        logconf.start()
-        take_off_simple(scf)
-        logconf.stop()
+            logconf = LogConfig(name='Motor', period_in_ms=10)
+            # logconf.add_variable('stabilizer.thrust', 'float')
+            # logconf.add_variable('pm.batteryLevel', 'float')
+            # logconf.add_variable('stabilizer.roll', 'float')
+            # logconf.add_variable('stabilizer.pitch', 'float')
+            # logconf.add_variable('stabilizer.yaw', 'float')
+            logconf.add_variable('motion.deltaX', 'int16_t')
+            logconf.add_variable('motion.deltaY', 'int16_t')
+            logconf.add_variable('stateEstimate.x', 'float')
+            logconf.add_variable('stateEstimate.y', 'float')
+            logconf.add_variable('stateEstimate.z', 'float')
+            # logconf.add_variable('motor.m1', 'float')
+            # logconf.add_variable('motor.m2', 'float')
+            # logconf.add_variable('motor.m3', 'float')
+            # logconf.add_variable('motor.m4', 'float')
+            scf.cf.log.add_config(logconf)
+            logconf.data_received_cb.add_callback(log_motor_callback)
 
-    plot_metrics()
+            # if not deck_attached_event.wait(timeout=5):
+            #     print('No flow deck detected!')
+            #     sys.exit(1)
+
+            logconf.start()
+            take_off_simple(scf)
+            # wall_spring(scf)
+            # test(scf)
+            logconf.stop()
+
+        plot_metrics()
+
+    else:
+        plot_metrics(file=args['plot'])

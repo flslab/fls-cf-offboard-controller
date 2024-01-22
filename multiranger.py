@@ -59,13 +59,7 @@ if len(sys.argv) > 1:
 logging.basicConfig(level=logging.ERROR)
 
 
-def is_close(range):
-    MIN_DISTANCE = 0.2  # m
 
-    if range is None:
-        return False
-    else:
-        return range < MIN_DISTANCE
 
 
 if __name__ == '__main__':
@@ -74,7 +68,7 @@ if __name__ == '__main__':
 
     cf = Crazyflie(rw_cache='./cache')
     with SyncCrazyflie(URI, cf=cf) as scf:
-        with MotionCommander(scf) as motion_commander:
+        with MotionCommander(scf, default_height=0.25) as motion_commander:
             with Multiranger(scf) as multiranger:
                 keep_flying = True
 
@@ -83,27 +77,22 @@ if __name__ == '__main__':
                     velocity_x = 0.0
                     velocity_y = 0.0
 
-                    print(multiranger.front)
-                    print(multiranger.back)
-                    print(multiranger.left)
-                    print(multiranger.right)
 
-                    if is_close(multiranger.front):
-                        velocity_x -= VELOCITY
-                    if is_close(multiranger.back):
-                        velocity_x += VELOCITY
+                    # print(f"front:{multiranger.front}, back:{multiranger.back}, left:{multiranger.left}, right:{multiranger.right}")
 
-                    if is_close(multiranger.left):
-                        velocity_y -= VELOCITY
-                    if is_close(multiranger.right):
-                        velocity_y += VELOCITY
+                    velocity_x += is_close(multiranger.front)
 
-                    # if is_close(multiranger.up):
-                    #     keep_flying = False
+                    # if is_close(multiranger.left):
+                    #     velocity_y -= VELOCITY
+                    # if is_close(multiranger.right):
+                    #     velocity_y += VELOCITY
+
+                    if multiranger.up is not None and multiranger.up < .20:
+                        keep_flying = False
 
                     motion_commander.start_linear_motion(
                         velocity_x, velocity_y, 0)
 
-                    time.sleep(0.1)
+                    time.sleep(0.01)
 
             print('Demo terminated!')
