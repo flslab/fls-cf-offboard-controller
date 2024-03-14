@@ -23,24 +23,30 @@ import argparse
 
 
 URI = uri_helper.uri_from_env(default='radio://0/100/2M/E7E7E7E701')
-DEFAULT_HEIGHT = 0.60
-DURATION = 20
+DEFAULT_HEIGHT = 0.5
+DURATION = 10
 deck_attached_event = Event()
 logging.basicConfig(level=logging.ERROR)
 _time = []
-_thrust = []
-_x = []
-_y = []
-_z = []
-_m1 = []
-_m2 = []
-_m3 = []
-_m4 = []
-_roll = []
-_pitch = []
-_yaw = []
-_delta_x = []
-_delta_y = []
+
+
+log_vars = {
+    "controller.cmd_roll": {
+        "type": "float",
+        "unit": "cmd",
+        "data": [],
+    },
+    "controller.cmd_pitch": {
+        "type": "float",
+        "unit": "cmd",
+        "data": [],
+    },
+    "controller.cmd_yaw": {
+        "type": "float",
+        "unit": "cmd",
+        "data": [],
+    },
+}
 
 
 def param_deck_flow(_, value_str):
@@ -85,12 +91,15 @@ def set_pid_values():
         new_D_gain = 0.0
 
         # print(cf.param.get_value('posCtlPid.zKp'))
-        print('posCtlPid.zKi', cf.param.get_value('posCtlPid.zKi'))
+        print('pid_attitude.roll_kp', cf.param.get_value('pid_attitude.roll_kp'))
         # print(cf.param.get_value('posCtlPid.zKd'))
         # cf.param.set_value('posCtlPid.zKp', str(new_P_gain))
-        cf.param.set_value('posCtlPid.zKi', str(new_I_gain))
+        # cf.param.set_value('posCtlPid.zKi', str(new_I_gain))
         # cf.param.set_value('posCtlPid.zKd', str(new_D_gain))
-        print('posCtlPid.zKi', cf.param.get_value('posCtlPid.zKi'))
+        # cf.param.set_value('pid_attitude.roll_kp', str(9))
+        # cf.param.set_value('pid_attitude.pitch_kp', str(9))
+        time.sleep(2)
+        # print('pid_attitude.roll_kd', cf.param.get_value('pid_attitude.roll_kd'))
 
 
 def set_controller():
@@ -106,40 +115,22 @@ def set_controller():
 
 def log_motor_callback(timestamp, data, logconf):
     # print(timestamp, data)
-    global _time, _thrust, _z, _m1, _m2, _m3, _m4
     _time.append(timestamp)
-    # _thrust.append(data['stabilizer.thrust'])
-    # _roll.append(data['stabilizer.roll'])
-    # _m1.append(data['motor.m1'])
-    # _m2.append(data['motor.m2'])
-    # _m3.append(data['motor.m3'])
-    # _m4.append(data['motor.m4'])
-    _x.append(data['stateEstimate.x'])
-    _y.append(data['stateEstimate.y'])
-    _z.append(data['stateEstimate.z'])
-    _delta_x.append(data['motion.deltaX'])
-    _delta_y.append(data['motion.deltaY'])
 
-
-    # motor_thrusts[0].append(data['motor.m1'])
-    # motor_thrusts[1].append(data['motor.m2'])
-    # motor_thrusts[2].append(data['motor.m2'])
-    # motor_thrusts[3].append(data['motor.m2'])
+    for par in log_vars.keys():
+        log_vars[par]["data"].append(data[par])
 
 
 def plot_metrics(file=""):
+    global log_vars, _time
     if not os.path.exists('metrics'):
         os.makedirs('metrics', exist_ok=True)
 
     if file:
         with open(file) as f:
-            log_data = json.load(f)
-            _time = log_data["time"]
-            _x = log_data["x"]
-            _y = log_data["y"]
-            _z = log_data["z"]
-            _delta_x = log_data["delta x"]
-            _delta_y = log_data["delta y"]
+            json_data = json.load(f)
+            _time = json_data["time"]
+            log_vars = json_data["params"]
 
     filename = f"{datetime.datetime.now():%Y_%m_%d_%H_%M_%S}"
     fig, ax = plt.subplots()
@@ -150,11 +141,13 @@ def plot_metrics(file=""):
     # ax.plot(time_axis, np.array(_m2) / 0xffff * 100, label='m2 (%)')
     # ax.plot(time_axis, np.array(_m3) / 0xffff * 100, label='m3 (%)')
     # ax.plot(time_axis, np.array(_m4) / 0xffff * 100, label='m4 (%)')
-    ax.plot(time_axis, np.array(_x) * 100, label='x (cm)')
-    ax.plot(time_axis, np.array(_y) * 100, label='y (cm)')
-    ax.plot(time_axis, np.array(_z) * 100, label='z (cm)')
-    ax.plot(time_axis, np.array(_delta_x), label='delta x (flow/fr)')
-    ax.plot(time_axis, np.array(_delta_y), label='delta y (flow/fr)')
+    # ax.plot(time_axis, np.array(_x) * 100, label='x (cm)')
+    # ax.plot(time_axis, np.array(_y) * 100, label='y (cm)')
+    # ax.plot(time_axis, np.array(_z) * 100, label='z (cm)')
+    # ax.plot(time_axis, np.array(_delta_x), label='delta x (flow/fr)')
+    # ax.plot(time_axis, np.array(_delta_y), label='delta y (flow/fr)')
+    for par in log_vars.keys():
+        ax.plot(time_axis, np.array(log_vars[par]["data"]), label=f"{par} ({log_vars[par]['unit']})")
     ax.set_xlabel('Time (s)')
     # ax.set_ylim([-15, 105])
     plt.legend()
@@ -162,14 +155,7 @@ def plot_metrics(file=""):
     if not file:
         plt.savefig(f'metrics/{filename}.png', dpi=300)
         with open(f'metrics/{filename}.json', 'w') as f:
-            json.dump({
-                "num_samples": len(_time),
-                "time": _time,
-                "x": _x,
-                "y": _y,
-                "z": _z,
-                "delta x": _delta_x,
-                "delta y": _delta_y}, f)
+            json.dump(dict(zip(["time", "params"], [_time, log_vars])), f)
     else:
         image_name = "".join(file.split('.')[:-1])
         plt.savefig(f'{image_name}.png', dpi=300)
@@ -234,20 +220,11 @@ if __name__ == '__main__':
             time.sleep(1)
 
             logconf = LogConfig(name='Motor', period_in_ms=10)
-            # logconf.add_variable('stabilizer.thrust', 'float')
-            # logconf.add_variable('pm.batteryLevel', 'float')
-            # logconf.add_variable('stabilizer.roll', 'float')
-            # logconf.add_variable('stabilizer.pitch', 'float')
-            # logconf.add_variable('stabilizer.yaw', 'float')
-            logconf.add_variable('motion.deltaX', 'int16_t')
-            logconf.add_variable('motion.deltaY', 'int16_t')
-            logconf.add_variable('stateEstimate.x', 'float')
-            logconf.add_variable('stateEstimate.y', 'float')
-            logconf.add_variable('stateEstimate.z', 'float')
-            # logconf.add_variable('motor.m1', 'float')
-            # logconf.add_variable('motor.m2', 'float')
-            # logconf.add_variable('motor.m3', 'float')
-            # logconf.add_variable('motor.m4', 'float')
+
+            for par, conf in log_vars.items():
+                logconf.add_variable(par, conf["type"])
+                # logconf.add_variable('motion.deltaY', 'int16_t')
+
             scf.cf.log.add_config(logconf)
             logconf.data_received_cb.add_callback(log_motor_callback)
 
