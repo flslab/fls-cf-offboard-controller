@@ -17,7 +17,7 @@ from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.positioning.motion_commander import MotionCommander
 from cflib.utils.multiranger import Multiranger
 from cflib.utils import uri_helper
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import numpy as np
 import argparse
 
@@ -316,9 +316,12 @@ if __name__ == '__main__':
     ap.add_argument("-p", "--plot", help="path to json log file")
     args = vars(ap.parse_args())
 
+    # Initialize the low-level drivers including the serial driver
+    # cflib.crtp.init_drivers()
+
     if not args['plot']:
 
-        cflib.crtp.init_drivers()
+        cflib.crtp.init_drivers(enable_serial_driver=True)
 
         # set_controller()
         # set_pid_values()
@@ -351,7 +354,7 @@ if __name__ == '__main__':
             # test(scf)
             logconf.stop()
 
-        plot_metrics(log_dir='bolt3inchlogs')
+        # plot_metrics(log_dir='bolt3inchlogs')
 
     else:
         plot_metrics(file=args['plot'])
