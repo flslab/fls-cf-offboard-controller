@@ -21,28 +21,37 @@ import matplotlib.pyplot as plt
 import numpy as np
 import argparse
 
+from worker_socket import WorkerSocket
 
-URI = uri_helper.uri_from_env(default='radio://0/100/2M/E7E7E7E701')
+#URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E713')
+# URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E711')
+URI = uri_helper.uri_from_env(default='serial://ttyAMA0') # uart pi5
+
 DEFAULT_HEIGHT = 0.5
-DURATION = 10
+DURATION = 15
 deck_attached_event = Event()
 logging.basicConfig(level=logging.ERROR)
 _time = []
 
 
 log_vars = {
-    "controller.cmd_roll": {
-        "type": "float",
+    "motor.m1": {
+        "type": "uint16_t",
         "unit": "cmd",
         "data": [],
     },
-    "controller.cmd_pitch": {
-        "type": "float",
+    "motor.m2": {
+        "type": "uint16_t",
         "unit": "cmd",
         "data": [],
     },
-    "controller.cmd_yaw": {
-        "type": "float",
+    "motor.m3": {
+        "type": "uint16_t",
+        "unit": "cmd",
+        "data": [],
+    },
+    "motor.m4": {
+        "type": "uint16_t",
         "unit": "cmd",
         "data": [],
     },
@@ -67,39 +76,142 @@ def take_off_simple(scf):
         mc.stop()
 
 
+def take_off_simple_network(scf):
+    sock = WorkerSocket()
+    with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
+        time.sleep(DURATION)
+        start_time = time.time()
+        while time.time() - start_time < DURATION:
+            msg = sock.receive()
+            print(msg)
+        # mc.up(0.25)
+        # time.sleep(5)
+        mc.stop()
+
+
 def move_circle(scf):
     with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
         mc.circle_right(.4)
 
 
-def test(scf):
-    with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
-        time.sleep(2)
-        mc.forward(.5)
-        time.sleep(2)
+# def test(scf):
+#     with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
+#         time.sleep(2)
+#         mc.forward(.5)
+#         time.sleep(2)
 
 
-def set_pid_values():
-    with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
-        cf = scf.cf
-        # Set new PID gains for Z position
-        default_P_gain = 2.0
-        default_I_gain = 0.5
-        default_D_gain = 0.0
-        new_P_gain = 2.0
-        new_I_gain = 0.0
-        new_D_gain = 0.0
+def set_pid_values(scf, propeller_size=3):
+    # with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
+    cf = scf.cf
 
-        # print(cf.param.get_value('posCtlPid.zKp'))
-        print('pid_attitude.roll_kp', cf.param.get_value('pid_attitude.roll_kp'))
-        # print(cf.param.get_value('posCtlPid.zKd'))
-        # cf.param.set_value('posCtlPid.zKp', str(new_P_gain))
-        # cf.param.set_value('posCtlPid.zKi', str(new_I_gain))
-        # cf.param.set_value('posCtlPid.zKd', str(new_D_gain))
-        # cf.param.set_value('pid_attitude.roll_kp', str(9))
-        # cf.param.set_value('pid_attitude.pitch_kp', str(9))
-        time.sleep(2)
-        # print('pid_attitude.roll_kd', cf.param.get_value('pid_attitude.roll_kd'))
+
+    cf.param.set_value('quadSysId.armLength', '0.05656')
+
+    if propeller_size == 2:
+        cf.param.set_value('pid_rate.roll_kp', '75')
+        cf.param.set_value('pid_rate.roll_ki', '75')
+        cf.param.set_value('pid_rate.roll_kd', '1')
+        cf.param.set_value('pid_rate.pitch_kp', '75')
+        cf.param.set_value('pid_rate.pitch_ki', '75')
+        cf.param.set_value('pid_rate.pitch_kd', '1')
+
+        cf.param.set_value('velCtlPid.vxKp', '15')
+        cf.param.set_value('velCtlPid.vxKi', '1')
+        cf.param.set_value('velCtlPid.vxKd', '0')
+        cf.param.set_value('velCtlPid.vyKp', '15')
+        cf.param.set_value('velCtlPid.vyKi', '1')
+        cf.param.set_value('velCtlPid.vyKd', '0')
+        cf.param.set_value('velCtlPid.vzKp', '15')
+        cf.param.set_value('velCtlPid.vzKi', '1')
+        cf.param.set_value('velCtlPid.vzKd', '0')
+
+        cf.param.set_value('pid_attitude.roll_kp', '3')
+        cf.param.set_value('pid_attitude.roll_ki', '0.5')
+        cf.param.set_value('pid_attitude.roll_kd', '0')
+        cf.param.set_value('pid_attitude.pitch_kp', '3')
+        cf.param.set_value('pid_attitude.pitch_ki', '0.5')
+        cf.param.set_value('pid_attitude.pitch_kd', '0')
+
+    else:
+        cf.param.set_value('pid_rate.roll_kp', '70')
+        cf.param.set_value('pid_rate.roll_ki', '70')
+        cf.param.set_value('pid_rate.roll_kd', '1')
+        cf.param.set_value('pid_rate.pitch_kp', '70')
+        cf.param.set_value('pid_rate.pitch_ki', '70')
+        cf.param.set_value('pid_rate.pitch_kd', '1')
+
+        cf.param.set_value('pid_attitude.roll_kp', '2.5')
+        cf.param.set_value('pid_attitude.roll_ki', '0.25')
+        cf.param.set_value('pid_attitude.roll_kd', '0')
+        cf.param.set_value('pid_attitude.pitch_kp', '2.5')
+        cf.param.set_value('pid_attitude.pitch_ki', '0.25')
+        cf.param.set_value('pid_attitude.pitch_kd', '0')
+
+        cf.param.set_value('velCtlPid.vxKp', '12')
+        cf.param.set_value('velCtlPid.vxKi', '1')
+        cf.param.set_value('velCtlPid.vxKd', '0')
+        cf.param.set_value('velCtlPid.vyKp', '12')
+        cf.param.set_value('velCtlPid.vyKi', '1')
+        cf.param.set_value('velCtlPid.vyKd', '0')
+        cf.param.set_value('velCtlPid.vzKp', '12')
+        cf.param.set_value('velCtlPid.vzKi', '1')
+        cf.param.set_value('velCtlPid.vzKd', '0')
+
+        cf.param.set_value('posCtlPid.xKp', '2')
+        cf.param.set_value('posCtlPid.yKp', '2')
+        cf.param.set_value('posCtlPid.zKp', '2')
+        cf.param.set_value('posCtlPid.zKi', '0.5')
+        cf.param.set_value('posCtlPid.thrustMin', '10000')
+        cf.param.set_value('posCtlPid.thrustBase', '22000')
+
+    time.sleep(2)
+
+    # print(cf.param.get_value('posCtlPid.zKp'))
+    print('pid_attitude.roll_kp', cf.param.get_value('pid_attitude.roll_kp'))
+    print('pid_attitude.roll_ki', cf.param.get_value('pid_attitude.roll_ki'))
+    print('pid_attitude.roll_kd', cf.param.get_value('pid_attitude.roll_kd'))
+    print('pid_attitude.pitch_kp', cf.param.get_value('pid_attitude.pitch_kp'))
+    print('pid_attitude.pitch_ki', cf.param.get_value('pid_attitude.pitch_ki'))
+    print('pid_attitude.pitch_kd', cf.param.get_value('pid_attitude.pitch_kd'))
+
+    print('pid_rate.roll_kp', cf.param.get_value('pid_rate.roll_kp'))
+    print('pid_rate.roll_ki', cf.param.get_value('pid_rate.roll_ki'))
+    print('pid_rate.roll_kd', cf.param.get_value('pid_rate.roll_kd'))
+    print('pid_rate.pitch_kp', cf.param.get_value('pid_rate.pitch_kp'))
+    print('pid_rate.pitch_ki', cf.param.get_value('pid_rate.pitch_ki'))
+    print('pid_rate.pitch_kd', cf.param.get_value('pid_rate.pitch_kd'))
+
+    print('posCtlPid.xKp', cf.param.get_value('posCtlPid.xKp'))
+    print('posCtlPid.xKi', cf.param.get_value('posCtlPid.xKi'))
+    print('posCtlPid.xKd', cf.param.get_value('posCtlPid.xKd'))
+    print('posCtlPid.yKp', cf.param.get_value('posCtlPid.yKp'))
+    print('posCtlPid.yKi', cf.param.get_value('posCtlPid.yKi'))
+    print('posCtlPid.yKd', cf.param.get_value('posCtlPid.yKd'))
+    print('posCtlPid.zKp', cf.param.get_value('posCtlPid.zKp'))
+    print('posCtlPid.zKi', cf.param.get_value('posCtlPid.zKi'))
+    print('posCtlPid.zKd', cf.param.get_value('posCtlPid.zKd'))
+
+    print('velCtlPid.vxKp', cf.param.get_value('velCtlPid.vxKp'))
+    print('velCtlPid.vxKi', cf.param.get_value('velCtlPid.vxKi'))
+    print('velCtlPid.vxKd', cf.param.get_value('velCtlPid.vxKd'))
+    print('velCtlPid.vyKp', cf.param.get_value('velCtlPid.vyKp'))
+    print('velCtlPid.vyKi', cf.param.get_value('velCtlPid.vyKi'))
+    print('velCtlPid.vyKd', cf.param.get_value('velCtlPid.vyKd'))
+    print('velCtlPid.vzKp', cf.param.get_value('velCtlPid.vzKp'))
+    print('velCtlPid.vzKi', cf.param.get_value('velCtlPid.vzKi'))
+    print('velCtlPid.vzKd', cf.param.get_value('velCtlPid.vzKd'))
+
+    print('posCtlPid.thrustMin', cf.param.get_value('posCtlPid.thrustMin'))
+    print('quadSysId.armLength', cf.param.get_value('quadSysId.armLength'))
+    # print(cf.param.get_value('posCtlPid.zKd'))
+    # cf.param.set_value('posCtlPid.zKp', str(new_P_gain))
+    # cf.param.set_value('posCtlPid.zKi', str(new_I_gain))
+    # cf.param.set_value('posCtlPid.zKd', str(new_D_gain))
+    # cf.param.set_value('pid_attitude.roll_kp', str(9))
+    # cf.param.set_value('pid_attitude.pitch_kp', str(9))
+    # time.sleep(2)
+    # print('pid_attitude.roll_kd', cf.param.get_value('pid_attitude.roll_kd'))
 
 
 def set_controller():
@@ -121,10 +233,10 @@ def log_motor_callback(timestamp, data, logconf):
         log_vars[par]["data"].append(data[par])
 
 
-def plot_metrics(file=""):
+def plot_metrics(file="", log_dir='metrics'):
     global log_vars, _time
-    if not os.path.exists('metrics'):
-        os.makedirs('metrics', exist_ok=True)
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
 
     if file:
         with open(file) as f:
@@ -153,8 +265,8 @@ def plot_metrics(file=""):
     plt.legend()
 
     if not file:
-        plt.savefig(f'metrics/{filename}.png', dpi=300)
-        with open(f'metrics/{filename}.json', 'w') as f:
+        plt.savefig(f'{log_dir}/{filename}.png', dpi=300)
+        with open(f'{log_dir}/{filename}.json', 'w') as f:
             json.dump(dict(zip(["time", "params"], [_time, log_vars])), f)
     else:
         image_name = "".join(file.split('.')[:-1])
@@ -233,12 +345,13 @@ if __name__ == '__main__':
             #     sys.exit(1)
 
             logconf.start()
-            take_off_simple(scf)
+            set_pid_values(scf)
+            # take_off_simple(scf)
             # wall_spring(scf)
             # test(scf)
             logconf.stop()
 
-        plot_metrics()
+        plot_metrics(log_dir='bolt3inchlogs')
 
     else:
         plot_metrics(file=args['plot'])
