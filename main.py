@@ -25,7 +25,7 @@ from worker_socket import WorkerSocket
 
 #URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E713')
 # URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E711')
-URI = uri_helper.uri_from_env(default='serial://ttyAMA0') # uart pi5
+URI = uri_helper.uri_from_env(default='serial:///dev/ttyAMA0') # uart pi5
 
 DEFAULT_HEIGHT = 0.5
 DURATION = 15
