@@ -25,10 +25,10 @@ from worker_socket import WorkerSocket
 
 #URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E713')
 # URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E711')
-URI = uri_helper.uri_from_env(default='serial:///dev/ttyAMA0') # uart pi5
+URI = uri_helper.uri_from_env(default='usb://0') # uart pi5
 
-DEFAULT_HEIGHT = 0.5
-DURATION = 15
+DEFAULT_HEIGHT = 0.65
+DURATION = 5
 deck_attached_event = Event()
 logging.basicConfig(level=logging.ERROR)
 _time = []
@@ -75,6 +75,17 @@ def take_off_simple(scf):
         # time.sleep(5)
         mc.stop()
 
+
+def up_and_down(scf):
+    with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
+        mc.down(0.3)
+        # time.sleep(DURATION)
+        mc.up(0.3)
+        mc.down(0.3)
+        # time.sleep(DURATION)
+        mc.up(0.3)
+        # time.sleep(5)
+        mc.stop()
 
 def take_off_simple_network(scf):
     sock = WorkerSocket()
@@ -350,6 +361,7 @@ if __name__ == '__main__':
             logconf.start()
             set_pid_values(scf)
             # take_off_simple(scf)
+            up_and_down(scf)
             # wall_spring(scf)
             # test(scf)
             logconf.stop()
