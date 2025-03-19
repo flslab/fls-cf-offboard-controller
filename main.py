@@ -366,6 +366,7 @@ if __name__ == '__main__':
             # test(scf)
             logconf.stop()
 
+        print(log_vars)
         # plot_metrics(log_dir='bolt3inchlogs')
 
     else:
