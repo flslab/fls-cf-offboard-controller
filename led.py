@@ -29,7 +29,7 @@ class LED:
     def set_frame(self, brightness_map):
         for idx, brightness in brightness_map.items():
             b = brightness_map[idx] / 1.5
-            self.strip.setPixelColor(int(idx)-1, Color(int(b*227), int(b*253), int(b*255)))
+            self.strip.setPixelColor(int(idx), Color(int(b*227), int(b*253), int(b*255)))
         self.strip.show()
 
 
@@ -47,11 +47,12 @@ class LED:
 if __name__ == '__main__':
     led = LED()
 
-    led.colorWipe(Color(227,253,255))
+    # led.colorWipe(Color(227,253,255))
 
-    # with open("animation_data.json", "r") as f:
-    #     animation_data = json.load(f)
-    #
-    # for frame, data in animation_data.items():
-    #     led.set_frame(data['led'])
-    #     time.sleep(1000/24)
+    with open("animation_data.json", "r") as f:
+        animation_data = json.load(f)
+
+    for i in range(5):
+        for frame, data in animation_data.items():
+            led.set_frame(data['led'])
+            time.sleep(1000/24)
