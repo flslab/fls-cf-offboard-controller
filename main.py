@@ -29,7 +29,7 @@ from worker_socket import WorkerSocket
 # URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E711')
 URI = uri_helper.uri_from_env(default='usb://0') # uart pi5
 
-DEFAULT_HEIGHT = 0.65
+DEFAULT_HEIGHT = 0.60
 DURATION = 5
 deck_attached_event = Event()
 logging.basicConfig(level=logging.ERROR)
@@ -86,6 +86,7 @@ def up_and_down(scf):
         mc.down(0.3)
         # time.sleep(DURATION)
         mc.up(0.3)
+        mc.down(0.6)
         # time.sleep(5)
         mc.stop()
 
