@@ -137,10 +137,11 @@ def blender_animation(scf, interval):
             led.set_frame(animation_data[str(i)]['led'])
             # print('Setting position {}'.format(position))
             while time.time() - start_time < 1/24:
-                cf.commander.send_position_setpoint(position[0],
-                                                    position[1],
-                                                    position[2],
-                                                    0)
+                # cf.commander.send_position_setpoint(position[0],
+                #                                     position[1],
+                #                                     position[2],
+                #                                     0)
+                cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
                 time.sleep(0.01)
 
     print("Landing...")
