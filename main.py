@@ -94,13 +94,13 @@ def blender_animation(scf, interval):
         animation_data = json.load(f)
 
     cf = scf.cf  # Get Crazyflie object
-    cf.commander.send_position_setpoint(animation_data['1']['pose'][0], animation_data['1']['pose'][1], animation_data['1']['pose'][2], 0)  # Initialize position control
+    cf.commander.send_position_setpoint(animation_data['1']['pos'][0], animation_data['1']['pos'][1], animation_data['1']['pos'][2], 0)  # Initialize position control
     time.sleep(2)  # Wait before starting
 
     for frame, data in animation_data:
         start_time = time.time()
         # print(f"Sending setpoint: x={x}, y={y}, z={z}, yaw={yaw}")
-        cf.commander.send_position_setpoint(data['pose'][0], data['pose'][1], data['pose'][2], yaw)
+        cf.commander.send_position_setpoint(data['pos'][0], data['pos'][1], data['pos'][2], yaw)
 
         # Ensure fixed timing by subtracting processing time
         elapsed = time.time() - start_time
