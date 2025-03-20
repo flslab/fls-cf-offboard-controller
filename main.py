@@ -429,9 +429,9 @@ if __name__ == '__main__':
             logconf.start()
             set_pid_values(scf)
             # take_off_simple(scf)
-            # up_and_down(scf)
-            TIME_INTERVAL = 1000/24
-            blender_animation(scf, TIME_INTERVAL)
+            up_and_down(scf)
+            # TIME_INTERVAL = 1000/24
+            # blender_animation(scf, TIME_INTERVAL)
             # wall_spring(scf)
             # test(scf)
             logconf.stop()
