@@ -23,6 +23,7 @@ from cflib.utils.reset_estimator import reset_estimator
 import numpy as np
 import argparse
 
+from led import LED
 from worker_socket import WorkerSocket
 
 #URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E713')
@@ -115,6 +116,7 @@ def land(cf, position):
         time.sleep(sleep_time)
 
 def blender_animation(scf, interval):
+    led = LED()
     yaw = 0
     with open("animation_data.json", "r") as f:
         animation_data = json.load(f)
@@ -129,14 +131,16 @@ def blender_animation(scf, interval):
     time.sleep(1.0)
 
     for i in range(1, len(animation_data)+1):
+        start_time = time.time()
         position = animation_data[str(i)]['pos']
+        led.set_frame(animation_data[str(i)]['led'])
         # print('Setting position {}'.format(position))
-        for i in range(2):
+        while time.time() - start_time < 1/24:
             cf.commander.send_position_setpoint(position[0],
                                                 position[1],
                                                 position[2],
                                                 0)
-            time.sleep(0.1)
+            time.sleep(0.01)
 
     print("Landing...")
     land(cf, animation_data['120']['pos'])
@@ -148,6 +152,7 @@ def blender_animation(scf, interval):
     # Make sure that the last packet leaves before the link is closed
     # since the message queue is not flushed before closing
     time.sleep(0.1)
+    led.clear()
 
     # with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
 
