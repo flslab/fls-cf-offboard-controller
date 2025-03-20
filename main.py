@@ -17,6 +17,8 @@ from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.positioning.motion_commander import MotionCommander
 from cflib.utils.multiranger import Multiranger
 from cflib.utils import uri_helper
+from cflib.utils.reset_estimator import reset_estimator
+
 # import matplotlib.pyplot as plt
 import numpy as np
 import argparse
@@ -105,7 +107,7 @@ def land(cf, position):
     steps = int(landing_time / sleep_time)
     vz = position[2] / landing_time
 
-    print(f'take off at {position[2]}')
+    print(f'land from {position[2]}')
 
     for i in range(steps):
         cf.commander.send_velocity_world_setpoint(0, 0, -vz, 0)
@@ -406,7 +408,7 @@ if __name__ == '__main__':
 
             scf.cf.param.add_update_callback(group='deck', name='bcFlow2',
                                              cb=param_deck_flow)
-            time.sleep(1)
+            time.sleep(.5)
 
             logconf = LogConfig(name='Motor', period_in_ms=10)
 
@@ -420,6 +422,9 @@ if __name__ == '__main__':
             # if not deck_attached_event.wait(timeout=5):
             #     print('No flow deck detected!')
             #     sys.exit(1)
+
+            reset_estimator(scf.cf)
+            time.sleep(.5)
 
             logconf.start()
             set_pid_values(scf)
