@@ -56,3 +56,5 @@ if __name__ == '__main__':
         for frame, data in animation_data.items():
             led.set_frame(data['led'])
             time.sleep(1000/24)
+
+    led.clear()
