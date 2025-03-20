@@ -87,29 +87,52 @@ def up_and_down(scf):
         # time.sleep(5)
         mc.stop()
 
+def take_off(cf, position):
+    take_off_time = 1.0
+    sleep_time = 0.1
+    steps = int(take_off_time / sleep_time)
+    vz = position[2] / take_off_time
+
+    print(f'take off at {position[2]}')
+
+    for i in range(steps):
+        cf.commander.send_velocity_world_setpoint(0, 0, vz, 0)
+        time.sleep(sleep_time)
 
 def blender_animation(scf, interval):
     yaw = 0
     with open("animation_data.json", "r") as f:
         animation_data = json.load(f)
 
-    cf = scf.cf  # Get Crazyflie object
-    cf.commander.send_position_setpoint(animation_data['1']['pos'][0], animation_data['1']['pos'][1], animation_data['1']['pos'][2], 0)  # Initialize position control
-    time.sleep(2)  # Wait before starting
+    cf = scf.cf
 
-    for frame, data in animation_data.items():
-        start_time = time.time()
-        # print(f"Sending setpoint: x={x}, y={y}, z={z}, yaw={yaw}")
-        cf.commander.send_position_setpoint(data['pos'][0], data['pos'][1], data['pos'][2], yaw)
+    # Arm the Crazyflie
+    cf.platform.send_arming_request(True)
+    time.sleep(1.0)
 
-        # Ensure fixed timing by subtracting processing time
-        elapsed = time.time() - start_time
-        sleep_time = max(0, interval - elapsed)
-        time.sleep(sleep_time)
+    take_off(cf, animation_data['1']['pos'])
+    time.sleep(1.0)
+
+    for i in range(1, len(animation_data)+1):
+        position = animation_data[str(i)]
+        print('Setting position {}'.format(position))
+        for i in range(4):
+            cf.commander.send_position_setpoint(position[0],
+                                                position[1],
+                                                position[2],
+                                                0)
+            time.sleep(0.1)
 
     print("Landing...")
+
     cf.commander.send_stop_setpoint()
-    time.sleep(1)
+    # Hand control over to the high level commander to avoid timeout and locking of the Crazyflie
+    cf.commander.send_notify_setpoint_stop()
+
+    # Make sure that the last packet leaves before the link is closed
+    # since the message queue is not flushed before closing
+    time.sleep(0.1)
+
     # with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
 
 
