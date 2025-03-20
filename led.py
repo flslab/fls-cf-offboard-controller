@@ -11,7 +11,7 @@ import json
 import argparse
 
 # LED strip configuration:
-LED_COUNT      = 30     # Number of LED pixels.
+LED_COUNT      = 60     # Number of LED pixels.
 LED_PIN        = 18      # GPIO pin connected to the pixels (18 uses PWM!).
 #LED_PIN        = 10      # GPIO pin connected to the pixels (10 uses SPI /dev/spidev0.0).
 LED_FREQ_HZ    = 800000  # LED signal frequency in hertz (usually 800khz)
@@ -28,7 +28,7 @@ class LED:
 
     def set_frame(self, brightness_map):
         for idx, brightness in brightness_map.items():
-            b = brightness_map[idx]
+            b = brightness_map[idx] / 1.5
             self.strip.setPixelColor(int(idx)-1, Color(int(b*227), int(b*253), int(b*255)))
         self.strip.show()
 
@@ -47,9 +47,11 @@ class LED:
 if __name__ == '__main__':
     led = LED()
 
-    with open("animation_data.json", "r") as f:
-        animation_data = json.load(f)
+    led.colorWipe(Color(227,253,255))
 
-    for frame, data in animation_data.items():
-        led.set_frame(data['led'])
-        time.sleep(1000/24)
+    # with open("animation_data.json", "r") as f:
+    #     animation_data = json.load(f)
+    #
+    # for frame, data in animation_data.items():
+    #     led.set_frame(data['led'])
+    #     time.sleep(1000/24)
