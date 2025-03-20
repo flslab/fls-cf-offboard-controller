@@ -90,7 +90,7 @@ def up_and_down(scf):
 
 def blender_animation(scf, interval):
     yaw = 0
-    with open("animation.json", "r") as f:
+    with open("animation_data.json", "r") as f:
         animation_data = json.load(f)
 
     cf = scf.cf  # Get Crazyflie object
