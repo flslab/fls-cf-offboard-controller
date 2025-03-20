@@ -97,7 +97,7 @@ def blender_animation(scf, interval):
     cf.commander.send_position_setpoint(animation_data['1']['pos'][0], animation_data['1']['pos'][1], animation_data['1']['pos'][2], 0)  # Initialize position control
     time.sleep(2)  # Wait before starting
 
-    for frame, data in animation_data:
+    for frame, data in animation_data.items():
         start_time = time.time()
         # print(f"Sending setpoint: x={x}, y={y}, z={z}, yaw={yaw}")
         cf.commander.send_position_setpoint(data['pos'][0], data['pos'][1], data['pos'][2], yaw)
