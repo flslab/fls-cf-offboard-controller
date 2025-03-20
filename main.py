@@ -87,6 +87,33 @@ def up_and_down(scf):
         # time.sleep(5)
         mc.stop()
 
+
+def blender_animation(scf, interval):
+    yaw = 0
+    with open("animation.json", "r") as f:
+        animation_data = json.load(f)
+
+    cf = scf.cf  # Get Crazyflie object
+    cf.commander.send_position_setpoint(animation_data['1']['pose'][0], animation_data['1']['pose'][1], animation_data['1']['pose'][2], 0)  # Initialize position control
+    time.sleep(2)  # Wait before starting
+
+    for frame, data in animation_data:
+        start_time = time.time()
+        # print(f"Sending setpoint: x={x}, y={y}, z={z}, yaw={yaw}")
+        cf.commander.send_position_setpoint(data['pose'][0], data['pose'][1], data['pose'][2], yaw)
+
+        # Ensure fixed timing by subtracting processing time
+        elapsed = time.time() - start_time
+        sleep_time = max(0, interval - elapsed)
+        time.sleep(sleep_time)
+
+    print("Landing...")
+    cf.commander.send_stop_setpoint()
+    time.sleep(1)
+    # with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
+
+
+
 def take_off_simple_network(scf):
     sock = WorkerSocket()
     with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
@@ -361,7 +388,9 @@ if __name__ == '__main__':
             logconf.start()
             set_pid_values(scf)
             # take_off_simple(scf)
-            up_and_down(scf)
+            # up_and_down(scf)
+            TIME_INTERVAL = 1000/24
+            blender_animation(scf, TIME_INTERVAL)
             # wall_spring(scf)
             # test(scf)
             logconf.stop()
