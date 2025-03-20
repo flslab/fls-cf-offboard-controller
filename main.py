@@ -130,17 +130,18 @@ def blender_animation(scf, interval):
     take_off(cf, animation_data['1']['pos'])
     time.sleep(1.0)
 
-    for i in range(1, len(animation_data)+1):
-        start_time = time.time()
-        position = animation_data[str(i)]['pos']
-        led.set_frame(animation_data[str(i)]['led'])
-        # print('Setting position {}'.format(position))
-        while time.time() - start_time < 1/24:
-            cf.commander.send_position_setpoint(position[0],
-                                                position[1],
-                                                position[2],
-                                                0)
-            time.sleep(0.01)
+    for i in range(2):
+        for i in range(1, len(animation_data)+1):
+            start_time = time.time()
+            position = animation_data[str(i)]['pos']
+            led.set_frame(animation_data[str(i)]['led'])
+            # print('Setting position {}'.format(position))
+            while time.time() - start_time < 1/24:
+                cf.commander.send_position_setpoint(position[0],
+                                                    position[1],
+                                                    position[2],
+                                                    0)
+                time.sleep(0.01)
 
     print("Landing...")
     land(cf, animation_data['120']['pos'])
