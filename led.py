@@ -29,7 +29,7 @@ class LED:
     def set_frame(self, brightness_map):
         for idx, brightness in brightness_map.items():
             b = brightness_map[idx]
-            self.strip.setPixelColor(int(idx)-1, Color(b*227, b*253, b*255))
+            self.strip.setPixelColor(int(idx)-1, Color(int(b*227), int(b*253), int(b*255)))
         self.strip.show()
 
 
