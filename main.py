@@ -99,6 +99,18 @@ def take_off(cf, position):
         cf.commander.send_velocity_world_setpoint(0, 0, vz, 0)
         time.sleep(sleep_time)
 
+def land(cf, position):
+    landing_time = 1.0
+    sleep_time = 0.1
+    steps = int(landing_time / sleep_time)
+    vz = position[2] / landing_time
+
+    print(f'take off at {position[2]}')
+
+    for i in range(steps):
+        cf.commander.send_velocity_world_setpoint(0, 0, -vz, 0)
+        time.sleep(sleep_time)
+
 def blender_animation(scf, interval):
     yaw = 0
     with open("animation_data.json", "r") as f:
@@ -124,6 +136,7 @@ def blender_animation(scf, interval):
             time.sleep(0.1)
 
     print("Landing...")
+    land(cf, animation_data['120']['pos'])
 
     cf.commander.send_stop_setpoint()
     # Hand control over to the high level commander to avoid timeout and locking of the Crazyflie
