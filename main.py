@@ -114,7 +114,7 @@ def blender_animation(scf, interval):
     time.sleep(1.0)
 
     for i in range(1, len(animation_data)+1):
-        position = animation_data[str(i)]
+        position = animation_data[str(i)]['pos']
         print('Setting position {}'.format(position))
         for i in range(4):
             cf.commander.send_position_setpoint(position[0],
