@@ -477,8 +477,8 @@ if __name__ == '__main__':
 
     with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
         if args.localize:
-            c_process = subprocess.Popen(["/home/fls/fls-marker-localization/build/eye", "-t", "30"])
-            time.sleep(1)
+            # c_process = subprocess.Popen(["/home/fls/fls-marker-localization/build/eye", "-t", "30"])
+            # time.sleep(1)
             localization = LocalizationWrapper(scf.cf)
 
         cf = scf.cf
