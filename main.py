@@ -356,7 +356,7 @@ def log_callback(timestamp, data, logconf):
         log_vars[par]["data"].append(data[par])
 
         if args.verbose:
-            logging.info(log_vars[par]["data"])
+            logging.info(f"{par} = {data[par]}")
 
 
 def save_logs(log_dir='logs'):
@@ -487,6 +487,7 @@ if __name__ == '__main__':
             # c_process = subprocess.Popen(["/home/fls/fls-marker-localization/build/eye", "-t", "30"])
             # time.sleep(1)
             localization = LocalizationWrapper(scf.cf)
+            localization.start()
 
         cf = scf.cf
 
