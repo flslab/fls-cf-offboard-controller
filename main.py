@@ -1,14 +1,10 @@
-# sample usage for plotting
-# python3 main.py -p [path_to_json_file]
-
-
 import datetime
 import json
 import logging
 import os
-import sys
 import time
 from threading import Event
+import argparse
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -18,10 +14,6 @@ from cflib.positioning.motion_commander import MotionCommander
 from cflib.utils.multiranger import Multiranger
 from cflib.utils import uri_helper
 from cflib.utils.reset_estimator import reset_estimator
-
-# import matplotlib.pyplot as plt
-import numpy as np
-import argparse
 
 from led import LED
 from worker_socket import WorkerSocket
@@ -33,31 +25,45 @@ URI = uri_helper.uri_from_env(default='usb://0') # uart pi5
 DEFAULT_HEIGHT = 0.60
 DURATION = 5
 deck_attached_event = Event()
-logging.basicConfig(level=logging.ERROR)
+
+
 _time = []
-
-
 log_vars = {
-    "motor.m1": {
-        "type": "uint16_t",
-        "unit": "cmd",
+    "kalman.stateX": {
+        "type": "float",
+        "unit": "m",
         "data": [],
     },
-    "motor.m2": {
-        "type": "uint16_t",
-        "unit": "cmd",
+    "kalman.stateY": {
+        "type": "float",
+        "unit": "m",
         "data": [],
     },
-    "motor.m3": {
-        "type": "uint16_t",
-        "unit": "cmd",
+    "kalman.stateZ": {
+        "type": "float",
+        "unit": "m",
         "data": [],
     },
-    "motor.m4": {
-        "type": "uint16_t",
-        "unit": "cmd",
-        "data": [],
-    },
+    # "motor.m1": {
+    #     "type": "uint16_t",
+    #     "unit": "cmd",
+    #     "data": [],
+    # },
+    # "motor.m2": {
+    #     "type": "uint16_t",
+    #     "unit": "cmd",
+    #     "data": [],
+    # },
+    # "motor.m3": {
+    #     "type": "uint16_t",
+    #     "unit": "cmd",
+    #     "data": [],
+    # },
+    # "motor.m4": {
+    #     "type": "uint16_t",
+    #     "unit": "cmd",
+    #     "data": [],
+    # },
 }
 
 
@@ -115,8 +121,9 @@ def land(cf, position):
         cf.commander.send_velocity_world_setpoint(0, 0, -vz, 0)
         time.sleep(sleep_time)
 
-def blender_animation(scf, interval):
-    led = LED()
+def blender_animation(scf, frame_interval=1/24, led_on=False):
+    if led_on:
+        led = LED()
     yaw = 0
     with open("animation_data.json", "r") as f:
         animation_data = json.load(f)
@@ -134,9 +141,10 @@ def blender_animation(scf, interval):
         for i in range(1, len(animation_data)+1):
             start_time = time.time()
             position = animation_data[str(i)]['pos']
-            led.set_frame(animation_data[str(i)]['led'])
+            if led_on:
+                led.set_frame(animation_data[str(i)]['led'])
             # print('Setting position {}'.format(position))
-            while time.time() - start_time < 1/24:
+            while time.time() - start_time < frame_interval:
                 # cf.commander.send_position_setpoint(position[0],
                 #                                     position[1],
                 #                                     position[2],
@@ -155,10 +163,10 @@ def blender_animation(scf, interval):
     # Make sure that the last packet leaves before the link is closed
     # since the message queue is not flushed before closing
     time.sleep(0.1)
-    led.clear()
+    if led_on:
+        led.clear()
 
     # with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
-
 
 
 def take_off_simple_network(scf):
@@ -250,7 +258,7 @@ def set_pid_values(scf, propeller_size=3):
         cf.param.set_value('posCtlPid.thrustMin', '10000')
         cf.param.set_value('posCtlPid.thrustBase', '22000')
 
-    time.sleep(2)
+    time.sleep(1)
 
     # print(cf.param.get_value('posCtlPid.zKp'))
     print('pid_attitude.roll_kp', cf.param.get_value('pid_attitude.roll_kp'))
@@ -310,28 +318,30 @@ def set_controller():
         print('stabilizer.controller', cf.param.get_value('stabilizer.controller'))
 
 
-def log_motor_callback(timestamp, data, logconf):
+def log_callback(timestamp, data, logconf):
     # print(timestamp, data)
     _time.append(timestamp)
 
     for par in log_vars.keys():
         log_vars[par]["data"].append(data[par])
 
+        if args.verbose:
+            logging.info(log_vars[par]["data"])
 
-def plot_metrics(file="", log_dir='metrics'):
+
+def save_logs(log_dir='logs'):
     global log_vars, _time
     if not os.path.exists(log_dir):
         os.makedirs(log_dir, exist_ok=True)
 
-    if file:
-        with open(file) as f:
-            json_data = json.load(f)
-            _time = json_data["time"]
-            log_vars = json_data["params"]
-
     filename = f"{datetime.datetime.now():%Y_%m_%d_%H_%M_%S}"
-    fig, ax = plt.subplots()
-    time_axis = (np.array(_time) - _time[0]) / 1000
+
+    with open(f'{log_dir}/{filename}.json', 'w') as f:
+        json.dump(dict(zip(["time", "params"], [_time, log_vars])), f)
+
+    # fig, ax = plt.subplots()
+    # time_axis = (np.array(_time) - _time[0]) / 1000
+
     # ax.plot(time_axis, np.array(_thrust) / 0xffff * 100, label='thrust (%)')
     # ax.plot(time_axis, np.array(_roll), label='roll')
     # ax.plot(time_axis, np.array(_m1) / 0xffff * 100, label='m1 (%)')
@@ -343,19 +353,17 @@ def plot_metrics(file="", log_dir='metrics'):
     # ax.plot(time_axis, np.array(_z) * 100, label='z (cm)')
     # ax.plot(time_axis, np.array(_delta_x), label='delta x (flow/fr)')
     # ax.plot(time_axis, np.array(_delta_y), label='delta y (flow/fr)')
-    for par in log_vars.keys():
-        ax.plot(time_axis, np.array(log_vars[par]["data"]), label=f"{par} ({log_vars[par]['unit']})")
-    ax.set_xlabel('Time (s)')
+    # for par in log_vars.keys():
+    #     ax.plot(time_axis, np.array(log_vars[par]["data"]), label=f"{par} ({log_vars[par]['unit']})")
+    # ax.set_xlabel('Time (s)')
     # ax.set_ylim([-15, 105])
-    plt.legend()
+    # plt.legend()
 
-    if not file:
-        plt.savefig(f'{log_dir}/{filename}.png', dpi=300)
-        with open(f'{log_dir}/{filename}.json', 'w') as f:
-            json.dump(dict(zip(["time", "params"], [_time, log_vars])), f)
-    else:
-        image_name = "".join(file.split('.')[:-1])
-        plt.savefig(f'{image_name}.png', dpi=300)
+        # plt.savefig(f'{log_dir}/{filename}.png', dpi=300)
+
+    # else:
+        # image_name = "".join(file.split('.')[:-1])
+        # plt.savefig(f'{image_name}.png', dpi=300)
 
 
 def is_close(range):
@@ -398,55 +406,52 @@ def wall_spring(scf):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument("-p", "--plot", help="path to json log file")
-    args = vars(ap.parse_args())
+    ap.add_argument("--led", help="Turn LEDs on", type=bool, action="store_true", default=False)
+    ap.add_argument("--log", help="Enable logging", type=bool, action="store_true", default=False)
+    ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
+    ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", type=bool, action="store_true", default=False)
+    args = ap.parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.INFO)
+    else:
+        logging.basicConfig(level=logging.ERROR)
 
     # Initialize the low-level drivers including the serial driver
     # cflib.crtp.init_drivers()
 
-    if not args['plot']:
+    cflib.crtp.init_drivers(enable_serial_driver=True)
 
-        cflib.crtp.init_drivers(enable_serial_driver=True)
+    with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
 
-        # set_controller()
-        # set_pid_values()
+        cf = scf.cf
 
-        with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
+        scf.cf.param.add_update_callback(group='deck', name='bcFlow2', cb=param_deck_flow)
+        time.sleep(.5)
 
-            cf = scf.cf
-
-            scf.cf.param.add_update_callback(group='deck', name='bcFlow2',
-                                             cb=param_deck_flow)
-            time.sleep(.5)
-
+        if args.log:
             logconf = LogConfig(name='Motor', period_in_ms=10)
 
             for par, conf in log_vars.items():
                 logconf.add_variable(par, conf["type"])
-                # logconf.add_variable('motion.deltaY', 'int16_t')
 
             scf.cf.log.add_config(logconf)
-            logconf.data_received_cb.add_callback(log_motor_callback)
+            logconf.data_received_cb.add_callback(log_callback)
 
-            # if not deck_attached_event.wait(timeout=5):
-            #     print('No flow deck detected!')
-            #     sys.exit(1)
+        # if not deck_attached_event.wait(timeout=5):
+        #     print('No flow deck detected!')
+        #     sys.exit(1)
 
-            reset_estimator(scf.cf)
-            time.sleep(.5)
+        set_pid_values(scf, propeller_size=3)
+        reset_estimator(scf.cf)
 
+        if args.log:
             logconf.start()
-            set_pid_values(scf)
-            # take_off_simple(scf)
-            # up_and_down(scf)
-            TIME_INTERVAL = 1000/24
-            blender_animation(scf, TIME_INTERVAL)
-            # wall_spring(scf)
-            # test(scf)
+
+        blender_animation(scf, frame_interval=1/24, led_on=args.led)
+
+        if args.log:
             logconf.stop()
 
-        # print(log_vars)
-        # plot_metrics(log_dir='bolt3inchlogs')
-
-    else:
-        plot_metrics(file=args['plot'])
+    if args.log:
+        save_logs(log_dir=args.log_dir)
