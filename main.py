@@ -135,7 +135,7 @@ def blender_animation(scf, frame_interval=1/24, led_on=False):
     time.sleep(1.0)
 
     take_off(cf, animation_data['1']['pos'])
-    time.sleep(1.0)
+    # time.sleep(1.0)
 
     for i in range(2):
         for i in range(1, len(animation_data)+1):
