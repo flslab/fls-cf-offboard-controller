@@ -97,9 +97,13 @@ def param_deck_flow(_, value_str):
 
 def take_off_simple(scf):
     with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
-        time.sleep(DURATION)
-        # mc.up(0.25)
-        # time.sleep(5)
+        # time.sleep(DURATION)
+        start_time = time.time()
+        while time.time() - start_time < DURATION:
+            cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
+            # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
+            # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
+            time.sleep(0.1)
         mc.stop()
 
 
