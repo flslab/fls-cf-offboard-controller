@@ -406,10 +406,10 @@ def wall_spring(scf):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument("--led", help="Turn LEDs on", type=bool, action="store_true", default=False)
-    ap.add_argument("--log", help="Enable logging", type=bool, action="store_true", default=False)
+    ap.add_argument("--led", help="Turn LEDs on", action="store_true", default=False)
+    ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
-    ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", type=bool, action="store_true", default=False)
+    ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     args = ap.parse_args()
 
     if args.verbose:
