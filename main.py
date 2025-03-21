@@ -2,9 +2,12 @@ import datetime
 import json
 import logging
 import os
+import subprocess
 import time
-from threading import Event
+from threading import Event, Thread
 import argparse
+import mmap
+import struct
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -29,21 +32,36 @@ deck_attached_event = Event()
 
 _time = []
 log_vars = {
-    "kalman.stateX": {
+    "locSrv.x": {
         "type": "float",
         "unit": "m",
         "data": [],
     },
-    "kalman.stateY": {
+    "locSrv.y": {
         "type": "float",
         "unit": "m",
         "data": [],
     },
-    "kalman.stateZ": {
+    "locSrv.z": {
         "type": "float",
         "unit": "m",
         "data": [],
     },
+    # "kalman.stateX": {
+    #     "type": "float",
+    #     "unit": "m",
+    #     "data": [],
+    # },
+    # "kalman.stateY": {
+    #     "type": "float",
+    #     "unit": "m",
+    #     "data": [],
+    # },
+    # "kalman.stateZ": {
+    #     "type": "float",
+    #     "unit": "m",
+    #     "data": [],
+    # },
     # "motor.m1": {
     #     "type": "uint16_t",
     #     "unit": "cmd",
@@ -120,6 +138,18 @@ def land(cf, position):
     for i in range(steps):
         cf.commander.send_velocity_world_setpoint(0, 0, -vz, 0)
         time.sleep(sleep_time)
+
+
+def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False):
+    """
+    Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
+    This is going to be forwarded to the Crazyflie's position estimator.
+    """
+    if send_full_pose:
+        cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
+    else:
+        cf.extpos.send_extpos(x, y, z)
+
 
 def blender_animation(scf, frame_interval=1/24, led_on=False):
     if led_on:
@@ -404,10 +434,33 @@ def wall_spring(scf):
                 time.sleep(0.01)
 
 
+class LocalizationWrapper(Thread):
+    def __init__(self, cf):
+        super().__init__()
+        self.cf = cf
+        self.stopped = False
+        self.shm_name = "/pos_shared_mem"
+        self.shm_fd = open(f"/dev/shm{self.shm_name}", "r+b")  # Open shared memory
+        self.shm_map = mmap.mmap(self.shm_fd.fileno(), mmap.PAGESIZE, access=mmap.ACCESS_READ)
+
+    def run(self):
+        while not self.stopped:
+                data = self.shm_map[:28]  # Read 7 floats (4 bytes each)
+                valid, x, y, z, qx, qy, qz, qw = struct.unpack("7f", data)
+                if valid:
+                    print(f"Position: ({x}, {y}, {z}), Orientation: ({qx}, {qy}, {qz}, {qw})")
+                    send_extpose_quat(self.cf, x, y, z)
+                time.sleep(0.01)
+
+    def stop(self):
+        self.stopped = True
+
+
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument("--led", help="Turn LEDs on", action="store_true", default=False)
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
+    ap.add_argument("--localize", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     args = ap.parse_args()
@@ -423,6 +476,10 @@ if __name__ == '__main__':
     cflib.crtp.init_drivers(enable_serial_driver=True)
 
     with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
+        if args.localize:
+            c_process = subprocess.Popen(["~/fls-marker-localization/build", "-t", "30"])
+            time.sleep(1)
+            localization = LocalizationWrapper(scf.cf)
 
         cf = scf.cf
 
@@ -448,10 +505,14 @@ if __name__ == '__main__':
         if args.log:
             logconf.start()
 
-        blender_animation(scf, frame_interval=1/24, led_on=args.led)
+        # blender_animation(scf, frame_interval=1/24, led_on=args.led)
+        time.sleep(30)
 
         if args.log:
             logconf.stop()
 
     if args.log:
         save_logs(log_dir=args.log_dir)
+
+    if args.localize:
+        localization.stop()

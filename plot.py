@@ -1,4 +1,5 @@
 from matplotlib import pyplot as plt
+import matplotlib as mpl
 import numpy as np
 import json
 import argparse
@@ -34,9 +35,39 @@ def plot_logs(file=""):
     plt.savefig(f'{image_name}.png', dpi=300)
 
 
+def plot_tvec_from_log(log_file):
+    with open(log_file, 'r') as f:
+        data = json.load(f)
+
+    frame_ids = []
+    tvec_x = []
+    tvec_y = []
+    tvec_z = []
+
+    for frame in data.get("frames", []):
+        frame_ids.append(frame["frame_id"])
+        tvec_x.append(frame["tvec"][0])
+        tvec_y.append(frame["tvec"][1])
+        tvec_z.append(frame["tvec"][2])
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(frame_ids, tvec_x, label="tvec_x", marker='o')
+    plt.plot(frame_ids, tvec_y, label="tvec_y", marker='o')
+    plt.plot(frame_ids, tvec_z, label="tvec_z", marker='o')
+
+    plt.xlabel("Frame ID")
+    plt.ylabel("Translation Vector (tvec)")
+    plt.title("tvec vs. Frame ID")
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+
 if __name__ == '__main__':
+    mpl.use('macosx')
     ap = argparse.ArgumentParser()
     ap.add_argument("-i", "--input", help="path to json log file")
     args = ap.parse_args()
 
-    plot_logs(args.input)
+    # plot_logs(args.input)
+    plot_tvec_from_log("logs/pose_logs_2025-03-21_11-40-28.json")
