@@ -514,7 +514,7 @@ if __name__ == '__main__':
             logconf.start()
 
         # blender_animation(scf, frame_interval=1/24, led_on=args.led)
-        time.sleep(30)
+        time.sleep(10)
 
         if args.log:
             logconf.stop()
@@ -524,3 +524,4 @@ if __name__ == '__main__':
 
     if args.localize:
         localization.stop()
+        localization.join()
