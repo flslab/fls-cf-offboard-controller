@@ -445,12 +445,17 @@ class LocalizationWrapper(Thread):
 
     def run(self):
         while not self.stopped:
-                data = self.shm_map[:28]  # Read 7 floats (4 bytes each)
-                valid, x, y, z, qx, qy, qz, qw = struct.unpack("7f", data)
-                if valid:
-                    print(f"Position: ({x}, {y}, {z}), Orientation: ({qx}, {qy}, {qz}, {qw})")
-                    send_extpose_quat(self.cf, x, y, z)
-                time.sleep(0.01)
+            data = self.shm_map[:32]  # Read 8 bytes (bool + 7 floats = 1 byte + 28 bytes)
+            valid = struct.unpack("?", data[:1])[0]  # Extract the validity flag (1 byte)
+
+            if valid:
+                x, y, z, qx, qy, qz, qw = struct.unpack("7f", data[1:])
+                print(f"Position: ({x}, {y}, {z}), Orientation: ({qx}, {qy}, {qz}, {qw})")
+                send_extpose_quat(self.cf, x, y, z)
+            else:
+                print("Invalid data received")
+
+            time.sleep(0.01)
 
     def stop(self):
         self.stopped = True
