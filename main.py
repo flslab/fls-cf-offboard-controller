@@ -453,10 +453,11 @@ class LocalizationWrapper(Thread):
 
             if valid:
                 x, y, z, qx, qy, qz, qw = struct.unpack("<7f", data[1:])
-                print(f"Position: ({x}, {y}, {z}), Orientation: ({qx}, {qy}, {qz}, {qw})")
-                send_extpose_quat(self.cf, x, y, z)
+                print(f"Position: ({-y}, {-x}, {z}), Orientation: ({qx}, {qy}, {qz}, {qw})")
+                send_extpose_quat(self.cf, -y, -x, z)
             else:
-                print("Invalid data received")
+                pass
+                # print("Invalid data received")
 
             time.sleep(0.01)
 
