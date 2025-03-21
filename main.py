@@ -514,7 +514,8 @@ if __name__ == '__main__':
         if args.log:
             logconf.start()
 
-        blender_animation(scf, frame_interval=1/24, led_on=args.led)
+        # blender_animation(scf, frame_interval=1/24, led_on=args.led)
+        take_off_simple(scf)
         # time.sleep(10)
 
         if args.log:
