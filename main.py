@@ -439,9 +439,11 @@ class LocalizationWrapper(Thread):
         super().__init__()
         self.cf = cf
         self.stopped = False
+        # Size of the Position structure: 1 byte for 'valid' + 7 floats (4 bytes each)
+        self.position_size = 1 + 7 * 4  # 1 byte + 7 floats (4 bytes each)
         self.shm_name = "/pos_shared_mem"
         self.shm_fd = open(f"/dev/shm{self.shm_name}", "r+b")  # Open shared memory
-        self.shm_map = mmap.mmap(self.shm_fd.fileno(), mmap.PAGESIZE, access=mmap.ACCESS_READ)
+        self.shm_map = mmap.mmap(self.shm_fd.fileno(), self.position_size, access=mmap.ACCESS_READ)
 
     def run(self):
         while not self.stopped:
