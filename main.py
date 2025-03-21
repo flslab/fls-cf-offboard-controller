@@ -26,7 +26,7 @@ from worker_socket import WorkerSocket
 URI = uri_helper.uri_from_env(default='usb://0') # uart pi5
 
 DEFAULT_HEIGHT = 0.60
-DURATION = 5
+DURATION = 15
 deck_attached_event = Event()
 
 
