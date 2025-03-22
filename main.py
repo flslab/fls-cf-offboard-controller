@@ -497,7 +497,7 @@ if __name__ == '__main__':
 
         cf = scf.cf
 
-        scf.cf.param.add_update_callback(group='deck', name='bcFlow2', cb=param_deck_flow)
+        scf.cf.param.add_update_callback(group='deck', name='bcZRanger2', cb=param_deck_flow)
         time.sleep(.5)
 
         if args.log:
@@ -520,7 +520,7 @@ if __name__ == '__main__':
             logconf.start()
 
         # blender_animation(scf, frame_interval=1/24, led_on=args.led)
-        take_off_simple(scf)
+        # take_off_simple(scf)
         # time.sleep(10)
 
         if args.log:
