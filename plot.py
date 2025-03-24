@@ -78,7 +78,7 @@ if __name__ == '__main__':
     args = ap.parse_args()
 
     ip = "192.168.8.219"
-    cf_log = "2025_03_24_15_38_18.json"
+    cf_log = "2025_03_24_15_43_32.json"
     cam_log = "pose_logs_2025-03-24_15-35-45.json"
     cf_log_path = f"fls@{ip}:~/fls-cf-offboard-controller/logs/{cf_log}"
     # cam_log_path = f"fls@{ip}:~/fls-cf-offboard-controller/logs/{cam_log}"
