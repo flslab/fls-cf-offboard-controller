@@ -228,7 +228,7 @@ def move_circle(scf):
 #         time.sleep(2)
 
 
-def set_pid_values(scf, propeller_size=3):
+def set_pid_values(scf, propeller_size=3, with_cage=False):
     # with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
     cf = scf.cf
 
@@ -260,37 +260,69 @@ def set_pid_values(scf, propeller_size=3):
         cf.param.set_value('pid_attitude.pitch_ki', '0.5')
         cf.param.set_value('pid_attitude.pitch_kd', '0')
 
-    else:
-        cf.param.set_value('pid_rate.roll_kp', '70')
-        cf.param.set_value('pid_rate.roll_ki', '70')
-        cf.param.set_value('pid_rate.roll_kd', '1')
-        cf.param.set_value('pid_rate.pitch_kp', '70')
-        cf.param.set_value('pid_rate.pitch_ki', '70')
-        cf.param.set_value('pid_rate.pitch_kd', '1')
+    elif propeller_size == 3:
+        if with_cage:
+            cf.param.set_value('pid_rate.roll_kp', '70')
+            cf.param.set_value('pid_rate.roll_ki', '70')
+            cf.param.set_value('pid_rate.roll_kd', '1')
+            cf.param.set_value('pid_rate.pitch_kp', '70')
+            cf.param.set_value('pid_rate.pitch_ki', '70')
+            cf.param.set_value('pid_rate.pitch_kd', '1')
 
-        cf.param.set_value('pid_attitude.roll_kp', '2.5')
-        cf.param.set_value('pid_attitude.roll_ki', '0.25')
-        cf.param.set_value('pid_attitude.roll_kd', '0')
-        cf.param.set_value('pid_attitude.pitch_kp', '2.5')
-        cf.param.set_value('pid_attitude.pitch_ki', '0.25')
-        cf.param.set_value('pid_attitude.pitch_kd', '0')
+            cf.param.set_value('pid_attitude.roll_kp', '2.5')
+            cf.param.set_value('pid_attitude.roll_ki', '0.25')
+            cf.param.set_value('pid_attitude.roll_kd', '0')
+            cf.param.set_value('pid_attitude.pitch_kp', '2.5')
+            cf.param.set_value('pid_attitude.pitch_ki', '0.25')
+            cf.param.set_value('pid_attitude.pitch_kd', '0')
 
-        cf.param.set_value('velCtlPid.vxKp', '12')
-        cf.param.set_value('velCtlPid.vxKi', '1')
-        cf.param.set_value('velCtlPid.vxKd', '0')
-        cf.param.set_value('velCtlPid.vyKp', '12')
-        cf.param.set_value('velCtlPid.vyKi', '1')
-        cf.param.set_value('velCtlPid.vyKd', '0')
-        cf.param.set_value('velCtlPid.vzKp', '12')
-        cf.param.set_value('velCtlPid.vzKi', '1')
-        cf.param.set_value('velCtlPid.vzKd', '0')
+            cf.param.set_value('velCtlPid.vxKp', '12')
+            cf.param.set_value('velCtlPid.vxKi', '1')
+            cf.param.set_value('velCtlPid.vxKd', '0')
+            cf.param.set_value('velCtlPid.vyKp', '12')
+            cf.param.set_value('velCtlPid.vyKi', '1')
+            cf.param.set_value('velCtlPid.vyKd', '0')
+            cf.param.set_value('velCtlPid.vzKp', '12')
+            cf.param.set_value('velCtlPid.vzKi', '1')
+            cf.param.set_value('velCtlPid.vzKd', '0')
 
-        cf.param.set_value('posCtlPid.xKp', '2')
-        cf.param.set_value('posCtlPid.yKp', '2')
-        cf.param.set_value('posCtlPid.zKp', '2')
-        cf.param.set_value('posCtlPid.zKi', '0.5')
-        cf.param.set_value('posCtlPid.thrustMin', '10000')
-        cf.param.set_value('posCtlPid.thrustBase', '22000')
+            cf.param.set_value('posCtlPid.xKp', '2')
+            cf.param.set_value('posCtlPid.yKp', '2')
+            cf.param.set_value('posCtlPid.zKp', '2')
+            cf.param.set_value('posCtlPid.zKi', '0.5')
+            cf.param.set_value('posCtlPid.thrustMin', '10000')
+            cf.param.set_value('posCtlPid.thrustBase', '22000')
+        else:
+            cf.param.set_value('pid_rate.roll_kp', '70')
+            cf.param.set_value('pid_rate.roll_ki', '70')
+            cf.param.set_value('pid_rate.roll_kd', '1')
+            cf.param.set_value('pid_rate.pitch_kp', '70')
+            cf.param.set_value('pid_rate.pitch_ki', '70')
+            cf.param.set_value('pid_rate.pitch_kd', '1')
+
+            cf.param.set_value('pid_attitude.roll_kp', '2.5')
+            cf.param.set_value('pid_attitude.roll_ki', '0.25')
+            cf.param.set_value('pid_attitude.roll_kd', '0')
+            cf.param.set_value('pid_attitude.pitch_kp', '2.5')
+            cf.param.set_value('pid_attitude.pitch_ki', '0.25')
+            cf.param.set_value('pid_attitude.pitch_kd', '0')
+
+            cf.param.set_value('velCtlPid.vxKp', '10')
+            cf.param.set_value('velCtlPid.vxKi', '1')
+            cf.param.set_value('velCtlPid.vxKd', '0')
+            cf.param.set_value('velCtlPid.vyKp', '10')
+            cf.param.set_value('velCtlPid.vyKi', '1')
+            cf.param.set_value('velCtlPid.vyKd', '0')
+            cf.param.set_value('velCtlPid.vzKp', '10')
+            cf.param.set_value('velCtlPid.vzKi', '1')
+            cf.param.set_value('velCtlPid.vzKd', '0')
+
+            cf.param.set_value('posCtlPid.xKp', '2')
+            cf.param.set_value('posCtlPid.yKp', '2')
+            cf.param.set_value('posCtlPid.zKp', '2')
+            cf.param.set_value('posCtlPid.zKi', '0.5')
+            cf.param.set_value('posCtlPid.thrustMin', '10000')
+            cf.param.set_value('posCtlPid.thrustBase', '22000')
 
     time.sleep(1)
 

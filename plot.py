@@ -13,7 +13,7 @@ def plot_logs(file=""):
             log_vars = json_data["params"]
 
     fig, ax = plt.subplots()
-    time_axis = (np.array(_time) - _time[0]) / 1000
+    time_axis = (np.array(_time) - _time[0])
     # ax.plot(time_axis, np.array(_thrust) / 0xffff * 100, label='thrust (%)')
     # ax.plot(time_axis, np.array(_roll), label='roll')
     # ax.plot(time_axis, np.array(_m1) / 0xffff * 100, label='m1 (%)')
@@ -32,7 +32,8 @@ def plot_logs(file=""):
     plt.legend()
 
     image_name = "".join(file.split('.')[:-1])
-    plt.savefig(f'{image_name}.png', dpi=300)
+    # plt.savefig(f'{image_name}.png', dpi=300)
+    plt.show()
 
 
 def plot_tvec_from_log(log_file):
@@ -40,24 +41,28 @@ def plot_tvec_from_log(log_file):
         data = json.load(f)
 
     frame_ids = []
+    timestamps = []
     tvec_x = []
     tvec_y = []
     tvec_z = []
 
     for frame in data.get("frames", []):
+        timestamps.append(frame["time"])
         frame_ids.append(frame["frame_id"])
         tvec_x.append(frame["tvec"][0])
         tvec_y.append(frame["tvec"][1])
         tvec_z.append(frame["tvec"][2])
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(frame_ids, tvec_x, label="tvec_x", marker='o')
-    plt.plot(frame_ids, tvec_y, label="tvec_y", marker='o')
-    plt.plot(frame_ids, tvec_z, label="tvec_z", marker='o')
+    time_axis = (np.array(timestamps) - timestamps[0]) / 1000
 
-    plt.xlabel("Frame ID")
+    plt.figure(figsize=(10, 5))
+    plt.plot(time_axis, tvec_x, label="tvec_x", marker='o')
+    plt.plot(time_axis, tvec_y, label="tvec_y", marker='o')
+    plt.plot(time_axis, tvec_z, label="tvec_z", marker='o')
+
+    plt.xlabel("Time (s)")
     plt.ylabel("Translation Vector (tvec)")
-    plt.title("tvec vs. Frame ID")
+    plt.title("tvec")
     plt.legend()
     plt.grid()
     plt.show()
@@ -69,5 +74,5 @@ if __name__ == '__main__':
     ap.add_argument("-i", "--input", help="path to json log file")
     args = ap.parse_args()
 
-    # plot_logs(args.input)
-    plot_tvec_from_log("logs/pose_logs_2025-03-21_11-40-28.json")
+    plot_logs("logs/2025_03_24_09_01_21.json")
+    plot_tvec_from_log("logs/pose_logs_2025-03-24_09-01-20.json")
