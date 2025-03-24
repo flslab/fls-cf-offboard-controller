@@ -25,7 +25,7 @@ from worker_socket import WorkerSocket
 # URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E711')
 URI = uri_helper.uri_from_env(default='usb://0') # uart pi5
 
-DEFAULT_HEIGHT = 0.60
+DEFAULT_HEIGHT = 0.40
 DURATION = 10
 deck_attached_event = Event()
 
@@ -489,7 +489,7 @@ class LocalizationWrapper(Thread):
 
             if valid:
                 x, y, z, qx, qy, qz, qw = struct.unpack("<7f", data[1:])
-                print(f"Position: ({-y}, {-x}, {z}), Orientation: ({qx}, {qy}, {qz}, {qw})")
+                print(f"Position: ({-y}, {-x}, {z-0.05}), Orientation: ({qx}, {qy}, {qz}, {qw})")
                 send_extpose_quat(self.cf, -y, -x, z)
             else:
                 pass
