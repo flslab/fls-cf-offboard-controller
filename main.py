@@ -354,7 +354,7 @@ def set_controller():
 
 def log_callback(timestamp, data, logconf):
     # print(timestamp, data)
-    _time.append(timestamp)
+    _time.append(time.time())
 
     for par in log_vars.keys():
         log_vars[par]["data"].append(data[par])
