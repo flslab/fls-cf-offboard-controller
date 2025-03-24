@@ -1,3 +1,5 @@
+import subprocess
+
 from matplotlib import pyplot as plt
 import matplotlib as mpl
 import numpy as np
@@ -34,9 +36,10 @@ def plot_logs(file=""):
     image_name = "".join(file.split('.')[:-1])
     # plt.savefig(f'{image_name}.png', dpi=300)
     plt.show()
+    return _time[0]
 
 
-def plot_tvec_from_log(log_file):
+def plot_tvec_from_log(log_file, start_time=0):
     with open(log_file, 'r') as f:
         data = json.load(f)
 
@@ -53,7 +56,7 @@ def plot_tvec_from_log(log_file):
         tvec_y.append(frame["tvec"][1])
         tvec_z.append(frame["tvec"][2])
 
-    time_axis = (np.array(timestamps) - timestamps[0]) / 1000
+    time_axis = np.array(timestamps) / 1000 - start_time
 
     plt.figure(figsize=(10, 5))
     plt.plot(time_axis, tvec_x, label="tvec_x", marker='o')
@@ -74,5 +77,13 @@ if __name__ == '__main__':
     ap.add_argument("-i", "--input", help="path to json log file")
     args = ap.parse_args()
 
-    plot_logs("logs/2025_03_24_09_01_21.json")
-    plot_tvec_from_log("logs/pose_logs_2025-03-24_09-01-20.json")
+    ip = "192.168.8.219"
+    cf_log = "2025_03_24_15_38_18.json"
+    cam_log = "pose_logs_2025-03-24_15-35-45.json"
+    cf_log_path = f"fls@{ip}:~/fls-cf-offboard-controller/logs/{cf_log}"
+    # cam_log_path = f"fls@{ip}:~/fls-cf-offboard-controller/logs/{cam_log}"
+
+    subprocess.run(["scp", cf_log_path, "logs"])
+    # subprocess.run(["scp", cam_log_path, "logs"])
+    start_time = plot_logs("logs/" + cf_log)
+    # plot_tvec_from_log("logs/" + cam_log, start_time=start_time)

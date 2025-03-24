@@ -32,36 +32,36 @@ deck_attached_event = Event()
 
 _time = []
 log_vars = {
-    "locSrv.x": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    "locSrv.y": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    "locSrv.z": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    # "kalman.stateX": {
+    # "locSrv.x": {
     #     "type": "float",
     #     "unit": "m",
     #     "data": [],
     # },
-    # "kalman.stateY": {
+    # "locSrv.y": {
     #     "type": "float",
     #     "unit": "m",
     #     "data": [],
     # },
-    # "kalman.stateZ": {
+    # "locSrv.z": {
     #     "type": "float",
     #     "unit": "m",
     #     "data": [],
     # },
+    "kalman.stateX": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "kalman.stateY": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "kalman.stateZ": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
     # "motor.m1": {
     #     "type": "uint16_t",
     #     "unit": "cmd",
