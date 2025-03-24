@@ -97,13 +97,13 @@ def param_deck_flow(_, value_str):
 
 def take_off_simple(scf):
     with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
-        # time.sleep(DURATION)
-        start_time = time.time()
-        while time.time() - start_time < DURATION:
-            cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
-            # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
-            # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
-            time.sleep(0.1)
+        time.sleep(DURATION)
+        # start_time = time.time()
+        # while time.time() - start_time < DURATION:
+        #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
+        #     # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
+        #     # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
+        #     time.sleep(0.1)
         mc.stop()
 
 
@@ -463,7 +463,7 @@ class LocalizationWrapper(Thread):
                 pass
                 # print("Invalid data received")
 
-            time.sleep(0.01)
+            time.sleep(1/60)
 
     def stop(self):
         self.stopped = True
@@ -490,8 +490,8 @@ if __name__ == '__main__':
 
     with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
         if args.localize:
-            # c_process = subprocess.Popen(["/home/fls/fls-marker-localization/build/eye", "-t", "30"])
-            # time.sleep(1)
+            c_process = subprocess.Popen(["/home/fls/fls-marker-localization/build/eye", "-t", "30", "--config", "/home/fls/fls-marker-localization/build/camera_config.json"])
+            time.sleep(2)
             localization = LocalizationWrapper(scf.cf)
             localization.start()
 
