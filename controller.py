@@ -470,7 +470,7 @@ def wall_spring(scf):
 
 
 def send_vicon_position(cf):
-    def func(x, y, z):
+    def func(x, y, z, timestamp):
         send_extpose_quat(cf, x/1000, y/1000, z/1000)
 
     return func
