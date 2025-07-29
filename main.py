@@ -545,7 +545,7 @@ if __name__ == '__main__':
         #     print('No flow deck detected!')
         #     sys.exit(1)
 
-        set_pid_values(scf, propeller_size=3)
+        set_pid_values(scf, propeller_size=2)
         reset_estimator(scf.cf)
 
         if args.log:
