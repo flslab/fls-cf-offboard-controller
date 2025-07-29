@@ -232,7 +232,7 @@ def set_pid_values(scf, propeller_size=3, with_cage=False):
     cf = scf.cf
 
 
-    cf.param.set_value('quadSysId.armLength', '0.05656')
+    cf.param.set_value('quadSysId.armLength', '0.04242')
 
     if propeller_size == 2:
         cf.param.set_value('pid_rate.roll_kp', '75')
@@ -469,6 +469,13 @@ def wall_spring(scf):
                 time.sleep(0.01)
 
 
+def send_vicon_position(cf):
+    def func(x, y, z):
+        send_extpose_quat(cf, x, y, z)
+
+    return func
+
+
 class LocalizationWrapper(Thread):
     def __init__(self, cf):
         super().__init__()
@@ -505,17 +512,19 @@ if __name__ == '__main__':
     ap.add_argument("--led", help="Turn LEDs on", action="store_true", default=False)
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--localize", help="Enable onboard marker localization", action="store_true", default=False)
+    ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     args = ap.parse_args()
 
+    log_level = logging.ERROR
+    if args.verbose:
+        log_level = logging.INFO
+
     if args.led:
         from led import LED
 
-    if args.verbose:
-        logging.basicConfig(level=logging.INFO)
-    else:
-        logging.basicConfig(level=logging.ERROR)
+
 
     # Initialize the low-level drivers including the serial driver
     # cflib.crtp.init_drivers()
@@ -523,15 +532,21 @@ if __name__ == '__main__':
     cflib.crtp.init_drivers(enable_serial_driver=True)
 
     with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
+        cf = scf.cf
+
         if args.localize:
             c_process = subprocess.Popen(["/home/fls/fls-marker-localization/build/eye", "-t", "20", "--config", "/home/fls/fls-marker-localization/build/camera_config.json"])
             time.sleep(2)
-            localization = LocalizationWrapper(scf.cf)
+            localization = LocalizationWrapper(cf)
             localization.start()
 
-        cf = scf.cf
+        if args.vicon:
+            from vicon import ViconWrapper
 
-        scf.cf.param.add_update_callback(group='deck', name='bcZRanger2', cb=param_deck_flow)
+            vicon_thread = ViconWrapper(callback=send_vicon_position(cf), log_level=log_level)
+            vicon_thread.start()
+
+        # scf.cf.param.add_update_callback(group='deck', name='bcZRanger2', cb=param_deck_flow)
         time.sleep(.5)
 
         if args.log:
@@ -554,6 +569,8 @@ if __name__ == '__main__':
             logconf.start()
 
         # blender_animation(scf, frame_interval=1/24, led_on=args.led)
+        cf.platform.send_arming_request(True)
+        time.sleep(1.0)
         take_off_simple(scf)
         # time.sleep(10)
 
@@ -566,3 +583,6 @@ if __name__ == '__main__':
     if args.localize:
         localization.stop()
         localization.join()
+
+    if args.vicon:
+        vicon_thread.stop()
