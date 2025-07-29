@@ -570,8 +570,8 @@ if __name__ == '__main__':
 
         # blender_animation(scf, frame_interval=1/24, led_on=args.led)
         cf.platform.send_arming_request(True)
-        time.sleep(1.0)
-        take_off_simple(scf)
+        time.sleep(10.0)
+        # take_off_simple(scf)
         # time.sleep(10)
 
         if args.log:
