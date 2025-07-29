@@ -18,7 +18,6 @@ from cflib.utils.multiranger import Multiranger
 from cflib.utils import uri_helper
 from cflib.utils.reset_estimator import reset_estimator
 
-from led import LED
 from worker_socket import WorkerSocket
 
 #URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E713')
@@ -509,6 +508,9 @@ if __name__ == '__main__':
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     args = ap.parse_args()
+
+    if args.led:
+        from led import LED
 
     if args.verbose:
         logging.basicConfig(level=logging.INFO)
