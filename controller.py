@@ -393,8 +393,19 @@ def set_controller(scf):
     # Controller type Auto select(0), PID(1), Mellinger(2), INDI(3), Brescianini(4)(Default: 0)
 
     print('stabilizer.controller', cf.param.get_value('stabilizer.controller'))
+    print('stabilizer.estimator', cf.param.get_value('stabilizer.estimator'))
+    print('commander.enHighLevel', cf.param.get_value('commander.enHighLevel'))
     cf.param.set_value('stabilizer.controller', 1)
+    cf.param.set_value('stabilizer.estimator', 2)
+    cf.param.set_value('commander.enHighLevel', 1)
+    cf.param.set_value('locSrv.extPoseStdDev', 0.001)
+    cf.param.set_value('locSrv.extQuatStdDev', 0.05)
+    cf.param.set_value('kalman.resetEstimation', 1)
     print('stabilizer.controller', cf.param.get_value('stabilizer.controller'))
+    print('stabilizer.estimator', cf.param.get_value('stabilizer.estimator'))
+    print('commander.enHighLevel', cf.param.get_value('commander.enHighLevel'))
+    print('locSrv.extPoseStdDev', cf.param.get_value('locSrv.extPoseStdDev'))
+    print('locSrv.extQuatStdDev', cf.param.get_value('locSrv.extQuatStdDev'))
 
 
 def log_callback(timestamp, data, logconf):
