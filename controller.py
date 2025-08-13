@@ -578,6 +578,7 @@ if __name__ == '__main__':
 
         set_pid_values(scf, propeller_size=2)
         reset_estimator(scf.cf)
+        time.sleep(2.0)
 
         if args.log:
             logconf.start()
