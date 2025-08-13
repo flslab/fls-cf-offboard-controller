@@ -538,6 +538,7 @@ class LocalizationWrapper(Thread):
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=1.0, type=float)
+    ap.add_argument("-t", help="flight duration", default=10.0, type=float)
     ap.add_argument("--led", help="Turn LEDs on", action="store_true", default=False)
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--localize", help="Enable onboard marker localization", action="store_true", default=False)
@@ -547,6 +548,7 @@ if __name__ == '__main__':
     args = ap.parse_args()
 
     DEFAULT_HEIGHT = args.takeoff_altitude
+    DURATION = args.t
 
     log_level = logging.ERROR
     if args.verbose:
