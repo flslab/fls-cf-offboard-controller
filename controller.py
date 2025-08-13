@@ -8,6 +8,7 @@ from threading import Event, Thread
 import argparse
 import mmap
 import struct
+import numpy as np
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -97,6 +98,28 @@ def param_deck_flow(_, value_str):
 def take_off_simple(scf):
     with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
         time.sleep(DURATION)
+        # start_time = time.time()
+        # while time.time() - start_time < DURATION:
+        #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
+        #     # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
+        #     # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
+        #     time.sleep(0.1)
+        mc.stop()
+
+
+def trajectory(scf, trajectory):
+    Z = args.takeoff_altitude
+
+    with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
+        time.sleep(3)
+        WAYPOINTS, fps = create_trajectory_from_file(trajectory, Z)
+        cf = scf.cf
+
+        trajectory_log = []
+        for i, p in enumerate(WAYPOINTS):
+            cf.commander.send_position_setpoint(*p, yaw=0.0)
+
+            time.sleep(1/fps)
         # start_time = time.time()
         # while time.time() - start_time < DURATION:
         #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
@@ -504,6 +527,52 @@ def send_vicon_position(cf):
     return func
 
 
+def create_trajectory_from_file(file_path, takeoff_altitude):
+    waypoints = []
+    with open(file_path, "r") as f:
+        trajectory = json.load(f)
+
+    fps = trajectory["fps"]
+    start_position = trajectory["start_position"]
+    segments = trajectory["segments"]
+
+    #  go to start position
+    x0, y0, z0 = 0, 0, takeoff_altitude
+    x, y, z = start_position
+    z = takeoff_altitude + z
+    dx, dy, dz = x - x0, y - y0, z - z0
+
+    # move to start point in 3 seconds
+    N = 3 * fps
+    for i in range(1, N + 1):
+        waypoints.append([x0 + i * dx / N, y0 + i * dy / N, z0 + i * dz / N])
+
+    # stay at start point for 1 second
+    for i in range(fps):
+        waypoints.append([x, y, z])
+
+    for i in range(2):
+        for segment in segments:
+            positions = segment["position"]
+            velocities = segment["velocity"]
+            state = segment["state"]
+            if state == "RETURN" and i == 2:
+                break
+
+            for p, v in zip(positions, velocities):
+                x, y, z = p
+                vx, vy, vz = v
+                # self.send_position_target(x, y, -self.takeoff_altitude-z)
+                # self.send_position_velocity_target(x, y, -self.takeoff_altitude - z, vx, vy, -vz)
+                waypoints.append([x, y, takeoff_altitude + z])
+
+    #  go to start position
+    for _ in range(fps):
+        waypoints.append([0, 0, takeoff_altitude])
+
+    return np.array(waypoints), fps
+
+
 class LocalizationWrapper(Thread):
     def __init__(self, cf):
         super().__init__()
@@ -545,6 +614,9 @@ if __name__ == '__main__':
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
+    ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
+    ap.add_argument("--simple-takeoff", action="store_true", help="takeoff and land")
+
     args = ap.parse_args()
 
     DEFAULT_HEIGHT = args.takeoff_altitude
@@ -606,7 +678,11 @@ if __name__ == '__main__':
         # blender_animation(scf, frame_interval=1/24, led_on=args.led)
         cf.platform.send_arming_request(True)
         time.sleep(2.0)
-        take_off_simple(scf)
+
+        if args.simple_takeoff:
+            take_off_simple(scf)
+        elif args.trajectory is not None:
+            trajectory(scf, args.trajectory)
         # time.sleep(10)
 
         if args.log:
