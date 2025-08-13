@@ -154,6 +154,7 @@ def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False):
         cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
     else:
         cf.extpos.send_extpos(x, y, z)
+        print(f"sending {x, y, z}")
 
 
 def blender_animation(scf, frame_interval=1/24, led_on=False):
@@ -386,15 +387,14 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
     # print('pid_attitude.roll_kd', cf.param.get_value('pid_attitude.roll_kd'))
 
 
-def set_controller():
-    with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
-        cf = scf.cf
+def set_controller(scf):
+    cf = scf.cf
 
-        # Controller type Auto select(0), PID(1), Mellinger(2), INDI(3), Brescianini(4)(Default: 0)
+    # Controller type Auto select(0), PID(1), Mellinger(2), INDI(3), Brescianini(4)(Default: 0)
 
-        print('stabilizer.controller', cf.param.get_value('stabilizer.controller'))
-        cf.param.set_value('stabilizer.controller', 1)
-        print('stabilizer.controller', cf.param.get_value('stabilizer.controller'))
+    print('stabilizer.controller', cf.param.get_value('stabilizer.controller'))
+    cf.param.set_value('stabilizer.controller', 1)
+    print('stabilizer.controller', cf.param.get_value('stabilizer.controller'))
 
 
 def log_callback(timestamp, data, logconf):
@@ -576,6 +576,7 @@ if __name__ == '__main__':
         #     print('No flow deck detected!')
         #     sys.exit(1)
 
+        set_controller(scf)
         set_pid_values(scf, propeller_size=2)
         reset_estimator(scf.cf)
         time.sleep(2.0)
@@ -586,7 +587,7 @@ if __name__ == '__main__':
         # blender_animation(scf, frame_interval=1/24, led_on=args.led)
         cf.platform.send_arming_request(True)
         time.sleep(2.0)
-        take_off_simple(scf)
+        # take_off_simple(scf)
         # time.sleep(10)
 
         if args.log:
