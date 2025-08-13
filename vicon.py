@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 import os.path
@@ -51,10 +52,11 @@ class ViconWrapper(threading.Thread):
             # Set axis mapping for standard coordinate systems
             client.set_axis_mapping(Direction.Forward, Direction.Left, Direction.Up)
 
+            last_time = time.time()
             while self.running:
                 if client.get_frame():
                     frame_num = client.get_frame_number()
-                    self.logger.debug(f"--- Frame {frame_num} ---")
+                    self.logger.debug(f"\n--- Frame {frame_num} ---")
 
                     if self.labeled_object:
                         object_count = client.get_subject_count()
@@ -63,7 +65,7 @@ class ViconWrapper(threading.Thread):
                         object_count = client.get_unlabeled_marker_count()
                         self.logger.debug(f"\tUnlabeled marker count: {object_count}")
 
-                    if object_count is not None and object_count == 1:
+                    if object_count is not None and object_count >= 1:
                         translation = None
 
                         if self.labeled_object:
@@ -86,8 +88,13 @@ class ViconWrapper(threading.Thread):
                             if callable(self.callback):
                                 self.callback(pos_x, pos_y, pos_z, timestamp=now)
 
-                            self.logger.debug(
-                                f"\tPosition (mm): X={pos_x:.2f}, Y={pos_y:.2f}, Z={pos_z:.2f}")
+                            time_interval = now - last_time
+                            last_time = now
+                            self.logger.debug(f"Position (mm): X={pos_x:.2f}, Y={pos_y:.2f}, Z={pos_z:.2f}")
+                            self.logger.debug(f"Time Interval (ms): {time_interval * 1000}")
+
+                            # slow down loop
+                            # time.sleep(0.05)
                         else:
                             self.logger.warning(f"\tPosition (mm): Occluded or no data")
 
@@ -113,7 +120,11 @@ class ViconWrapper(threading.Thread):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-t", default=10, type=int, help="time to run")
+    args = ap.parse_args()
+
     vw = ViconWrapper(labeled_object=False, log_level=logging.DEBUG)
     vw.start()
-    time.sleep(30)
+    time.sleep(args.t)
     vw.stop()
