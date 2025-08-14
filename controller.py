@@ -149,7 +149,6 @@ def trajectory(scf, trajectory):
         #     # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
         #     # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
         #     time.sleep(0.1)
-        mc.stop()
 
 
 def up_and_down(scf):
