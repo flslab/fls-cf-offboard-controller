@@ -163,6 +163,46 @@ def run_sequence(cf, trajectory_id, duration):
     commander.stop()
 
 
+def set_pid_values(cf, propeller_size=None, with_cage=False):
+    cf.param.set_value('quadSysId.armLength', '0.04242')
+
+    cf.param.set_value('posCtlPid.xKp', '1.8')
+    cf.param.set_value('posCtlPid.xKi', '0.0')
+    cf.param.set_value('posCtlPid.xKd', '0.0')
+    cf.param.set_value('posCtlPid.yKp', '2.0')
+    cf.param.set_value('posCtlPid.yKi', '0.0')
+    cf.param.set_value('posCtlPid.yKd', '0.0')
+    cf.param.set_value('posCtlPid.zKp', '2.0')
+    cf.param.set_value('posCtlPid.zKi', '0.5')
+    cf.param.set_value('posCtlPid.zKd', '0.0')
+    cf.param.set_value('posCtlPid.thrustMin', '10000')
+    cf.param.set_value('posCtlPid.thrustBase', '22000')
+
+    cf.param.set_value('velCtlPid.vxKp', '27.0')
+    cf.param.set_value('velCtlPid.vxKi', '18.0')
+    cf.param.set_value('velCtlPid.vxKd', '0.0')
+    cf.param.set_value('velCtlPid.vyKp', '30.0')
+    cf.param.set_value('velCtlPid.vyKi', '20.0')
+    cf.param.set_value('velCtlPid.vyKd', '0')
+    cf.param.set_value('velCtlPid.vzKp', '20.0')
+    cf.param.set_value('velCtlPid.vzKi', '0.0')
+    cf.param.set_value('velCtlPid.vzKd', '0.5')
+
+    cf.param.set_value('pid_attitude.roll_kp', '19.0')
+    cf.param.set_value('pid_attitude.roll_ki', '0.001')
+    cf.param.set_value('pid_attitude.roll_kd', '0.15')
+    cf.param.set_value('pid_attitude.pitch_kp', '17.1')
+    cf.param.set_value('pid_attitude.pitch_ki', '0.001')
+    cf.param.set_value('pid_attitude.pitch_kd', '0.135')
+
+    cf.param.set_value('pid_rate.roll_kp', '66.0')
+    cf.param.set_value('pid_rate.roll_ki', '0.0')
+    cf.param.set_value('pid_rate.roll_kd', '1.65')
+    cf.param.set_value('pid_rate.pitch_kp', '65.0')
+    cf.param.set_value('pid_rate.pitch_ki', '0.0')
+    cf.param.set_value('pid_rate.pitch_kd', '1.485')
+
+
 if __name__ == '__main__':
     cflib.crtp.init_drivers()
 
@@ -176,6 +216,7 @@ if __name__ == '__main__':
         # Set up a callback to handle data from the mocap system
         mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
 
+        set_pid_values(cf)
         adjust_orientation_sensitivity(cf)
         activate_kalman_estimator(cf)
         # activate_mellinger_controller(cf)
