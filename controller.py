@@ -138,9 +138,10 @@ def trajectory(scf, trajectory):
 
         trajectory_log = []
         for i, p in enumerate(WAYPOINTS):
-            cf.commander.send_position_setpoint(*p, yaw=0.0)
+            # cf.commander.send_position_setpoint(*p, yaw=0.0)
+            mc.go_to(*p)
 
-            time.sleep(1 / (fps / 2))
+            time.sleep(1 / (fps))
         # start_time = time.time()
         # while time.time() - start_time < DURATION:
         #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
@@ -288,7 +289,7 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('posCtlPid.yKp', '2.0')
         cf.param.set_value('posCtlPid.yKi', '0.0')
         cf.param.set_value('posCtlPid.yKd', '0.0')
-        cf.param.set_value('posCtlPid.zKp', '1.5')
+        cf.param.set_value('posCtlPid.zKp', '1.8')
         cf.param.set_value('posCtlPid.zKi', '0.5')
         cf.param.set_value('posCtlPid.zKd', '0.0')
         cf.param.set_value('posCtlPid.thrustMin', '10000')
@@ -580,10 +581,7 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
             if state == "RETURN" and i == 2:
                 break
 
-            for j, pv in enumerate(zip(positions, velocities)):
-                p, v = pv
-                if j % 2:
-                    continue
+            for p, v in zip(positions, velocities):
                 x, y, z = p
                 # vx, vy, vz = v
                 # self.send_position_target(x, y, -self.takeoff_altitude-z)
