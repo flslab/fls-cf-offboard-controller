@@ -16,6 +16,7 @@ from cflib.crazyflie import Crazyflie
 from cflib.crazyflie.log import LogConfig
 from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.positioning.motion_commander import MotionCommander
+from cflib.positioning.position_hl_commander import PositionHlCommander
 from cflib.utils.multiranger import Multiranger
 from cflib.utils import uri_helper
 from cflib.utils.reset_estimator import reset_estimator
@@ -131,7 +132,7 @@ def take_off_simple(scf):
 def trajectory(scf, trajectory):
     Z = args.takeoff_altitude
 
-    with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
+    with PositionHlCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
         time.sleep(3)
         WAYPOINTS, fps = create_trajectory_from_file(trajectory, Z)
         cf = scf.cf
