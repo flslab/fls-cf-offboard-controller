@@ -559,7 +559,9 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
             if state == "RETURN" and i == 2:
                 break
 
-            for p, v in zip(positions, velocities):
+            for j, p, v in enumerate(zip(positions, velocities)):
+                if j % 2:
+                    continue
                 x, y, z = p
                 vx, vy, vz = v
                 # self.send_position_target(x, y, -self.takeoff_altitude-z)
@@ -567,8 +569,9 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
                 waypoints.append([x, y, takeoff_altitude + z])
 
     #  go to start position
-    for _ in range(fps):
-        waypoints.append([0, 0, takeoff_altitude])
+    last_p = waypoints[-1]
+    for i in range(fps):
+        waypoints.append([last_p[0] - i * last_p[0] / fps, last_p[1] - i * last_p[1] / fps, last_p[2] - i * (last_p[2] - takeoff_altitude) / fps])
 
     return np.array(waypoints), fps
 
