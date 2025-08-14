@@ -119,7 +119,7 @@ def trajectory(scf, trajectory):
         for i, p in enumerate(WAYPOINTS):
             cf.commander.send_position_setpoint(*p, yaw=0.0)
 
-            time.sleep(1/fps)
+            time.sleep(1 / (fps / 2))
         # start_time = time.time()
         # while time.time() - start_time < DURATION:
         #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
@@ -559,11 +559,12 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
             if state == "RETURN" and i == 2:
                 break
 
-            for j, p, v in enumerate(zip(positions, velocities)):
+            for j, pv in enumerate(zip(positions, velocities)):
+                p, v = pv
                 if j % 2:
                     continue
                 x, y, z = p
-                vx, vy, vz = v
+                # vx, vy, vz = v
                 # self.send_position_target(x, y, -self.takeoff_altitude-z)
                 # self.send_position_velocity_target(x, y, -self.takeoff_altitude - z, vx, vy, -vz)
                 waypoints.append([x, y, takeoff_altitude + z])
