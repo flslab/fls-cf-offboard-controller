@@ -52,7 +52,7 @@ host_name = '192.168.1.39'
 mocap_system_type = 'vicon'
 
 # The name of the rigid body that represents the Crazyflie
-rigid_body_name = 'cf'
+rigid_body_name = 'cffls'
 
 # True: send position and orientation; False: send position only
 send_full_pose = False
@@ -97,12 +97,11 @@ class MocapWrapper(Thread):
         mc = motioncapture.connect(mocap_system_type, {'hostname': host_name})
         while self._stay_open:
             mc.waitForNextFrame()
-            for marker_id, marker in enumerate(mc.markers):
-                print(marker_id, marker)
-                # if name == self.body_name:
-                #     if self.on_pose:
-                #         pos = obj.position
-                #         self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
+            for name, obj in mc.rigidBodies.items():
+                if name == self.body_name:
+                    if self.on_pose:
+                        pos = obj.position
+                        self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
 
 
 def send_extpose_quat(cf, x, y, z, quat):
