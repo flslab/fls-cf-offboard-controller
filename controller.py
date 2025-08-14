@@ -689,15 +689,15 @@ if __name__ == '__main__':
             trajectory(scf, args.trajectory)
         # time.sleep(10)
 
+        if args.vicon:
+            vicon_thread.stop()
+
+        if args.localize:
+            localization.stop()
+            localization.join()
+
         if args.log:
             logconf.stop()
 
     if args.log:
         save_logs(log_dir=args.log_dir)
-
-    if args.localize:
-        localization.stop()
-        localization.join()
-
-    if args.vicon:
-        vicon_thread.stop()
