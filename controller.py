@@ -9,6 +9,7 @@ import argparse
 import mmap
 import struct
 import numpy as np
+import motioncapture
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -29,6 +30,26 @@ DEFAULT_HEIGHT = 0.60
 DURATION = 10
 deck_attached_event = Event()
 
+# The host name or ip address of the mocap system
+host_name = '192.168.1.39'
+
+# The type of the mocap system
+# Valid options are: 'vicon', 'optitrack', 'optitrack_closed_source', 'qualisys', 'nokov', 'vrpn', 'motionanalysis'
+mocap_system_type = 'vicon'
+
+# The name of the rigid body that represents the Crazyflie
+rigid_body_name = 'cffls'
+
+# True: send position and orientation; False: send position only
+send_full_pose = False
+
+# When using full pose, the estimator can be sensitive to noise in the orientation data when yaw is close to +/- 90
+# degrees. If this is a problem, increase orientation_std_dev a bit. The default value in the firmware is 4.5e-3.
+orientation_std_dev = 8.0e-3
+
+# The trajectory to fly
+# See https://github.com/whoenig/uav_trajectories for a tool to generate
+# trajectories
 
 _time = []
 log_vars = {
@@ -608,6 +629,30 @@ class LocalizationWrapper(Thread):
         self.stopped = True
 
 
+class MocapWrapper(Thread):
+    def __init__(self, body_name):
+        Thread.__init__(self)
+
+        self.body_name = body_name
+        self.on_pose = None
+        self._stay_open = True
+
+        self.start()
+
+    def close(self):
+        self._stay_open = False
+
+    def run(self):
+        mc = motioncapture.connect(mocap_system_type, {'hostname': host_name})
+        while self._stay_open:
+            mc.waitForNextFrame()
+            for name, obj in mc.rigidBodies.items():
+                if name == self.body_name:
+                    if self.on_pose:
+                        pos = obj.position
+                        self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
+
+
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=1.0, type=float)
@@ -650,10 +695,13 @@ if __name__ == '__main__':
             localization.start()
 
         if args.vicon:
-            from vicon import ViconWrapper
+            mocap_wrapper = MocapWrapper(rigid_body_name)
+            mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
 
-            vicon_thread = ViconWrapper(callback=send_vicon_position(cf), log_level=log_level)
-            vicon_thread.start()
+            # from vicon import ViconWrapper
+            #
+            # vicon_thread = ViconWrapper(callback=send_vicon_position(cf), log_level=log_level)
+            # vicon_thread.start()
 
         # scf.cf.param.add_update_callback(group='deck', name='bcZRanger2', cb=param_deck_flow)
         time.sleep(.5)
@@ -681,7 +729,7 @@ if __name__ == '__main__':
 
         # blender_animation(scf, frame_interval=1/24, led_on=args.led)
         cf.platform.send_arming_request(True)
-        time.sleep(2.0)
+        time.sleep(1.0)
 
         if args.simple_takeoff:
             take_off_simple(scf)
@@ -690,7 +738,8 @@ if __name__ == '__main__':
         # time.sleep(10)
 
         if args.vicon:
-            vicon_thread.stop()
+            mocap_wrapper.close()
+            # vicon_thread.stop()
 
         if args.localize:
             localization.stop()
