@@ -302,8 +302,8 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('velCtlPid.vyKp', '30.0')
         cf.param.set_value('velCtlPid.vyKi', '20.0')
         cf.param.set_value('velCtlPid.vyKd', '0')
-        cf.param.set_value('velCtlPid.vzKp', '10.0')
-        cf.param.set_value('velCtlPid.vzKi', '0.0')
+        cf.param.set_value('velCtlPid.vzKp', '15.0')
+        cf.param.set_value('velCtlPid.vzKi', '0.01')
         cf.param.set_value('velCtlPid.vzKd', '0.5')
 
         cf.param.set_value('pid_attitude.roll_kp', '19.0')
