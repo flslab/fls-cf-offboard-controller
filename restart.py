@@ -5,21 +5,22 @@ import cflib.crtp
 
 logging.basicConfig(level=logging.ERROR)
 
-URI = 'usb://0'  # Replace with your Crazyflie's URI
+URI = 'usb://0'  # or 'radio://0/80/2M'
 
 
 def reboot_crazyflie(uri):
     cflib.crtp.init_drivers(enable_debug_driver=False)
     cf = Crazyflie()
 
-    def connected(link_uri):
-        print("Connected to", link_uri)
-        # Send reboot command
+    def param_toc_updated():
+        print("Parameter TOC received, sending reboot command...")
         cf.param.set_value('sys.resetToFirmware', '1')
-        print("Reboot command sent")
-        # Wait a moment for command to be sent before disconnect
         time.sleep(0.5)
         cf.close_link()
+
+    def connected(link_uri):
+        print("Connected to", link_uri)
+        cf.param_toc_updated.add_callback(param_toc_updated)
 
     def connection_failed(link_uri, msg):
         print("Connection failed:", msg)
@@ -34,7 +35,8 @@ def reboot_crazyflie(uri):
     print("Connecting to", uri)
     cf.open_link(uri)
 
-    time.sleep(2)  # Allow enough time for connection and reboot command
+    # Give enough time for param TOC + reboot before script exits
+    time.sleep(5)
 
 
 if __name__ == '__main__':
