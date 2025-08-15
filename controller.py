@@ -543,7 +543,8 @@ def wall_spring(scf):
                 time.sleep(0.01)
 
 
-pos_update_log = []
+pos_update_time_log = []
+pos_update_profile_log = []
 
 def send_vicon_position(cf):
     def func(x, y, z, timestamp):
@@ -559,8 +560,11 @@ def consume_vicon_data(cf, stop_event):
         data, last_version = vicon_thread.wait_for_new(last_version)
         if data:
             x, y, z, timestamp = data
+            start_time = time.time()
             send_extpose_quat(cf, x/1000, y/1000, z/1000)
-            pos_update_log.append(time.time())
+            end_time = time.time()
+            pos_update_time_log.append(end_time)
+            pos_update_profile_log.append(end_time - start_time)
 
 
 def create_trajectory_from_file(file_path, takeoff_altitude):
@@ -771,6 +775,10 @@ if __name__ == '__main__':
     if args.log:
         save_logs(log_dir=args.log_dir)
 
-    with open("pose_update.txt", "w") as f:
-        for number in pos_update_log:
+    with open("pose_update_time.txt", "w") as f:
+        for number in pos_update_time_log:
+            f.write(f"{number}\n")
+
+    with open("pose_update_profile.txt", "w") as f:
+        for number in pos_update_profile_log:
             f.write(f"{number}\n")
