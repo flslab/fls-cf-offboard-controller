@@ -55,7 +55,7 @@ class ViconWrapper(threading.Thread):
             client.set_axis_mapping(Direction.Forward, Direction.Left, Direction.Up)
 
             last_time = time.time()
-            while self.stop_event.is_set():
+            while not self.stop_event.is_set():
                 if client.get_frame():
                     frame_num = client.get_frame_number()
                     self.logger.debug(f"\n--- Frame {frame_num} ---")
