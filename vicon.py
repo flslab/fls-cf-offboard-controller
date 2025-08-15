@@ -15,21 +15,23 @@ VICON_ADDRESS = f"{VICON_PC_IP}:801"
 
 
 class ViconWrapper(threading.Thread):
-    def __init__(self, callback=None, log_level=logging.INFO, labeled_object=False):
-        super().__init__()
-        self.running = False
+    def __init__(self, log_level=logging.INFO, labeled_object=False):
+        super().__init__(daemon=True)
+        self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
+        self.stop_event = threading.Event()
         self.logger = LoggerFactory("Vicon", level=log_level).get_logger()
-        self.callback = callback
-        self.position_log = []
+        self.all_frames = []
+        self.latest_frame = None
+        self.frame_version = 0
         self.labeled_object = labeled_object
 
     def stop(self):
-        self.running = False
-        self.join()
+        self.stop_event.set()
+        with self.condition:
+            self.condition.notify_all()
 
     def run(self):
-        self.running = True
-
         client = PyViconDatastream()
         self.logger.info("Client object created.")
 
@@ -53,7 +55,7 @@ class ViconWrapper(threading.Thread):
             client.set_axis_mapping(Direction.Forward, Direction.Left, Direction.Up)
 
             last_time = time.time()
-            while self.running:
+            while self.stop_event.is_set():
                 if client.get_frame():
                     frame_num = client.get_frame_number()
                     self.logger.debug(f"\n--- Frame {frame_num} ---")
@@ -80,13 +82,19 @@ class ViconWrapper(threading.Thread):
                         if translation is not None:
                             now = time.time()
                             pos_x, pos_y, pos_z = translation
-                            self.position_log.append({
+
+                            with self.condition:
+                                self.latest_frame = [pos_x, pos_y, pos_z, now]
+                                self.frame_version += 1
+                                self.condition.notify_all()
+
+                            self.all_frames.append({
                                 "frame_id": frame_num,
                                 "tvec": [pos_x, pos_y, pos_z],
                                 "time": now * 1000
                             })
-                            if callable(self.callback):
-                                self.callback(pos_x, pos_y, pos_z, timestamp=now)
+                            # if callable(self.callback):
+                            #     self.callback(pos_x, pos_y, pos_z, timestamp=now)
 
                             time_interval = now - last_time
                             last_time = now
@@ -111,12 +119,19 @@ class ViconWrapper(threading.Thread):
             formatted = now.strftime("%H_%M_%S_%m_%d_%Y")
             file_path = os.path.join("logs", f"vicon_{formatted}.json")
             with open(file_path, "w") as f:
-                json.dump({"frames": self.position_log}, f)
+                json.dump({"frames": self.all_frames}, f)
             self.logger.info(f"Vicon log saved in {file_path}")
 
             if client.is_connected():
                 client.disconnect()
                 self.logger.info("Disconnected from Vicon server.")
+
+    def wait_for_new(self, last_version):
+        with self.condition:
+            self.condition.wait_for(
+                lambda: self.frame_version != last_version or self.stop_event.is_set()
+            )
+            return self.latest_frame, self.frame_version
 
 
 if __name__ == "__main__":

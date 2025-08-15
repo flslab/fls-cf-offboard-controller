@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from threading import Event, Thread
 import argparse
@@ -549,6 +550,16 @@ def send_vicon_position(cf):
     return func
 
 
+def consume_vicon_data(cf, stop_event):
+    """Run in separate thread: process new Vicon data as soon as it arrives."""
+    last_version = 0
+    while not stop_event.is_set():
+        data, last_version = vicon_thread.wait_for_new(last_version)
+        if data:
+            x, y, z, timestamp = data
+            send_extpose_quat(cf, x/1000, y/1000, z/1000)
+
+
 def create_trajectory_from_file(file_path, takeoff_altitude):
     waypoints = []
     with open(file_path, "r") as f:
@@ -698,8 +709,13 @@ if __name__ == '__main__':
 
             from vicon import ViconWrapper
 
-            vicon_thread = ViconWrapper(callback=send_vicon_position(cf), log_level=log_level)
+            vicon_thread = ViconWrapper(log_level=log_level)
             vicon_thread.start()
+            stop_event = threading.Event()
+            vicon_consumer_thread = threading.Thread(
+                target=consume_vicon_data, args=(cf, stop_event), daemon=True
+            )
+            vicon_consumer_thread.start()
 
         # scf.cf.param.add_update_callback(group='deck', name='bcZRanger2', cb=param_deck_flow)
         time.sleep(.5)
@@ -737,7 +753,10 @@ if __name__ == '__main__':
 
         if args.vicon:
             # mocap_wrapper.close()
+            stop_event.set()
+            vicon_consumer_thread.join()
             vicon_thread.stop()
+            vicon_thread.join()
 
         if args.localize:
             localization.stop()
