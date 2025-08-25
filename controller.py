@@ -709,18 +709,18 @@ if __name__ == '__main__':
             localization.start()
 
         if args.vicon:
-            # mocap_wrapper = MocapWrapper(rigid_body_name)
-            # mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
+            mocap_wrapper = MocapWrapper(rigid_body_name)
+            mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
 
-            from vicon import ViconWrapper
-
-            vicon_thread = ViconWrapper(log_level=log_level)
-            vicon_thread.start()
-            stop_event = threading.Event()
-            vicon_consumer_thread = threading.Thread(
-                target=consume_vicon_data, args=(cf, stop_event), daemon=True
-            )
-            vicon_consumer_thread.start()
+            # from vicon import ViconWrapper
+            #
+            # vicon_thread = ViconWrapper(log_level=log_level)
+            # vicon_thread.start()
+            # stop_event = threading.Event()
+            # vicon_consumer_thread = threading.Thread(
+            #     target=consume_vicon_data, args=(cf, stop_event), daemon=True
+            # )
+            # vicon_consumer_thread.start()
 
         # scf.cf.param.add_update_callback(group='deck', name='bcZRanger2', cb=param_deck_flow)
         time.sleep(.5)
@@ -759,9 +759,9 @@ if __name__ == '__main__':
         # time.sleep(10)
 
         if args.vicon:
-            # mocap_wrapper.close()
-            stop_event.set()
-            vicon_consumer_thread.join()
+            mocap_wrapper.close()
+            # stop_event.set()
+            # vicon_consumer_thread.join()
             # vicon_thread.stop()
             # vicon_thread.join()
 
