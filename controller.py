@@ -53,6 +53,9 @@ orientation_std_dev = 8.0e-3
 # See https://github.com/whoenig/uav_trajectories for a tool to generate
 # trajectories
 
+pos_update_time_log = []
+pos_update_profile_log = []
+
 _time = []
 log_vars = {
     # "locSrv.x": {
@@ -196,11 +199,15 @@ def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False):
     Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
     This is going to be forwarded to the Crazyflie's position estimator.
     """
+    start_time = time.time()
     if send_full_pose:
         cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
     else:
         cf.extpos.send_extpos(x, y, z)
         # print(f"sending {x, y, z}")
+    end_time = time.time()
+    pos_update_time_log.append(end_time)
+    pos_update_profile_log.append(end_time - start_time)
 
 
 def blender_animation(scf, frame_interval=1/24, led_on=False):
@@ -542,10 +549,6 @@ def wall_spring(scf):
 
                 time.sleep(0.01)
 
-
-pos_update_time_log = []
-pos_update_profile_log = []
-
 def send_vicon_position(cf):
     def func(x, y, z, timestamp):
         send_extpose_quat(cf, x/1000, y/1000, z/1000)
@@ -557,16 +560,10 @@ def consume_vicon_data(cf, stop_event):
     """Run in separate thread: process new Vicon data as soon as it arrives."""
     last_version = 0
     while not stop_event.is_set():
-        # data, last_version = vicon_thread.wait_for_new(last_version)
-        data = (0.1, 0.2, 0.3, time.time())
+        data, last_version = vicon_thread.wait_for_new(last_version)
         if data:
             x, y, z, timestamp = data
-            start_time = time.time()
             send_extpose_quat(cf, x/1000, y/1000, z/1000)
-            end_time = time.time()
-            pos_update_time_log.append(end_time)
-            pos_update_profile_log.append(end_time - start_time)
-            time.sleep(1/100)
 
 
 def create_trajectory_from_file(file_path, takeoff_altitude):
@@ -716,10 +713,10 @@ if __name__ == '__main__':
             # mocap_wrapper = MocapWrapper(rigid_body_name)
             # mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
 
-            # from vicon import ViconWrapper
-            #
-            # vicon_thread = ViconWrapper(log_level=log_level)
-            # vicon_thread.start()
+            from vicon import ViconWrapper
+
+            vicon_thread = ViconWrapper(log_level=log_level)
+            vicon_thread.start()
             stop_event = threading.Event()
             vicon_consumer_thread = threading.Thread(
                 target=consume_vicon_data, args=(cf, stop_event), daemon=True
