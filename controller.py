@@ -566,6 +566,7 @@ def consume_vicon_data(cf, stop_event):
             end_time = time.time()
             pos_update_time_log.append(end_time)
             pos_update_profile_log.append(end_time - start_time)
+            time.sleep(1/100)
 
 
 def create_trajectory_from_file(file_path, takeoff_altitude):
