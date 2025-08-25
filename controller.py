@@ -557,7 +557,8 @@ def consume_vicon_data(cf, stop_event):
     """Run in separate thread: process new Vicon data as soon as it arrives."""
     last_version = 0
     while not stop_event.is_set():
-        data, last_version = vicon_thread.wait_for_new(last_version)
+        # data, last_version = vicon_thread.wait_for_new(last_version)
+        data = (0.1, 0.2, 0.3, time.time())
         if data:
             x, y, z, timestamp = data
             start_time = time.time()
@@ -714,10 +715,10 @@ if __name__ == '__main__':
             # mocap_wrapper = MocapWrapper(rigid_body_name)
             # mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
 
-            from vicon import ViconWrapper
-
-            vicon_thread = ViconWrapper(log_level=log_level)
-            vicon_thread.start()
+            # from vicon import ViconWrapper
+            #
+            # vicon_thread = ViconWrapper(log_level=log_level)
+            # vicon_thread.start()
             stop_event = threading.Event()
             vicon_consumer_thread = threading.Thread(
                 target=consume_vicon_data, args=(cf, stop_event), daemon=True
@@ -756,14 +757,16 @@ if __name__ == '__main__':
             take_off_simple(scf)
         elif args.trajectory is not None:
             trajectory(scf, args.trajectory)
+        else:
+            time.sleep(args.t)
         # time.sleep(10)
 
         if args.vicon:
             # mocap_wrapper.close()
             stop_event.set()
             vicon_consumer_thread.join()
-            vicon_thread.stop()
-            vicon_thread.join()
+            # vicon_thread.stop()
+            # vicon_thread.join()
 
         if args.localize:
             localization.stop()
