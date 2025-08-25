@@ -631,7 +631,7 @@ class LocalizationWrapper(Thread):
 
             if valid:
                 x, y, z, roll, pitch, yaw = struct.unpack("<6f", data[4:28])
-                print(f"Position: ({-y}, {-x}, {z-0.05})")
+                # print(f"Position: ({-y}, {-x}, {z-0.05})")
                 send_extpose_quat(self.cf, -y, -x, z)
             else:
                 pass
