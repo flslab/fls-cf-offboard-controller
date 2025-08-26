@@ -676,7 +676,7 @@ class MocapWrapper(Thread):
                         self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
                         self.all_frames.append({
                             "frame_id": i,
-                            "tvec": [pos[0], pos[1], pos[2]],
+                            "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
                             "time": time.time() * 1000
                         })
                         i += 1
