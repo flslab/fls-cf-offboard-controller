@@ -122,7 +122,7 @@ def param_deck_flow(_, value_str):
 
 
 def take_off_simple(scf):
-    with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
+    with PositionHlCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
         time.sleep(DURATION)
         # start_time = time.time()
         # while time.time() - start_time < DURATION:
