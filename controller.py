@@ -649,14 +649,24 @@ class MocapWrapper(Thread):
         self.body_name = body_name
         self.on_pose = None
         self._stay_open = True
+        self.all_frames = []
 
         self.start()
 
     def close(self):
         self._stay_open = False
 
+        now = datetime.now()
+        formatted = now.strftime("%H_%M_%S_%m_%d_%Y")
+        file_path = os.path.join("logs", f"vicon_{formatted}.json")
+        with open(file_path, "w") as f:
+            json.dump({"frames": self.all_frames}, f)
+        print(f"Vicon log saved in {file_path}")
+
+
     def run(self):
         mc = motioncapture.connect(mocap_system_type, {'hostname': host_name})
+        i = 0
         while self._stay_open:
             mc.waitForNextFrame()
             for name, obj in mc.rigidBodies.items():
@@ -664,6 +674,12 @@ class MocapWrapper(Thread):
                     if self.on_pose:
                         pos = obj.position
                         self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
+                        self.all_frames.append({
+                            "frame_id": i,
+                            "tvec": [pos[0], pos[1], pos[2]],
+                            "time": time.time() * 1000
+                        })
+                        i += 1
 
 
 if __name__ == '__main__':
