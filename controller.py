@@ -130,7 +130,6 @@ def take_off_simple(scf):
         #     # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
         #     # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
         #     time.sleep(0.1)
-        mc.stop()
 
 
 def trajectory(scf, trajectory):
