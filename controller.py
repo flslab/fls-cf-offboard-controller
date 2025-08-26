@@ -656,7 +656,7 @@ class MocapWrapper(Thread):
     def close(self):
         self._stay_open = False
 
-        now = datetime.now()
+        now = datetime.datetime.now()
         formatted = now.strftime("%H_%M_%S_%m_%d_%Y")
         file_path = os.path.join("logs", f"vicon_{formatted}.json")
         with open(file_path, "w") as f:
