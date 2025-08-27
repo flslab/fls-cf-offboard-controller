@@ -126,12 +126,12 @@ def param_deck_flow(_, value_str):
 
 
 def take_off_simple(scf):
+    global failsafe
     with PositionHlCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
         # time.sleep(DURATION)
         start_time = time.time()
         while time.time() - start_time < DURATION:
             if failsafe:
-                print("failsafe activated: lost tracking")
                 break
             #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
             #     # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
@@ -208,6 +208,8 @@ def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False, filter_z=Fal
     global z_estimate, z_filter_alpha
     if filter_z:
         z_estimate = (1 - z_filter_alpha) * z_estimate + z_filter_alpha * z
+    else:
+        z_estimate = z
     start_time = time.time()
     if send_full_pose:
         cf.extpos.send_extpose(x, y, z_estimate, quat.x, quat.y, quat.z, quat.w)
@@ -635,19 +637,22 @@ class LocalizationWrapper(Thread):
 
     def run(self):
         global failsafe
+        last_valid = time.time()
         while not self.stopped:
             data = self.shm_map[:self.position_size]  # Read 8 bytes (bool + 7 floats = 1 byte + 28 bytes)
             # print("raw data:", data)
             valid = struct.unpack("<4?", data[:4])[0]  # Extract the validity flag (1 byte)
 
+            if time.time() - last_valid > 1 and failsafe is False:
+                failsafe = True
+                print(f"Failsafe triggered due to lack of position estimation.")
             if valid:
-                failsafe = False
+                last_valid = time.time()
                 left, forward, up, roll, pitch, yaw = struct.unpack("<6f", data[4:28])
                 # print(f"Position: ({forward:.3f}, {left:.3f}, {up:.3f})")
                 send_extpose_quat(self.cf, forward, left, up, filter_z=True)
             else:
-                failsafe = True
-                # print("Invalid data received")
+                pass
 
             time.sleep(1 / 120)
 
