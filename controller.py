@@ -24,9 +24,9 @@ from cflib.utils.reset_estimator import reset_estimator
 
 from worker_socket import WorkerSocket
 
-#URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E713')
+# URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E713')
 # URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E711')
-URI = uri_helper.uri_from_env(default='usb://0') # uart pi5
+URI = uri_helper.uri_from_env(default='usb://0')  # uart pi5
 
 DEFAULT_HEIGHT = 0.60
 DURATION = 10
@@ -131,9 +131,9 @@ def take_off_simple(scf):
             if failsafe:
                 print("failsafe activated: lost tracking")
                 break
-        #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
-        #     # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
-        #     # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
+            #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
+            #     # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
+            #     # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
             time.sleep(1)
 
 
@@ -214,7 +214,7 @@ def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False):
     pos_update_profile_log.append(end_time - start_time)
 
 
-def blender_animation(scf, frame_interval=1/24, led_on=False):
+def blender_animation(scf, frame_interval=1 / 24, led_on=False):
     if led_on:
         led = LED()
     yaw = 0
@@ -231,7 +231,7 @@ def blender_animation(scf, frame_interval=1/24, led_on=False):
     # time.sleep(1.0)
 
     for i in range(2):
-        for i in range(1, len(animation_data)+1):
+        for i in range(1, len(animation_data) + 1):
             start_time = time.time()
             position = animation_data[str(i)]['pos']
             if led_on:
@@ -290,7 +290,6 @@ def move_circle(scf):
 def set_pid_values(scf, propeller_size=None, with_cage=False):
     # with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
     cf = scf.cf
-
 
     cf.param.set_value('quadSysId.armLength', '0.04242')
 
@@ -509,11 +508,11 @@ def save_logs(log_dir='logs'):
     # ax.set_ylim([-15, 105])
     # plt.legend()
 
-        # plt.savefig(f'{log_dir}/{filename}.png', dpi=300)
+    # plt.savefig(f'{log_dir}/{filename}.png', dpi=300)
 
     # else:
-        # image_name = "".join(file.split('.')[:-1])
-        # plt.savefig(f'{image_name}.png', dpi=300)
+    # image_name = "".join(file.split('.')[:-1])
+    # plt.savefig(f'{image_name}.png', dpi=300)
 
 
 def is_close(range):
@@ -553,9 +552,10 @@ def wall_spring(scf):
 
                 time.sleep(0.01)
 
+
 def send_vicon_position(cf):
     def func(x, y, z, timestamp):
-        send_extpose_quat(cf, x/1000, y/1000, z/1000)
+        send_extpose_quat(cf, x / 1000, y / 1000, z / 1000)
 
     return func
 
@@ -567,7 +567,7 @@ def consume_vicon_data(cf, stop_event):
         data, last_version = vicon_thread.wait_for_new(last_version)
         if data:
             x, y, z, timestamp = data
-            send_extpose_quat(cf, x/1000, y/1000, z/1000)
+            send_extpose_quat(cf, x / 1000, y / 1000, z / 1000)
 
 
 def create_trajectory_from_file(file_path, takeoff_altitude):
@@ -612,7 +612,8 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
     #  go to start position
     last_p = waypoints[-1]
     for i in range(fps):
-        waypoints.append([last_p[0] - i * last_p[0] / fps, last_p[1] - i * last_p[1] / fps, last_p[2] - i * (last_p[2] - takeoff_altitude) / fps])
+        waypoints.append([last_p[0] - i * last_p[0] / fps, last_p[1] - i * last_p[1] / fps,
+                          last_p[2] - i * (last_p[2] - takeoff_altitude) / fps])
 
     return np.array(waypoints), fps
 
@@ -643,7 +644,7 @@ class LocalizationWrapper(Thread):
                 failsafe = True
                 # print("Invalid data received")
 
-            time.sleep(1/120)
+            time.sleep(1 / 120)
 
     def stop(self):
         self.stopped = True
@@ -670,7 +671,6 @@ class MocapWrapper(Thread):
             json.dump({"frames": self.all_frames}, f)
         print(f"Vicon log saved in {file_path}")
 
-
     def run(self):
         mc = motioncapture.connect(mocap_system_type, {'hostname': host_name})
         i = 0
@@ -693,6 +693,7 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=1.0, type=float)
     ap.add_argument("-t", help="flight duration", default=10.0, type=float)
+    ap.add_argument("--fps", type=int, default=120, help="position estimation rate, works with --localize")
     ap.add_argument("--led", help="Turn LEDs on", action="store_true", default=False)
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--localize", help="Enable onboard marker localization", action="store_true", default=False)
@@ -701,6 +702,10 @@ if __name__ == '__main__':
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
     ap.add_argument("--simple-takeoff", action="store_true", help="takeoff and land")
+    ap.add_argument("--save-camera", action="store_true",
+                    help="save camera at 1/10 of original fps, works with --localize")
+    ap.add_argument("--stream-camera", action="store_true",
+                    help="stream camera at 1/10 of original fps, works with --localize")
 
     args = ap.parse_args()
 
@@ -714,8 +719,6 @@ if __name__ == '__main__':
     if args.led:
         from led import LED
 
-
-
     # Initialize the low-level drivers including the serial driver
     # cflib.crtp.init_drivers()
 
@@ -725,7 +728,23 @@ if __name__ == '__main__':
         cf = scf.cf
 
         if args.localize:
-            c_process = subprocess.Popen(["/home/fls/fls-marker-localization/build/eye", "-t", "20", "--config", "/home/fls/fls-marker-localization/build/camera_config.json"])
+            localization_params = [
+                "/home/fls/fls-marker-localization/build/eye",
+                "-t", str(20 + args.t),
+                "--config", "/home/fls/fls-marker-localization/build/camera_config.json",
+                "--brightness", "0.5",  # 0.5
+                "--contrast", "2.5",  # 0.75
+                "--exposure", "500",
+                "--fps", str(args.fps),
+            ]
+
+            if args.save_camera:
+                localization_params.extend(["-s", "--save-rate", "10"])
+            if args.stream_camera:
+                localization_params.extend(["--stream", "--stream-rate", "10"])
+
+            c_process = subprocess.Popen(localization_params)
+
             time.sleep(2)
             localization = LocalizationWrapper(cf)
             localization.start()
