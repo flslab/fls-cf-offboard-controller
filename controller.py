@@ -56,6 +56,8 @@ orientation_std_dev = 8.0e-3
 pos_update_time_log = []
 pos_update_profile_log = []
 
+failsafe = False
+
 _time = []
 log_vars = {
     # "locSrv.x": {
@@ -123,13 +125,16 @@ def param_deck_flow(_, value_str):
 
 def take_off_simple(scf):
     with PositionHlCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
-        time.sleep(DURATION)
-        # start_time = time.time()
-        # while time.time() - start_time < DURATION:
+        # time.sleep(DURATION)
+        start_time = time.time()
+        while time.time() - start_time < DURATION:
+            if failsafe:
+                print("failsafe activated: lost tracking")
+                break
         #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
         #     # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
         #     # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
-        #     time.sleep(0.1)
+            time.sleep(1)
 
 
 def trajectory(scf, trajectory):
@@ -623,17 +628,19 @@ class LocalizationWrapper(Thread):
         self.shm_map = mmap.mmap(self.shm_fd.fileno(), self.position_size, access=mmap.ACCESS_READ)
 
     def run(self):
+        global failsafe
         while not self.stopped:
             data = self.shm_map[:self.position_size]  # Read 8 bytes (bool + 7 floats = 1 byte + 28 bytes)
             # print("raw data:", data)
             valid = struct.unpack("<4?", data[:4])[0]  # Extract the validity flag (1 byte)
 
             if valid:
+                failsafe = False
                 left, forward, up, roll, pitch, yaw = struct.unpack("<6f", data[4:28])
                 # print(f"Position: ({-y}, {-x}, {z-0.05})")
                 send_extpose_quat(self.cf, forward, left, up)
             else:
-                pass
+                failsafe = True
                 # print("Invalid data received")
 
             time.sleep(1/120)
