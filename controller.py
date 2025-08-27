@@ -57,6 +57,8 @@ pos_update_time_log = []
 pos_update_profile_log = []
 
 failsafe = False
+z_estimate = 0
+z_filter_alpha = 0.3
 
 _time = []
 log_vars = {
@@ -198,16 +200,19 @@ def land(cf, position):
         time.sleep(sleep_time)
 
 
-def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False):
+def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False, filter_z=False):
     """
     Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
     This is going to be forwarded to the Crazyflie's position estimator.
     """
+    global z_estimate, z_filter_alpha
+    if filter_z:
+        z_estimate = (1 - z_filter_alpha) * z_estimate + z_filter_alpha * z
     start_time = time.time()
     if send_full_pose:
-        cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
+        cf.extpos.send_extpose(x, y, z_estimate, quat.x, quat.y, quat.z, quat.w)
     else:
-        cf.extpos.send_extpos(x, y, z)
+        cf.extpos.send_extpos(x, y, z_estimate)
         # print(f"sending {x, y, z}")
     end_time = time.time()
     pos_update_time_log.append(end_time)
@@ -638,8 +643,8 @@ class LocalizationWrapper(Thread):
             if valid:
                 failsafe = False
                 left, forward, up, roll, pitch, yaw = struct.unpack("<6f", data[4:28])
-                print(f"Position: ({forward:.3f}, {left:.3f}, {up:.3f})")
-                send_extpose_quat(self.cf, forward, left, up)
+                # print(f"Position: ({forward:.3f}, {left:.3f}, {up:.3f})")
+                send_extpose_quat(self.cf, forward, left, up, filter_z=True)
             else:
                 failsafe = True
                 # print("Invalid data received")
