@@ -629,9 +629,9 @@ class LocalizationWrapper(Thread):
             valid = struct.unpack("<4?", data[:4])[0]  # Extract the validity flag (1 byte)
 
             if valid:
-                x, y, z, roll, pitch, yaw = struct.unpack("<6f", data[4:28])
+                left, forward, up, roll, pitch, yaw = struct.unpack("<6f", data[4:28])
                 # print(f"Position: ({-y}, {-x}, {z-0.05})")
-                send_extpose_quat(self.cf, -y, -x, z)
+                send_extpose_quat(self.cf, forward, left, up)
             else:
                 pass
                 # print("Invalid data received")
