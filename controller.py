@@ -215,7 +215,7 @@ def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False, filter_z=Fal
         cf.extpos.send_extpose(x, y, z_estimate, quat.x, quat.y, quat.z, quat.w)
     else:
         cf.extpos.send_extpos(x, y, z_estimate)
-        print(f"sending {x, y, z_estimate}")
+        # print(f"sending {x, y, z_estimate}")
     end_time = time.time()
     pos_update_time_log.append(end_time)
     pos_update_profile_log.append(end_time - start_time)
