@@ -688,15 +688,15 @@ class MocapWrapper(Thread):
             mc.waitForNextFrame()
             for name, obj in mc.rigidBodies.items():
                 if name == self.body_name:
+                    pos = obj.position
                     if self.on_pose:
-                        pos = obj.position
                         self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
-                        self.all_frames.append({
-                            "frame_id": i,
-                            "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
-                            "time": time.time() * 1000
-                        })
-                        i += 1
+                    self.all_frames.append({
+                        "frame_id": i,
+                        "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
+                        "time": time.time() * 1000
+                    })
+                    i += 1
 
 
 if __name__ == '__main__':
@@ -708,6 +708,7 @@ if __name__ == '__main__':
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--localize", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
+    ap.add_argument("--save-vicon", action="store_true", help="track with vicon and save the data")
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
@@ -762,6 +763,9 @@ if __name__ == '__main__':
         if args.vicon:
             mocap_wrapper = MocapWrapper(rigid_body_name)
             mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2])
+        elif args.save_vicon:
+            mocap_wrapper = MocapWrapper(rigid_body_name)
+
 
             # from vicon import ViconWrapper
             #
