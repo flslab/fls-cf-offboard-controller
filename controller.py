@@ -650,7 +650,7 @@ class LocalizationWrapper(Thread):
                 last_valid = time.time()
                 left, forward, up, roll, pitch, yaw = struct.unpack("<6f", data[4:28])
                 # print(f"Position: ({forward:.3f}, {left:.3f}, {up:.3f})")
-                send_extpose_quat(self.cf, forward, left, up, filter_z=True)
+                # send_extpose_quat(self.cf, forward, left, up, filter_z=True)
             else:
                 pass
 
