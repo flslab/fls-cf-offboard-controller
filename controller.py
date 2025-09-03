@@ -820,7 +820,7 @@ if __name__ == '__main__':
             time.sleep(args.t)
         # time.sleep(10)
 
-        if args.vicon:
+        if args.vicon or args.save_vicon:
             mocap_wrapper.close()
             # stop_event.set()
             # vicon_consumer_thread.join()
