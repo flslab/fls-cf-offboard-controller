@@ -202,7 +202,7 @@ def land(cf, position):
 
 def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False, filter_z=False):
     """
-    Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
+    Send the current Crazyflie X, Y, Z position (m) and attitude as a quaternion.
     This is going to be forwarded to the Crazyflie's position estimator.
     """
     global z_estimate, z_filter_alpha
@@ -650,7 +650,7 @@ class LocalizationWrapper(Thread):
                 last_valid = time.time()
                 left, forward, up, roll, pitch, yaw = struct.unpack("<6f", data[4:28])
                 # print(f"Position: ({forward:.3f}, {left:.3f}, {up:.3f})")
-                # send_extpose_quat(self.cf, forward, left, up, filter_z=True)
+                send_extpose_quat(self.cf, forward, left, up, filter_z=True)
             else:
                 pass
 
