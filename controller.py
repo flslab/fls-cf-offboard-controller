@@ -57,7 +57,11 @@ pos_update_time_log = []
 pos_update_profile_log = []
 
 failsafe = False
+x_estimate = 0
+y_estimate = 0
 z_estimate = 0
+x_filter_alpha = 0.3
+y_filter_alpha = 0.3
 z_filter_alpha = 0.3
 
 _time = []
@@ -205,16 +209,20 @@ def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False, filter_z=Fal
     Send the current Crazyflie X, Y, Z position (m) and attitude as a quaternion.
     This is going to be forwarded to the Crazyflie's position estimator.
     """
-    global z_estimate, z_filter_alpha
+    global x_estimate, y_estimate, z_estimate, x_filter_alpha, y_filter_alpha, z_filter_alpha
     if filter_z:
+        x_estimate = (1 - x_filter_alpha) * x_estimate + x_filter_alpha * x
+        y_estimate = (1 - y_filter_alpha) * y_estimate + y_filter_alpha * y
         z_estimate = (1 - z_filter_alpha) * z_estimate + z_filter_alpha * z
     else:
+        x_estimate = x
+        y_estimate = y
         z_estimate = z
     start_time = time.time()
     if send_full_pose:
-        cf.extpos.send_extpose(x, y, z_estimate, quat.x, quat.y, quat.z, quat.w)
+        cf.extpos.send_extpose(x_estimate, y_estimate, z_estimate, quat.x, quat.y, quat.z, quat.w)
     else:
-        cf.extpos.send_extpos(x, y, z_estimate)
+        cf.extpos.send_extpos(x_estimate, y_estimate, z_estimate)
         # print(f"sending {x, y, z_estimate}")
     end_time = time.time()
     pos_update_time_log.append(end_time)
@@ -765,7 +773,6 @@ if __name__ == '__main__':
             mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2])
         elif args.save_vicon:
             mocap_wrapper = MocapWrapper(rigid_body_name)
-
 
             # from vicon import ViconWrapper
             #
