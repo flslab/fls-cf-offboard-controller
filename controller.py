@@ -651,7 +651,7 @@ class LocalizationWrapper(Thread):
             # print("raw data:", data)
             valid = struct.unpack("<4?", data[:4])[0]  # Extract the validity flag (1 byte)
 
-            if time.time() - last_valid > 1 and failsafe is False:
+            if time.time() - last_valid > 3 and failsafe is False:
                 failsafe = True
                 print(f"Failsafe triggered due to lack of position estimation.")
             if valid:

@@ -5,7 +5,7 @@ from cflib.utils.power_switch import PowerSwitch
 
 logging.basicConfig(level=logging.ERROR)
 
-URI = 'usb://0'  # or 'radio://0/80/2M'
+URI = 'radio://0/80/2M/E7E7E7E701'  # or 'radio://0/80/2M'
 
 
 def reboot_crazyflie(uri):
