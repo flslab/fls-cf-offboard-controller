@@ -24,3 +24,12 @@ https://wiki.bitcraze.io/projects:crazyflie2:development:dfu
 ```commandline
 sudo dfu-util -d 0483:df11 -a 0 -s 0x08000000 -D ~/Downloads/cf2loader-1.0.bin 
 ```
+
+Servo:
+```commandline
+pip install gpiozero lgpio pigpio
+```
+Add to `/boot/firmware/config.txt`
+```
+dtoverlay=pwm
+```
