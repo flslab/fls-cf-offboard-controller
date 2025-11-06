@@ -784,6 +784,7 @@ if __name__ == '__main__':
             # )
             # vicon_consumer_thread.start()
 
+        scf.cf.param.add_update_callback(group='deck', name='bcFlow2', cb=param_deck_flow)
         # scf.cf.param.add_update_callback(group='deck', name='bcZRanger2', cb=param_deck_flow)
         time.sleep(.5)
 
@@ -796,9 +797,9 @@ if __name__ == '__main__':
             scf.cf.log.add_config(logconf)
             logconf.data_received_cb.add_callback(log_callback)
 
-        # if not deck_attached_event.wait(timeout=5):
-        #     print('No flow deck detected!')
-        #     sys.exit(1)
+        if not deck_attached_event.wait(timeout=5):
+            print('No flow deck detected!')
+            exit()
 
         set_controller(scf)
         set_pid_values(scf, propeller_size=2)
