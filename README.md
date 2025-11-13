@@ -25,6 +25,20 @@ https://wiki.bitcraze.io/projects:crazyflie2:development:dfu
 sudo dfu-util -d 0483:df11 -a 0 -s 0x08000000 -D ~/Downloads/cf2loader-1.0.bin 
 ```
 
+Install dependencies:
+```
+git clone https://github.com/bitcraze/crazyflie-lib-python.git
+cd crazyflie-lib-python
+pip install -e .
+pip install pyserial
+```
+```
+git clone https://github.com/flslab/fls-cf-offboard-controller.git
+```
+```commandline
+pip install -r requirements.txt
+```
+
 Servo:
 ```commandline
 pip install gpiozero lgpio pigpio
@@ -33,3 +47,4 @@ Add to `/boot/firmware/config.txt`
 ```
 dtoverlay=pwm
 ```
+

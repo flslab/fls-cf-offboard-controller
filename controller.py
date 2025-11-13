@@ -40,7 +40,7 @@ host_name = '192.168.1.39'
 mocap_system_type = 'vicon'
 
 # The name of the rigid body that represents the Crazyflie
-rigid_body_name = 'cffls'
+rigid_body_name = 'fls_ap_y'
 
 # True: send position and orientation; False: send position only
 send_full_pose = False
@@ -797,9 +797,9 @@ if __name__ == '__main__':
             scf.cf.log.add_config(logconf)
             logconf.data_received_cb.add_callback(log_callback)
 
-        if not deck_attached_event.wait(timeout=5):
-            print('No flow deck detected!')
-            exit()
+        # if not deck_attached_event.wait(timeout=5):
+        #     print('No flow deck detected!')
+        #     exit()
 
         set_controller(scf)
         set_pid_values(scf, propeller_size=2)

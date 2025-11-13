@@ -5,6 +5,7 @@ from cflib.utils.power_switch import PowerSwitch
 
 logging.basicConfig(level=logging.ERROR)
 
+# URI = 'radio://0/80/2M/E7E7E7E712'  # or 'radio://0/80/2M'
 URI = 'radio://0/80/2M/E7E7E7E701'  # or 'radio://0/80/2M'
 
 
