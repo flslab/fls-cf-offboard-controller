@@ -129,18 +129,35 @@ def param_deck_flow(_, value_str):
         print('Deck is NOT attached!')
 
 
+def servo_seq_1():
+    servo_ctl.set_a_b(0, 0)
+    time.sleep(1)
+    servo_ctl.set_a_b(90, 90)
+    time.sleep(1)
+    servo_ctl.set_a_b(180, 180)
+    time.sleep(1)
+    servo_ctl.set_a_b(0, 0)
+
+
+def servo_seq_2():
+    servo_ctl.set_a_b(0, 0)
+    time.sleep(1)
+    servo_ctl.set_a(90)
+    time.sleep(1)
+    servo_ctl.set_b(90)
+    time.sleep(1)
+    servo_ctl.set_a(180)
+    time.sleep(1)
+    servo_ctl.set_b(180)
+    time.sleep(1)
+
+
 def take_off_simple(scf):
     global failsafe
     with PositionHlCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
         # time.sleep(DURATION)
         time.sleep(1)
-        servo_ctl.set_a_b(0, 0)
-        time.sleep(1)
-        servo_ctl.set_a_b(90, 90)
-        time.sleep(1)
-        servo_ctl.set_a_b(180, 180)
-        time.sleep(1)
-        servo_ctl.set_a_b(0, 0)
+        servo_seq_2()
 
         start_time = time.time()
         while time.time() - start_time < DURATION:
