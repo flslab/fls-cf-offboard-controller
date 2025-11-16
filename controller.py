@@ -724,6 +724,7 @@ if __name__ == '__main__':
     ap.add_argument("-t", help="flight duration", default=10.0, type=float)
     ap.add_argument("--fps", type=int, default=120, help="position estimation rate, works with --localize")
     ap.add_argument("--led", help="Turn LEDs on", action="store_true", default=False)
+    ap.add_argument("--servo", help="Use servo", action="store_true", default=False)
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--localize", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
@@ -752,7 +753,7 @@ if __name__ == '__main__':
         led_ctl.start()
         led_ctl.show_single_color()
 
-    if args.servo_ctl:
+    if args.servo:
         from servo_pwm import Servo
         servo_ctl = Servo()
 
