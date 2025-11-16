@@ -7,10 +7,14 @@ servo_a = pi5RC(18)
 servo_b = pi5RC(19)
 
 try:
+    i = 0
     while True:
-        angle = int(input("Enter angle between 0 and 180:\n"))
-        servo_a.set(angle)
-        servo_b.set(angle)
+        angle = int(input(f"Enter angle between 0 and 180 for servo {i % 2 + 1}:\n"))
+        i += 1
+        if i % 2:
+            servo_a.set(angle)
+        else:
+            servo_b.set(angle)
 except KeyboardInterrupt:
     print("Program stopped by user")
 
