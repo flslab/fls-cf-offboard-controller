@@ -133,6 +133,15 @@ def take_off_simple(scf):
     global failsafe
     with PositionHlCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
         # time.sleep(DURATION)
+        time.sleep(1)
+        servo_ctl.set_a_b(0, 0)
+        time.sleep(1)
+        servo_ctl.set_a_b(90, 90)
+        time.sleep(1)
+        servo_ctl.set_a_b(180, 180)
+        time.sleep(1)
+        servo_ctl.set_a_b(0, 0)
+
         start_time = time.time()
         while time.time() - start_time < DURATION:
             if failsafe:
@@ -140,7 +149,9 @@ def take_off_simple(scf):
             #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
             #     # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
             #     # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
+
             time.sleep(1)
+
 
 
 def trajectory(scf, trajectory):
@@ -737,6 +748,13 @@ if __name__ == '__main__':
 
     if args.led:
         from led import LED
+        led_ctl = LED()
+        led_ctl.start()
+        led_ctl.show_single_color()
+
+    if args.servo_ctl:
+        from servo_pwm import Servo
+        servo_ctl = Servo()
 
     # Initialize the low-level drivers including the serial driver
     # cflib.crtp.init_drivers()
@@ -837,6 +855,12 @@ if __name__ == '__main__':
 
     if args.log:
         save_logs(log_dir=args.log_dir)
+
+    if args.led:
+        led_ctl.stop()
+
+    if args.servo:
+        del servo_ctl
 
     with open("pose_update_time.txt", "w") as f:
         for number in pos_update_time_log:

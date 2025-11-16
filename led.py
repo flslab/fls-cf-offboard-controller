@@ -4,7 +4,7 @@ import board
 import neopixel_spi as neopixel
 
 
-class MovingDotLED(threading.Thread):
+class LED(threading.Thread):
     def __init__(self, num_pixels=72, color=(227, 253, 255), tail_decay=0.75, delay=0.02, brightness=1.0):
         super().__init__()
         self.num_pixels = num_pixels
@@ -79,7 +79,7 @@ class MovingDotLED(threading.Thread):
 
 
 if __name__ == '__main__':
-    led = MovingDotLED()
+    led = LED()
     led.start()
     led.show_single_color()
     time.sleep(10)
