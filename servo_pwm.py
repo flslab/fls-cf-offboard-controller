@@ -10,7 +10,7 @@ try:
     while True:
         angle = int(input("Enter angle between 0 and 180:\n"))
         servo_a.set(angle)
-        servo_b.set(180-angle)
+        servo_b.set(angle)
 except KeyboardInterrupt:
     print("Program stopped by user")
 
