@@ -164,7 +164,8 @@ def take_off_simple(scf):
     with PositionHlCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
         # time.sleep(DURATION)
         time.sleep(1)
-        servo_seq_3()
+        if args.servo:
+            servo_seq_3()
 
         start_time = time.time()
         while time.time() - start_time < DURATION:
