@@ -846,7 +846,7 @@ if __name__ == '__main__':
         #     exit()
 
         set_controller(scf)
-        set_pid_values(scf, propeller_size=3)
+        set_pid_values(scf, propeller_size=2)
         reset_estimator(scf.cf)
         time.sleep(2.0)
 
