@@ -234,6 +234,23 @@ def up_and_down(scf):
         mc.stop()
 
 
+def xy_tune_pattern(scf):
+    with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
+        mc.forward(1)
+        mc.back(1)
+        mc.forward(1)
+        mc.back(1)
+        mc.forward(1)
+        mc.back(1)
+        mc.left(1)
+        mc.right(1)
+        mc.left(1)
+        mc.right(1)
+        mc.left(1)
+        mc.right(1)
+        mc.stop()
+
+
 def take_off(cf, position):
     take_off_time = 1.0
     sleep_time = 0.1
@@ -772,6 +789,7 @@ if __name__ == '__main__':
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
     ap.add_argument("--simple-takeoff", action="store_true", help="takeoff and land")
+    ap.add_argument("--xy-tune", action="store_true", help="takeoff and land")
     ap.add_argument("--save-camera", action="store_true",
                     help="save camera at 1/10 of original fps, works with --localize")
     ap.add_argument("--stream-camera", action="store_true",
@@ -863,6 +881,8 @@ if __name__ == '__main__':
 
         if args.simple_takeoff:
             take_off_simple(scf)
+        elif args.xy_tune:
+            xy_tune_pattern(scf)
         elif args.trajectory is not None:
             trajectory(scf, args.trajectory)
         else:
