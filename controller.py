@@ -587,6 +587,7 @@ def save_logs(log_dir='logs'):
     with open(f'{log_dir}/{filename}.json', 'w') as f:
         json.dump(dict(zip(["time", "params"], [_time, log_vars])), f)
 
+    print(f'{log_dir}/{filename}.json')
     # fig, ax = plt.subplots()
     # time_axis = (np.array(_time) - _time[0]) / 1000
 
