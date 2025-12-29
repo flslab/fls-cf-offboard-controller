@@ -240,40 +240,40 @@ def land(cf, position):
         time.sleep(sleep_time)
 
 
-# def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False, filter_z=False):
-#     """
-#     Send the current Crazyflie X, Y, Z position (m) and attitude as a quaternion.
-#     This is going to be forwarded to the Crazyflie's position estimator.
-#     """
-#     global x_estimate, y_estimate, z_estimate, x_filter_alpha, y_filter_alpha, z_filter_alpha
-#     if filter_z:
-#         x_estimate = (1 - x_filter_alpha) * x_estimate + x_filter_alpha * x
-#         y_estimate = (1 - y_filter_alpha) * y_estimate + y_filter_alpha * y
-#         z_estimate = (1 - z_filter_alpha) * z_estimate + z_filter_alpha * z
-#     else:
-#         x_estimate = x
-#         y_estimate = y
-#         z_estimate = z
-#     start_time = time.time()
-#     if send_full_pose:
-#         cf.extpos.send_extpose(x_estimate, y_estimate, z_estimate, quat.x, quat.y, quat.z, quat.w)
-#     else:
-#         cf.extpos.send_extpos(x_estimate, y_estimate, z_estimate)
-#         # print(f"sending {x, y, z_estimate}")
-#     end_time = time.time()
-#     pos_update_time_log.append(end_time)
-#     pos_update_profile_log.append(end_time - start_time)
-
-
-def send_extpose_quat(cf, x, y, z, quat):
+def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False, filter_z=False):
     """
-    Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
+    Send the current Crazyflie X, Y, Z position (m) and attitude as a quaternion.
     This is going to be forwarded to the Crazyflie's position estimator.
     """
-    # if send_full_pose:
-    # cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
-    # else:
-    cf.extpos.send_extpos(x, y, z)
+    global x_estimate, y_estimate, z_estimate, x_filter_alpha, y_filter_alpha, z_filter_alpha
+    if filter_z:
+        x_estimate = (1 - x_filter_alpha) * x_estimate + x_filter_alpha * x
+        y_estimate = (1 - y_filter_alpha) * y_estimate + y_filter_alpha * y
+        z_estimate = (1 - z_filter_alpha) * z_estimate + z_filter_alpha * z
+    else:
+        x_estimate = x
+        y_estimate = y
+        z_estimate = z
+    start_time = time.time()
+    if send_full_pose:
+        cf.extpos.send_extpose(x_estimate, y_estimate, z_estimate, quat.x, quat.y, quat.z, quat.w)
+    else:
+        cf.extpos.send_extpos(x_estimate, y_estimate, z_estimate)
+        # print(f"sending {x, y, z_estimate}")
+    end_time = time.time()
+    pos_update_time_log.append(end_time)
+    pos_update_profile_log.append(end_time - start_time)
+
+
+# def send_extpose_quat(cf, x, y, z, quat):
+#     """
+#     Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
+#     This is going to be forwarded to the Crazyflie's position estimator.
+#     """
+#     # if send_full_pose:
+#     # cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
+#     # else:
+#     cf.extpos.send_extpos(x, y, z)
 
 
 def blender_animation(scf, frame_interval=1 / 24, led_on=False):
