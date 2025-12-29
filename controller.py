@@ -40,7 +40,7 @@ host_name = '192.168.1.39'
 mocap_system_type = 'vicon'
 
 # The name of the rigid body that represents the Crazyflie
-rigid_body_name = 'fls_ap_y'
+rigid_body_name = 'lightbender00'
 
 # True: send position and orientation; False: send position only
 send_full_pose = False
@@ -240,29 +240,40 @@ def land(cf, position):
         time.sleep(sleep_time)
 
 
-def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False, filter_z=False):
+# def send_extpose_quat(cf, x, y, z, quat=None, send_full_pose=False, filter_z=False):
+#     """
+#     Send the current Crazyflie X, Y, Z position (m) and attitude as a quaternion.
+#     This is going to be forwarded to the Crazyflie's position estimator.
+#     """
+#     global x_estimate, y_estimate, z_estimate, x_filter_alpha, y_filter_alpha, z_filter_alpha
+#     if filter_z:
+#         x_estimate = (1 - x_filter_alpha) * x_estimate + x_filter_alpha * x
+#         y_estimate = (1 - y_filter_alpha) * y_estimate + y_filter_alpha * y
+#         z_estimate = (1 - z_filter_alpha) * z_estimate + z_filter_alpha * z
+#     else:
+#         x_estimate = x
+#         y_estimate = y
+#         z_estimate = z
+#     start_time = time.time()
+#     if send_full_pose:
+#         cf.extpos.send_extpose(x_estimate, y_estimate, z_estimate, quat.x, quat.y, quat.z, quat.w)
+#     else:
+#         cf.extpos.send_extpos(x_estimate, y_estimate, z_estimate)
+#         # print(f"sending {x, y, z_estimate}")
+#     end_time = time.time()
+#     pos_update_time_log.append(end_time)
+#     pos_update_profile_log.append(end_time - start_time)
+
+
+def send_extpose_quat(cf, x, y, z, quat):
     """
-    Send the current Crazyflie X, Y, Z position (m) and attitude as a quaternion.
+    Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
     This is going to be forwarded to the Crazyflie's position estimator.
     """
-    global x_estimate, y_estimate, z_estimate, x_filter_alpha, y_filter_alpha, z_filter_alpha
-    if filter_z:
-        x_estimate = (1 - x_filter_alpha) * x_estimate + x_filter_alpha * x
-        y_estimate = (1 - y_filter_alpha) * y_estimate + y_filter_alpha * y
-        z_estimate = (1 - z_filter_alpha) * z_estimate + z_filter_alpha * z
-    else:
-        x_estimate = x
-        y_estimate = y
-        z_estimate = z
-    start_time = time.time()
-    if send_full_pose:
-        cf.extpos.send_extpose(x_estimate, y_estimate, z_estimate, quat.x, quat.y, quat.z, quat.w)
-    else:
-        cf.extpos.send_extpos(x_estimate, y_estimate, z_estimate)
-        # print(f"sending {x, y, z_estimate}")
-    end_time = time.time()
-    pos_update_time_log.append(end_time)
-    pos_update_profile_log.append(end_time - start_time)
+    # if send_full_pose:
+    cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
+    # else:
+    #     cf.extpos.send_extpos(x, y, z)
 
 
 def blender_animation(scf, frame_interval=1 / 24, led_on=False):
@@ -342,7 +353,7 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
     # with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
     cf = scf.cf
 
-    cf.param.set_value('quadSysId.armLength', '0.05656')
+    cf.param.set_value('quadSysId.armLength', '0.053')
 
     if propeller_size == 2:
         cf.param.set_value('posCtlPid.xKp', '1.8')
@@ -604,23 +615,6 @@ def wall_spring(scf):
                 time.sleep(0.01)
 
 
-def send_vicon_position(cf):
-    def func(x, y, z, timestamp):
-        send_extpose_quat(cf, x / 1000, y / 1000, z / 1000)
-
-    return func
-
-
-def consume_vicon_data(cf, stop_event):
-    """Run in separate thread: process new Vicon data as soon as it arrives."""
-    last_version = 0
-    while not stop_event.is_set():
-        data, last_version = vicon_thread.wait_for_new(last_version)
-        if data:
-            x, y, z, timestamp = data
-            send_extpose_quat(cf, x / 1000, y / 1000, z / 1000)
-
-
 def create_trajectory_from_file(file_path, takeoff_altitude):
     waypoints = []
     with open(file_path, "r") as f:
@@ -818,17 +812,7 @@ if __name__ == '__main__':
         elif args.save_vicon:
             mocap_wrapper = MocapWrapper(rigid_body_name)
 
-            # from vicon import ViconWrapper
-            #
-            # vicon_thread = ViconWrapper(log_level=log_level)
-            # vicon_thread.start()
-            # stop_event = threading.Event()
-            # vicon_consumer_thread = threading.Thread(
-            #     target=consume_vicon_data, args=(cf, stop_event), daemon=True
-            # )
-            # vicon_consumer_thread.start()
-
-        scf.cf.param.add_update_callback(group='deck', name='bcFlow2', cb=param_deck_flow)
+        # scf.cf.param.add_update_callback(group='deck', name='bcFlow2', cb=param_deck_flow)
         # scf.cf.param.add_update_callback(group='deck', name='bcZRanger2', cb=param_deck_flow)
         time.sleep(.5)
 
@@ -888,10 +872,10 @@ if __name__ == '__main__':
     if args.servo:
         del servo_ctl
 
-    with open("pose_update_time.txt", "w") as f:
-        for number in pos_update_time_log:
-            f.write(f"{number}\n")
-
-    with open("pose_update_profile.txt", "w") as f:
-        for number in pos_update_profile_log:
-            f.write(f"{number}\n")
+    # with open("pose_update_time.txt", "w") as f:
+    #     for number in pos_update_time_log:
+    #         f.write(f"{number}\n")
+    #
+    # with open("pose_update_profile.txt", "w") as f:
+    #     for number in pos_update_profile_log:
+    #         f.write(f"{number}\n")
