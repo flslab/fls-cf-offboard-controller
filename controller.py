@@ -66,6 +66,26 @@ z_filter_alpha = 0.3
 
 _time = []
 log_vars = {
+    "controller.pitchRate": {
+        "type": "float",
+        "unit": "x",
+        "data": [],
+    },
+    "stateEstimateZ.ratePitch": {
+        "type": "float",
+        "unit": "x",
+        "data": [],
+    },
+    "controller.rollRate": {
+        "type": "float",
+        "unit": "x",
+        "data": [],
+    },
+    "stateEstimateZ.rateRoll": {
+        "type": "float",
+        "unit": "x",
+        "data": [],
+    },
     # "locSrv.x": {
     #     "type": "float",
     #     "unit": "m",
@@ -81,21 +101,21 @@ log_vars = {
     #     "unit": "m",
     #     "data": [],
     # },
-    "kalman.stateX": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    "kalman.stateY": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    "kalman.stateZ": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
+    # "kalman.stateX": {
+    #     "type": "float",
+    #     "unit": "m",
+    #     "data": [],
+    # },
+    # "kalman.stateY": {
+    #     "type": "float",
+    #     "unit": "m",
+    #     "data": [],
+    # },
+    # "kalman.stateZ": {
+    #     "type": "float",
+    #     "unit": "m",
+    #     "data": [],
+    # },
     # "motor.m1": {
     #     "type": "uint16_t",
     #     "unit": "cmd",
