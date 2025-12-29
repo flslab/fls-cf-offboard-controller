@@ -40,7 +40,7 @@ host_name = '192.168.1.39'
 mocap_system_type = 'vicon'
 
 # The name of the rigid body that represents the Crazyflie
-rigid_body_name = 'lightbender00'
+rigid_body_name = 'cf1'
 
 # True: send position and orientation; False: send position only
 send_full_pose = False
@@ -838,8 +838,8 @@ if __name__ == '__main__':
             logconf.start()
 
         # blender_animation(scf, frame_interval=1/24, led_on=args.led)
-        cf.platform.send_arming_request(True)
-        time.sleep(1.0)
+        # cf.platform.send_arming_request(True)
+        # time.sleep(1.0)
 
         if args.simple_takeoff:
             take_off_simple(scf)
