@@ -271,9 +271,9 @@ def send_extpose_quat(cf, x, y, z, quat):
     This is going to be forwarded to the Crazyflie's position estimator.
     """
     # if send_full_pose:
-    cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
+    # cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
     # else:
-    #     cf.extpos.send_extpos(x, y, z)
+    cf.extpos.send_extpos(x, y, z)
 
 
 def blender_animation(scf, frame_interval=1 / 24, led_on=False):
