@@ -808,7 +808,7 @@ if __name__ == '__main__':
 
         if args.vicon:
             mocap_wrapper = MocapWrapper(rigid_body_name)
-            mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2])
+            mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pos[3])
         elif args.save_vicon:
             mocap_wrapper = MocapWrapper(rigid_body_name)
 
