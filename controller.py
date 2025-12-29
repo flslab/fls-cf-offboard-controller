@@ -356,8 +356,8 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
     cf.param.set_value('quadSysId.armLength', '0.053')
 
     if propeller_size == 2:
-        cf.param.set_value('posCtlPid.xKp', '1.8')
-        cf.param.set_value('posCtlPid.xKi', '0.09')
+        cf.param.set_value('posCtlPid.xKp', '2.0')
+        cf.param.set_value('posCtlPid.xKi', '0.1')
         cf.param.set_value('posCtlPid.xKd', '0.0')
         cf.param.set_value('posCtlPid.yKp', '2.0')
         cf.param.set_value('posCtlPid.yKi', '0.1')
@@ -371,8 +371,8 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('velCtlPid.vxKp', '27.0')
         cf.param.set_value('velCtlPid.vxKi', '18.0')
         cf.param.set_value('velCtlPid.vxKd', '0.0')
-        cf.param.set_value('velCtlPid.vyKp', '30.0')
-        cf.param.set_value('velCtlPid.vyKi', '20.0')
+        cf.param.set_value('velCtlPid.vyKp', '27.0')
+        cf.param.set_value('velCtlPid.vyKi', '18.0')
         cf.param.set_value('velCtlPid.vyKd', '0')
         cf.param.set_value('velCtlPid.vzKp', '30.0')
         cf.param.set_value('velCtlPid.vzKi', '2.0')
@@ -381,16 +381,16 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('pid_attitude.roll_kp', '19.0')
         cf.param.set_value('pid_attitude.roll_ki', '0.001')
         cf.param.set_value('pid_attitude.roll_kd', '0.15')
-        cf.param.set_value('pid_attitude.pitch_kp', '17.1')
+        cf.param.set_value('pid_attitude.pitch_kp', '19.0')
         cf.param.set_value('pid_attitude.pitch_ki', '0.001')
-        cf.param.set_value('pid_attitude.pitch_kd', '0.135')
+        cf.param.set_value('pid_attitude.pitch_kd', '0.15')
 
-        cf.param.set_value('pid_rate.roll_kp', '66.0')
+        cf.param.set_value('pid_rate.roll_kp', '65.0')
         cf.param.set_value('pid_rate.roll_ki', '0.0')
         cf.param.set_value('pid_rate.roll_kd', '1.65')
         cf.param.set_value('pid_rate.pitch_kp', '65.0')
         cf.param.set_value('pid_rate.pitch_ki', '0.0')
-        cf.param.set_value('pid_rate.pitch_kd', '1.485')
+        cf.param.set_value('pid_rate.pitch_kd', '1.65')
 
     elif propeller_size == 3:
         if with_cage:
