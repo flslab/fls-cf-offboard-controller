@@ -4,9 +4,8 @@ import board
 import neopixel_spi as neopixel
 
 
-class LED(threading.Thread):
+class LED:
     def __init__(self, num_pixels=72, color=(227, 253, 255), tail_decay=0.75, delay=0.02, brightness=1.0):
-        super().__init__()
         self.num_pixels = num_pixels
         self.color = color
         self.tail_decay = tail_decay
@@ -53,9 +52,11 @@ class LED(threading.Thread):
         # self.leds[34] = self.color
         # self.draw_frame()
 
-    def show_single_color(self):
+    def show_single_color(self, color=None):
+        if color is None:
+            color = self.color
         for pos in range(self.num_pixels):
-            self.leds[pos] = self.color
+            self.leds[pos] = color
         self.draw_frame()
 
     def halo_loop(self):
@@ -70,7 +71,6 @@ class LED(threading.Thread):
 
     def stop(self):
         self.running = False
-        self.join()
         self.clear()
 
     def clear(self):
@@ -80,7 +80,6 @@ class LED(threading.Thread):
 
 if __name__ == '__main__':
     led = LED()
-    led.start()
-    led.show_single_color()
+    led.show_single_color(color=(200, 230, 0))
     time.sleep(10)
     led.stop()

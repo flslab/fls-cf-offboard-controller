@@ -8,8 +8,8 @@ class pi5RC:
         # Define supported GPIO pins and their mappings
         pins = [12, 13, 14, 15, 18, 19]
         afunc = ['a0', 'a0', 'a0', 'a0', 'a3', 'a3']
-        pwmchip_map = [0, 2, -1, -1, 0, 0]  # GPIO18 (pwmchip2/pwm2), GPIO19 (pwmchip2/pwm1)
-        pwmchan_map = [0, 0, -1, -1, 2, 3]
+        pwmchip_map = [0, 0, -1, -1, 0, 0]
+        pwmchan_map = [0, 1, -1, -1, 2, 3]
 
         if Pin not in pins:
             raise ValueError(f"Unsupported PWM pin: GPIO{Pin}")
