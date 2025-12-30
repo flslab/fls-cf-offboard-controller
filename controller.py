@@ -234,8 +234,8 @@ def up_and_down(scf):
         mc.stop()
 
 
-def xy_tune_pattern(cf):
-    commander = cf.high_level_commander
+def xy_tune_pattern(scf):
+    commander = scf.cf.high_level_commander
 
     commander.takeoff(1.0, 2.0)
     time.sleep(3)
