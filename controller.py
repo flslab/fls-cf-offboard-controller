@@ -267,6 +267,8 @@ def take_off_simple(scf):
     commander = scf.cf.high_level_commander
 
     commander.takeoff(args.takeoff_altitude, 2.0)
+    time.sleep(1)
+    commander.go_to(0, 0, args.takeoff_altitude, 0, 0.5, relative=False)
     time.sleep(args.t)
     commander.land(0.0, 3.0)
     time.sleep(3)
