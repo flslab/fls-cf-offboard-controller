@@ -241,17 +241,19 @@ def xy_tune_pattern(scf):
     time.sleep(3)
     flight_time = 1
 
-    commander.go_to(0, 0, 0, 0, flight_time, relative=True)
-    time.sleep(flight_time+10)
+    for _ in range(3):
+        commander.go_to(1, 0, 0, 0, flight_time, relative=True)
+        time.sleep(flight_time)
 
-    # commander.go_to(0, 1, 0, 0, flight_time, relative=True)
-    # time.sleep(flight_time)
-    #
-    # commander.go_to(-1, 0, 0, 0, flight_time, relative=True)
-    # time.sleep(flight_time)
-    #
-    # commander.go_to(0, -1, 0, 0, flight_time, relative=True)
-    # time.sleep(flight_time)
+        commander.go_to(0, 0, 0, 0, flight_time, relative=True)
+        time.sleep(flight_time)
+
+    for _ in range(3):
+        commander.go_to(0, 1, 0, 0, flight_time, relative=True)
+        time.sleep(flight_time)
+
+        commander.go_to(0, 0, 0, 0, flight_time, relative=True)
+        time.sleep(flight_time)
 
     commander.land(0.0, 2.0)
     time.sleep(2)
