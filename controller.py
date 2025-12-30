@@ -544,6 +544,11 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('pid_rate.pitch_ki', '270.0')
         cf.param.set_value('pid_rate.pitch_kd', '2.5')
 
+        cf.param.set_value('pid_rate.rateFiltEn', '1')
+        cf.param.set_value('pid_rate.omxFiltCut', '160')
+        cf.param.set_value('pid_rate.omyFiltCut', '160')
+        cf.param.set_value('pid_rate.omzFiltCut', '160')
+
     elif propeller_size == 3:
         if with_cage:
             cf.param.set_value('pid_rate.roll_kp', '70')
