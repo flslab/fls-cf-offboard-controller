@@ -267,8 +267,8 @@ def take_off_simple(scf):
     offset = 0.12
     commander = scf.cf.high_level_commander
 
-    commander.takeoff(args.takeoff_altitude - offset, 2.0)
-    time.sleep(2.0)
+    commander.takeoff(args.takeoff_altitude - offset, 3.0)
+    time.sleep(3.0)
     commander.go_to(0.0, 0.0, args.takeoff_altitude, 0, 0.5, relative=False)
     time.sleep(args.t)
     commander.land(offset, 3.0)
