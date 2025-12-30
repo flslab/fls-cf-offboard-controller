@@ -74,6 +74,7 @@ log_vars = {
     "stateEstimateZ.ratePitch": {
         "type": "int16_t",
         "unit": "x",
+        "scale": 0.001,
         "data": [],
     },
     "controller.rollRate": {
@@ -84,6 +85,7 @@ log_vars = {
     "stateEstimateZ.rateRoll": {
         "type": "int16_t",
         "unit": "x",
+        "scale": 0.001,
         "data": [],
     },
     # "locSrv.x": {
