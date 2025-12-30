@@ -234,21 +234,29 @@ def up_and_down(scf):
         mc.stop()
 
 
-def xy_tune_pattern(scf):
-    with MotionCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
-        mc.forward(1)
-        mc.back(1)
-        mc.forward(1)
-        mc.back(1)
-        mc.forward(1)
-        mc.back(1)
-        mc.left(1)
-        mc.right(1)
-        mc.left(1)
-        mc.right(1)
-        mc.left(1)
-        mc.right(1)
-        mc.stop()
+def xy_tune_pattern(cf):
+    commander = cf.high_level_commander
+
+    commander.takeoff(1.0, 2.0)
+    time.sleep(3)
+    flight_time = 2
+
+    commander.go_to(-1, 0, 0, 0, flight_time, relative=True)
+    time.sleep(flight_time)
+
+    commander.go_to(0, 1, 0, 0, flight_time, relative=True)
+    time.sleep(flight_time)
+
+    commander.go_to(-1, 0, 0, 0, flight_time, relative=True)
+    time.sleep(flight_time)
+
+    commander.go_to(0, -1, 0, 0, flight_time, relative=True)
+    time.sleep(flight_time)
+
+    commander.land(0.0, 2.0)
+    time.sleep(2)
+
+    commander.stop()
 
 
 def take_off(cf, position):
