@@ -76,16 +76,16 @@ log_vars = {
         "unit": "deg",
         "data": [],
     },
-    "controller.roll": {
-        "type": "float",
-        "unit": "deg",
-        "data": [],
-    },
-    "stateEstimate.roll": {
-        "type": "float",
-        "unit": "deg",
-        "data": [],
-    },
+    # "controller.roll": {
+    #     "type": "float",
+    #     "unit": "deg",
+    #     "data": [],
+    # },
+    # "stateEstimate.roll": {
+    #     "type": "float",
+    #     "unit": "deg",
+    #     "data": [],
+    # },
     # "controller.pitchRate": {
     #     "type": "float",
     #     "unit": "rad/s",
