@@ -301,7 +301,7 @@ def xy_tune_pattern(scf):
         commander.go_to(0, 0, 1, 0, flight_time, relative=False)
         time.sleep(flight_time)
 
-    commander.land(0.0, 2.0)
+    commander.land(0.0, 3.0)
     time.sleep(2)
 
     commander.stop()
