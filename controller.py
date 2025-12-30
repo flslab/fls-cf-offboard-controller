@@ -126,50 +126,50 @@ log_vars = {
     #     "unit": "m/s",
     #     "data": [],
     # },
-    "controller.pitch": {
-        "type": "float",
-        "unit": "deg",
-        "data": [],
-    },
-    "stateEstimate.pitch": {
-        "type": "float",
-        "unit": "deg",
-        "data": [],
-    },
-    "controller.roll": {
-        "type": "float",
-        "unit": "deg",
-        "data": [],
-    },
-    "stateEstimate.roll": {
-        "type": "float",
-        "unit": "deg",
-        "data": [],
-    },
-    # "controller.pitchRate": {
+    # "controller.pitch": {
     #     "type": "float",
-    #     "unit": "rad/s",
-    #     "scale": np.pi/180,
+    #     "unit": "deg",
     #     "data": [],
     # },
-    # "stateEstimateZ.ratePitch": {
-    #     "type": "int16_t",
-    #     "unit": "rad/s",
-    #     "scale": 0.001,
-    #     "data": [],
-    # },
-    # "controller.rollRate": {
+    # "stateEstimate.pitch": {
     #     "type": "float",
-    #     "unit": "rad/s",
-    #     "scale": np.pi/180,
+    #     "unit": "deg",
     #     "data": [],
     # },
-    # "stateEstimateZ.rateRoll": {
-    #     "type": "int16_t",
-    #     "unit": "rad/s",
-    #     "scale": 0.001,
+    # "controller.roll": {
+    #     "type": "float",
+    #     "unit": "deg",
     #     "data": [],
     # },
+    # "stateEstimate.roll": {
+    #     "type": "float",
+    #     "unit": "deg",
+    #     "data": [],
+    # },
+    "controller.pitchRate": {
+        "type": "float",
+        "unit": "rad/s",
+        "scale": np.pi/180,
+        "data": [],
+    },
+    "stateEstimateZ.ratePitch": {
+        "type": "int16_t",
+        "unit": "rad/s",
+        "scale": 0.001,
+        "data": [],
+    },
+    "controller.rollRate": {
+        "type": "float",
+        "unit": "rad/s",
+        "scale": np.pi/180,
+        "data": [],
+    },
+    "stateEstimateZ.rateRoll": {
+        "type": "int16_t",
+        "unit": "rad/s",
+        "scale": 0.001,
+        "data": [],
+    },
     # "locSrv.x": {
     #     "type": "float",
     #     "unit": "m",
@@ -533,7 +533,7 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('pid_attitude.roll_kp', '6.0')
         cf.param.set_value('pid_attitude.roll_ki', '1.0')
         cf.param.set_value('pid_attitude.roll_kd', '0.005')
-        cf.param.set_value('pid_attitude.pitch_kp', '7.2')
+        cf.param.set_value('pid_attitude.pitch_kp', '7.1')
         cf.param.set_value('pid_attitude.pitch_ki', '1.0')
         cf.param.set_value('pid_attitude.pitch_kd', '0.005')
         #
