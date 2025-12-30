@@ -68,25 +68,25 @@ _time = []
 log_vars = {
     "controller.pitchRate": {
         "type": "float",
-        "unit": "x",
+        "unit": "rad/s",
         "scale": np.pi/180,
         "data": [],
     },
     "stateEstimateZ.ratePitch": {
         "type": "int16_t",
-        "unit": "x",
+        "unit": "rad/s",
         "scale": 0.001,
         "data": [],
     },
     "controller.rollRate": {
         "type": "float",
-        "unit": "x",
+        "unit": "rad/s",
         "scale": np.pi/180,
         "data": [],
     },
     "stateEstimateZ.rateRoll": {
         "type": "int16_t",
-        "unit": "x",
+        "unit": "rad/s",
         "scale": 0.001,
         "data": [],
     },
