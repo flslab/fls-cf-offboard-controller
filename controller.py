@@ -461,10 +461,10 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('posCtlPid.thrustMin', '12000')
         cf.param.set_value('posCtlPid.thrustBase', '28000')
         #
-        cf.param.set_value('velCtlPid.vxKp', '45.0')
+        cf.param.set_value('velCtlPid.vxKp', '35.0')
         cf.param.set_value('velCtlPid.vxKi', '5.0')
         cf.param.set_value('velCtlPid.vxKd', '0.007')
-        cf.param.set_value('velCtlPid.vyKp', '45.0')
+        cf.param.set_value('velCtlPid.vyKp', '35.0')
         cf.param.set_value('velCtlPid.vyKi', '5.0')
         cf.param.set_value('velCtlPid.vyKd', '0.007')
         cf.param.set_value('velCtlPid.vzKp', '25.0')
