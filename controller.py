@@ -66,30 +66,50 @@ z_filter_alpha = 0.3
 
 _time = []
 log_vars = {
-    "controller.pitchRate": {
+    "controller.pitch": {
         "type": "float",
-        "unit": "rad/s",
-        "scale": np.pi/180,
+        "unit": "deg",
         "data": [],
     },
-    "stateEstimateZ.ratePitch": {
-        "type": "int16_t",
-        "unit": "rad/s",
-        "scale": 0.001,
-        "data": [],
-    },
-    "controller.rollRate": {
+    "stateEstimate.pitch": {
         "type": "float",
-        "unit": "rad/s",
-        "scale": np.pi/180,
+        "unit": "deg",
         "data": [],
     },
-    "stateEstimateZ.rateRoll": {
-        "type": "int16_t",
-        "unit": "rad/s",
-        "scale": 0.001,
+    "controller.roll": {
+        "type": "float",
+        "unit": "deg",
         "data": [],
     },
+    "stateEstimate.roll": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    # "controller.pitchRate": {
+    #     "type": "float",
+    #     "unit": "rad/s",
+    #     "scale": np.pi/180,
+    #     "data": [],
+    # },
+    # "stateEstimateZ.ratePitch": {
+    #     "type": "int16_t",
+    #     "unit": "rad/s",
+    #     "scale": 0.001,
+    #     "data": [],
+    # },
+    # "controller.rollRate": {
+    #     "type": "float",
+    #     "unit": "rad/s",
+    #     "scale": np.pi/180,
+    #     "data": [],
+    # },
+    # "stateEstimateZ.rateRoll": {
+    #     "type": "int16_t",
+    #     "unit": "rad/s",
+    #     "scale": 0.001,
+    #     "data": [],
+    # },
     # "locSrv.x": {
     #     "type": "float",
     #     "unit": "m",
