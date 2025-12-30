@@ -86,26 +86,26 @@ log_vars = {
     #     "unit": "m",
     #     "data": [],
     # },
-    "ctrltarget.z": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    "stateEstimate.z": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    "ctrltarget.vz": {
-        "type": "float",
-        "unit": "m/s",
-        "data": [],
-    },
-    "stateEstimate.vz": {
-        "type": "float",
-        "unit": "m/s",
-        "data": [],
-    },
+    # "ctrltarget.z": {
+    #     "type": "float",
+    #     "unit": "m",
+    #     "data": [],
+    # },
+    # "stateEstimate.z": {
+    #     "type": "float",
+    #     "unit": "m",
+    #     "data": [],
+    # },
+    # "ctrltarget.vz": {
+    #     "type": "float",
+    #     "unit": "m/s",
+    #     "data": [],
+    # },
+    # "stateEstimate.vz": {
+    #     "type": "float",
+    #     "unit": "m/s",
+    #     "data": [],
+    # },
     # "ctrltarget.vx": {
     #     "type": "float",
     #     "unit": "m/s",
