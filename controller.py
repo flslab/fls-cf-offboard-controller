@@ -66,26 +66,46 @@ z_filter_alpha = 0.3
 
 _time = []
 log_vars = {
-    "ctrltarget.vx": {
+    "ctrltarget.z": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "stateEstimate.z": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "ctrltarget.vz": {
         "type": "float",
         "unit": "m/s",
         "data": [],
     },
-    "stateEstimate.vx": {
+    "stateEstimate.vz": {
         "type": "float",
         "unit": "m/s",
         "data": [],
     },
-    "ctrltarget.vy": {
-        "type": "float",
-        "unit": "m/s",
-        "data": [],
-    },
-    "stateEstimate.vy": {
-        "type": "float",
-        "unit": "m/s",
-        "data": [],
-    },
+    # "ctrltarget.vx": {
+    #     "type": "float",
+    #     "unit": "m/s",
+    #     "data": [],
+    # },
+    # "stateEstimate.vx": {
+    #     "type": "float",
+    #     "unit": "m/s",
+    #     "data": [],
+    # },
+    # "ctrltarget.vy": {
+    #     "type": "float",
+    #     "unit": "m/s",
+    #     "data": [],
+    # },
+    # "stateEstimate.vy": {
+    #     "type": "float",
+    #     "unit": "m/s",
+    #     "data": [],
+    # },
     # "controller.pitch": {
     #     "type": "float",
     #     "unit": "deg",
@@ -307,6 +327,29 @@ def xy_tune_pattern(scf):
     commander.stop()
 
 
+def z_tune_pattern(scf):
+    commander = scf.cf.high_level_commander
+
+    commander.takeoff(1.0, 2.0)
+    time.sleep(3)
+
+    flight_time = 1.5
+    commander.go_to(0, 0, 0.5, 0, flight_time, relative=False)
+    time.sleep(flight_time)
+
+    for _ in range(3):
+        commander.go_to(0, 0, 1.5, 0, flight_time, relative=False)
+        time.sleep(flight_time)
+
+        commander.go_to(0, 0, 0.5, 0, flight_time, relative=False)
+        time.sleep(flight_time)
+
+    commander.land(0.0, 2.0)
+    time.sleep(2)
+
+    commander.stop()
+
+
 def take_off(cf, position):
     take_off_time = 1.0
     sleep_time = 0.1
@@ -449,15 +492,15 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
     cf.param.set_value('quadSysId.armLength', '0.053')
 
     if propeller_size == 2:
-        # cf.param.set_value('posCtlPid.xKp', '2.0')
-        # cf.param.set_value('posCtlPid.xKi', '0.1')
-        # cf.param.set_value('posCtlPid.xKd', '0.0')
-        # cf.param.set_value('posCtlPid.yKp', '2.0')
-        # cf.param.set_value('posCtlPid.yKi', '0.1')
-        # cf.param.set_value('posCtlPid.yKd', '0.0')
-        # cf.param.set_value('posCtlPid.zKp', '2.0')
-        # cf.param.set_value('posCtlPid.zKi', '0.15')
-        # cf.param.set_value('posCtlPid.zKd', '0.15')
+        cf.param.set_value('posCtlPid.xKp', '2.0')
+        cf.param.set_value('posCtlPid.xKi', '0.0')
+        cf.param.set_value('posCtlPid.xKd', '0.0')
+        cf.param.set_value('posCtlPid.yKp', '2.0')
+        cf.param.set_value('posCtlPid.yKi', '0.0')
+        cf.param.set_value('posCtlPid.yKd', '0.0')
+        cf.param.set_value('posCtlPid.zKp', '2.0')
+        cf.param.set_value('posCtlPid.zKi', '0.5')
+        cf.param.set_value('posCtlPid.zKd', '0.0')
         cf.param.set_value('posCtlPid.thrustMin', '12000')
         cf.param.set_value('posCtlPid.thrustBase', '28000')
         #
@@ -847,7 +890,8 @@ if __name__ == '__main__':
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
     ap.add_argument("--simple-takeoff", action="store_true", help="takeoff and land")
-    ap.add_argument("--xy-tune", action="store_true", help="takeoff and land")
+    ap.add_argument("--xy-tune", action="store_true", help="forward/back left/right flight pattern")
+    ap.add_argument("--z-tune", action="store_true", help="up/down flight pattern")
     ap.add_argument("--save-camera", action="store_true",
                     help="save camera at 1/10 of original fps, works with --localize")
     ap.add_argument("--stream-camera", action="store_true",
@@ -941,6 +985,8 @@ if __name__ == '__main__':
             take_off_simple(scf)
         elif args.xy_tune:
             xy_tune_pattern(scf)
+        elif args.z_tune:
+            z_tune_pattern(scf)
         elif args.trajectory is not None:
             trajectory(scf, args.trajectory)
         else:
