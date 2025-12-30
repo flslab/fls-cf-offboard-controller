@@ -538,11 +538,11 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('pid_attitude.pitch_kd', '0.005')
         #
         cf.param.set_value('pid_rate.roll_kp', '50')
-        cf.param.set_value('pid_rate.roll_ki', '135.0')
-        cf.param.set_value('pid_rate.roll_kd', '1.25')
-        cf.param.set_value('pid_rate.pitch_kp', '40')
-        cf.param.set_value('pid_rate.pitch_ki', '135.0')
-        cf.param.set_value('pid_rate.pitch_kd', '1.25')
+        cf.param.set_value('pid_rate.roll_ki', '50.0')
+        cf.param.set_value('pid_rate.roll_kd', '1.0')
+        cf.param.set_value('pid_rate.pitch_kp', '50')
+        cf.param.set_value('pid_rate.pitch_ki', '50.0')
+        cf.param.set_value('pid_rate.pitch_kd', '1.0')
 
         cf.param.set_value('pid_rate.rateFiltEn', '1')
         cf.param.set_value('pid_rate.omxFiltCut', '160')
