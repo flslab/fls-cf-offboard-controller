@@ -321,9 +321,9 @@ def send_extpose_quat(cf, x, y, z, quat):
     This is going to be forwarded to the Crazyflie's position estimator.
     """
     # if send_full_pose:
-    # cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
+    cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
     # else:
-    cf.extpos.send_extpos(x, y, z)
+    # cf.extpos.send_extpos(x, y, z)
 
 
 def blender_animation(scf, frame_interval=1 / 24, led_on=False):
@@ -780,7 +780,7 @@ class MocapWrapper(Thread):
                 if name == self.body_name:
                     pos = obj.position
                     if self.on_pose:
-                        self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
+                        self.on_pose([pos[0], pos[1], pos[2] - 0.06, obj.rotation])
                     self.all_frames.append({
                         "frame_id": i,
                         "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
