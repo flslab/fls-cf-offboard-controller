@@ -267,7 +267,7 @@ def take_off_simple(scf):
     offset = 0.12
     commander = scf.cf.high_level_commander
 
-    commander.takeoff(args.takeoff_altitude - offset, 3.0)
+    commander.takeoff(args.takeoff_altitude, 2.0)
     time.sleep(3.0)
     commander.go_to(0.0, 0.0, args.takeoff_altitude, 0, 0.5, relative=False)
     time.sleep(args.t)
@@ -336,7 +336,7 @@ def xy_tune_pattern(scf):
         commander.go_to(0, 0, 1, 0, flight_time, relative=False)
         time.sleep(flight_time)
 
-    commander.land(0.0, 3.0)
+    commander.land(0.12, 3.0)
     time.sleep(3)
 
     commander.stop()
@@ -359,7 +359,7 @@ def z_tune_pattern(scf):
         commander.go_to(0, 0, 0.5, 0, flight_time, relative=False)
         time.sleep(flight_time)
 
-    commander.land(0.0, 1.5)
+    commander.land(0.12, 1.5)
     time.sleep(1.5)
 
     commander.stop()
