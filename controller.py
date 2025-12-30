@@ -513,9 +513,9 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('posCtlPid.yKp', '2.1')
         cf.param.set_value('posCtlPid.yKi', '0.1')
         cf.param.set_value('posCtlPid.yKd', '0.0')
-        cf.param.set_value('posCtlPid.zKp', '2.0')
-        cf.param.set_value('posCtlPid.zKi', '1.0')
-        cf.param.set_value('posCtlPid.zKd', '0.1')
+        cf.param.set_value('posCtlPid.zKp', '1.9')
+        cf.param.set_value('posCtlPid.zKi', '2.0')
+        cf.param.set_value('posCtlPid.zKd', '0.05')
         cf.param.set_value('posCtlPid.thrustMin', '12000')
         cf.param.set_value('posCtlPid.thrustBase', '28000')
         #
@@ -881,7 +881,7 @@ class MocapWrapper(Thread):
                 if name == self.body_name:
                     pos = obj.position
                     if self.on_pose:
-                        self.on_pose([pos[0], pos[1], pos[2] - 0.05, obj.rotation])
+                        self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
                     self.all_frames.append({
                         "frame_id": i,
                         "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
