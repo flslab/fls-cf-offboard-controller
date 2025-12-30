@@ -283,7 +283,7 @@ def xy_tune_pattern(scf):
     commander.takeoff(1.0, 2.0)
     time.sleep(3)
 
-    flight_time = 3
+    flight_time = 2
     commander.go_to(0, 0, 1, 0, flight_time, relative=False)
     time.sleep(flight_time)
 
@@ -302,7 +302,7 @@ def xy_tune_pattern(scf):
         time.sleep(flight_time)
 
     commander.land(0.0, 3.0)
-    time.sleep(2)
+    time.sleep(3)
 
     commander.stop()
 
@@ -461,12 +461,12 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('posCtlPid.thrustMin', '12000')
         cf.param.set_value('posCtlPid.thrustBase', '28000')
         #
-        cf.param.set_value('velCtlPid.vxKp', '30.0')
+        cf.param.set_value('velCtlPid.vxKp', '35.0')
         cf.param.set_value('velCtlPid.vxKi', '2.0')
-        cf.param.set_value('velCtlPid.vxKd', '0.01')
-        cf.param.set_value('velCtlPid.vyKp', '30.0')
+        cf.param.set_value('velCtlPid.vxKd', '0.005')
+        cf.param.set_value('velCtlPid.vyKp', '35.0')
         cf.param.set_value('velCtlPid.vyKi', '2.0')
-        cf.param.set_value('velCtlPid.vyKd', '0.01')
+        cf.param.set_value('velCtlPid.vyKd', '0.005')
         cf.param.set_value('velCtlPid.vzKp', '25.0')
         cf.param.set_value('velCtlPid.vzKi', '15.0')
         cf.param.set_value('velCtlPid.vzKd', '0.0')
