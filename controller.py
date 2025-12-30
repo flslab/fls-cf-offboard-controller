@@ -72,7 +72,7 @@ log_vars = {
         "data": [],
     },
     "stateEstimateZ.ratePitch": {
-        "type": "int16",
+        "type": "int16_t",
         "unit": "x",
         "data": [],
     },
@@ -82,7 +82,7 @@ log_vars = {
         "data": [],
     },
     "stateEstimateZ.rateRoll": {
-        "type": "int16",
+        "type": "int16_t",
         "unit": "x",
         "data": [],
     },
