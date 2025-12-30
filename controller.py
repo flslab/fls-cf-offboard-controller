@@ -28,7 +28,7 @@ from worker_socket import WorkerSocket
 # URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E711')
 URI = uri_helper.uri_from_env(default='usb://0')  # uart pi5
 
-DEFAULT_HEIGHT = 0.60
+DEFAULT_HEIGHT = 1.0
 DURATION = 10
 deck_attached_event = Event()
 
@@ -72,7 +72,7 @@ log_vars = {
         "data": [],
     },
     "stateEstimateZ.ratePitch": {
-        "type": "float",
+        "type": "int16",
         "unit": "x",
         "data": [],
     },
@@ -82,7 +82,7 @@ log_vars = {
         "data": [],
     },
     "stateEstimateZ.rateRoll": {
-        "type": "float",
+        "type": "int16",
         "unit": "x",
         "data": [],
     },
@@ -242,17 +242,17 @@ def xy_tune_pattern(scf):
     flight_time = 1
 
     for _ in range(3):
-        commander.go_to(1, 0, 0, 0, flight_time, relative=True)
+        commander.go_to(1, 0, 0, 0, flight_time, relative=False)
         time.sleep(flight_time)
 
-        commander.go_to(0, 0, 0, 0, flight_time, relative=True)
+        commander.go_to(0, 0, 0, 0, flight_time, relative=False)
         time.sleep(flight_time)
 
     for _ in range(3):
-        commander.go_to(0, 1, 0, 0, flight_time, relative=True)
+        commander.go_to(0, 1, 0, 0, flight_time, relative=False)
         time.sleep(flight_time)
 
-        commander.go_to(0, 0, 0, 0, flight_time, relative=True)
+        commander.go_to(0, 0, 0, 0, flight_time, relative=False)
         time.sleep(flight_time)
 
     commander.land(0.0, 2.0)
