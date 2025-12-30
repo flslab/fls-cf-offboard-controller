@@ -69,6 +69,7 @@ log_vars = {
     "controller.pitchRate": {
         "type": "float",
         "unit": "x",
+        "scale": np.pi/180,
         "data": [],
     },
     "stateEstimateZ.ratePitch": {
@@ -80,6 +81,7 @@ log_vars = {
     "controller.rollRate": {
         "type": "float",
         "unit": "x",
+        "scale": np.pi/180,
         "data": [],
     },
     "stateEstimateZ.rateRoll": {
