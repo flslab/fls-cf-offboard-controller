@@ -264,22 +264,14 @@ def servo_seq_3():
 
 
 def take_off_simple(scf):
-    global failsafe
-    with PositionHlCommander(scf, default_height=DEFAULT_HEIGHT) as mc:
-        # time.sleep(DURATION)
-        time.sleep(1)
-        if args.servo:
-            servo_seq_3()
+    commander = scf.cf.high_level_commander
 
-        start_time = time.time()
-        while time.time() - start_time < DURATION:
-            if failsafe:
-                break
-            #     cf.commander.send_position_setpoint(0, 0, DEFAULT_HEIGHT, 0)
-            #     # cf.commander.send_hover_setpoint(0, 0, 0, position[2])
-            #     # cf.commander.send_zdistance_setpoint(0, 0, 0, position[2])
+    commander.takeoff(args.takeoff_altitude, 2.0)
+    time.sleep(args.t)
+    commander.land(0.0, 3.0)
+    time.sleep(3)
 
-            time.sleep(1)
+    commander.stop()
 
 
 def trajectory(scf, trajectory):
@@ -512,10 +504,10 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
     cf.param.set_value('quadSysId.armLength', '0.053')
 
     if propeller_size == 2:
-        cf.param.set_value('posCtlPid.xKp', '2.0')
+        cf.param.set_value('posCtlPid.xKp', '1.9')
         cf.param.set_value('posCtlPid.xKi', '0.1')
         cf.param.set_value('posCtlPid.xKd', '0.0')
-        cf.param.set_value('posCtlPid.yKp', '2.0')
+        cf.param.set_value('posCtlPid.yKp', '2.1')
         cf.param.set_value('posCtlPid.yKi', '0.1')
         cf.param.set_value('posCtlPid.yKd', '0.0')
         cf.param.set_value('posCtlPid.zKp', '2.0')
