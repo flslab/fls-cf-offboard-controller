@@ -198,7 +198,6 @@ def take_off_simple(scf):
             time.sleep(1)
 
 
-
 def trajectory(scf, trajectory):
     Z = args.takeoff_altitude
 
@@ -413,8 +412,8 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         # cf.param.set_value('posCtlPid.zKp', '2.0')
         # cf.param.set_value('posCtlPid.zKi', '0.15')
         # cf.param.set_value('posCtlPid.zKd', '0.15')
-        # cf.param.set_value('posCtlPid.thrustMin', '10000')
-        # cf.param.set_value('posCtlPid.thrustBase', '22000')
+        cf.param.set_value('posCtlPid.thrustMin', '10000')
+        cf.param.set_value('posCtlPid.thrustBase', '22000')
         #
         # cf.param.set_value('velCtlPid.vxKp', '27.0')
         # cf.param.set_value('velCtlPid.vxKi', '18.0')
