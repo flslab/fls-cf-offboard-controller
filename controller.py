@@ -146,30 +146,30 @@ log_vars = {
     #     "unit": "deg",
     #     "data": [],
     # },
-    # "controller.pitchRate": {
-    #     "type": "float",
-    #     "unit": "rad/s",
-    #     "scale": np.pi/180,
-    #     "data": [],
-    # },
-    # "stateEstimateZ.ratePitch": {
-    #     "type": "int16_t",
-    #     "unit": "rad/s",
-    #     "scale": 0.001,
-    #     "data": [],
-    # },
-    # "controller.rollRate": {
-    #     "type": "float",
-    #     "unit": "rad/s",
-    #     "scale": np.pi/180,
-    #     "data": [],
-    # },
-    # "stateEstimateZ.rateRoll": {
-    #     "type": "int16_t",
-    #     "unit": "rad/s",
-    #     "scale": 0.001,
-    #     "data": [],
-    # },
+    "controller.pitchRate": {
+        "type": "float",
+        "unit": "rad/s",
+        "scale": np.pi/180,
+        "data": [],
+    },
+    "stateEstimateZ.ratePitch": {
+        "type": "int16_t",
+        "unit": "rad/s",
+        "scale": 0.001,
+        "data": [],
+    },
+    "controller.rollRate": {
+        "type": "float",
+        "unit": "rad/s",
+        "scale": np.pi/180,
+        "data": [],
+    },
+    "stateEstimateZ.rateRoll": {
+        "type": "int16_t",
+        "unit": "rad/s",
+        "scale": 0.001,
+        "data": [],
+    },
     # "locSrv.x": {
     #     "type": "float",
     #     "unit": "m",
@@ -514,7 +514,7 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('posCtlPid.yKp', '2.1')
         cf.param.set_value('posCtlPid.yKi', '0.1')
         cf.param.set_value('posCtlPid.yKd', '0.0')
-        cf.param.set_value('posCtlPid.zKp', '1.85')
+        cf.param.set_value('posCtlPid.zKp', '1.9')
         cf.param.set_value('posCtlPid.zKi', '2.0')
         cf.param.set_value('posCtlPid.zKd', '0.05')
         cf.param.set_value('posCtlPid.thrustMin', '12000')
