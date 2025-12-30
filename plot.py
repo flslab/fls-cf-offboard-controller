@@ -28,7 +28,8 @@ def plot_logs(file=""):
     # ax.plot(time_axis, np.array(_delta_x), label='delta x (flow/fr)')
     # ax.plot(time_axis, np.array(_delta_y), label='delta y (flow/fr)')
     for par in log_vars.keys():
-        ax.plot(time_axis, np.array(log_vars[par]["data"]), label=f"{par} ({log_vars[par]['unit']})")
+        scale = log_vars[par].get('scale', 1)
+        ax.plot(time_axis, np.array(log_vars[par]["data"])*scale, label=f"{par} ({log_vars[par]['unit']})")
     ax.set_xlabel('Time (s)')
     # ax.set_ylim([-15, 105])
     plt.legend()
@@ -77,9 +78,9 @@ if __name__ == '__main__':
     ap.add_argument("-i", "--input", help="path to json log file")
     args = ap.parse_args()
 
-    ip = "192.168.8.219"
-    cf_log = "2025_03_24_15_43_32.json"
-    cam_log = "pose_logs_2025-03-24_15-35-45.json"
+    ip = "lightbendercf00"
+    cf_log = "2025_12_30_12_41_04.json"
+    # cam_log = "vicon_15_26_38_12_29_2025.json"
     cf_log_path = f"fls@{ip}:~/fls-cf-offboard-controller/logs/{cf_log}"
     # cam_log_path = f"fls@{ip}:~/fls-cf-offboard-controller/logs/{cam_log}"
 
