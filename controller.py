@@ -402,7 +402,6 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
     cf.param.set_value('quadSysId.armLength', '0.053')
 
     if propeller_size == 2:
-        pass
         # cf.param.set_value('posCtlPid.xKp', '2.0')
         # cf.param.set_value('posCtlPid.xKi', '0.1')
         # cf.param.set_value('posCtlPid.xKd', '0.0')
