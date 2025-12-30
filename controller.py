@@ -451,12 +451,12 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         # cf.param.set_value('velCtlPid.vzKi', '2.0')
         # cf.param.set_value('velCtlPid.vzKd', '0.5')
         #
-        # cf.param.set_value('pid_attitude.roll_kp', '19.0')
-        # cf.param.set_value('pid_attitude.roll_ki', '0.001')
-        # cf.param.set_value('pid_attitude.roll_kd', '0.15')
-        # cf.param.set_value('pid_attitude.pitch_kp', '19.0')
-        # cf.param.set_value('pid_attitude.pitch_ki', '0.001')
-        # cf.param.set_value('pid_attitude.pitch_kd', '0.15')
+        cf.param.set_value('pid_attitude.roll_kp', '6.0')
+        cf.param.set_value('pid_attitude.roll_ki', '4.0')
+        cf.param.set_value('pid_attitude.roll_kd', '0.0')
+        cf.param.set_value('pid_attitude.pitch_kp', '6.0')
+        cf.param.set_value('pid_attitude.pitch_ki', '4.0')
+        cf.param.set_value('pid_attitude.pitch_kd', '0.0')
         #
         cf.param.set_value('pid_rate.roll_kp', '100.0')
         cf.param.set_value('pid_rate.roll_ki', '270.0')
