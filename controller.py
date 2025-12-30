@@ -40,7 +40,7 @@ host_name = '192.168.1.39'
 mocap_system_type = 'vicon'
 
 # The name of the rigid body that represents the Crazyflie
-rigid_body_name = 'cf1'
+rigid_body_name = 'lightbender00'
 
 # True: send position and orientation; False: send position only
 send_full_pose = False
