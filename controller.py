@@ -504,6 +504,7 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
     cf = scf.cf
 
     cf.param.set_value('quadSysId.armLength', '0.053')
+    cf.param.set_value('hlCommander.vland', '0.3')
 
     if propeller_size == 2:
         cf.param.set_value('posCtlPid.xKp', '1.9')
