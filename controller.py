@@ -438,8 +438,8 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         # cf.param.set_value('posCtlPid.zKp', '2.0')
         # cf.param.set_value('posCtlPid.zKi', '0.15')
         # cf.param.set_value('posCtlPid.zKd', '0.15')
-        cf.param.set_value('posCtlPid.thrustMin', '10000')
-        cf.param.set_value('posCtlPid.thrustBase', '25000')
+        cf.param.set_value('posCtlPid.thrustMin', '12000')
+        cf.param.set_value('posCtlPid.thrustBase', '28000')
         #
         # cf.param.set_value('velCtlPid.vxKp', '27.0')
         # cf.param.set_value('velCtlPid.vxKi', '18.0')
@@ -459,10 +459,10 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         # cf.param.set_value('pid_attitude.pitch_kd', '0.15')
         #
         cf.param.set_value('pid_rate.roll_kp', '100.0')
-        cf.param.set_value('pid_rate.roll_ki', '260.0')
+        cf.param.set_value('pid_rate.roll_ki', '270.0')
         cf.param.set_value('pid_rate.roll_kd', '2.5')
         cf.param.set_value('pid_rate.pitch_kp', '80.0')
-        cf.param.set_value('pid_rate.pitch_ki', '260.0')
+        cf.param.set_value('pid_rate.pitch_ki', '270.0')
         cf.param.set_value('pid_rate.pitch_kd', '2.5')
 
     elif propeller_size == 3:
