@@ -79,12 +79,12 @@ if __name__ == '__main__':
     args = ap.parse_args()
 
     ip = "lightbendercf00"
-    cf_log = "2025_12_30_12_41_04.json"
-    # cam_log = "vicon_15_26_38_12_29_2025.json"
+    cf_log = "2025_12_30_13_58_52.json"
+    cam_log = "vicon_13_58_52_12_30_2025.json"
     cf_log_path = f"fls@{ip}:~/fls-cf-offboard-controller/logs/{cf_log}"
-    # cam_log_path = f"fls@{ip}:~/fls-cf-offboard-controller/logs/{cam_log}"
+    cam_log_path = f"fls@{ip}:~/fls-cf-offboard-controller/logs/{cam_log}"
 
     subprocess.run(["scp", cf_log_path, "logs"])
-    # subprocess.run(["scp", cam_log_path, "logs"])
+    subprocess.run(["scp", cam_log_path, "logs"])
     start_time = plot_logs("logs/" + cf_log)
-    # plot_tvec_from_log("logs/" + cam_log, start_time=start_time)
+    plot_tvec_from_log("logs/" + cam_log, start_time=start_time)

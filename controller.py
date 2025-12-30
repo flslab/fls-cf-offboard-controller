@@ -66,46 +66,46 @@ z_filter_alpha = 0.3
 
 _time = []
 log_vars = {
-    "ctrltarget.x": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    "stateEstimate.x": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    "ctrltarget.y": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    "stateEstimate.y": {
-        "type": "float",
-        "unit": "m",
-        "data": [],
-    },
-    # "ctrltarget.z": {
+    # "ctrltarget.x": {
     #     "type": "float",
     #     "unit": "m",
     #     "data": [],
     # },
-    # "stateEstimate.z": {
+    # "stateEstimate.x": {
     #     "type": "float",
     #     "unit": "m",
     #     "data": [],
     # },
-    # "ctrltarget.vz": {
+    # "ctrltarget.y": {
     #     "type": "float",
-    #     "unit": "m/s",
+    #     "unit": "m",
     #     "data": [],
     # },
-    # "stateEstimate.vz": {
+    # "stateEstimate.y": {
     #     "type": "float",
-    #     "unit": "m/s",
+    #     "unit": "m",
     #     "data": [],
     # },
+    "ctrltarget.z": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "stateEstimate.z": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "ctrltarget.vz": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "stateEstimate.vz": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
     # "ctrltarget.vx": {
     #     "type": "float",
     #     "unit": "m/s",
