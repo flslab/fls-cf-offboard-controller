@@ -541,7 +541,7 @@ def set_pid_values(scf, propeller_size=None, with_cage=False):
         cf.param.set_value('pid_rate.roll_ki', '270.0')
         cf.param.set_value('pid_rate.roll_kd', '2.5')
         cf.param.set_value('pid_rate.pitch_kp', '75')
-        cf.param.set_value('pid_rate.pitch_ki', '225.0')
+        cf.param.set_value('pid_rate.pitch_ki', '270.0')
         cf.param.set_value('pid_rate.pitch_kd', '2.5')
 
         cf.param.set_value('pid_rate.rateFiltEn', '1')
