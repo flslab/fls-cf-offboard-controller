@@ -149,7 +149,7 @@ log_vars = {
     "controller.pitchRate": {
         "type": "float",
         "unit": "rad/s",
-        "scale": np.pi/180,
+        "scale": np.pi / 180,
         "data": [],
     },
     "stateEstimateZ.ratePitch": {
@@ -161,7 +161,7 @@ log_vars = {
     "controller.rollRate": {
         "type": "float",
         "unit": "rad/s",
-        "scale": np.pi/180,
+        "scale": np.pi / 180,
         "data": [],
     },
     "stateEstimateZ.rateRoll": {
@@ -254,6 +254,7 @@ def servo_seq_2():
     time.sleep(1)
     servo_ctl.set_b(180)
     time.sleep(1)
+
 
 def servo_seq_3():
     servo_ctl.set_a_b(0, 0)
@@ -906,6 +907,8 @@ if __name__ == '__main__':
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--localize", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
+    ap.add_argument("--obj-name", type=str, default="lightbender01",
+                    help="the name of the rigid body that represents the drone in mocap tracking system, works with --vicon.")
     ap.add_argument("--save-vicon", action="store_true", help="track with vicon and save the data")
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
@@ -929,12 +932,14 @@ if __name__ == '__main__':
 
     if args.led:
         from led import LED
+
         led_ctl = LED()
         led_ctl.start()
         led_ctl.show_single_color()
 
     if args.servo:
         from servo_pwm import Servo
+
         servo_ctl = Servo()
 
     # Initialize the low-level drivers including the serial driver
