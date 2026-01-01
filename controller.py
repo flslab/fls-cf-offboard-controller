@@ -39,9 +39,6 @@ host_name = '192.168.1.39'
 # Valid options are: 'vicon', 'optitrack', 'optitrack_closed_source', 'qualisys', 'nokov', 'vrpn', 'motionanalysis'
 mocap_system_type = 'vicon'
 
-# The name of the rigid body that represents the Crazyflie
-rigid_body_name = 'lightbender00'
-
 # True: send position and orientation; False: send position only
 send_full_pose = False
 
@@ -973,10 +970,10 @@ if __name__ == '__main__':
             localization.start()
 
         if args.vicon:
-            mocap_wrapper = MocapWrapper(rigid_body_name)
+            mocap_wrapper = MocapWrapper(args.obj_name)
             mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
         elif args.save_vicon:
-            mocap_wrapper = MocapWrapper(rigid_body_name)
+            mocap_wrapper = MocapWrapper(args.obj_name)
 
         # scf.cf.param.add_update_callback(group='deck', name='bcFlow2', cb=param_deck_flow)
         # scf.cf.param.add_update_callback(group='deck', name='bcZRanger2', cb=param_deck_flow)
