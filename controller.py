@@ -213,8 +213,8 @@ class Controller:
     def setup_servo(self):
         if self.args.servo:
             from servo_pwm import Servo
-            offsets = [0, -180] if args.servo_type == 'a' else [-90, -270]
-            self.servo = Servo(args.servo_count, offsets)
+            offsets = [0, -180] if self.args.servo_type == 'a' else [-90, -270]
+            self.servo = Servo(self.args.servo_count, offsets)
             time.sleep(0.1)
             self._set_safe_servo_angles()
 
@@ -273,17 +273,17 @@ class Controller:
         if not self.args.orchestrated:
             return
 
-        logger.info(f"[{args.drone_id}] Sending READY...")
-        self.push_socket.send_json({"id": args.drone_id, "status": "READY"})
+        logger.info(f"[{self.args.drone_id}] Sending READY...")
+        self.push_socket.send_json({"id": self.args.drone_id, "status": "READY"})
 
-        logger.info(f"[{args.drone_id}] Waiting for START...")
+        logger.info(f"[{self.args.drone_id}] Waiting for START...")
         while True:
             msg = self.sub_socket.recv_json()
             if msg.get('cmd') == 'START':
                 break
 
-        delay = int(args.drone_id) * c.manifest['mission']['delta_t']
-        logger.info(f"[{args.drone_id}] Launching in {delay}s...")
+        delay = int(self.args.drone_id) * c.manifest['mission']['delta_t']
+        logger.info(f"[{self.args.drone_id}] Launching in {delay}s...")
         time.sleep(delay)
 
         if self.led:
@@ -493,6 +493,7 @@ if __name__ == '__main__':
     ap.add_argument("--led-brightness", type=float, default=1.0, help="change led brightness between 0 and 1")
     ap.add_argument("--servo", help="Use servo", action="store_true", default=False)
     ap.add_argument("--servo-type", type=str, help="type of light bender servo setting")
+    ap.add_argument("--servo-count", type=int, default=2, help="number of the servos")
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
