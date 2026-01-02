@@ -347,6 +347,8 @@ class Controller:
             self.z_tune_pattern()
         elif self.args.trajectory:
             self.fly_trajectory(self.args.trajectory)
+        elif self.args.orchestrated:
+            self.orchestrated_mission()
         else:
             logger.info(f"Hovering for {self.args.t} seconds...")
             time.sleep(self.args.t)
@@ -395,6 +397,33 @@ class Controller:
         for p in trajectory:
             self.commander.go_to(*p)
             time.sleep(1 / fps)
+
+    def orchestrated_mission(self):
+        x, y, z = self.mission[self.args.drone_id]['target']
+        led_color = self.mission[self.args.drone_id]['color']
+        self.led.show_single_color(led_color)
+
+        servo_setting = self.mission[self.args.drone_id]['servo']
+        angles = servo_setting.get('angles', [])
+        delta_t = servo_setting['delta_t']
+        iterations = servo_setting['iterations']
+
+        flight_duration = delta_t * iterations * len(angles)
+
+        self.commander.go_to(x, y, z, 0, 1, relative=False)
+        time.sleep(2)
+
+        if len(angles):
+            self.run_servo(angles, delta_t, iterations)
+        self.led.clear()
+
+    def run_servo(self, angles, delta_t, iterations):
+        for _ in range(iterations):
+            for a in angles:
+                self.servo.set_all_smooth(a)
+                if self.failsafe:
+                    return
+                time.sleep(delta_t)
 
     def save_logs(self):
         log_dir = self.args.log_dir
