@@ -477,7 +477,7 @@ class Controller:
         self.scf.cf.extpos.send_extpos(x, y, z)
 
     def _send_position_orientation(self, x, y, z, quat):
-        self.scf.cf.extpos.send_extpos(x, y, z, quat.x, quat.y, quat.z, quat.w)
+        self.scf.cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
 
 
 if __name__ == '__main__':
