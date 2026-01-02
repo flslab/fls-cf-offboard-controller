@@ -109,6 +109,7 @@ class Controller:
         self.log_data = copy.deepcopy(LOG_VARS)
         self.log_times = []
         self.flying = False
+        self.failsafe = False
 
     def __enter__(self):
         self.connect()
