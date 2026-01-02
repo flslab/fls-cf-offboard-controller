@@ -30,3 +30,6 @@ loggers:
   cflib:
     level: WARNING
     propagate: True
+  paramiko:
+    level: WARNING
+    propagate: True
