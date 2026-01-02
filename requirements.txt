@@ -1,2 +1,3 @@
 motioncapture
 pyzmq
+PyYAML

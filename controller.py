@@ -494,7 +494,7 @@ if __name__ == '__main__':
     ap.add_argument("--servo-type", type=str, help="type of light bender servo setting")
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
-    ap.add_argument("--localize", help="Enable onboard marker localization", action="store_true", default=False)
+    ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
     ap.add_argument("--vicon-full-pose", action="store_true",
                     help="if passed send both position and orientation otherwise send only position")
