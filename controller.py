@@ -2,6 +2,7 @@ import argparse
 import copy
 import datetime
 import json
+import yaml
 import logging
 import numpy as np
 import os
@@ -172,8 +173,8 @@ class Controller:
         if not self.args.orchestrated:
             return
 
-        with open('swarm_manifest.json', 'r') as f:
-            self.manifest = json.load(f)
+        with open('swarm_manifest.yaml', 'r') as f:
+            self.manifest = yaml.safe_load(f)
 
     def download_mission_config(self):
         if not self.args.orchestrated:
@@ -189,7 +190,7 @@ class Controller:
         try:
             with urllib.request.urlopen(url) as response:
                 data = response.read().decode('utf-8')
-                self.mission = json.loads(data)
+                self.mission = yaml.safe_load(data)
 
             logger.info(f"  > Download successful: {filename}")
 
@@ -399,11 +400,11 @@ class Controller:
             time.sleep(1 / fps)
 
     def orchestrated_mission(self):
-        x, y, z = self.mission[self.args.drone_id]['target']
-        led_color = self.mission[self.args.drone_id]['color']
+        x, y, z = self.mission['drones'][self.args.drone_id]['target']
+        led_color = self.mission['drones'][self.args.drone_id]['color']
         self.led.show_single_color(led_color)
 
-        servo_setting = self.mission[self.args.drone_id]['servo']
+        servo_setting = self.mission['drones'][self.args.drone_id]['servo']
         angles = servo_setting.get('angles', [])
         delta_t = servo_setting['delta_t']
         iterations = servo_setting['iterations']
