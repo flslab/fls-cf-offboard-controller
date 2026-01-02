@@ -1,5 +1,4 @@
 import time
-import threading
 import board
 import neopixel_spi as neopixel
 
