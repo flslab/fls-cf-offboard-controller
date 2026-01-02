@@ -132,6 +132,7 @@ class Controller:
             self.scf.close_link()
 
     def start(self):
+        self.load_manifest()
         self.check_deck()
         self.setup_led()
         self.setup_servo()
@@ -140,6 +141,7 @@ class Controller:
         self.setup_motion_capture()
         self.setup_tracker()
         self.setup_params()
+        self.download_mission_config()
         self.handshake()
         self.arm()
         self.takeoff()
@@ -283,7 +285,7 @@ class Controller:
             if msg.get('cmd') == 'START':
                 break
 
-        delay = int(self.args.drone_id) * c.manifest['mission']['delta_t']
+        delay = int(self.args.drone_id) * self.manifest['mission']['delta_t']
         logger.info(f"[{self.args.drone_id}] Launching in {delay}s...")
         time.sleep(delay)
 
