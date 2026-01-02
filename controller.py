@@ -153,6 +153,7 @@ class Controller:
             self._set_safe_servo_angles()
 
         self.land()
+        self._send_landing_confirmation()
 
         if self.var_logger:
             self.var_logger.stop()
@@ -443,6 +444,14 @@ class Controller:
         with open(filename, 'w') as f:
             json.dump(output_data, f)
         logger.info(f"Logs saved to {filename}")
+
+    def _send_landing_confirmation(self):
+        if self.args.orchestrated:
+            self.push_socket.send_json({
+                "id": args.drone_id,
+                "status": "LANDED"
+            })
+            logger.info("Sent landing confirmation")
 
     def _log_callback(self, timestamp, data, log_conf):
         self.log_times.append(time.time())
