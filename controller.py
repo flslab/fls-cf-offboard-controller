@@ -221,7 +221,7 @@ class Controller:
     def setup_led(self):
         if self.args.led:
             from led import LED
-            self.led = LED(brightness=args.led_brightness)
+            self.led = LED(brightness=self.args.led_brightness)
             self.led.show_single_color(color=(230, 180, 0))
 
     def setup_motion_capture(self):
@@ -490,6 +490,7 @@ if __name__ == '__main__':
     ap.add_argument("-t", help="flight duration", default=DEFAULT_DURATION, type=float)
     ap.add_argument("--fps", type=int, default=120, help="position estimation rate, works with --localize")
     ap.add_argument("--led", help="Turn LEDs on", action="store_true", default=False)
+    ap.add_argument("--led-brightness", type=float, default=1.0, help="change led brightness between 0 and 1")
     ap.add_argument("--servo", help="Use servo", action="store_true", default=False)
     ap.add_argument("--servo-type", type=str, help="type of light bender servo setting")
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")
