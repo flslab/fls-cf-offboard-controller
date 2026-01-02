@@ -514,7 +514,7 @@ if __name__ == '__main__':
     tag = f"{datetime.datetime.now():%Y-%m-%d_%H-%M-%S}"
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", default=tag, type=str, help="tag included in filename of saved log files")
-    ap.add_argument("--id", type=str, help="drone id")
+    ap.add_argument("--drone-id", type=str, help="drone id")
     ap.add_argument("--orchestrated", action="store_true", help="orchestrated by orchestrator")
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=DEFAULT_HEIGHT, type=float)
     ap.add_argument("-t", help="flight duration", default=DEFAULT_DURATION, type=float)
