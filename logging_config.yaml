@@ -27,3 +27,6 @@ loggers:
     level: INFO
     handlers: [console, file_rotator]
     propagate: True
+  cflib:
+    level: DEBUG
+    propagate: True
