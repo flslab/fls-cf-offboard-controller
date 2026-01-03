@@ -121,7 +121,7 @@ class Controller:
     def connect(self):
         logger.info(f"Connecting to {self.uri}...")
         cflib.crtp.init_drivers(enable_serial_driver=True)
-        self.scf = SyncCrazyflie(self.uri, cf=Crazyflie(ro_cache=None, rw_cache=None))
+        self.scf = SyncCrazyflie(self.uri, cf=Crazyflie(rw_cache='./cache'))
         self.scf.open_link()
         self.cf = self.scf.cf
         self.commander = self.cf.high_level_commander
