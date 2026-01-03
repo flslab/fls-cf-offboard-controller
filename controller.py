@@ -180,6 +180,8 @@ class Controller:
         with open('swarm_manifest.yaml', 'r') as f:
             self.manifest = yaml.safe_load(f)
 
+        logger.debug("loaded manifest")
+
     def download_mission_config(self):
         if not self.args.orchestrated:
             return
@@ -222,12 +224,14 @@ class Controller:
             self.servo = Servo(self.args.servo_count, offsets)
             time.sleep(0.1)
             self._set_safe_servo_angles()
+            logger.info("servo activated")
 
     def setup_led(self):
         if self.args.led:
             from led import LED
             self.led = LED(brightness=self.args.led_brightness)
             self.led.show_single_color(color=(230, 180, 0))
+            logger.debug("led activated")
 
     def setup_motion_capture(self):
         on_pose = None
@@ -243,6 +247,7 @@ class Controller:
                 on_pose=on_pose
             )
             self.mocap.start()
+            logger.debug("mocap activated")
         elif self.args.save_vicon:
             self.mocap = Mocap(
                 object_name=self.args.obj_name,
@@ -250,6 +255,7 @@ class Controller:
                 on_pose=on_pose
             )
             self.mocap.start()
+            logger.debug("mocap activated")
 
     def setup_tracker(self):
         if self.args.tracker:
@@ -260,6 +266,7 @@ class Controller:
                 on_failsafe=self._trigger_failsafe
             )
             self.tracker.start()
+            logger.debug("tracker activated")
 
     def setup_sockets(self):
         if not self.args.orchestrated:
@@ -273,6 +280,8 @@ class Controller:
         self.sub_socket = context.socket(zmq.SUB)
         self.sub_socket.connect(f"tcp://{ctrl['ip']}:{ctrl['zmq_cmd_port']}")
         self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+
+        logger.debug("sockets opened")
 
     def handshake(self):
         if not self.args.orchestrated:
@@ -322,6 +331,8 @@ class Controller:
         self.cf.log.add_config(self.var_logger)
         self.var_logger.data_received_cb.add_callback(self._log_callback)
         self.var_logger.start()
+
+        logger.debug("logging activated")
 
     def setup_params(self):
         logger.info("Setting up parameters...")
