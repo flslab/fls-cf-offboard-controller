@@ -417,7 +417,7 @@ class Controller:
         trajectory, fps = create_trajectory_from_file(file_path, self.args.takeoff_altitude)
 
         for p in trajectory:
-            self.commander.go_to(*p)
+            self.commander.go_to(*p, 0, 1 / fps)
             time.sleep(1 / fps)
 
     def orchestrated_mission(self):
@@ -464,7 +464,7 @@ class Controller:
     def sync_pos_servo(self, waypoints, angles, delta_t, iterations):
         for _ in range(iterations):
             for w, a in zip(waypoints, angles):
-                self.commander.go_to(*w)
+                self.commander.go_to(*w, 0, delta_t)
                 dur = self.servo.set_all_smooth(a)
                 if self.failsafe:
                     return
