@@ -110,6 +110,7 @@ class Controller:
         self.log_times = []
         self.flying = False
         self.failsafe = False
+        self.init_coord = None
 
     def __enter__(self):
         self.connect()
@@ -144,6 +145,7 @@ class Controller:
         self.setup_params()
         self.download_mission_config()
         self.handshake()
+        self.save_init_coord()
         self.arm()
         self.takeoff()
         self.run_mission()
@@ -303,6 +305,10 @@ class Controller:
         if self.led:
             self.led.clear()
 
+    def save_init_coord(self):
+        if self.mocap:
+            self.init_coord = self.mocap.get_latest_pos()["tvec"]
+
     def takeoff(self):
         logger.info("Taking off...")
         self.flying = True
@@ -424,14 +430,25 @@ class Controller:
         delta_t = servo_setting['delta_t']
         iterations = servo_setting['iterations']
 
-        flight_duration = delta_t * iterations * len(angles)
+        total_flight_duration = delta_t * iterations * len(angles)
 
-        self.commander.go_to(x, y, z, 0, 1, relative=False)
-        time.sleep(2)
+        dt = 1
+        if self.init_coord:
+            xi, yi, _ = self.init_coord
+            dist = ((xi - x)**2 + (yi - y)**2) ** 0.5
+            dt = 2 * dist
+
+        self.commander.go_to(x, y, z, 0, dt, relative=False)
+        time.sleep(dt + 1)
 
         if len(angles):
             self.run_servo(angles, delta_t, iterations)
         self.led.clear()
+
+        if self.init_coord:
+            x, y, _ = self.init_coord
+            self.commander.go_to(x, y, self.args.takeoff_altitude, 0, dt, relative=False)
+            time.sleep(dt + 1)
 
     def run_servo(self, angles, delta_t, iterations):
         for _ in range(iterations):

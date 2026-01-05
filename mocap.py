@@ -32,6 +32,9 @@ class Mocap(threading.Thread):
 
         self.log_filename = os.path.join("logs", f"{self.mocap_system_type}_{tag}.json")
 
+    def get_latest_pos(self):
+        return self.all_frames[-1]
+
     def stop(self):
         self.running = False
 
@@ -49,11 +52,13 @@ class Mocap(threading.Thread):
             for name, obj in mc.rigidBodies.items():
                 if name == self.object_name:
                     pos = obj.position
+                    quat = obj.rotation
                     if self.on_pose:
-                        self.on_pose(pos[0], pos[1], pos[2], obj.rotation)
+                        self.on_pose(pos[0], pos[1], pos[2], quat)
                     self.all_frames.append({
                         "frame_id": i,
                         "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
+                        "quat": [float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
                         "time": now
                     })
             i += 1
