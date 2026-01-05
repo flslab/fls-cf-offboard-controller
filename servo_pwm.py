@@ -74,6 +74,8 @@ class Servo:
                 self.servos[index].set(angles[index])
                 self.values[index] = angles[index]
 
+            return max(ns) * self.tick_duration
+
     def set_all(self, target_angles):
         for i in range(len(self.servos)):
             self.set(i, target_angles[i])

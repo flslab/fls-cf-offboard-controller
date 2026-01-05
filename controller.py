@@ -421,10 +421,11 @@ class Controller:
             time.sleep(1 / fps)
 
     def orchestrated_mission(self):
-        x, y, z = self.mission['drones'][self.args.drone_id]['target']
         led_color = self.mission['drones'][self.args.drone_id]['color']
         self.led.show_single_color(led_color)
 
+        x, y, z = self.mission['drones'][self.args.drone_id]['target']
+        waypoints = self.mission['drones'][self.args.drone_id]['waypoints']
         servo_setting = self.mission['drones'][self.args.drone_id]['servo']
         angles = servo_setting.get('angles', [])
         delta_t = servo_setting['delta_t']
@@ -441,6 +442,8 @@ class Controller:
         self.commander.go_to(x, y, z, 0, dt, relative=False)
         time.sleep(dt + 1)
 
+        if len(waypoints) and len(angles):
+            self.sync_pos_servo(waypoints, angles, delta_t, iterations)
         if len(angles):
             self.run_servo(angles, delta_t, iterations)
         self.led.clear()
@@ -457,6 +460,15 @@ class Controller:
                 if self.failsafe:
                     return
                 time.sleep(delta_t)
+
+    def sync_pos_servo(self, waypoints, angles, delta_t, iterations):
+        for _ in range(iterations):
+            for w, a in zip(waypoints, angles):
+                self.commander.go_to(*w)
+                dur = self.servo.set_all_smooth(a)
+                if self.failsafe:
+                    return
+                time.sleep(max(0, delta_t - dur))
 
     def save_logs(self):
         log_dir = self.args.log_dir
