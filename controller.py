@@ -436,7 +436,7 @@ class Controller:
         if self.init_coord:
             xi, yi, _ = self.init_coord
             dist = ((xi - x)**2 + (yi - y)**2) ** 0.5
-            dt = 2 * dist
+            dt = 3 * dist
 
         self.commander.go_to(x, y, z, 0, dt, relative=False)
         time.sleep(dt + 1)
