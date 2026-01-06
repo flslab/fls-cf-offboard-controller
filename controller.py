@@ -444,7 +444,7 @@ class Controller:
 
         if len(waypoints) and len(angles):
             self.sync_pos_servo(waypoints, angles, delta_t, iterations)
-        if len(angles):
+        elif len(angles):
             self.run_servo(angles, delta_t, iterations)
         self.led.clear()
 
@@ -465,10 +465,8 @@ class Controller:
         for _ in range(iterations):
             for w, a in zip(waypoints, angles):
                 self.commander.go_to(*w, 0, delta_t)
-                dur = self.servo.set_all_smooth(a)
-                if self.failsafe:
-                    return
-                time.sleep(max(0, delta_t - dur))
+                self.servo.set_all(a)
+                time.sleep(delta_t)
 
     def save_logs(self):
         log_dir = self.args.log_dir
