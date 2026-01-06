@@ -588,7 +588,7 @@ class Controller:
     def _watch_battery(self, timestamp, data, logconf):
         voltage = data['pm.vbat']
         self.voltage = voltage
-        logger.info(f"Voltage: {voltage:.2f}V")
+        logger.debug(f"Voltage: {voltage:.2f}V")
         if voltage < self.min_voltage:
             self.battery_critical.set()
             if self.led:
