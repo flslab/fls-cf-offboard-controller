@@ -39,6 +39,10 @@ pos_update_time_log = []
 pos_update_profile_log = []
 
 
+class LowBatteryException(Exception):
+    pass
+
+
 def create_trajectory_from_file(file_path, takeoff_altitude):
     waypoints = []
     with open(file_path, "r") as f:
@@ -96,15 +100,19 @@ class Controller:
         self.commander = None
         self.manifest = None
         self.mission = None
+        self.min_voltage = 3.7 * 2
 
         self.mocap = None
         self.servo = None
         self.led = None
         self.tracker = None
         self.var_logger = None
+        self.bat_logger = None
         self.sub_socket = None
         self.push_socket = None
+        self.voltage = None
         self.deck_attached_event = Event()
+        self.battery_critical = Event()
 
         self.log_data = copy.deepcopy(LOG_VARS)
         self.log_times = []
@@ -140,6 +148,7 @@ class Controller:
         self.setup_servo()
         self.setup_sockets()
         self.setup_logging()
+        self.setup_battery_watcher()
         self.setup_motion_capture()
         self.setup_tracker()
         self.setup_params()
@@ -160,6 +169,9 @@ class Controller:
         if self.var_logger:
             self.var_logger.stop()
             self.save_logs()
+
+        if self.bat_logger:
+            self.bat_logger.stop()
 
         if self.mocap:
             self.mocap.stop()
@@ -340,6 +352,21 @@ class Controller:
 
         logger.debug("logging activated")
 
+    def setup_battery_watcher(self):
+        self.bat_logger = LogConfig(name='Battery', period_in_ms=1000)
+
+        self.bat_logger.add_variable("pm.vbat", "float")
+
+        self.cf.log.add_config(self.bat_logger)
+        self.bat_logger.data_received_cb.add_callback(self._watch_battery)
+        self.bat_logger.start()
+
+        logger.info("Waiting for initial battery reading...")
+        while self.voltage is None:
+            time.sleep(0.1)
+
+        logger.debug("logging activated")
+
     def setup_params(self):
         logger.info("Setting up parameters...")
 
@@ -483,6 +510,21 @@ class Controller:
             json.dump(output_data, f)
         logger.info(f"Logs saved to {filename}")
 
+    def _safe_sleep(self, seconds):
+        is_battery_critical = self.battery_critical.wait(timeout=seconds)
+
+        if is_battery_critical:
+            if self.led:
+                self.led.show_single_color((230, 20, 20))
+            raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
+
+    def _watch_battery(self, timestamp, data, logconf):
+        voltage = data['pm.vbat']
+        self.voltage = voltage
+        logger.info(f"Voltage: {voltage:.2f}V")
+        if voltage < self.min_voltage:
+            self.battery_critical.set()
+
     def _send_landing_confirmation(self):
         if self.args.orchestrated:
             self.push_socket.send_json({
@@ -597,7 +639,10 @@ if __name__ == '__main__':
     args = ap.parse_args()
 
     with Controller(args) as c:
-        c.start()
+        try:
+            c.start()
+        except LowBatteryException as e:
+            logger.error(e)
 
     # with open("pose_update_time.txt", "w") as f:
     #     for number in pos_update_time_log:
