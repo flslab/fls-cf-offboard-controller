@@ -342,6 +342,9 @@ class Controller:
             self.init_coord = self.mocap.get_latest_pos()["tvec"]
 
     def takeoff(self):
+        if self.args.ground_test:
+            return
+
         logger.info("Taking off...")
         self.flying = True
         t = self.args.takeoff_altitude * 2
@@ -397,12 +400,16 @@ class Controller:
         self._activate_high_level_commander()
         self._set_pid_values(PID_VALUES_PROP_2)
 
-        reset_estimator(self.cf)
+        if not self.args.ground_test:
+            reset_estimator(self.cf)
 
         if self.led:
             self.led.show_single_color(color=(80, 240, 30))
 
     def arm(self):
+        if self.args.ground_test:
+            return
+
         logger.info("Arming...")
         self.cf.platform.send_arming_request(True)
         time.sleep(1.0)
@@ -488,8 +495,9 @@ class Controller:
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = 3 * dist
 
-        self.commander.go_to(x, y, z, 0, dt, relative=False)
-        self._safe_sleep(dt + 1)
+        if not self.args.ground_test:
+            self.commander.go_to(x, y, z, 0, dt, relative=False)
+            self._safe_sleep(dt + 1)
 
         if len(waypoints) and len(angles):
             self.sync_pos_servo(waypoints, angles, delta_t, iterations)
@@ -497,7 +505,7 @@ class Controller:
             self.run_servo(angles, delta_t, iterations)
         self.led.clear()
 
-        if self.init_coord:
+        if self.init_coord and not self.args.ground_test:
             x, y, _ = self.init_coord
             self.commander.go_to(x, y, self.args.takeoff_altitude, 0, dt, relative=False)
             self._safe_sleep(dt + 1)
@@ -506,8 +514,6 @@ class Controller:
         for _ in range(iterations):
             for a in angles:
                 self.servo.set_all_smooth(a)
-                if self.failsafe:
-                    return
                 self._safe_sleep(delta_t)
 
     def sync_pos_servo(self, waypoints, angles, delta_t, iterations):
@@ -693,6 +699,7 @@ if __name__ == '__main__':
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
+    ap.add_argument("--ground-test", type=str, help="run mission without flying")
     ap.add_argument("--simple-takeoff", action="store_true", help="takeoff and land")
     ap.add_argument("--xy-tune", action="store_true", help="forward/back left/right flight pattern")
     ap.add_argument("--z-tune", action="store_true", help="up/down flight pattern")
