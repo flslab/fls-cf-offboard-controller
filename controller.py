@@ -699,7 +699,7 @@ if __name__ == '__main__':
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
-    ap.add_argument("--ground-test", type=str, help="run mission without flying")
+    ap.add_argument("--ground-test", action="store_true", help="run mission without flying")
     ap.add_argument("--simple-takeoff", action="store_true", help="takeoff and land")
     ap.add_argument("--xy-tune", action="store_true", help="forward/back left/right flight pattern")
     ap.add_argument("--z-tune", action="store_true", help="up/down flight pattern")
