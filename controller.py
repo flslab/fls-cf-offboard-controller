@@ -465,8 +465,8 @@ class Controller:
         for _ in range(iterations):
             for w, a in zip(waypoints, angles):
                 self.commander.go_to(*w, 0, delta_t)
-                self.servo.set_all(a)
                 time.sleep(delta_t)
+                self.servo.set_all(a)
 
     def save_logs(self):
         log_dir = self.args.log_dir
