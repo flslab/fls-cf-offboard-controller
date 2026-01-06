@@ -15,6 +15,9 @@ DEFAULT_DURATION = 10.0
 # Localization Settings
 LOCALIZATION_SHM_NAME = "/pos_shared_mem"
 
+# Battery
+MIN_LIHV_VOLT = 3.5
+
 PI = 3.141592653589793
 
 # Logging Configuration

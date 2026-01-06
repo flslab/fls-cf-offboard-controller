@@ -22,7 +22,8 @@ from cflib.utils.reset_estimator import reset_estimator
 
 from config import (
     DEFAULT_URI, LOG_VARS, DEFAULT_HEIGHT, DEFAULT_DURATION,
-    PID_VALUES_PROP_2, POSITION_STD_DEV, ORIENTATION_STD_DEV
+    PID_VALUES_PROP_2, POSITION_STD_DEV, ORIENTATION_STD_DEV,
+    MIN_LIHV_VOLT
 )
 
 from mocap import Mocap
@@ -100,7 +101,7 @@ class Controller:
         self.commander = None
         self.manifest = None
         self.mission = None
-        self.min_voltage = 3.7 * 2
+        self.min_voltage = MIN_LIHV_VOLT * 2
 
         self.mocap = None
         self.servo = None
@@ -326,7 +327,7 @@ class Controller:
         self.flying = True
         t = self.args.takeoff_altitude * 2
         self.cf.high_level_commander.takeoff(self.args.takeoff_altitude, t)
-        time.sleep(t + 1)
+        self._safe_sleep(t + 1)
 
     def land(self):
         logger.info("Landing...")
@@ -400,44 +401,44 @@ class Controller:
             self.orchestrated_mission()
         else:
             logger.info(f"Hovering for {self.args.t} seconds...")
-            time.sleep(self.args.t)
+            self._safe_sleep(self.args.t)
 
     def hover(self):
         self.commander.go_to(0.0, 0.0, self.args.takeoff_altitude, 0, 0.5, relative=False)
-        time.sleep(self.args.t)
+        self._safe_sleep(self.args.t)
 
     def xy_tune_pattern(self):
         logger.info("Executing XY Tune Pattern...")
         flight_time = 2
         self.commander.go_to(0, 0, 1, 0, flight_time, relative=False)
-        time.sleep(flight_time)
+        self._safe_sleep(flight_time)
 
         for _ in range(3):
             self.commander.go_to(1.5, 0, 1, 0, flight_time, relative=False)
-            time.sleep(flight_time)
+            self._safe_sleep(flight_time)
 
             self.commander.go_to(0, 0, 1, 0, flight_time, relative=False)
-            time.sleep(flight_time)
+            self._safe_sleep(flight_time)
 
         for _ in range(3):
             self.commander.go_to(0, 1.5, 1, 0, flight_time, relative=False)
-            time.sleep(flight_time)
+            self._safe_sleep(flight_time)
 
             self.commander.go_to(0, 0, 1, 0, flight_time, relative=False)
-            time.sleep(flight_time)
+            self._safe_sleep(flight_time)
 
     def z_tune_pattern(self):
         logger.info("Executing Z Tune Pattern...")
 
         flight_time = 1.5
         self.commander.go_to(0, 0, 0.5, 0, flight_time, relative=False)
-        time.sleep(flight_time)
+        self._safe_sleep(flight_time)
 
         for _ in range(3):
             self.commander.go_to(0, 0, 1.5, 0, flight_time, relative=False)
-            time.sleep(flight_time)
+            self._safe_sleep(flight_time)
             self.commander.go_to(0, 0, 0.5, 0, flight_time, relative=False)
-            time.sleep(flight_time)
+            self._safe_sleep(flight_time)
 
     def fly_trajectory(self, file_path):
         logger.info(f"Executing Trajectory from {file_path}...")
@@ -445,7 +446,7 @@ class Controller:
 
         for p in trajectory:
             self.commander.go_to(*p, 0, 1 / fps)
-            time.sleep(1 / fps)
+            self._safe_sleep(1 / fps)
 
     def orchestrated_mission(self):
         led_color = self.mission['drones'][self.args.drone_id]['color']
@@ -463,11 +464,11 @@ class Controller:
         dt = 1
         if self.init_coord:
             xi, yi, _ = self.init_coord
-            dist = ((xi - x)**2 + (yi - y)**2) ** 0.5
+            dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = 3 * dist
 
         self.commander.go_to(x, y, z, 0, dt, relative=False)
-        time.sleep(dt + 1)
+        self._safe_sleep(dt + 1)
 
         if len(waypoints) and len(angles):
             self.sync_pos_servo(waypoints, angles, delta_t, iterations)
@@ -478,7 +479,7 @@ class Controller:
         if self.init_coord:
             x, y, _ = self.init_coord
             self.commander.go_to(x, y, self.args.takeoff_altitude, 0, dt, relative=False)
-            time.sleep(dt + 1)
+            self._safe_sleep(dt + 1)
 
     def run_servo(self, angles, delta_t, iterations):
         for _ in range(iterations):
@@ -486,13 +487,13 @@ class Controller:
                 self.servo.set_all_smooth(a)
                 if self.failsafe:
                     return
-                time.sleep(delta_t)
+                self._safe_sleep(delta_t)
 
     def sync_pos_servo(self, waypoints, angles, delta_t, iterations):
         for _ in range(iterations):
             for w, a in zip(waypoints, angles):
                 self.commander.go_to(*w, 0, delta_t)
-                time.sleep(delta_t)
+                self._safe_sleep(delta_t)
                 self.servo.set_all(a)
 
     def save_logs(self):
