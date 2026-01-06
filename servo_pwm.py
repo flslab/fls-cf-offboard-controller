@@ -59,7 +59,7 @@ class Servo:
         if all(0 <= x <= 180 for x in angles):
             start_angles = [v for v in self.values]
             delta_angles = [angle - start_angle for angle, start_angle in zip(angles, start_angles)]
-            ns = [abs(delta_angle) // self.tick_angle for delta_angle in delta_angles]
+            ns = [int(abs(delta_angle) // self.tick_angle) for delta_angle in delta_angles]
 
             for i in range(max(ns)):
                 for index in range(len(self.servos)):
