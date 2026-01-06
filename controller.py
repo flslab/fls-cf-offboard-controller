@@ -2,6 +2,8 @@ import argparse
 import copy
 import datetime
 import json
+from typing import Callable
+
 import yaml
 import logging
 import numpy as np
@@ -41,6 +43,10 @@ pos_update_profile_log = []
 
 
 class LowBatteryException(Exception):
+    pass
+
+
+class EmergencyStopException(Exception):
     pass
 
 
@@ -111,6 +117,7 @@ class Controller:
         self.bat_logger = None
         self.sub_socket = None
         self.push_socket = None
+        self.poller = None
         self.voltage = None
         self.deck_attached_event = Event()
         self.battery_critical = Event()
@@ -120,6 +127,12 @@ class Controller:
         self.flying = False
         self.failsafe = False
         self.init_coord = None
+
+        self._safe_sleep: Callable[[float], None]
+        if self.args.orchestrated:
+            self._safe_sleep = self._safe_sleep_orchestrated
+        else:
+            self._safe_sleep = self._safe_sleep_standalone
 
     def __enter__(self):
         self.connect()
@@ -295,6 +308,8 @@ class Controller:
         self.sub_socket = context.socket(zmq.SUB)
         self.sub_socket.connect(f"tcp://{ctrl['ip']}:{ctrl['zmq_cmd_port']}")
         self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.poller = zmq.Poller()
+        self.poller.register(self.sub_socket, zmq.POLLIN)
 
         logger.debug("sockets opened")
 
@@ -511,13 +526,52 @@ class Controller:
             json.dump(output_data, f)
         logger.info(f"Logs saved to {filename}")
 
-    def _safe_sleep(self, seconds):
+    def _safe_sleep_standalone(self, seconds):
         is_battery_critical = self.battery_critical.wait(timeout=seconds)
 
         if is_battery_critical:
             if self.led:
                 self.led.show_single_color((230, 20, 20))
             raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
+
+    def _safe_sleep_orchestrated(self, duration):
+        """
+        Sleeps for 'duration' seconds, but interrupts IMMEDIATELY for:
+        1. Low Battery
+        2. ZMQ 'EMERGENCY' message
+        """
+        end_time = time.time() + duration
+
+        # We wake up every 1000ms to check the Battery Event flag.
+        # ZMQ messages will wake us up instantly.
+        poll_interval_ms = 1000
+
+        while True:
+            remaining_seconds = end_time - time.time()
+            if remaining_seconds <= 0:
+                break
+
+            # Check Battery
+            if self.battery_critical.is_set():
+                raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
+
+            # Wait for ZMQ Message OR Timeout
+            # take the smaller of: 100ms OR remaining time
+            timeout_ms = int(min(poll_interval_ms, remaining_seconds * 1000))
+
+            # This blocks until a message arrives OR timeout_ms passes
+            socks = dict(self.poller.poll(timeout_ms))
+
+            # Process ZMQ Messages (if any)
+            if self.sub_socket in socks:
+                try:
+                    msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
+
+                    if msg.get('cmd') == 'EMERGENCY':
+                        raise EmergencyStopException("Orchestrator requested Emergency Stop")
+
+                except zmq.Again:
+                    pass
 
     def _watch_battery(self, timestamp, data, logconf):
         voltage = data['pm.vbat']
@@ -644,6 +698,9 @@ if __name__ == '__main__':
             c.start()
         except LowBatteryException as e:
             logger.error(e)
+        except EmergencyStopException as e:
+            logger.error(e)
+
 
     # with open("pose_update_time.txt", "w") as f:
     #     for number in pos_update_time_log:
