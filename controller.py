@@ -181,6 +181,14 @@ class Controller:
         if self.servo:
             self._set_safe_servo_angles()
 
+        if self.init_coord:
+            x, y, _ = self.mocap.get_latest_pos()["tvec"]
+            xi, yi, _ = self.init_coord
+            dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
+            dt = 2 * dist
+            self.commander.go_to(xi, yi, self.args.takeoff_altitude, 0, dt, relative=False)
+            time.sleep(dt + 0.5)
+
         self.land()
         self._send_landing_confirmation()
 
@@ -504,11 +512,6 @@ class Controller:
         elif len(angles):
             self.run_servo(angles, delta_t, iterations)
         self.led.clear()
-
-        if self.init_coord and not self.args.ground_test:
-            x, y, _ = self.init_coord
-            self.commander.go_to(x, y, self.args.takeoff_altitude, 0, dt, relative=False)
-            self._safe_sleep(dt + 1)
 
     def run_servo(self, angles, delta_t, iterations):
         for _ in range(iterations):
