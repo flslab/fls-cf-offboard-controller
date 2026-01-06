@@ -182,11 +182,11 @@ class Controller:
             self._set_safe_servo_angles()
 
         if self.init_coord:
-            x, y, _ = self.mocap.get_latest_pos()["tvec"]
+            x, y, z = self.mocap.get_latest_pos()["tvec"]
             xi, yi, _ = self.init_coord
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = 2 * dist
-            self.commander.go_to(xi, yi, self.args.takeoff_altitude, 0, dt, relative=False)
+            self.commander.go_to(xi, yi, z, 0, dt, relative=False)
             time.sleep(dt + 0.5)
 
         self.land()
