@@ -530,8 +530,6 @@ class Controller:
         is_battery_critical = self.battery_critical.wait(timeout=seconds)
 
         if is_battery_critical:
-            if self.led:
-                self.led.show_single_color((230, 20, 20))
             raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
 
     def _safe_sleep_orchestrated(self, duration):
@@ -568,6 +566,8 @@ class Controller:
                     msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
 
                     if msg.get('cmd') == 'EMERGENCY':
+                        if self.led:
+                            self.led.show_single_color((230, 20, 20))
                         raise EmergencyStopException("Orchestrator requested Emergency Stop")
 
                 except zmq.Again:
@@ -579,6 +579,8 @@ class Controller:
         logger.info(f"Voltage: {voltage:.2f}V")
         if voltage < self.min_voltage:
             self.battery_critical.set()
+            if self.led:
+                self.led.show_single_color((230, 20, 20))
 
     def _send_landing_confirmation(self):
         if self.args.orchestrated:
