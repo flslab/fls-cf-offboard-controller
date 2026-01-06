@@ -499,9 +499,9 @@ class Controller:
             self.commander.go_to(x, y, z, 0, dt, relative=False)
             self._safe_sleep(dt + 1)
 
-        if len(waypoints) and len(angles):
-            self.sync_pos_servo(waypoints, angles, delta_t, iterations)
-        elif len(angles):
+        # if len(waypoints) and len(angles):
+        #     self.sync_pos_servo(waypoints, angles, delta_t, iterations)
+        if len(angles):
             self.run_servo(angles, delta_t, iterations)
         self.led.clear()
 
