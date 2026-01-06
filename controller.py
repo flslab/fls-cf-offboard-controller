@@ -121,6 +121,8 @@ class Controller:
         self.voltage = None
         self.deck_attached_event = Event()
         self.battery_critical = Event()
+        self.start_time = 0
+        self.flight_duration = 0
 
         self.log_data = copy.deepcopy(LOG_VARS)
         self.log_times = []
@@ -174,6 +176,8 @@ class Controller:
         self.run_mission()
 
     def stop(self):
+        self.flight_duration = time.time() - self.start_time
+
         if self.servo:
             self._set_safe_servo_angles()
 
@@ -404,6 +408,8 @@ class Controller:
         time.sleep(1.0)
 
     def run_mission(self):
+        self.start_time = time.time()
+
         if self.args.simple_takeoff:
             self.hover()
         elif self.args.xy_tune:
@@ -586,7 +592,9 @@ class Controller:
         if self.args.orchestrated:
             self.push_socket.send_json({
                 "id": args.drone_id,
-                "status": "LANDED"
+                "status": "LANDED",
+                "battery": self.voltage,
+                "flight_duration": self.flight_duration
             })
             logger.info("Sent landing confirmation")
 
