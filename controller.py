@@ -363,8 +363,9 @@ class Controller:
             time.sleep(dt + 0.5)
 
         if self.flying:
-            self.cf.high_level_commander.land(0.12, z * 8)
-            time.sleep(4)
+            dt = z * 6
+            self.cf.high_level_commander.land(0.12, dt)
+            time.sleep(dt + 1)
             self.cf.high_level_commander.stop()
             self.flying = False
 
