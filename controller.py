@@ -181,14 +181,6 @@ class Controller:
         if self.servo:
             self._set_safe_servo_angles()
 
-        if self.init_coord:
-            x, y, z = self.mocap.get_latest_pos()["tvec"]
-            xi, yi, _ = self.init_coord
-            dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
-            dt = 2 * dist
-            self.commander.go_to(xi, yi, z, 0, dt, relative=False)
-            time.sleep(dt + 0.5)
-
         self.land()
         self._send_landing_confirmation()
 
@@ -361,8 +353,17 @@ class Controller:
 
     def land(self):
         logger.info("Landing...")
+        z = self.args.takeoff_altitude
+        if self.init_coord:
+            x, y, z = self.mocap.get_latest_pos()["tvec"]
+            xi, yi, _ = self.init_coord
+            dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
+            dt = 2 * dist
+            self.commander.go_to(xi, yi, z, 0, dt, relative=False)
+            time.sleep(dt + 0.5)
+
         if self.flying:
-            self.cf.high_level_commander.land(0.12, 3)
+            self.cf.high_level_commander.land(0.12, z * 8)
             time.sleep(4)
             self.cf.high_level_commander.stop()
             self.flying = False
@@ -620,7 +621,7 @@ class Controller:
 
     def _activate_high_level_commander(self):
         self.cf.param.set_value('commander.enHighLevel', '1')
-        self.cf.param.set_value('hlCommander.vland', '0.3')
+        self.cf.param.set_value('hlCommander.vland', '0.1')
 
     def _activate_pid_controller(self):
         self.cf.param.set_value('stabilizer.controller', '1')
