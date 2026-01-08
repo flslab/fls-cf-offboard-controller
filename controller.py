@@ -530,6 +530,7 @@ class Controller:
         for _ in range(iterations):
             for w, a in zip(waypoints, angles):
                 self.commander.go_to(*w, delta_t, **params)
+                logger.info(f"go to {w}")
                 self.servo.set_all_smooth(a)
                 self._safe_sleep(delta_t)
 
