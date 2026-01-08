@@ -525,14 +525,24 @@ class Controller:
                 self._safe_sleep(delta_t)
 
     def sync_pos_servo(self, waypoints, angles, delta_t, iterations, params):
+        start_time = time.time()
         if len(angles) < len(waypoints):
             angles = angles + [angles[-1]] * (len(waypoints) - len(angles))
-        for _ in range(iterations):
-            for w, a in zip(waypoints, angles):
+        n = len(waypoints)
+        for i in range(iterations):
+            for j, (w, a) in enumerate(zip(waypoints, angles)):
                 self.commander.go_to(*w, delta_t, **params)
                 logger.info(f"go to {w}")
                 self.servo.set_all_smooth(a)
-                self._safe_sleep(delta_t)
+
+                target_time = start_time + ((i * n + j + 1) * delta_t)
+                sleep_duration = target_time - time.time()
+                # If we are ahead of schedule, sleep the difference
+                if sleep_duration > 0:
+                    self._safe_sleep(sleep_duration)
+                else:
+                    # If sleep_duration is negative, we are lagging behind!
+                    logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
 
     def save_logs(self):
         log_dir = self.args.log_dir
@@ -728,7 +738,6 @@ if __name__ == '__main__':
             logger.error(e)
         except EmergencyStopException as e:
             logger.error(e)
-
 
     # with open("pose_update_time.txt", "w") as f:
     #     for number in pos_update_time_log:
