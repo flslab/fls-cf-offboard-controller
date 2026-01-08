@@ -170,6 +170,8 @@ class Controller:
         self.setup_params()
         self.download_mission_config()
         self.handshake()
+        if self.led:
+            self.led.clear()
         self.save_init_coord()
         self.arm()
         self.takeoff()
@@ -333,9 +335,6 @@ class Controller:
         delay = int(self.args.drone_id.split('lb')[1]) * self.manifest['mission']['delta_t']
         logger.info(f"[{self.args.drone_id}] Launching in {delay}s...")
         time.sleep(delay)
-
-        if self.led:
-            self.led.clear()
 
     def save_init_coord(self):
         if self.mocap:
@@ -509,6 +508,9 @@ class Controller:
         if not self.args.ground_test:
             self.commander.go_to(x, y, z, 0, dt, relative=False)
             self._safe_sleep(dt + 1)
+
+        if self.manifest['mission']['require_handshake']:
+            self.handshake()
 
         if len(waypoints) and len(angles):
             self.sync_pos_servo(waypoints, angles, delta_t, iterations, params)
