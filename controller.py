@@ -490,13 +490,13 @@ class Controller:
         led_color = self.mission['drones'][self.args.drone_id]['color']
         self.led.show_single_color(led_color)
 
-        x, y, z = self.mission['drones'][self.args.drone_id]['target']
-        waypoints = self.mission['drones'][self.args.drone_id]['waypoints']
-        params = self.mission['drones'][self.args.drone_id]['params']
-        servo_setting = self.mission['drones'][self.args.drone_id]['servo']
-        angles = servo_setting.get('angles', [])
-        delta_t = servo_setting['delta_t']
-        iterations = servo_setting['iterations']
+        mission_setting = self.mission['drones'][self.args.drone_id]
+        x, y, z = mission_setting['target']
+        waypoints = mission_setting.get('waypoints', [])
+        params = mission_setting.get('params', {'linear': False, 'relative': False})
+        angles = mission_setting.get('servos', [])
+        delta_t = mission_setting['delta_t']
+        iterations = mission_setting['iterations']
 
         total_flight_duration = delta_t * iterations * len(angles)
 
@@ -523,6 +523,8 @@ class Controller:
                 self._safe_sleep(delta_t)
 
     def sync_pos_servo(self, waypoints, angles, delta_t, iterations, params):
+        if len(angles) < len(waypoints):
+            angles = angles + [angles[-1]] * (len(waypoints) - len(angles))
         for _ in range(iterations):
             for w, a in zip(waypoints, angles):
                 self.commander.go_to(*w, delta_t, **params)
