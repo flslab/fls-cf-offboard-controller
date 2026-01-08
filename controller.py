@@ -525,7 +525,7 @@ class Controller:
         for _ in range(iterations):
             for w, a in zip(waypoints, angles):
                 self.commander.go_to(*w, 0, delta_t)
-                self.servo.set_all(a)
+                self.servo.set_all_smooth(a)
                 self._safe_sleep(delta_t)
 
     def save_logs(self):
