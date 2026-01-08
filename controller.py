@@ -524,7 +524,7 @@ class Controller:
     def sync_pos_servo(self, waypoints, angles, delta_t, iterations):
         for _ in range(iterations):
             for w, a in zip(waypoints, angles):
-                self.commander.go_to(*w, 0, delta_t)
+                self.commander.go_to(*w, delta_t, linear=True)
                 self.servo.set_all_smooth(a)
                 self._safe_sleep(delta_t)
 
