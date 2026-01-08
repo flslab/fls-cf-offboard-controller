@@ -492,6 +492,7 @@ class Controller:
 
         x, y, z = self.mission['drones'][self.args.drone_id]['target']
         waypoints = self.mission['drones'][self.args.drone_id]['waypoints']
+        params = self.mission['drones'][self.args.drone_id]['params']
         servo_setting = self.mission['drones'][self.args.drone_id]['servo']
         angles = servo_setting.get('angles', [])
         delta_t = servo_setting['delta_t']
@@ -510,7 +511,7 @@ class Controller:
             self._safe_sleep(dt + 1)
 
         if len(waypoints) and len(angles):
-            self.sync_pos_servo(waypoints, angles, delta_t, iterations)
+            self.sync_pos_servo(waypoints, angles, delta_t, iterations, params)
         elif len(angles):
             self.run_servo(angles, delta_t, iterations)
         self.led.clear()
@@ -521,10 +522,10 @@ class Controller:
                 self.servo.set_all_smooth(a)
                 self._safe_sleep(delta_t)
 
-    def sync_pos_servo(self, waypoints, angles, delta_t, iterations):
+    def sync_pos_servo(self, waypoints, angles, delta_t, iterations, params):
         for _ in range(iterations):
             for w, a in zip(waypoints, angles):
-                self.commander.go_to(*w, delta_t, linear=True)
+                self.commander.go_to(*w, delta_t, **params)
                 self.servo.set_all_smooth(a)
                 self._safe_sleep(delta_t)
 
