@@ -1,3 +1,4 @@
 motioncapture
 pyzmq
 PyYAML
+pyserial

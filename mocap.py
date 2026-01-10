@@ -1,46 +1,28 @@
 import argparse
 import threading
-import os
-import json
 import time
 import logging
 import motioncapture
-
 
 logger = logging.getLogger(__name__)
 
 
 class Mocap(threading.Thread):
-    def __init__(self, object_name, tag="", on_pose=None, mocap_system_type="vicon", host_name="vicon"):
+    def __init__(self, mocap_system_type="vicon", host_name="vicon"):
         threading.Thread.__init__(self)
 
-        self.object_name = object_name
-        self.on_pose = on_pose
         self.running = True
-        self.all_frames = []
         self.mocap_system_type = mocap_system_type
         self.host_name = host_name
-        self.log_filename = ''
-        self.set_log_filename(tag)
 
-    def set_log_filename(self, tag):
-        if not tag:
-            import datetime
+        # Shared state
+        self.objects_to_track = []
 
-            now = datetime.datetime.now()
-            tag = now.strftime("%Y-%m-%d_%H-%M-%S")
-
-        self.log_filename = os.path.join("logs", f"{self.mocap_system_type}_{tag}.json")
-
-    def get_latest_pos(self):
-        return self.all_frames[-1]
+        # Lock is ONLY for writers (subscribe/unsubscribe), not the reader (run)
+        self._write_lock = threading.Lock()
 
     def stop(self):
         self.running = False
-
-        with open(self.log_filename, "w") as f:
-            json.dump({"frames": self.all_frames}, f)
-        logger.info(f"Mocap log saved in {self.log_filename}")
         self.join()
 
     def run(self):
@@ -49,27 +31,44 @@ class Mocap(threading.Thread):
         while self.running:
             mc.waitForNextFrame()
             now = time.time()
+
+            # Grab a reference to the current list
+            # If unsubscribe happens during this line, we just keep using the "old" list
+            current_targets = self.objects_to_track
+
             for name, obj in mc.rigidBodies.items():
-                if name == self.object_name:
-                    pos = obj.position
-                    quat = obj.rotation
-                    if self.on_pose:
-                        self.on_pose(pos[0], pos[1], pos[2], quat)
-                    self.all_frames.append({
-                        "frame_id": i,
-                        "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
-                        "quat": [float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
-                        "time": now
-                    })
+                for obj_name, callback in current_targets:
+                    if name == obj_name:
+                        pos = obj.position
+                        quat = obj.rotation
+                        if callback:
+                            callback({
+                                "frame_id": i,
+                                "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
+                                "quat": [float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
+                                "time": now
+                            })
             i += 1
+
+    def subscribe_object(self, obj_name, callback):
+        with self._write_lock:
+            new_list = list(self.objects_to_track)
+            new_list.append((obj_name, callback))
+            self.objects_to_track = new_list
+
+    def unsubscribe_object(self, obj_name):
+        with self._write_lock:
+            new_list = [obj for obj in self.objects_to_track if obj[0] != obj_name]
+            self.objects_to_track = new_list
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("-t", default=140, type=int, help="duration")
-    ap.add_argument("--object-name", type=str, help="object name in motion capture system")
+    ap.add_argument("--obj-name", type=str, help="object name in motion capture system")
     args = ap.parse_args()
 
-    mw = Mocap(object_name=args.object_name)
+    mw = Mocap()
+    mw.subscribe_object(args.obj_name, lambda frame: print(frame))
     time.sleep(args.t)
     mw.stop()
