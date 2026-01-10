@@ -513,7 +513,7 @@ class Controller:
                 self._safe_sleep(delta_t)
                 self.mocap.unsubscribe_object(leader_obj_name)
                 self.cf.commander.send_stop_setpoint()
-                # self.cf.commander.send_notify_setpoint_stop()
+                self.cf.commander.send_notify_setpoint_stop()
         elif len(waypoints) and len(angles):
             self.sync_pos_servo(waypoints, angles, delta_t, iterations, params)
         elif len(angles):
