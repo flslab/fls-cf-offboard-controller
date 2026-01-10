@@ -512,8 +512,7 @@ class Controller:
                 self.mocap.subscribe_object(leader_obj_name, lambda frame: self._follow_with_offset(frame, follow['offset']))
                 self._safe_sleep(delta_t)
                 self.mocap.unsubscribe_object(leader_obj_name)
-                # self.cf.commander.send_stop_setpoint()
-                self.cf.commander.send_notify_setpoint_stop()
+                # self.cf.commander.send_notify_setpoint_stop()
         elif len(waypoints) and len(angles):
             self.sync_pos_servo(waypoints, angles, delta_t, iterations, params)
         elif len(angles):
@@ -722,7 +721,8 @@ class Controller:
     def _follow_with_offset(self, frame, offset):
         x, y, z = frame['tvec']
         xo, yo, zo = offset
-        self.cf.commander.send_position_setpoint(x + xo, y + yo, z + zo, 0)
+        self.commander.go_to(x + xo, y + yo, z + zo, 0, 0.1)
+        # self.cf.commander.send_position_setpoint(x + xo, y + yo, z + zo, 0)
 
 
 if __name__ == '__main__':
