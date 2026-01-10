@@ -1,0 +1,22 @@
+name: reversing_arrow_sepy30cm_sepx25cm_t2s
+drones:
+  lb0:
+    target: [ 0.0, -0.15, 1.0 ]
+    waypoints: [[0.0, -0.15, 1.0, 0.0], [0.0, 0.25, 1.0, 0.0], [-0.25, 0.25, 1.0, 0.0], [-0.25, -0.15, 1.0, 0.0]]
+    delta_t: 2
+    iterations: 2
+    params:
+      linear: false
+      relative: false
+    servos: [ [0, 180], [0, 180], [40, 320], [40, 320] ]
+    color: [ 227, 253, 255 ]
+  lb1:
+    target: [ -0.25, 0.15, 1.0 ]
+    waypoints: [ [-0.25, 0.15, 1.0, 0.0], [-0.25, 0.55, 1.0, 0.0], [0.0, 0.55, 1.0, 0.0], [0.0, 0.15, 1.0, 0.0] ]
+    delta_t: 2
+    iterations: 2
+    params:
+      linear: false
+      relative: false
+    servos: [ [150, 220], [150, 220], [0, 180], [0, 180] ]
+    color: [ 227, 253, 255 ]

@@ -1,0 +1,25 @@
+name: arrow_body_follows_head_sepy24cm_l200cm_t8s
+drones:
+  lb0:
+    target: [ 0.0, -1.24, 1.0 ]
+    waypoints: []
+    delta_t: 8
+    iterations: 1
+    params:
+      linear: false
+      relative: false
+    servos: [ [0, 180] ]
+    color: [ 227, 253, 255 ]
+    follow:
+      id: lb1
+      offset: [ 0.0, -0.24, 0 ]
+  lb1:
+    target: [ 0.0, -1.0, 1.0 ]
+    waypoints: [[0.0, 1, 1.0, 0.0]]
+    delta_t: 8
+    iterations: 1
+    params:
+      linear: false
+      relative: false
+    servos: [ [150, 220] ]
+    color: [ 227, 253, 255 ]
