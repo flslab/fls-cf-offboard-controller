@@ -8,14 +8,14 @@ formatters:
 handlers:
   console:
     class: logging.StreamHandler
-    level: INFO
+    level: DEBUG
     formatter: standard
     stream: ext://sys.stdout
 
   file_rotator:
     # This class handles the rotation
     class: logging.handlers.RotatingFileHandler
-    level: INFO
+    level: DEBUG
     formatter: standard
     filename: app.log
     maxBytes: 10485760 # 10MB
