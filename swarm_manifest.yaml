@@ -1,0 +1,34 @@
+controller:
+  ip: 192.168.1.230
+  zmq_cmd_port: 5556
+  zmq_ack_port: 5557
+  http_port: 8000
+  mission_path: "mission"
+  mission_file: mission.yaml
+  downloads_file: downloads.json
+
+common:
+  work_dir: /home/fls/fls-cf-offboard-controller
+  venv_path: /home/fls/env
+
+drones:
+  - id: "lb1"
+    ip: lightbendercf01
+    user: fls
+    obj_name: lightbender01
+    type: a
+    uri: radio://0/100/2M/E7E7E7E701
+  - id: "lb2"
+    ip: lightbendercf02
+    user: fls
+    obj_name: lightbender02
+    type: a
+    uri: radio://0/100/2M/E7E7E7E702
+
+mission:
+  delta_t: 0.0
+  require_handshake: true
+
+camera_node:
+  ip: 192.168.1.90
+  user: fls

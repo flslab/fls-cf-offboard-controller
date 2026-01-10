@@ -150,6 +150,9 @@ class SwarmOrchestrator:
             conn.get(remote_path, local_path)
             self.logger.info(f"Saved: {local_path}")
             return True
+        except FileNotFoundError:
+            self.logger.info(f"File not found, it will be removed from list.")
+            return True
         except Exception as e:
             self.logger.error(f"Failed to download {description}: {e}")
             return False
@@ -177,7 +180,7 @@ class SwarmOrchestrator:
     def reboot_flight_controllers(self):
         for drone in self.drones:
             reboot_crazyflie(drone['uri'])
-        time.sleep(8)  # Wait for reboot
+        time.sleep(5)  # Wait for reboot
 
     def run(self):
         if self.args.off:

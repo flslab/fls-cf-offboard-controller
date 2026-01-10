@@ -324,7 +324,7 @@ class Controller:
             if msg.get('cmd') == 'START':
                 break
 
-        delay = int(self.args.drone_id.split('lb')[1]) * self.manifest['mission']['delta_t']
+        delay = (int(self.args.drone_id.split('lb')[1]) - 1) * self.manifest['mission']['delta_t']
         logger.info(f"[{self.args.drone_id}] Launching in {delay}s...")
         time.sleep(delay)
 

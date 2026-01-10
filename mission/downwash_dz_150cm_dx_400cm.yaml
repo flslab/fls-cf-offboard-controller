@@ -1,6 +1,6 @@
 name: downwash_dz_150cm_dx_400cm
 drones:
-  lb0:
+  lb1:
     target: [ 0.0, 0.0, 1.5 ]
     waypoints: [ [0.0, 0.0, 2.0] ]
     servo:
@@ -8,7 +8,7 @@ drones:
       delta_t: 5
       iterations: 26
     color: [ 25, 25, 30 ]
-  lb1:
+  lb2:
     target: [ -2.0, 0.0, 0.5 ]
     waypoints: [ [2.0, 0.0, 0.5], [-2.0, 0.0, 0.5] ]
     servo:

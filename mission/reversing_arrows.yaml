@@ -1,6 +1,6 @@
 name: reversing_arrow_sepy24cm_t8s_l200cm
 drones:
-  lb0:
+  lb1:
     target: [ 0.0, -0.12, 1.0 ]
     waypoints: [[0.0, 0.88, 1.0, 0.0], [0.0, -1.12, 1.0, 0.0]]
     delta_t: 8
@@ -10,7 +10,7 @@ drones:
       relative: false
     servos: [ [0, 180], [40, 320] ]
     color: [ 227, 253, 255 ]
-  lb1:
+  lb2:
     target: [ 0.0, 0.12, 1.0 ]
     waypoints: [ [0.0, 1.12, 1.0, 0.0], [0.0, -0.88, 1.0, 0.0] ]
     delta_t: 8
