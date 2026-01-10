@@ -48,8 +48,6 @@ class pi5RC:
     def set(self, angle: float, angle_range: float = 180.0, pulse_range: tuple = (500, 2500)):
         pulse_width = int(((angle / angle_range) * (pulse_range[1] - pulse_range[0]) + pulse_range[0]))
         self.set_pwm(pulse_width)
-        if abs(angle - angle_range) < 1:
-            self.set_pwm(pulse_width - 11)
 
     def set_pwm(self, onTime_us: int):
         """Set pulse width in microseconds (e.g., 1500 for center)"""
