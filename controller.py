@@ -129,6 +129,7 @@ class Controller:
         self.flying = False
         self.failsafe = False
         self.init_coord = None
+        self.mocap_frames = []
 
         self._safe_sleep: Callable[[float], None]
         if self.args.orchestrated:
@@ -188,13 +189,14 @@ class Controller:
 
         if self.var_logger:
             self.var_logger.stop()
-            self.save_logs()
+            self.save_log()
 
         if self.bat_logger:
             self.bat_logger.stop()
 
         if self.mocap:
             self.mocap.stop()
+            self.save_mocap_log()
 
         if self.tracker:
             self.tracker.stop()
@@ -268,28 +270,18 @@ class Controller:
             logger.debug("led activated")
 
     def setup_motion_capture(self):
-        on_pose = None
-        if self.args.vicon:
-            if self.args.vicon_full_pose:
-                on_pose = self._send_position_orientation
-            else:
-                on_pose = self._send_position
-        if self.args.vicon:
-            self.mocap = Mocap(
-                object_name=self.args.obj_name,
-                tag=self.args.tag,
-                on_pose=on_pose
-            )
-            self.mocap.start()
-            logger.debug("mocap activated")
-        elif self.args.save_vicon:
-            self.mocap = Mocap(
-                object_name=self.args.obj_name,
-                tag=self.args.tag,
-                on_pose=on_pose
-            )
-            self.mocap.start()
-            logger.debug("mocap activated")
+        if not self.args.vicon:
+            return
+
+        if self.args.vicon_full_pose:
+            on_pose = self._send_position_orientation
+        else:
+            on_pose = self._send_position
+
+        self.mocap = Mocap()
+        self.mocap.subscribe_object(self.args.obj_name, on_pose)
+        self.mocap.start()
+        logger.debug("mocap activated")
 
     def setup_tracker(self):
         if self.args.tracker:
@@ -338,7 +330,7 @@ class Controller:
 
     def save_init_coord(self):
         if self.mocap:
-            self.init_coord = self.mocap.get_latest_pos()["tvec"]
+            self.init_coord = self._get_latest_mocap_frame()["tvec"]
 
     def takeoff(self):
         if self.args.ground_test:
@@ -354,7 +346,7 @@ class Controller:
         logger.info("Landing...")
         z = self.args.takeoff_altitude
         if self.init_coord:
-            x, y, z = self.mocap.get_latest_pos()["tvec"]
+            x, y, z = self._get_latest_mocap_frame()["tvec"]
             xi, yi, _ = self.init_coord
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = 2 * dist
@@ -492,6 +484,7 @@ class Controller:
         mission_setting = self.mission['drones'][self.args.drone_id]
         x, y, z = mission_setting['target']
         waypoints = mission_setting.get('waypoints', [])
+        follow = mission_setting.get('follow', False)
         params = mission_setting.get('params', {'linear': False, 'relative': False})
         angles = mission_setting.get('servos', [])
         delta_t = mission_setting['delta_t']
@@ -512,7 +505,16 @@ class Controller:
         if self.manifest['mission']['require_handshake']:
             self.handshake()
 
-        if len(waypoints) and len(angles):
+        if follow:
+            leader_drone = self._get_drone_by_id(follow['id'])
+            if leader_drone:
+                leader_obj_name = leader_drone['obj_name']
+                self.mocap.subscribe_object(leader_obj_name, lambda frame: self._follow_with_offset(frame, follow['offset']))
+                self._safe_sleep(delta_t)
+                self.mocap.unsubscribe_object(leader_obj_name)
+                self.cf.commander.send_stop_setpoint()
+                self.cf.commander.send_notify_setpoint_stop()
+        elif len(waypoints) and len(angles):
             self.sync_pos_servo(waypoints, angles, delta_t, iterations, params)
         elif len(angles):
             self.run_servo(angles, delta_t, iterations)
@@ -544,12 +546,12 @@ class Controller:
                     # If sleep_duration is negative, we are lagging behind!
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
 
-    def save_logs(self):
+    def save_log(self):
         log_dir = self.args.log_dir
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
 
-        filename = os.path.join("logs", f"cf_{self.args.tag}.json")
+        filename = os.path.join(log_dir, f"cf_{self.args.tag}.json")
 
         output_data = {
             "time": self.log_times,
@@ -558,6 +560,17 @@ class Controller:
         with open(filename, 'w') as f:
             json.dump(output_data, f)
         logger.info(f"Logs saved to {filename}")
+
+    def save_mocap_log(self):
+        log_dir = self.args.log_dir
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+
+        filename = os.path.join(log_dir, f"vicon_{self.args.tag}.json")
+
+        with open(filename, "w") as f:
+            json.dump({"frames": self.mocap_frames}, f)
+        logger.info(f"Mocap log saved in {filename}")
 
     def _safe_sleep_standalone(self, seconds):
         is_battery_critical = self.battery_critical.wait(timeout=seconds)
@@ -687,11 +700,29 @@ class Controller:
         if value:
             self.deck_attached_event.set()
 
-    def _send_position(self, x, y, z, quat=None):
-        self.scf.cf.extpos.send_extpos(x, y, z)
+    def _send_position(self, frame):
+        self.scf.cf.extpos.send_extpos(*frame['tvec'])
+        self._log_mocap(frame)
 
-    def _send_position_orientation(self, x, y, z, quat):
-        self.scf.cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
+    def _send_position_orientation(self, frame):
+        self.scf.cf.extpos.send_extpose(*frame['tvec'], *frame['quat'])
+        self._log_mocap(frame)
+
+    def _log_mocap(self, frame):
+        self.mocap_frames.append(frame)
+
+    def _get_latest_mocap_frame(self):
+        return self.mocap_frames[-1]
+
+    def _get_drone_by_id(self, drone_id):
+        for drone in self.manifest['drones']:
+            if drone['id'] == drone_id:
+                return drone
+
+    def _follow_with_offset(self, frame, offset):
+        x, y, z = frame['tvec']
+        xo, yo, zo = offset
+        self.cf.commander.send_position_setpoint(x + xo, y + yo, z + zo, 0)
 
 
 if __name__ == '__main__':
