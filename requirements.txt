@@ -1,4 +1,3 @@
-motioncapture
 pyzmq
 PyYAML
 pyserial

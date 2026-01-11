@@ -3,20 +3,29 @@ import threading
 import time
 import logging
 import motioncapture
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
 class Mocap(threading.Thread):
-    def __init__(self, mocap_system_type="vicon", host_name="vicon"):
+    def __init__(self, mocap_system_type="vicon", host_name="vicon", mode="rigidbody"):
+        """
+        Args:
+            mocap_system_type (str): Type of system (vicon, optitrack, etc).
+            host_name (str): Hostname or IP of the mocap server.
+            mode (str): 'rigidbody' or 'pointcloud'.
+        """
         threading.Thread.__init__(self)
 
         self.running = True
         self.mocap_system_type = mocap_system_type
         self.host_name = host_name
+        self.mode = mode.lower()
 
         # Shared state
-        self.objects_to_track = []
+        self.objects_to_track = []  # For RigidBodies: list of (name, callback)
+        self.points_to_track = []  # For PointCloud: list of mutable dicts
 
         # Lock is ONLY for writers (subscribe/unsubscribe), not the reader (run)
         self._write_lock = threading.Lock()
@@ -26,31 +35,92 @@ class Mocap(threading.Thread):
         self.join()
 
     def run(self):
-        mc = motioncapture.connect(self.mocap_system_type, {'hostname': self.host_name})
-        i = 0
+        logger.info(f"Connecting to {self.mocap_system_type} at {self.host_name} in {self.mode} mode...")
+        try:
+            mc = motioncapture.connect(self.mocap_system_type, {'hostname': self.host_name})
+        except Exception as e:
+            logger.error(f"Failed to connect: {e}")
+            self.running = False
+            return
+
+        frame_count = 0
         while self.running:
-            mc.waitForNextFrame()
+            try:
+                mc.waitForNextFrame()
+            except Exception as e:
+                logger.warning(f"Frame wait error: {e}")
+                continue
+
             now = time.time()
 
-            # Grab a reference to the current list
-            # If unsubscribe happens during this line, we just keep using the "old" list
-            current_targets = self.objects_to_track
+            # --- Rigid Body Mode ---
+            if self.mode == "rigidbody":
+                # Grab reference to list (thread-safe copy logic in subscribe handles the writer side)
+                current_targets = self.objects_to_track
 
-            for name, obj in mc.rigidBodies.items():
-                for obj_name, callback in current_targets:
-                    if name == obj_name:
-                        pos = obj.position
-                        quat = obj.rotation
-                        if callback:
-                            callback({
-                                "frame_id": i,
-                                "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
-                                "quat": [float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
-                                "time": now
-                            })
-            i += 1
+                # Iterate over all rigid bodies provided by the SDK
+                for name, obj in mc.rigidBodies.items():
+                    for obj_name, callback in current_targets:
+                        if name == obj_name:
+                            pos = obj.position
+                            quat = obj.rotation
+                            if callback:
+                                callback({
+                                    "frame_id": frame_count,
+                                    "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
+                                    "quat": [float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
+                                    "time": now
+                                })
+
+            # --- Point Cloud Mode ---
+            elif self.mode == "pointcloud":
+                if hasattr(mc, 'pointCloud') and mc.pointCloud is not None:
+                    # 1. Convert SDK PointCloud to Numpy Array (N x 3)
+                    # C++ Type: Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor>
+                    # This maps efficiently to a numpy array, often allowing zero-copy access.
+                    try:
+                        # copy=False attempts to use the existing buffer without duplication
+                        cloud_arr = np.array(mc.pointCloud, copy=False)
+                    except (ValueError, TypeError):
+                        # Fallback if the binding returns a list or requires a copy
+                        cloud_arr = np.array(mc.pointCloud)
+
+                    if len(cloud_arr) > 0:
+                        # We only lock briefly to get the reference to our tracking list
+                        with self._write_lock:
+                            current_points = list(self.points_to_track)
+
+                        for pt_data in current_points:
+                            target_pos = pt_data['current_pos']
+
+                            # --- Efficient Nearest Neighbor Search ---
+                            # Vectorized calculation of Squared Euclidean Distance
+                            # (x-x0)^2 + (y-y0)^2 + (z-z0)^2
+                            diff = cloud_arr - target_pos
+
+                            # Einstein summation is often faster/cleaner for dot products on rows
+                            # Equivalent to: np.sum(diff**2, axis=1)
+                            dist_sq = np.einsum('ij,ij->i', diff, diff)
+
+                            # Find index of the minimum distance
+                            min_idx = np.argmin(dist_sq)
+                            closest_point = cloud_arr[min_idx]
+
+                            # Update 'current_pos' to the new found point.
+                            # This allows us to "track" the point as it moves across the volume.
+                            pt_data['current_pos'] = closest_point
+
+                            if pt_data['callback']:
+                                pt_data['callback']({
+                                    "frame_id": frame_count,
+                                    "pos": closest_point.tolist(),
+                                    "dist_sq": float(dist_sq[min_idx]),
+                                    "time": now
+                                })
+            frame_count += 1
 
     def subscribe_object(self, obj_name, callback):
+        """Subscribe to a named rigid body (RigidBody Mode)."""
         with self._write_lock:
             new_list = list(self.objects_to_track)
             new_list.append((obj_name, callback))
@@ -61,14 +131,59 @@ class Mocap(threading.Thread):
             new_list = [obj for obj in self.objects_to_track if obj[0] != obj_name]
             self.objects_to_track = new_list
 
+    def subscribe_point(self, initial_point, callback):
+        """
+        Subscribe to a specific point in the pointcloud (Pointcloud Mode).
+
+        Args:
+            initial_point (list/array): [x, y, z] coordinates of the point to start tracking.
+            callback (func): Function to call with frame data.
+        """
+        with self._write_lock:
+            # We store a mutable dictionary for each tracked point.
+            # 'current_pos' is updated by the run loop to follow the marker.
+            pt_data = {
+                'initial_pos': np.array(initial_point, dtype=float),
+                'current_pos': np.array(initial_point, dtype=float),
+                'callback': callback
+            }
+            self.points_to_track.append(pt_data)
+
 
 if __name__ == "__main__":
+    # Example usage:
+    # python mocap_extended.py --mode pointcloud --point 100 200 50
+
     ap = argparse.ArgumentParser()
     ap.add_argument("-t", default=140, type=int, help="duration")
-    ap.add_argument("--obj-name", type=str, help="object name in motion capture system")
+    ap.add_argument("--mode", default="rigidbody", choices=["rigidbody", "pointcloud"], help="Tracking mode")
+
+    # Rigidbody args
+    ap.add_argument("--obj-name", type=str, help="Rigid body name")
+
+    # Pointcloud args
+    ap.add_argument("--point", type=float, nargs=3, help="Initial point x y z", default=[0.0, 0.0, 0.0])
+
     args = ap.parse_args()
 
-    mw = Mocap()
-    mw.subscribe_object(args.obj_name, lambda frame: print(frame))
-    time.sleep(args.t)
-    mw.stop()
+    mw = Mocap(mode=args.mode)
+    mw.start()
+
+    if args.mode == "rigidbody":
+        if args.obj_name:
+            print(f"Subscribing to RigidBody: {args.obj_name}")
+            mw.subscribe_object(args.obj_name, lambda frame: print(f"RB: {frame['tvec']}"))
+        else:
+            print("Warning: Mode is rigidbody but no --obj-name provided.")
+
+    elif args.mode == "pointcloud":
+        print(f"Subscribing to Point closest to: {args.point}")
+        mw.subscribe_point(args.point, lambda frame: print(f"PT: {frame['pos']} (Error^2: {frame['dist_sq']:.2f})"))
+
+    try:
+        time.sleep(args.t)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        mw.stop()
+        print("Stopped.")
