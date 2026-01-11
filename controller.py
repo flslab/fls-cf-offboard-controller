@@ -123,6 +123,7 @@ class Controller:
         self.battery_critical = Event()
         self.start_time = 0
         self.flight_duration = 0
+        self.target_yaw = 0.0
 
         self.log_data = copy.deepcopy(LOG_VARS)
         self.log_times = []
@@ -350,7 +351,7 @@ class Controller:
             xi, yi, _ = self.init_coord
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = 2 * dist
-            self.commander.go_to(xi, yi, z, 0, dt, relative=False)
+            self.commander.go_to(xi, yi, z, self.target_yaw, dt, relative=False)
             time.sleep(dt + 0.5)
 
         if self.flying:
@@ -494,6 +495,7 @@ class Controller:
         if len(target) == 3:
             target.append(0.0)
         x, y, z, yaw = target
+        self.target_yaw = yaw
 
         dt = 1
         if self.init_coord:
