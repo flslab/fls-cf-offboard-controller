@@ -482,7 +482,7 @@ class Controller:
         self.led.show_single_color(led_color)
 
         mission_setting = self.mission['drones'][self.args.drone_id]
-        x, y, z = mission_setting['target']
+        target = mission_setting['target']
         waypoints = mission_setting.get('waypoints', [])
         follow = mission_setting.get('follow', False)
         params = mission_setting.get('params', {'linear': False, 'relative': False})
@@ -491,6 +491,9 @@ class Controller:
         iterations = mission_setting['iterations']
 
         total_flight_duration = delta_t * iterations * len(angles)
+        if len(target) == 3:
+            target.append(0.0)
+        x, y, z, yaw = target
 
         dt = 1
         if self.init_coord:
@@ -499,7 +502,7 @@ class Controller:
             dt = 3 * dist
 
         if not self.args.ground_test:
-            self.commander.go_to(x, y, z, 0, dt, relative=False)
+            self.commander.go_to(x, y, z, yaw, dt, relative=False)
             self._safe_sleep(dt + 1)
 
         if self.manifest['mission']['require_handshake']:
