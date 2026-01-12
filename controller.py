@@ -278,8 +278,15 @@ class Controller:
         else:
             on_pose = self._send_position
 
-        self.mocap = Mocap()
-        self.mocap.subscribe_object(self.args.obj_name, on_pose)
+        self.mocap = Mocap(mode=self.args.vicon_mode)
+
+        if self.args.vicon_mode == "rigidbody":
+            logger.info(f"Subscribing to RigidBody: {args.obj_name}")
+            self.mocap.subscribe_object(self.args.obj_name, on_pose)
+        elif args.mode == "pointcloud":
+            logger.info(f"Subscribing to Point closest to: {args.point}")
+            self.mocap.subscribe_point(self.args.init_pos, on_pose, name=self.args.drone_id)
+
         self.mocap.start()
         logger.debug("mocap activated")
 
@@ -509,12 +516,22 @@ class Controller:
             self.handshake()
 
         if follow:
-            leader_drone = self._get_drone_by_id(follow['id'])
+            leader_id = follow['id']
+            leader_drone = self._get_drone_by_id(leader_id)
             if leader_drone:
-                leader_obj_name = leader_drone['obj_name']
-                self.mocap.subscribe_object(leader_obj_name, lambda frame: self._follow_with_offset(frame, follow['offset']))
-                self._safe_sleep(delta_t)
-                self.mocap.unsubscribe_object(leader_obj_name)
+                if self.args.vicon_mode == "rigidbody":
+                    leader_obj_name = leader_drone['obj_name']
+                    self.mocap.subscribe_object(leader_obj_name,
+                                                lambda frame: self._follow_with_offset(frame, follow['offset']))
+                    self._safe_sleep(delta_t)
+                    self.mocap.unsubscribe_object(leader_obj_name)
+                elif self.args.vicon_mode == "pointcloud":
+                    leader_init_pos = leader_drone['init_pos']
+                    self.mocap.subscribe_point(leader_init_pos,
+                                               lambda frame: self._follow_with_offset(frame, follow['offset']),
+                                               name=leader_id)
+                    self._safe_sleep(delta_t)
+                    self.mocap.unsubscribe_point(leader_id)
                 self.cf.commander.send_notify_setpoint_stop()
         elif len(waypoints) and len(angles):
             self.sync_pos_servo(waypoints, angles, delta_t, iterations, params)
@@ -747,8 +764,10 @@ if __name__ == '__main__':
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
     ap.add_argument("--vicon-full-pose", action="store_true",
                     help="if passed send both position and orientation otherwise send only position")
-    ap.add_argument("--obj-name", type=str, default="lightbender01",
+    ap.add_argument("--obj-name", type=str,
                     help="object name in mocap system, works with --vicon.")
+    ap.add_argument("--vicon-mode", default="rigidbody", choices=["rigidbody", "pointcloud"], help="Tracking mode")
+    ap.add_argument("--init-pos", type=float, nargs=3, help="Initial point x y z", default=[0.0, 0.0, 0.0])
     ap.add_argument("--save-vicon", action="store_true", help="track with vicon and save the data")
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)

@@ -131,23 +131,33 @@ class Mocap(threading.Thread):
             new_list = [obj for obj in self.objects_to_track if obj[0] != obj_name]
             self.objects_to_track = new_list
 
-    def subscribe_point(self, initial_point, callback):
+    def subscribe_point(self, initial_point, callback, name=None):
         """
         Subscribe to a specific point in the pointcloud (Pointcloud Mode).
 
         Args:
             initial_point (list/array): [x, y, z] coordinates of the point to start tracking.
             callback (func): Function to call with frame data.
+            name (str, optional): Unique identifier for this point to allow unsubscribing.
         """
         with self._write_lock:
             # We store a mutable dictionary for each tracked point.
             # 'current_pos' is updated by the run loop to follow the marker.
             pt_data = {
+                'name': name,
                 'initial_pos': np.array(initial_point, dtype=float),
                 'current_pos': np.array(initial_point, dtype=float),
                 'callback': callback
             }
             self.points_to_track.append(pt_data)
+
+    def unsubscribe_point(self, name):
+        """
+        Unsubscribe a point by its assigned name.
+        """
+        with self._write_lock:
+            # Remove all points that match the given name
+            self.points_to_track = [pt for pt in self.points_to_track if pt.get('name') != name]
 
 
 if __name__ == "__main__":
