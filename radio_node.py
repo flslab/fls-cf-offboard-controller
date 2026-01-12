@@ -23,14 +23,12 @@ class RadioGatewayNode:
         self.ctrl = manifest['controller']
         self.context = zmq.Context()
 
-        # Subscribe to Commands (REBOOT, SHUTDOWN)
+        self.push_socket = self.context.socket(zmq.PUSH)
+        self.push_socket.connect(f"tcp://{self.ctrl['ip']}:{self.ctrl['zmq_ack_port']}")
+
         self.sub_socket = self.context.socket(zmq.SUB)
         self.sub_socket.connect(f"tcp://{self.ctrl['ip']}:{self.ctrl['zmq_cmd_port']}")
         self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-
-        # Push Status
-        self.push_socket = self.context.socket(zmq.PUSH)
-        self.push_socket.connect(f"tcp://{self.ctrl['ip']}:{self.ctrl['zmq_ack_port']}")
 
     def handle_reboot(self, uris):
         if not CFLIB_AVAILABLE:
@@ -54,6 +52,7 @@ class RadioGatewayNode:
         try:
             while True:
                 msg = self.sub_socket.recv_json()
+                print(msg)
                 cmd = msg.get('cmd')
 
                 if cmd == 'REBOOT':
