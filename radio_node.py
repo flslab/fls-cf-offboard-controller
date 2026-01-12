@@ -56,6 +56,8 @@ class RadioGatewayNode:
                 cmd = msg.get('cmd')
 
                 if cmd == 'REBOOT':
+                    self.push_socket.send_json({"id": "RADIO", "status": "REBOOT_STARTED"})
+
                     uris = msg.get('uris', [])
                     self.handle_reboot(uris)
 
