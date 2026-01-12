@@ -650,7 +650,7 @@ class Controller:
     def _send_landing_confirmation(self):
         if self.args.orchestrated:
             self.push_socket.send_json({
-                "id": args.drone_id,
+                "id": self.args.drone_id,
                 "status": "LANDED",
                 "battery": self.voltage,
                 "flight_duration": self.flight_duration

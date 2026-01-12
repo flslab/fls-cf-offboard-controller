@@ -113,7 +113,7 @@ class Mocap(threading.Thread):
                             if pt_data['callback']:
                                 pt_data['callback']({
                                     "frame_id": frame_count,
-                                    "pos": closest_point.tolist(),
+                                    "tvec": closest_point.tolist(),
                                     "dist_sq": float(dist_sq[min_idx]),
                                     "time": now
                                 })
