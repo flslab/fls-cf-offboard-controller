@@ -1,0 +1,80 @@
+name: drawing_s
+drones:
+  lb2:
+    target: [ -0.16, 0.0, 1.32, 0.0 ]
+    waypoints: []
+    delta_t: 15
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [150, 392] ]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "[230, 115, 21] if i > (49 - (t * 25)) else [0, 0, 0]"
+  lb3:
+    target: [ 0.16, 0.0, 0.68, 0.0 ]
+    waypoints: []
+    delta_t: 15
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [ 215, 325 ] ]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "[230, 115, 21] if i - 150 > (49 - (t * 25)) else [0, 0, 0]"
+  lb4:
+    target: [ 0.0, -0.14, 1.08, 0.0 ]
+    waypoints: []
+    delta_t: 15
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [29, 265] ]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "[230, 115, 21] if i - 50 > (49 - (t * 25)) else [0, 0, 0]"
+  lb5:
+    target: [ -0.005, 0.146, 0.918, 0.0 ]
+    waypoints: []
+    delta_t: 15
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [ 87, 209 ] ]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "[230, 115, 21] if i - 100 > (49 - (t * 25)) else [0, 0, 0]"
+
+
+#  - id: "lb2"
+#    ip: lightbendercf02
+#    user: fls
+#    init_pos: [ -0.5, 0.0, 0.2 ]
+#    type: b
+#    uri: radio://0/100/2M/E7E7E7E702
+#  - id: "lb3"
+#    ip: lightbendercf03
+#    user: fls
+#    init_pos: [ 0.5, 0.0, 0.2 ]
+#    type: b
+#    uri: radio://0/100/2M/E7E7E7E703
+#  - id: "lb4"
+#    ip: lightbendercf04
+#    user: fls
+#    init_pos: [ 0.0, -0.5, 0.2 ]
+#    type: a
+#    uri: radio://0/100/2M/E7E7E7E704
+#  - id: "lb5"
+#    ip: lightbendercf05
+#    user: fls
+#    init_pos: [ 0.0, 0.5, 0.2 ]
+#    type: a
+#    uri: radio://0/100/2M/E7E7E7E705
