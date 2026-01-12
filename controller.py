@@ -560,7 +560,7 @@ class Controller:
             current_time = time.time() - start_time
             led_buffer = []
 
-            for i in range(50):
+            for i in range(self.args.led_count):
                 # Create a context with local variables for the formula
                 context = {"t": current_time, "i": i, "N": self.args.led_count, "math": math}
                 # Evaluate the string from YAML
