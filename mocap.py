@@ -109,7 +109,9 @@ class Mocap(threading.Thread):
                             # SAFETY GUARD: Only update if the point is within the allowed radius.
                             # If min_dist_sq is too large, it implies the point is occluded or
                             # not published, and the "closest" point is actually just some other random marker.
-                            if min_dist_sq <= pt_data['max_dist_sq']:
+                            max_dist_sq = pt_data['max_dist_sq'] if pt_data['captured'] else pt_data['max_dist_sq'] * 4
+                            if min_dist_sq <= max_dist_sq:
+                                pt_data['captured'] = True
                                 closest_point = cloud_arr[min_idx]
 
                                 # Update 'current_pos' to the new found point.
@@ -160,6 +162,7 @@ class Mocap(threading.Thread):
                 'initial_pos': np.array(initial_point, dtype=float) * 1000,
                 'current_pos': np.array(initial_point, dtype=float) * 1000,
                 'max_dist_sq': (max_distance * 1000) ** 2,
+                'captured': False,
                 'callback': callback
             }
             self.points_to_track.append(pt_data)
