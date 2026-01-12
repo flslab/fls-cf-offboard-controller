@@ -104,19 +104,29 @@ class Mocap(threading.Thread):
 
                             # Find index of the minimum distance
                             min_idx = np.argmin(dist_sq)
-                            closest_point = cloud_arr[min_idx]
+                            min_dist_sq = dist_sq[min_idx]
 
-                            # Update 'current_pos' to the new found point.
-                            # This allows us to "track" the point as it moves across the volume.
-                            pt_data['current_pos'] = closest_point
+                            # SAFETY GUARD: Only update if the point is within the allowed radius.
+                            # If min_dist_sq is too large, it implies the point is occluded or
+                            # not published, and the "closest" point is actually just some other random marker.
+                            if min_dist_sq <= pt_data['max_dist_sq']:
+                                closest_point = cloud_arr[min_idx]
 
-                            if pt_data['callback']:
-                                pt_data['callback']({
-                                    "frame_id": frame_count,
-                                    "tvec": closest_point.tolist(),
-                                    "dist_sq": float(dist_sq[min_idx]),
-                                    "time": now
-                                })
+                                # Update 'current_pos' to the new found point.
+                                # This allows us to "track" the point as it moves across the volume.
+                                pt_data['current_pos'] = closest_point
+
+                                if pt_data['callback']:
+                                    pt_data['callback']({
+                                        "frame_id": frame_count,
+                                        "pos": closest_point.tolist(),
+                                        "dist_sq": float(min_dist_sq),
+                                        "time": now
+                                    })
+                            # else:
+                            #   Point lost/occluded. We keep 'current_pos' at the last valid location
+                            #   so we can re-acquire the point when it reappears nearby.
+
             frame_count += 1
 
     def subscribe_object(self, obj_name, callback):
@@ -131,7 +141,7 @@ class Mocap(threading.Thread):
             new_list = [obj for obj in self.objects_to_track if obj[0] != obj_name]
             self.objects_to_track = new_list
 
-    def subscribe_point(self, initial_point, callback, name=None):
+    def subscribe_point(self, initial_point, callback, name=None, max_distance=0.1):
         """
         Subscribe to a specific point in the pointcloud (Pointcloud Mode).
 
@@ -139,6 +149,8 @@ class Mocap(threading.Thread):
             initial_point (list/array): [x, y, z] coordinates of the point to start tracking.
             callback (func): Function to call with frame data.
             name (str, optional): Unique identifier for this point to allow unsubscribing.
+            max_distance (float): Maximum allowed distance (units, e.g. mm) the point can move
+                                  between frames before being considered "lost".
         """
         with self._write_lock:
             # We store a mutable dictionary for each tracked point.
@@ -147,6 +159,7 @@ class Mocap(threading.Thread):
                 'name': name,
                 'initial_pos': np.array(initial_point, dtype=float),
                 'current_pos': np.array(initial_point, dtype=float),
+                'max_dist_sq': max_distance ** 2,
                 'callback': callback
             }
             self.points_to_track.append(pt_data)
@@ -162,7 +175,7 @@ class Mocap(threading.Thread):
 
 if __name__ == "__main__":
     # Example usage:
-    # python mocap_extended.py --mode pointcloud --point 100 200 50
+    # python mocap_extended.py --mode pointcloud --point 100 200 50 --max-dist 100
 
     ap = argparse.ArgumentParser()
     ap.add_argument("-t", default=140, type=int, help="duration")
@@ -173,6 +186,7 @@ if __name__ == "__main__":
 
     # Pointcloud args
     ap.add_argument("--point", type=float, nargs=3, help="Initial point x y z", default=[0.0, 0.0, 0.0])
+    ap.add_argument("--max-dist", type=float, default=0.1, help="Max tracking jump distance")
 
     args = ap.parse_args()
 
@@ -187,8 +201,13 @@ if __name__ == "__main__":
             print("Warning: Mode is rigidbody but no --obj-name provided.")
 
     elif args.mode == "pointcloud":
-        print(f"Subscribing to Point closest to: {args.point}")
-        mw.subscribe_point(args.point, lambda frame: print(f"PT: {frame['pos']} (Error^2: {frame['dist_sq']:.2f})"))
+        print(f"Subscribing to Point closest to: {args.point} (Max Jump: {args.max_dist})")
+        mw.subscribe_point(
+            args.point,
+            lambda frame: print(f"PT: {frame['pos']} (Error^2: {frame['dist_sq']:.2f})"),
+            name="my_point",
+            max_distance=args.max_dist
+        )
 
     try:
         time.sleep(args.t)
