@@ -143,7 +143,7 @@ class Mocap(threading.Thread):
             new_list = [obj for obj in self.objects_to_track if obj[0] != obj_name]
             self.objects_to_track = new_list
 
-    def subscribe_point(self, initial_point, callback, name=None, max_distance=0.1):
+    def subscribe_point(self, initial_point, callback, name=None, max_distance=0.05):
         """
         Subscribe to a specific point in the pointcloud (Pointcloud Mode).
 

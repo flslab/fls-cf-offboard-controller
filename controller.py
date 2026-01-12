@@ -502,11 +502,14 @@ class Controller:
             target.append(0.0)
         x, y, z, yaw = target
 
-        dt = 1
+        dt = 3
         if self.init_coord:
             xi, yi, _ = self.init_coord
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
-            dt = 3 * dist
+            dt = 6 * dist
+
+        if len(angles):
+            self.servo.set_all_smooth(angles[0])
 
         if not self.args.ground_test:
             self.commander.go_to(x, y, z, yaw, dt, relative=False)
