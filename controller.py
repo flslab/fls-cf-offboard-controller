@@ -281,10 +281,10 @@ class Controller:
         self.mocap = Mocap(mode=self.args.vicon_mode)
 
         if self.args.vicon_mode == "rigidbody":
-            logger.info(f"Subscribing to RigidBody: {args.obj_name}")
+            logger.info(f"Subscribing to RigidBody: {self.args.obj_name}")
             self.mocap.subscribe_object(self.args.obj_name, on_pose)
         elif self.args.vicon_mode == "pointcloud":
-            logger.info(f"Subscribing to Point closest to: {args.point}")
+            logger.info(f"Subscribing to Point closest to: {self.args.init_pos}")
             self.mocap.subscribe_point(self.args.init_pos, on_pose, name=self.args.drone_id)
 
         self.mocap.start()
