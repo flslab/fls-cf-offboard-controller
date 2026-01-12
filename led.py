@@ -4,7 +4,7 @@ import neopixel_spi as neopixel
 
 
 class LED:
-    def __init__(self, num_pixels=72, color=(227, 253, 255), tail_decay=0.75, delay=0.02, brightness=1.0):
+    def __init__(self, num_pixels=50, color=(227, 253, 255), tail_decay=0.75, delay=0.02, brightness=1.0):
         self.num_pixels = num_pixels
         self.color = color
         self.tail_decay = tail_decay
@@ -56,6 +56,10 @@ class LED:
             color = self.color
         for pos in range(self.num_pixels):
             self.leds[pos] = color
+        self.draw_frame()
+
+    def set_colors(self, colors):
+        self.leds = colors
         self.draw_frame()
 
     def halo_loop(self):

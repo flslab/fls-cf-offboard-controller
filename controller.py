@@ -2,7 +2,9 @@ import argparse
 import copy
 import datetime
 import json
+import threading
 from typing import Callable
+import math
 
 import yaml
 import logging
@@ -123,6 +125,8 @@ class Controller:
         self.battery_critical = Event()
         self.start_time = 0
         self.flight_duration = 0
+        self.led_running = False
+        self.led_thread = None
 
         self.log_data = copy.deepcopy(LOG_VARS)
         self.log_times = []
@@ -265,7 +269,7 @@ class Controller:
     def setup_led(self):
         if self.args.led:
             from led import LED
-            self.led = LED(brightness=self.args.led_brightness)
+            self.led = LED(brightness=self.args.led_brightness, num_pixels=self.args.led_count)
             self.led.show_single_color(color=(230, 180, 0))
             logger.debug("led activated")
 
@@ -485,9 +489,6 @@ class Controller:
             self._safe_sleep(1 / fps)
 
     def orchestrated_mission(self):
-        led_color = self.mission['drones'][self.args.drone_id]['color']
-        self.led.show_single_color(led_color)
-
         mission_setting = self.mission['drones'][self.args.drone_id]
         target = mission_setting['target']
         waypoints = mission_setting.get('waypoints', [])
@@ -496,6 +497,10 @@ class Controller:
         angles = mission_setting.get('servos', [])
         delta_t = mission_setting['delta_t']
         iterations = mission_setting['iterations']
+        led_color = mission_setting.get('color')
+        if led_color is not None:
+            self.led.show_single_color(led_color)
+        led_setting = mission_setting.get('led', {})
 
         total_flight_duration = delta_t * iterations * len(angles)
         if len(target) == 3:
@@ -517,6 +522,9 @@ class Controller:
 
         if self.manifest['mission']['require_handshake']:
             self.handshake()
+
+        if led_setting.get('mode') == 'expression':
+            self.start_led_thread(led_setting)
 
         if follow:
             leader_id = follow['id']
@@ -540,7 +548,38 @@ class Controller:
             self.sync_pos_servo(waypoints, angles, delta_t, iterations, params)
         elif len(angles):
             self.run_servo(angles, delta_t, iterations)
+
+        self.stop_led_thread()
         self.led.clear()
+
+    def run_led(self, setting):
+        start_time = time.time()
+        formula_str = setting['formula']
+        rate_hz = setting['rate']
+        while self.led_running:
+            current_time = time.time() - start_time
+            led_buffer = []
+
+            for i in range(50):
+                # Create a context with local variables for the formula
+                context = {"t": current_time, "i": i, "N": self.args.led_count, "math": math}
+                # Evaluate the string from YAML
+                # formula_str = "[ 255 * abs(math.sin(t * 2 + i * 0.1)), 0, 100 ]"
+                rgb = eval(formula_str, {}, context)
+                led_buffer.append(rgb)
+
+                self.led.set_colors(led_buffer)
+            time.sleep(1 / rate_hz)
+
+    def start_led_thread(self, setting):
+        self.led_running = True
+        self.led_thread = threading.Thread(target=self.run_led, args=(setting,))
+        self.led_thread.start()
+
+    def stop_led_thread(self):
+        self.led_running = False
+        if self.led_thread is not None:
+            self.led_thread.join()
 
     def run_servo(self, angles, delta_t, iterations):
         for _ in range(iterations):
@@ -758,6 +797,7 @@ if __name__ == '__main__':
     ap.add_argument("--fps", type=int, default=120, help="position estimation rate, works with --localize")
     ap.add_argument("--led", help="Turn LEDs on", action="store_true", default=False)
     ap.add_argument("--led-brightness", type=float, default=1.0, help="change led brightness between 0 and 1")
+    ap.add_argument("--led-count", type=int, default=50, help="Number of LEDs")
     ap.add_argument("--servo", help="Use servo", action="store_true", default=False)
     ap.add_argument("--servo-type", type=str, help="type of light bender servo setting")
     ap.add_argument("--servo-count", type=int, default=2, help="number of the servos")
