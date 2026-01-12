@@ -80,10 +80,10 @@ class Mocap(threading.Thread):
                     # This maps efficiently to a numpy array, often allowing zero-copy access.
                     try:
                         # copy=False attempts to use the existing buffer without duplication
-                        cloud_arr = np.array(mc.pointCloud, copy=False)
+                        cloud_arr = np.array(mc.pointCloud, copy=False) * 1000
                     except (ValueError, TypeError):
                         # Fallback if the binding returns a list or requires a copy
-                        cloud_arr = np.array(mc.pointCloud)
+                        cloud_arr = np.array(mc.pointCloud) * 1000
 
                     if len(cloud_arr) > 0:
                         # We only lock briefly to get the reference to our tracking list
@@ -119,7 +119,7 @@ class Mocap(threading.Thread):
                                 if pt_data['callback']:
                                     pt_data['callback']({
                                         "frame_id": frame_count,
-                                        "pos": closest_point.tolist(),
+                                        "pos": (closest_point / 1000).tolist(),
                                         "dist_sq": float(min_dist_sq),
                                         "time": now
                                     })
@@ -157,9 +157,9 @@ class Mocap(threading.Thread):
             # 'current_pos' is updated by the run loop to follow the marker.
             pt_data = {
                 'name': name,
-                'initial_pos': np.array(initial_point, dtype=float),
-                'current_pos': np.array(initial_point, dtype=float),
-                'max_dist_sq': max_distance ** 2,
+                'initial_pos': np.array(initial_point, dtype=float) * 1000,
+                'current_pos': np.array(initial_point, dtype=float) * 1000,
+                'max_dist_sq': (max_distance * 1000) ** 2,
                 'callback': callback
             }
             self.points_to_track.append(pt_data)
