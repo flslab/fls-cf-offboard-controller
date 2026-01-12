@@ -112,18 +112,31 @@ class SwarmOrchestrator:
         else:
             p = drone['init_pos']
             mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
-        return (
-            f"cd {self.common_cfg['work_dir']} && "
-            f"source {self.common_cfg['venv_path']}/bin/activate && "
-            "git pull && "
-            f"nohup python3 {DRONE_SCRIPT} "
-            f"--orchestrated --tag {self.tag} "
-            f"--vicon {mocap_args} "
-            f"--drone-id {drone['id']} "
-            f"--led --servo --servo-type {drone['type']} "
-            f"--takeoff-altitude {alt} "
-            f"> drone_{drone['id']}.log 2>&1 < /dev/null &"
-        )
+        if self.args.ground:
+            return (
+                f"cd {self.common_cfg['work_dir']} && "
+                f"source {self.common_cfg['venv_path']}/bin/activate && "
+                "git pull && "
+                f"nohup python3 {DRONE_SCRIPT} "
+                f"--orchestrated --tag {self.tag} --ground-test "
+                f"--drone-id {drone['id']} "
+                f"--led --servo --servo-type {drone['type']} "
+                f"--takeoff-altitude {alt} "
+                f"> drone_{drone['id']}.log 2>&1 < /dev/null &"
+            )
+        else:
+            return (
+                f"cd {self.common_cfg['work_dir']} && "
+                f"source {self.common_cfg['venv_path']}/bin/activate && "
+                "git pull && "
+                f"nohup python3 {DRONE_SCRIPT} "
+                f"--orchestrated --tag {self.tag} "
+                f"--vicon {mocap_args} "
+                f"--drone-id {drone['id']} "
+                f"--led --servo --servo-type {drone['type']} "
+                f"--takeoff-altitude {alt} "
+                f"> drone_{drone['id']}.log 2>&1 < /dev/null &"
+            )
 
     def _get_camera_cmd(self):
         return (
@@ -194,16 +207,49 @@ class SwarmOrchestrator:
 
         if remote:
             if not self.radio_node:
-                self.logger.error("Cannot perform remote reboot: No 'radio_node' in manifest.")
+                print("[Orchestrator] ❌ Cannot perform remote reboot: No 'radio_node' in manifest.")
                 return
 
-            self.logger.info(f"Sending REMOTE REBOOT request to Radio Node ({len(uris)} drones)...")
-            # Send message to Radio Node
+            print(f"[Orchestrator] 📡 Sending REMOTE REBOOT request to Radio Node ({len(uris)} drones)...")
             msg = {
                 "cmd": "REBOOT",
                 "uris": uris
             }
-            self.pub_socket.send_json(msg)
+
+            # --- Retry Logic ---
+            retries = 3
+            timeout_ms = 3000
+            ack_received = False
+
+            # Use a poller to listen for the specific ACK
+            poller = zmq.Poller()
+            poller.register(self.pull_socket, zmq.POLLIN)
+
+            for attempt in range(1, retries + 1):
+                self.logger.info(f"Attempt {attempt}/{retries}: Sending REBOOT command...")
+                self.pub_socket.send_json(msg)
+
+                # Wait for ACK
+                events = dict(poller.poll(timeout_ms))
+                if self.pull_socket in events:
+                    try:
+                        reply = self.pull_socket.recv_json(flags=zmq.NOBLOCK)
+                        # Check if this is the ACK we want
+                        if reply.get('id') == 'RADIO' and reply.get('status') == 'REBOOT_STARTED':
+                            self.logger.info("Radio Node confirmed receipt. Reboot sequence initiated.")
+                            ack_received = True
+                            break
+                        else:
+                            self.logger.info(f"(Ignored message while waiting for ACK: {reply})")
+                    except zmq.Again:
+                        pass
+
+                if not ack_received:
+                    self.logger.info("Timeout waiting for Radio Node confirmation.")
+
+            if not ack_received:
+                self.logger.info("Radio Node did not respond after multiple attempts. Reboot failed.")
+                return
         else:
             for drone in self.drones:
                 reboot_crazyflie(drone['uri'])
@@ -228,7 +274,9 @@ class SwarmOrchestrator:
             # Process Pending Downloads from previous runs
             self._process_pending_downloads()
 
-            self.reboot_flight_controllers()
+            self.pub_socket.send_json({"cmd": "_"})
+            time.sleep(2)
+            self.reboot_flight_controllers(remote=bool(self.radio_node))
 
             for drone in self.drones:
                 cmd = self._get_drone_cmd(drone)
@@ -236,7 +284,8 @@ class SwarmOrchestrator:
                     self.pending_downloads.append({'drone': drone, 'tag': self.tag})
 
             if self.camera_cfg:
-                self._boot_remote_node(self.camera_cfg, self._get_camera_cmd(), "Camera")
+                if not self.args.ground:
+                    self._boot_remote_node(self.camera_cfg, self._get_camera_cmd(), "Camera")
             else:
                 self.logger.warning("No camera_node found. Skipping.")
 
@@ -292,9 +341,10 @@ class SwarmOrchestrator:
 
                 if sender_id == 'CAM' and status == 'READY':
                     self.logger.info("Camera Node Ready.")
-                elif status == 'READY' and sender_id not in self.ready_ids:
-                    self.ready_ids.add(sender_id)
-                    self.logger.info(f"Drone {sender_id} Ready. ({len(self.ready_ids)}/{total_drones})")
+                elif "lb" in sender_id:
+                    if status == 'READY' and sender_id not in self.ready_ids:
+                        self.ready_ids.add(sender_id)
+                        self.logger.info(f"Drone {sender_id} Ready. ({len(self.ready_ids)}/{total_drones})")
             except zmq.Again:
                 continue  # Timeout, loop back to check self.running
 
@@ -333,7 +383,7 @@ class SwarmOrchestrator:
         self.running = False
 
         # Stop Camera
-        if self.camera_cfg and self.pub_socket:
+        if self.camera_cfg and self.pub_socket and not self.args.ground:
             self.logger.info("Stopping Camera...")
             self.pub_socket.send_json({"cmd": "STOP_CAMERA"})
             time.sleep(2)
@@ -367,6 +417,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--off", action="store_true", help="shutdown the raspberry pis")
     parser.add_argument("--kill", action="store_true", help="stop the controller")
+    parser.add_argument("--ground", action="store_true", help="ground test")
     args = parser.parse_args()
 
     orchestrator = SwarmOrchestrator(args)
