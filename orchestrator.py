@@ -1,4 +1,6 @@
 import argparse
+import os
+
 import yaml
 import json
 import time
@@ -34,6 +36,7 @@ class SwarmOrchestrator:
         self.ctrl_cfg = self.manifest['controller']
         self.drones = self.manifest['drones']
         self.camera_cfg = self.manifest.get('camera_node')
+        self.radio_node = self.manifest.get('radio_node')
         self.common_cfg = self.manifest['common']
         self.mission = self._load_mission()
 
@@ -59,7 +62,7 @@ class SwarmOrchestrator:
             return yaml.safe_load(f)
 
     def _load_mission(self):
-        with open(self.ctrl_cfg['mission_file']) as f:
+        with open(os.path.join(self.ctrl_cfg['mission_path'], self.ctrl_cfg['mission_file'])) as f:
             return yaml.safe_load(f)
 
     def _load_previous_downloads(self):
@@ -104,17 +107,21 @@ class SwarmOrchestrator:
 
     def _get_drone_cmd(self, drone):
         alt = self.mission['drones'][drone['id']]['target'][2]
+        if hasattr(drone, "obj_name"):
+            mocap_args = f"--obj-name {drone['obj_name']} --vicon-mode rigidbody --vicon-full-pose "
+        else:
+            p = drone['init_pos']
+            mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
         return (
             f"cd {self.common_cfg['work_dir']} && "
             f"source {self.common_cfg['venv_path']}/bin/activate && "
             "git pull && "
             f"nohup python3 {DRONE_SCRIPT} "
-            f"--vicon --orchestrated --vicon-full-pose "
+            f"--orchestrated --tag {self.tag} "
+            f"--vicon {mocap_args} "
             f"--drone-id {drone['id']} "
-            f"--obj-name {drone['obj_name']} "
             f"--led --servo --servo-type {drone['type']} "
             f"--takeoff-altitude {alt} "
-            f"--tag {self.tag} "
             f"> drone_{drone['id']}.log 2>&1 < /dev/null &"
         )
 
@@ -177,9 +184,29 @@ class SwarmOrchestrator:
             except Exception:
                 pass
 
-    def reboot_flight_controllers(self):
-        for drone in self.drones:
-            reboot_crazyflie(drone['uri'])
+    def reboot_flight_controllers(self, remote=False):
+        """
+        Reboots flight controllers.
+        If remote=True, sends a command to the Radio Node to perform the reboot.
+        If remote=False, attempts to reboot locally using cflib.
+        """
+        uris = [d['uri'] for d in self.drones]
+
+        if remote:
+            if not self.radio_node:
+                self.logger.error("Cannot perform remote reboot: No 'radio_node' in manifest.")
+                return
+
+            self.logger.info(f"Sending REMOTE REBOOT request to Radio Node ({len(uris)} drones)...")
+            # Send message to Radio Node
+            msg = {
+                "cmd": "REBOOT",
+                "uris": uris
+            }
+            self.pub_socket.send_json(msg)
+        else:
+            for drone in self.drones:
+                reboot_crazyflie(drone['uri'])
         time.sleep(5)  # Wait for reboot
 
     def run(self):
