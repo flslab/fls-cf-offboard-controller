@@ -49,7 +49,7 @@ class RadioGatewayNode:
 
     def run(self):
         print("[RadioNode] Gateway Online. Listening for radio commands...")
-        self.push_socket.send_json({"id": "RADIO", "status": "READY"})
+        # self.push_socket.send_json({"id": "RADIO", "status": "READY"})
 
         try:
             while True:
