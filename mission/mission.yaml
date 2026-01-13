@@ -1,25 +1,35 @@
-name: arrow_body_follows_head_sepy24cm_l200cm_t8s
+name: magnet
 drones:
-  lb1:
-    target: [ 0.0, -1.24, 1.0 ]
-    waypoints: []
-    delta_t: 8
-    iterations: 1
-    params:
-      linear: false
-      relative: false
-    servos: [ [0, 180] ]
-    color: [ 227, 253, 255 ]
-    follow:
-      id: lb2
-      offset: [ 0.0, -0.24, 0 ]
   lb2:
-    target: [ 0.0, -1.0, 1.0 ]
-    waypoints: [[0.0, 1, 1.0, 0.0]]
-    delta_t: 8
+    target: [ 0.01, 0.165, 0.6, 0.0 ]
+    waypoints: []
+    delta_t: 20
     iterations: 1
     params:
-      linear: false
+      linear: true
       relative: false
-    servos: [ [150, 220] ]
-    color: [ 227, 253, 255 ]
+    servos: [ [180, 360] ]
+    color: [251, 186, 23]
+  lb3:
+    target: [ 0.0, -0.16, 0.6, 0.0 ]
+    waypoints: []
+    delta_t: 20
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [ 180, 360 ] ]
+    color: [251, 186, 23]
+
+#  - id: "lb2"
+#    ip: lightbendercf02
+#    user: fls
+#    init_pos: [ 0.0, 0.5, 0.2 ]
+#    type: b
+#    uri: radio://0/100/2M/E7E7E7E702
+#  - id: "lb3"
+#    ip: lightbendercf03
+#    user: fls
+#    init_pos: [ 0.0, -0.5, 0.2 ]
+#    type: b
+#    uri: radio://0/100/2M/E7E7E7E703

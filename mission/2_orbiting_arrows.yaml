@@ -50,7 +50,7 @@ drones:
 #  - id: "lb3"
 #    ip: lightbendercf03
 #    user: fls
-#    init_pos: [ 0.5, -0.5, 0.2 ]
+#    init_pos: [ 1.0, -0.5, 0.2 ]
 #    type: b
 #    uri: radio://0/100/2M/E7E7E7E703
 #  - id: "lb4"
@@ -62,6 +62,6 @@ drones:
 #  - id: "lb5"
 #    ip: lightbendercf05
 #    user: fls
-#    init_pos: [ 0.5, 0.5, 0.2 ]
+#    init_pos: [ 1.0, 0.5, 0.2 ]
 #    type: a
 #    uri: radio://0/100/2M/E7E7E7E705
