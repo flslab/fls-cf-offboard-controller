@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Drone Swarm Animator",
     "author": "HA",
-    "version": (1, 4),
+    "version": (1, 5),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Drone Swarm",
     "description": "Create light-element drones, animate LEDs, and export YAML",
