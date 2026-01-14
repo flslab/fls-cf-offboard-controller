@@ -1,10 +1,10 @@
 bl_info = {
     "name": "Drone Swarm Animator",
-    "author": "HA14H",
-    "version": (1, 2),
+    "author": "HA",
+    "version": (1, 4),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Drone Swarm",
-    "description": "Create LightBender drones, animate LEDs, and export YAML",
+    "description": "Create light-element drones, animate LEDs, and export YAML",
     "category": "Animation",
 }
 
@@ -42,6 +42,12 @@ class DroneProperties(bpy.types.PropertyGroup):
         description="Frequency of waypoints in the output file (1/delta_t)",
         default=2.0,
         min=0.1
+    )
+
+    export_at_keyframes: BoolProperty(
+        name="Export Keyframes Only",
+        description="Export only at keyframe locations (adds dt to waypoints)",
+        default=False
     )
 
 
@@ -312,11 +318,21 @@ class EXPORT_OT_drone_yaml(bpy.types.Operator):
             return {'CANCELLED'}
 
         fps = scene.render.fps
-        export_hz = scene.drone_props.export_rate
-        if export_hz <= 0: export_hz = 1.0
 
-        step = fps / export_hz
-        delta_t = 1.0 / export_hz
+        # Export Settings
+        use_keyframes = scene.drone_props.export_at_keyframes
+
+        if use_keyframes:
+            # Mode A: Keyframes Only (dt is variable)
+            # Global delta_t isn't really used, set to 0
+            delta_t = 0.0
+        else:
+            # Mode B: Fixed Rate
+            export_hz = scene.drone_props.export_rate
+            if export_hz <= 0: export_hz = 1.0
+            step = fps / export_hz
+            delta_t = 1.0 / export_hz
+
         start_frame = scene.frame_start
         end_frame = scene.frame_end
 
@@ -329,22 +345,77 @@ class EXPORT_OT_drone_yaml(bpy.types.Operator):
             waypoints = []
             servos = []
 
-            current_frame = start_frame
-            while current_frame <= end_frame:
-                scene.frame_set(int(current_frame))
+            # --- Frame Collection Strategy ---
+            frames_to_export = []
 
+            if use_keyframes:
+                # Find all unique keyframes for this drone
+                keys = set()
+
+                if drone.animation_data and drone.animation_data.action:
+                    # Scan all FCurves (covers Loc/Rot AND Custom Props like servo_1)
+                    for fcurve in drone.animation_data.action.fcurves:
+                        for kp in fcurve.keyframe_points:
+                            # Only include frames within scene range
+                            if start_frame <= kp.co.x <= end_frame:
+                                keys.add(kp.co.x)
+
+                # ALWAYS include start and end frames, regardless of keyframes
+                keys.add(start_frame)
+                keys.add(end_frame)
+
+                frames_to_export = sorted(list(keys))
+            else:
+                # Generate fixed steps
+                curr = float(start_frame)
+                while curr <= end_frame:
+                    frames_to_export.append(curr)
+                    curr += step
+
+            # --- Data Collection ---
+            prev_time_sec = 0.0  # Time since start of animation
+
+            for i, frame in enumerate(frames_to_export):
+                scene.frame_set(int(frame))
+
+                # Calculate timing
+                current_time_sec = (frame - start_frame) / fps
+
+                # Calculate dt for this specific point
+                if i == 0:
+                    dt_val = 0.0
+                else:
+                    dt_val = current_time_sec - prev_time_sec
+
+                prev_time_sec = current_time_sec
+
+                # Position
                 loc = drone.matrix_world.translation
                 x, y, z = round(loc.x, 4), round(loc.y, 4), round(loc.z, 4)
+
+                # Rotation (Yaw)
                 rot_euler = drone.matrix_world.to_euler('XYZ')
                 yaw = round(rot_euler.z, 4)
 
-                waypoints.append(f"[{x}, {y}, {z}, {yaw}]")
+                # Servos
                 s1 = round(drone["servo_1"], 2)
                 s2 = round(drone["servo_2"], 2)
-                servos.append(f"[{s1}, {s2}]")
-                current_frame += step
 
+                # Formatting based on mode
+                if use_keyframes:
+                    # Append dt as last item
+                    waypoints.append(f"[{x}, {y}, {z}, {yaw}, {round(dt_val, 4)}]")
+                    servos.append(f"[{s1}, {s2}]")
+                else:
+                    # Standard Format
+                    waypoints.append(f"[{x}, {y}, {z}, {yaw}]")
+                    servos.append(f"[{s1}, {s2}]")
+
+            # --- Write Block ---
+            # Use first frame as target
+            # Note: For keyframe mode, target string might now contain dt, which is fine if parser expects it
             output_lines.append(f"    target: {waypoints[0]}")
+
             output_lines.append(f"    waypoints: [{', '.join(waypoints)}]")
             output_lines.append(f"    delta_t: {delta_t}")
             output_lines.append(f"    iterations: 1")
@@ -352,6 +423,7 @@ class EXPORT_OT_drone_yaml(bpy.types.Operator):
             output_lines.append(f"      linear: true")
             output_lines.append(f"      relative: false")
             output_lines.append(f"    servos: [{', '.join(servos)}]")
+
             output_lines.append(f"    led:")
             output_lines.append(f"      mode: \"expression\"")
             output_lines.append(f"      rate: 50")
@@ -408,7 +480,12 @@ class VIEW3D_PT_drone_swarm(bpy.types.Panel):
         layout.separator()
 
         layout.label(text="Export Config:")
-        layout.prop(scene.drone_props, "export_rate")
+        layout.prop(scene.drone_props, "export_at_keyframes")
+
+        # Only show Rate if NOT using Keyframes mode
+        if not scene.drone_props.export_at_keyframes:
+            layout.prop(scene.drone_props, "export_rate")
+
         layout.operator("drone.export_yaml", text="Export to YAML", icon='EXPORT')
 
 
