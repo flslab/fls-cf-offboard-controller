@@ -206,6 +206,7 @@ class Controller:
             self.tracker.stop()
 
         if self.led:
+            self.stop_led_thread()
             self.led.stop()
 
         if self.servo:
@@ -498,8 +499,6 @@ class Controller:
         delta_t = mission_setting['delta_t']
         iterations = mission_setting['iterations']
         led_color = mission_setting.get('color')
-        if led_color is not None:
-            self.led.show_single_color(led_color)
         led_setting = mission_setting.get('led', {})
 
         total_flight_duration = delta_t * iterations * len(angles)
@@ -522,6 +521,9 @@ class Controller:
 
         if self.manifest['mission']['require_handshake']:
             self.handshake()
+
+        if led_color is not None:
+            self.led.show_single_color(led_color)
 
         if led_setting.get('mode') == 'expression':
             self.start_led_thread(led_setting)
@@ -596,7 +598,7 @@ class Controller:
             for j, (w, a) in enumerate(zip(waypoints, angles)):
                 self.commander.go_to(*w, delta_t, **params)
                 logger.info(f"go to {w}")
-                self.servo.set_all_smooth(a)
+                self.servo.set_all_smooth(a, duration=delta_t)
 
                 target_time = start_time + ((i * n + j + 1) * delta_t)
                 sleep_duration = target_time - time.time()
