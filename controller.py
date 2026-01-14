@@ -547,7 +547,10 @@ class Controller:
                     self.mocap.unsubscribe_point(leader_id)
                 self.cf.commander.send_notify_setpoint_stop()
         elif len(waypoints) and len(angles):
-            self.sync_pos_servo(waypoints, angles, delta_t, iterations, params)
+            if len(waypoints[0]) == 4:
+                for w in waypoints:
+                    w.append(delta_t)
+            self.sync_pos_servo(waypoints, angles, iterations, params)
         elif len(angles):
             self.run_servo(angles, delta_t, iterations)
 
@@ -589,18 +592,19 @@ class Controller:
                 self.servo.set_all_smooth(a)
                 self._safe_sleep(delta_t)
 
-    def sync_pos_servo(self, waypoints, angles, delta_t, iterations, params):
+    def sync_pos_servo(self, waypoints, angles, iterations, params):
         start_time = time.time()
         if len(angles) < len(waypoints):
             angles = angles + [angles[-1]] * (len(waypoints) - len(angles))
         n = len(waypoints)
         for i in range(iterations):
             for j, (w, a) in enumerate(zip(waypoints, angles)):
-                self.commander.go_to(*w, delta_t, **params)
+                dt = w[-1]
+                self.commander.go_to(*w, **params)
                 logger.info(f"go to {w}")
-                self.servo.set_all_smooth(a, duration=delta_t)
+                self.servo.set_all_smooth(a, duration=dt)
 
-                target_time = start_time + ((i * n + j + 1) * delta_t)
+                target_time = start_time + ((i * n + j + 1) * dt)
                 sleep_duration = target_time - time.time()
                 # If we are ahead of schedule, sleep the difference
                 if sleep_duration > 0:
