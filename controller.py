@@ -504,7 +504,9 @@ class Controller:
         total_flight_duration = delta_t * iterations * len(angles)
         if len(target) == 3:
             target.append(0.0)
-        x, y, z, yaw = target
+        if len(target) == 4:
+            target.append(0.0)
+        x, y, z, yaw, _ = target
 
         dt = 3
         if self.init_coord:
