@@ -348,7 +348,7 @@ class Controller:
         if self.args.ground_test:
             return
 
-        logger.info("Taking off...")
+        logger.info(f"Taking off to {args.takeoff_altitude}m ...")
         self.flying = True
         t = self.args.takeoff_altitude * 2
         self.cf.high_level_commander.takeoff(self.args.takeoff_altitude, t)
@@ -501,7 +501,6 @@ class Controller:
         led_color = mission_setting.get('color')
         led_setting = mission_setting.get('led', {})
 
-        total_flight_duration = delta_t * iterations * len(angles)
         if len(target) == 3:
             target.append(0.0)
         if len(target) == 4:
@@ -596,18 +595,19 @@ class Controller:
 
     def sync_pos_servo(self, waypoints, angles, iterations, params):
         start_time = time.time()
+        elapsed_time = 0.0
         if len(angles) < len(waypoints):
             angles = angles + [angles[-1]] * (len(waypoints) - len(angles))
-        n = len(waypoints)
         for i in range(iterations):
             for j, (w, a) in enumerate(zip(waypoints, angles)):
-                dt = w[-1]
+                duration = w[4]
                 self.commander.go_to(*w, **params)
                 logger.info(f"go to {w}")
-                self.servo.set_all_smooth(a, duration=dt)
+                self.servo.set_all_smooth(a, duration=duration)
 
-                target_time = start_time + ((i * n + j + 1) * dt)
+                target_time = start_time + elapsed_time + duration
                 sleep_duration = target_time - time.time()
+                elapsed_time += duration
                 # If we are ahead of schedule, sleep the difference
                 if sleep_duration > 0:
                     self._safe_sleep(sleep_duration)
@@ -682,6 +682,7 @@ class Controller:
 
                     if msg.get('cmd') == 'EMERGENCY':
                         if self.led:
+                            self.stop_led_thread()
                             self.led.show_single_color((230, 20, 20))
                         raise EmergencyStopException("Orchestrator requested Emergency Stop")
 
