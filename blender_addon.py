@@ -244,7 +244,7 @@ def evaluate_leds(scene):
                 try:
                     # Evaluate user string
                     # Expected result: [R, G, B] (0-255 or 0-1)
-                    raw_color = eval(formula, {"__builtins__": None}, ctx)
+                    raw_color = eval(formula, {}, ctx)
 
                     if isinstance(raw_color, (list, tuple)) and len(raw_color) >= 3:
                         r, g, b = raw_color[0], raw_color[1], raw_color[2]
