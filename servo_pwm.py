@@ -1,8 +1,9 @@
 import argparse
 import time
+import threading
 
+# Assuming pi5RC is available in the environment as per original code
 from pi5RC import pi5RC
-
 
 pwm_pins = [19, 18, 12, 13]
 
@@ -22,67 +23,129 @@ class Servo:
             offsets = [0, 0]
         self.servos = [pi5RC(pwm_pins[i]) for i in range(num)]
         self.offsets = offsets
-        self.values = [None, None]
-        self.tick_angle = 1
-        self.tick_duration = 1/180
+
+        # self.values stores the current hardware angle (float)
+        self.values = [None] * num
+        # self.target_values stores the desired destination angle
+        self.target_values = [None] * num
+
+        # Interpolation state
+        self.start_values = [None] * num
+        self.start_times = [0.0] * num
+        self.move_durations = [1.0] * num
+
+        # Threading setup for non-blocking smooth movement
+        self.running = True
+        self.lock = threading.RLock()  # Re-entrant lock to allow methods to call each other
+        self.worker_thread = threading.Thread(target=self._update_loop, daemon=True)
+        self.worker_thread.start()
+
+    def _update_loop(self):
+        """
+        Background thread that moves servos smoothly based on time duration.
+        """
+        while self.running:
+            with self.lock:
+                now = time.time()
+                for i in range(len(self.servos)):
+                    # Skip if not initialized or no target set
+                    if self.values[i] is None or self.target_values[i] is None:
+                        continue
+
+                    # Check if movement is needed
+                    if self.values[i] != self.target_values[i]:
+                        elapsed = now - self.start_times[i]
+                        duration = self.move_durations[i]
+
+                        if duration <= 0:
+                            # Instant move if duration is 0
+                            self.values[i] = self.target_values[i]
+                            self.servos[i].set(self.values[i])
+                        elif elapsed >= duration:
+                            # Movement finished
+                            self.values[i] = self.target_values[i]
+                            self.servos[i].set(self.values[i])
+                        else:
+                            # Interpolate position
+                            progress = elapsed / duration
+                            start = self.start_values[i]
+                            target = self.target_values[i]
+
+                            # Linear interpolation (Lerp)
+                            current_angle = start + (target - start) * progress
+
+                            self.values[i] = current_angle
+                            self.servos[i].set(current_angle)
+
+            # Update frequency ~100Hz
+            time.sleep(0.01)
 
     def set(self, index, a):
+        """Sets servo angle immediately (snaps to position)."""
         angle = a + self.offsets[index]
         if 0 <= angle <= 180:
-            self.servos[index].set(angle)
-            self.values[index] = angle
+            with self.lock:
+                self.servos[index].set(angle)
+                self.values[index] = angle
+                self.target_values[index] = angle  # Stop any ongoing smooth move
+                self.start_values[index] = angle
 
-    def set_smooth(self, index, a):
-        if self.values[index] is None:
-            return self.set(index, a)
-
+    def set_smooth(self, index, a, duration=1.0):
+        """
+        Sets the target angle and returns immediately.
+        The servo will reach the target in 'duration' seconds.
+        """
         angle = a + self.offsets[index]
         if 0 <= angle <= 180:
-            start_angle = self.values[index]
-            delta_angle = angle - start_angle
-            n = abs(delta_angle) // self.tick_angle
+            with self.lock:
+                # If first time (uninitialized), snap to position immediately
+                if self.values[index] is None:
+                    self.set(index, a)
+                    return
 
-            for i in range(n):
-                angle_i = start_angle + (i + 1) * self.tick_angle * sign(delta_angle)
-                self.servos[index].set(angle_i)
-                self.values[index] = angle_i
-                time.sleep(self.tick_duration)
+                # Capture current state as start state for smooth transition
+                self.start_values[index] = self.values[index]
+                self.target_values[index] = angle
+                self.start_times[index] = time.time()
+                self.move_durations[index] = duration
 
-            self.servos[index].set(angle)
-            self.values[index] = angle
+    def set_all_smooth(self, target_angles, duration=1.0):
+        """
+        Sets targets for multiple servos and returns immediately.
+        All servos will reach their targets in 'duration' seconds.
+        """
+        with self.lock:
+            # If any servo is uninitialized, snap all to start positions
+            if any(v is None for v in self.values):
+                self.set_all(target_angles)
+                return
 
-    def set_all_smooth(self, target_angles):
-        if None in self.values:
-            return self.set_all(target_angles)
-
-        angles = [a + offset for a, offset in zip(target_angles, self.offsets)]
-        if all(0 <= x <= 180 for x in angles):
-            start_angles = [v for v in self.values]
-            delta_angles = [angle - start_angle for angle, start_angle in zip(angles, start_angles)]
-            ns = [int(abs(delta_angle) // self.tick_angle) for delta_angle in delta_angles]
-
-            for i in range(max(ns)):
-                for index in range(len(self.servos)):
-                    if i < ns[index]:
-                        angle_i = start_angles[index] + (i + 1) * self.tick_angle * sign(delta_angles[index])
-                        self.servos[index].set(angle_i)
-                        self.values[index] = angle_i
-
-                time.sleep(self.tick_duration)
-
-            for index in range(len(self.servos)):
-                self.servos[index].set(angles[index])
-                self.values[index] = angles[index]
-
-            return max(ns) * self.tick_duration
+            now = time.time()
+            for i, a in enumerate(target_angles):
+                if i < len(self.servos):
+                    angle = a + self.offsets[i]
+                    if 0 <= angle <= 180:
+                        # Capture current state for each servo
+                        self.start_values[i] = self.values[i]
+                        self.target_values[i] = angle
+                        self.start_times[i] = now
+                        self.move_durations[i] = duration
 
     def set_all(self, target_angles):
+        """Sets all servos immediately."""
         for i in range(len(self.servos)):
-            self.set(i, target_angles[i])
+            if i < len(target_angles):
+                self.set(i, target_angles[i])
 
     def __del__(self):
+        self.running = False
+        # Attempt to join thread if it's alive, but don't block forever
+        if hasattr(self, 'worker_thread') and self.worker_thread.is_alive():
+            self.worker_thread.join(0.1)
+
         for servo in self.servos:
-            del servo
+            if servo:
+                del servo
         self.servos.clear()
 
     def __len__(self):
@@ -96,6 +159,8 @@ class Servo:
 
 
 def range_test(servos, a, b, n=5):
+    # This test function uses explicit sleeps, so we don't need to change it.
+    # It relies on set(), which is immediate.
     for i in range(n):
         for j in range(len(servos)):
             servos[j] = a
@@ -127,25 +192,35 @@ if __name__ == '__main__':
             while True:
                 user_input = input(f"Enter servo index and angle, e.g., 0 90:\n")
                 if user_input:
-                    j, angle = user_input.strip().split(" ")
-                    j, angle = int(j), int(angle)
+                    try:
+                        parts = user_input.strip().split(" ")
+                        if len(parts) >= 2:
+                            j, angle = int(parts[0]), int(parts[1])
+                            if 0 <= j < args.n:
+                                if args.smooth:
+                                    servos.set_smooth(j, angle, duration=1.0)
+                                    print(f"Command sent: Servo {j} -> {angle} (smooth, 1.0s)")
+                                else:
+                                    servos.set(j, angle)
+                                    print(f"Command sent: Servo {j} -> {angle} (instant)")
+                    except ValueError:
+                        print("Invalid input format.")
 
-                    if 0 <= j < args.n:
-                        if args.smooth:
-                            servos.set_smooth(j, angle)
-                        else:
-                            servos.set(j, angle)
         elif args.all:
             while True:
                 user_input = input(f"Enter angles for {args.n} servos, e.g., 0 180:\n")
                 if user_input:
-                    angles = user_input.strip().split(" ")
-                    angles = list(map(int, angles))
+                    try:
+                        angles = list(map(int, user_input.strip().split(" ")))
+                        if args.smooth:
+                            servos.set_all_smooth(angles, duration=1.0)
+                            print(f"Command sent: All -> {angles} (smooth, 1.0s)")
+                        else:
+                            servos.set_all(angles)
+                            print(f"Command sent: All -> {angles} (instant)")
+                    except ValueError:
+                        print("Invalid input format.")
 
-                    if args.smooth:
-                        servos.set_all_smooth(angles)
-                    else:
-                        servos.set_all(angles)
         elif len(args.range_test):
             range_test(servos, *args.range_test)
         elif len(args.set_all):
@@ -154,7 +229,8 @@ if __name__ == '__main__':
             servos.set_all(args.set_all)
 
     except KeyboardInterrupt:
-        print("Program stopped by user")
+        print("\nProgram stopped by user")
 
     finally:
-        del servos
+        # Explicit cleanup to stop thread
+        servos.__del__()
