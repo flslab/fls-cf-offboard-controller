@@ -1,3 +1,4 @@
+import sys
 import time
 import board
 import neopixel_spi as neopixel
@@ -84,5 +85,10 @@ class LED:
 if __name__ == '__main__':
     led = LED()
     led.show_single_color(color=(200, 230, 0))
-    time.sleep(10)
+
+    if len(sys.argv) > 1:
+        t = int(sys.argv[1])
+    else:
+        t = 10
+    time.sleep(t)
     led.stop()
