@@ -77,8 +77,8 @@ class Servo:
                             self.values[i] = current_angle
                             self.servos[i].set(current_angle)
 
-            # Update frequency ~100Hz
-            time.sleep(0.01)
+            # Update frequency ~30Hz
+            time.sleep(0.03)
 
     def set(self, index, a):
         """Sets servo angle immediately (snaps to position)."""
