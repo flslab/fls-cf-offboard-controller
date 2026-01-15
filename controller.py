@@ -209,6 +209,9 @@ class Controller:
         if self.tracker:
             self.tracker.stop()
 
+        if self.smooth_controller:
+            self.smooth_controller.stop()
+
         if self.led:
             self.stop_led_thread()
             self.led.stop()
