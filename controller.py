@@ -189,6 +189,8 @@ class Controller:
 
         if self.servo:
             self._set_safe_servo_angles()
+            if self.args.ground_test:
+                time.sleep(1.0)
 
         self.land()
         self._send_landing_confirmation()
