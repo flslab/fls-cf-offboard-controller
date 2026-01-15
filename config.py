@@ -181,7 +181,25 @@ KALMAN_POSITION_LOG_VARS = {
     },
 }
 
-LOG_VARS = XY_RATE_LOG_VARS
+ATT_LOG_VARS = {
+    "stateEstimate.roll": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "stateEstimate.pitch": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "stateEstimate.yaw": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+}
+
+LOG_VARS = ATT_LOG_VARS
 
 # PID Configurations
 PID_VALUES_PROP_2 = {
