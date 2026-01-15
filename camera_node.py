@@ -44,6 +44,11 @@ class CameraNode:
                 "-o", OUTPUT_FILENAME,
                 "--width", "1920",
                 "--height", "1080",
+                "--autofocus-mode", "manual",
+                "--lens-position", "0.5",
+                "--shutter", "30000",
+                "--gain", "1.0",
+                "--awb", "indoor",
                 "--nopreview"
             ]
             try:
