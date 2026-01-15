@@ -198,7 +198,6 @@ class Controller:
 
         if self.var_logger:
             self.var_logger.stop()
-            self.save_log()
 
         if self.mocap:
             self.mocap.stop()
