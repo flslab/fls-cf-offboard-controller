@@ -41,9 +41,9 @@ class Servo:
                 self.set(i, target_angles[i])
 
     def __del__(self):
-        # for servo in self.servos:
-        #     if servo:
-        #         del servo
+        for servo in self.servos:
+            if servo:
+                del servo
         self.servos.clear()
 
     def __len__(self):
