@@ -287,7 +287,7 @@ class Controller:
         logger.info("servos activated")
 
     def setup_led(self):
-        if self.args.led:
+        if not self.args.led:
             return
 
         from led import LED
