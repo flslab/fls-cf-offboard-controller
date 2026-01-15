@@ -124,10 +124,8 @@ class Controller:
         self.voltage = None
         self.deck_attached_event = Event()
         self.battery_critical = Event()
-        self.start_time = 0
-        self.flight_duration = 0
-        self.led_running = False
-        self.led_thread = None
+        self.mission_start_time = 0
+        self.mission_duration = 0
         self.animation_start_time = 0
         self.smooth_controller = None
 
@@ -187,7 +185,7 @@ class Controller:
         self.run_mission()
 
     def stop(self):
-        self.flight_duration = time.time() - self.start_time
+        self.mission_duration = time.time() - self.mission_start_time
 
         if self.servo:
             self._set_safe_servo_angles()
@@ -213,7 +211,6 @@ class Controller:
             self.smooth_controller.stop()
 
         if self.led:
-            self.stop_led_thread()
             self.led.stop()
 
         if self.servo:
@@ -456,7 +453,7 @@ class Controller:
         time.sleep(1.0)
 
     def run_mission(self):
-        self.start_time = time.time()
+        self.mission_start_time = time.time()
 
         if self.args.simple_takeoff:
             self.hover()
@@ -633,35 +630,6 @@ class Controller:
 
         self.led.set_colors(led_buffer)
 
-    def run_led(self, setting):
-        start_time = time.time()
-        formula_str = setting['formula']
-        rate_hz = setting['rate']
-        while self.led_running:
-            current_time = time.time() - start_time
-            led_buffer = []
-
-            for i in range(self.args.led_count):
-                # Create a context with local variables for the formula
-                context = {"t": current_time, "i": i, "N": self.args.led_count, "math": math}
-                # Evaluate the string from YAML
-                # formula_str = "[ 255 * abs(math.sin(t * 2 + i * 0.1)), 0, 100 ]"
-                rgb = eval(formula_str, {}, context)
-                led_buffer.append(rgb)
-
-            self.led.set_colors(led_buffer)
-            time.sleep(1 / rate_hz)
-
-    def start_led_thread(self, setting):
-        self.led_running = True
-        self.led_thread = threading.Thread(target=self.run_led, args=(setting,))
-        self.led_thread.start()
-
-    def stop_led_thread(self):
-        self.led_running = False
-        if self.led_thread is not None:
-            self.led_thread.join()
-
     def run_servo(self, angles, delta_t, iterations):
         for _ in range(iterations):
             for a in angles:
@@ -757,7 +725,6 @@ class Controller:
 
                     if msg.get('cmd') == 'EMERGENCY':
                         if self.led:
-                            self.stop_led_thread()
                             self.led.show_single_color((230, 20, 20))
                         raise EmergencyStopException("Orchestrator requested Emergency Stop")
                     elif msg.get('cmd') == 'START':
@@ -781,7 +748,7 @@ class Controller:
                 "id": self.args.drone_id,
                 "status": "LANDED",
                 "battery": self.voltage,
-                "flight_duration": self.flight_duration
+                "flight_duration": self.mission_duration
             })
             logger.info("Sent landing confirmation")
 
