@@ -598,7 +598,7 @@ class Controller:
     def run_control_loop(self, waypoints, angles, pointers, params):
         elapsed_time = 0.0
         num_steps = max(len(waypoints), len(angles), len(pointers))
-        for i in range(num_steps):
+        for i in range(1, num_steps):
             duration = waypoints[i][4]
             if i < len(waypoints):
                 self.commander.go_to(*waypoints[i], **params)
