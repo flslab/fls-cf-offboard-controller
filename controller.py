@@ -127,6 +127,7 @@ class Controller:
         self.mission_start_time = 0
         self.mission_duration = 0
         self.animation_start_time = 0
+        self.animation_stop_time = 0
         self.smooth_controller = None
 
         self.log_data = copy.deepcopy(LOG_VARS)
@@ -589,6 +590,7 @@ class Controller:
         #     self.sync_pos_servo(waypoints, angles, iterations, params)
         # elif len(angles):
         #     self.run_servo(angles, delta_t, iterations)
+        self.animation_stop_time = time.time()
 
         self.led.clear()
 
@@ -664,7 +666,10 @@ class Controller:
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
 
-        output_data = {}
+        output_data = {
+            "start_time": self.animation_start_time,
+            "stop_time": self.animation_stop_time,
+        }
 
         if self.mocap:
             output_data["frames"] = self.mocap_frames
@@ -685,6 +690,14 @@ class Controller:
         if is_battery_critical:
             raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
 
+    def _prepare_for_emergency_landing(self):
+        self._set_safe_servo_angles()
+        time.sleep(0.6)
+        if self.smooth_controller:
+            self.smooth_controller.stop()
+        if self.led:
+            self.led.show_single_color((230, 20, 20))
+
     def _safe_sleep_orchestrated(self, duration):
         """
         Sleeps for 'duration' seconds, but interrupts IMMEDIATELY for:
@@ -704,6 +717,7 @@ class Controller:
 
             # Check Battery
             if self.battery_critical.is_set():
+                self._prepare_for_emergency_landing()
                 raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
 
             # Wait for ZMQ Message OR Timeout
@@ -719,8 +733,7 @@ class Controller:
                     msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
 
                     if msg.get('cmd') == 'EMERGENCY':
-                        if self.led:
-                            self.led.show_single_color((230, 20, 20))
+                        self._prepare_for_emergency_landing()
                         raise EmergencyStopException("Orchestrator requested Emergency Stop")
                     elif msg.get('cmd') == 'START':
                         return True
@@ -734,8 +747,6 @@ class Controller:
         logger.debug(f"Voltage: {voltage:.2f}V")
         if voltage < self.min_voltage:
             self.battery_critical.set()
-            if self.led:
-                self.led.show_single_color((230, 20, 20))
 
     def _send_landing_confirmation(self):
         if self.args.orchestrated:
@@ -779,9 +790,9 @@ class Controller:
 
     def _set_safe_servo_angles(self):
         if self.args.servo_type == 'a':
-            self.smooth_controller.set_group_values("servos", [0, 180], 1.0)
+            self.smooth_controller.set_group_values("servos", [0, 180], 0.5)
         elif self.args.servo_type == 'b':
-            self.smooth_controller.set_group_values("servos", [180, 360], 1.0)
+            self.smooth_controller.set_group_values("servos", [180, 360], 0.5)
 
     def _start_tracker_process(self):
         """Starts the external C++ localization process."""
