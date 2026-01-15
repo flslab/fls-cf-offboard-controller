@@ -1,16 +1,17 @@
 bl_info = {
     "name": "Drone Swarm Animator",
     "author": "HA",
-    "version": (1, 5),
+    "version": (1, 8),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Drone Swarm",
-    "description": "Create light-element drones, animate LEDs, and export YAML",
+    "description": "Create light-element drones, animate LEDs with pointers, and export YAML",
     "category": "Animation",
 }
 
 import bpy
 import math
-from bpy.props import FloatProperty, StringProperty, EnumProperty, BoolProperty, IntProperty, PointerProperty
+from bpy.props import FloatProperty, StringProperty, EnumProperty, BoolProperty, IntProperty, PointerProperty, \
+    CollectionProperty
 from bpy.app.handlers import persistent
 from mathutils import Vector, Matrix
 
@@ -18,6 +19,24 @@ from mathutils import Vector, Matrix
 # ------------------------------------------------------------------------
 #    Properties & Data Classes
 # ------------------------------------------------------------------------
+
+class LEDPointer(bpy.types.PropertyGroup):
+    """Defines a split point on the LED strip and the color following it"""
+    # Position on the strip (0 to 50)
+    value: FloatProperty(
+        name="Position",
+        description="Index location of the pointer",
+        default=10.0,
+        soft_min=0.0,
+        soft_max=50.0
+    )
+    # Color expression for the segment starting at this pointer
+    color_expression: StringProperty(
+        name="Color",
+        description="Color expression for LEDs after this pointer",
+        default="[0, 255, 0]"
+    )
+
 
 class DroneProperties(bpy.types.PropertyGroup):
     drone_type: EnumProperty(
@@ -30,11 +49,32 @@ class DroneProperties(bpy.types.PropertyGroup):
         default='TYPE_A'
     )
 
+    # LED Control Modes
+    led_mode: EnumProperty(
+        name="LED Mode",
+        items=[
+            ('EXPRESSION', "Single Expression", "Use one python formula for all LEDs"),
+            ('POINTERS', "Pointers", "Use pointers to define colored segments"),
+        ],
+        default='EXPRESSION'
+    )
+
+    # Mode A: Single Expression
     led_formula: StringProperty(
-        name="LED Formula",
+        name="Formula",
         description="Python expression for LEDs. Vars: i (index), t (time), N (total)",
         default="[255, 255, 255] if i < t*10 else [0,0,0]"
     )
+
+    # Mode B: Pointers
+    led_base_color: StringProperty(
+        name="Base Color",
+        description="Color expression for LEDs before the first pointer",
+        default="[0, 0, 0]"
+    )
+
+    led_pointers: CollectionProperty(type=LEDPointer)
+    active_pointer_index: IntProperty(name="Active Pointer", default=0)
 
     # Export Settings (Scene Level)
     export_rate: FloatProperty(
@@ -211,6 +251,57 @@ class OBJECT_OT_add_drone(bpy.types.Operator):
 
 
 # ------------------------------------------------------------------------
+#    Pointer List UI Operators
+# ------------------------------------------------------------------------
+
+class DRONE_OT_add_pointer(bpy.types.Operator):
+    """Add a new LED Pointer"""
+    bl_idname = "drone.add_pointer"
+    bl_label = "Add Pointer"
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj: return {'CANCELLED'}
+
+        # Add new item
+        item = obj.drone_props.led_pointers.add()
+        # Default value slightly offset to avoid overlap
+        item.value = 10.0 + (len(obj.drone_props.led_pointers) * 5)
+        item.color_expression = "[255, 0, 0]"
+
+        obj.drone_props.active_pointer_index = len(obj.drone_props.led_pointers) - 1
+        return {'FINISHED'}
+
+
+class DRONE_OT_remove_pointer(bpy.types.Operator):
+    """Remove selected LED Pointer"""
+    bl_idname = "drone.remove_pointer"
+    bl_label = "Remove Pointer"
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj: return {'CANCELLED'}
+
+        idx = obj.drone_props.active_pointer_index
+        obj.drone_props.led_pointers.remove(idx)
+
+        if idx >= len(obj.drone_props.led_pointers):
+            obj.drone_props.active_pointer_index = max(0, len(obj.drone_props.led_pointers) - 1)
+
+        return {'FINISHED'}
+
+
+class UL_DronePointerList(bpy.types.UIList):
+    """List representation of Pointers"""
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        # Draw layout: Position Value | Color Expression
+        split = layout.split(factor=0.3)
+        split.prop(item, "value", text="", emboss=False)  # Editable number
+        split.prop(item, "color_expression", text="", emboss=False)
+
+
+# ------------------------------------------------------------------------
 #    Animation Handler (Live Updates)
 # ------------------------------------------------------------------------
 
@@ -222,12 +313,35 @@ def evaluate_leds(scene):
     if t < 0: t = 0
 
     # 1. Find all Drone Bases
-    # We scan objects that have our specific property group data
     drones = [obj for obj in scene.objects if "servo_1" in obj and "servo_2" in obj]
 
     for drone in drones:
-        formula = drone.drone_props.led_formula
-        if not formula: continue
+        props = drone.drone_props
+        mode = props.led_mode
+
+        # Prepare Pointer Data if in Pointer Mode
+        sorted_pointers = []
+        base_expr = ""
+
+        if mode == 'POINTERS':
+            base_expr = props.led_base_color
+            # Collect pointers and sort by current value
+            # We must evaluate value here because it might be animated
+            # Note: Animation on collection items requires evaluating the property
+            # For simplicity in this handler, we read the current property value which Blender updates
+
+            raw_pointers = []
+            for ptr in props.led_pointers:
+                raw_pointers.append({
+                    'val': ptr.value,
+                    'expr': ptr.color_expression
+                })
+
+            # Sort by position value
+            sorted_pointers = sorted(raw_pointers, key=lambda x: x['val'])
+        else:
+            # Expression Mode
+            base_expr = props.led_formula
 
         # Traverse children to find LEDs
         # Hierarchy: Drone -> Rods -> LEDs
@@ -236,27 +350,42 @@ def evaluate_leds(scene):
                 continue
 
             for led in rod.children:
-                # Check if it's an LED by looking for our index prop
                 if "led_index" not in led:
                     continue
 
                 i = led["led_index"]  # 0-49
                 N = 50  # Total LEDs
 
-                # Context for eval
-                # We allow math module functions (sin, cos, etc)
+                # Determine formula for this specific LED based on Mode
+                active_formula = ""
+
+                if mode == 'EXPRESSION':
+                    active_formula = base_expr
+                elif mode == 'POINTERS':
+                    # Find interval
+                    # Default to base
+                    active_formula = base_expr
+
+                    # Iterate sorted pointers to find which segment we are in
+                    # Logic: if i >= pointer.value, we adopt that pointer's color
+                    # Since sorted, the last one we satisfy is the correct one
+                    for ptr in sorted_pointers:
+                        if i >= ptr['val']:
+                            active_formula = ptr['expr']
+                        else:
+                            # Since sorted, if i < current, it is < all subsequent
+                            break
+
+                # Evaluate
                 ctx = {"i": i, "t": t, "N": N, "math": math}
 
                 try:
-                    # Evaluate user string
-                    # Expected result: [R, G, B] (0-255 or 0-1)
-                    raw_color = eval(formula, {}, ctx)
+                    raw_color = eval(active_formula, {}, ctx)
 
                     if isinstance(raw_color, (list, tuple)) and len(raw_color) >= 3:
                         r, g, b = raw_color[0], raw_color[1], raw_color[2]
 
-                        # Normalize 0-255 to 0-1 for Blender
-                        # Heuristic: If any value > 1.0, assume 0-255 scale
+                        # Normalize
                         if max(r, g, b) > 1.0:
                             r /= 255.0
                             g /= 255.0
@@ -267,11 +396,9 @@ def evaluate_leds(scene):
                         g = max(0.0, min(1.0, g))
                         b = max(0.0, min(1.0, b))
 
-                        # Set Object Color (RGBA)
                         led.color = (r, g, b, 1.0)
 
                 except Exception as e:
-                    # Fail silently to avoid spamming console during playback
                     pass
 
 
@@ -323,8 +450,7 @@ class EXPORT_OT_drone_yaml(bpy.types.Operator):
         use_keyframes = scene.drone_props.export_at_keyframes
 
         if use_keyframes:
-            # Mode A: Keyframes Only (dt is variable)
-            # Global delta_t isn't really used, set to 0
+            # Mode A: Keyframes Only
             delta_t = 0.0
         else:
             # Mode B: Fixed Rate
@@ -344,78 +470,59 @@ class EXPORT_OT_drone_yaml(bpy.types.Operator):
             output_lines.append(f"  {drone.name}:")
             waypoints = []
             servos = []
+            pointer_data = []
 
-            # --- Frame Collection Strategy ---
+            # --- Frame Collection ---
             frames_to_export = []
-
             if use_keyframes:
-                # Find all unique keyframes for this drone
                 keys = set()
-
                 if drone.animation_data and drone.animation_data.action:
-                    # Scan all FCurves (covers Loc/Rot AND Custom Props like servo_1)
                     for fcurve in drone.animation_data.action.fcurves:
                         for kp in fcurve.keyframe_points:
-                            # Only include frames within scene range
                             if start_frame <= kp.co.x <= end_frame:
                                 keys.add(kp.co.x)
-
-                # ALWAYS include start and end frames, regardless of keyframes
                 keys.add(start_frame)
                 keys.add(end_frame)
-
                 frames_to_export = sorted(list(keys))
             else:
-                # Generate fixed steps
                 curr = float(start_frame)
                 while curr <= end_frame:
                     frames_to_export.append(curr)
                     curr += step
 
             # --- Data Collection ---
-            prev_time_sec = 0.0  # Time since start of animation
+            prev_time_sec = 0.0
 
             for i, frame in enumerate(frames_to_export):
                 scene.frame_set(int(frame))
-
-                # Calculate timing
                 current_time_sec = (frame - start_frame) / fps
 
-                # Calculate dt for this specific point
                 if i == 0:
                     dt_val = 0.0
                 else:
                     dt_val = current_time_sec - prev_time_sec
-
                 prev_time_sec = current_time_sec
 
-                # Position
                 loc = drone.matrix_world.translation
                 x, y, z = round(loc.x, 4), round(loc.y, 4), round(loc.z, 4)
-
-                # Rotation (Yaw)
                 rot_euler = drone.matrix_world.to_euler('XYZ')
                 yaw = round(rot_euler.z, 4)
-
-                # Servos
                 s1 = round(drone["servo_1"], 2)
                 s2 = round(drone["servo_2"], 2)
 
-                # Formatting based on mode
+                # Capture Pointers
+                ptrs = [round(p.value, 2) for p in drone.drone_props.led_pointers]
+                pointer_data.append(f"[{', '.join(map(str, ptrs))}]")
+
                 if use_keyframes:
-                    # Append dt as last item
                     waypoints.append(f"[{x}, {y}, {z}, {yaw}, {round(dt_val, 4)}]")
                     servos.append(f"[{s1}, {s2}]")
                 else:
-                    # Standard Format
                     waypoints.append(f"[{x}, {y}, {z}, {yaw}]")
                     servos.append(f"[{s1}, {s2}]")
 
             # --- Write Block ---
-            # Use first frame as target
-            # Note: For keyframe mode, target string might now contain dt, which is fine if parser expects it
             output_lines.append(f"    target: {waypoints[0]}")
-
             output_lines.append(f"    waypoints: [{', '.join(waypoints)}]")
             output_lines.append(f"    delta_t: {delta_t}")
             output_lines.append(f"    iterations: 1")
@@ -423,11 +530,46 @@ class EXPORT_OT_drone_yaml(bpy.types.Operator):
             output_lines.append(f"      linear: true")
             output_lines.append(f"      relative: false")
             output_lines.append(f"    servos: [{', '.join(servos)}]")
+            output_lines.append(f"    pointers: [{', '.join(pointer_data)}]")
+
+            # --- LED Formula Generation ---
+            props = drone.drone_props
+            final_formula = ""
+
+            if props.led_mode == 'EXPRESSION':
+                final_formula = props.led_formula
+            elif props.led_mode == 'POINTERS':
+                # Compile pointers into a single nested Python ternary expression using variables p0, p1...
+
+                raw_ptrs = []
+                for idx, ptr in enumerate(props.led_pointers):
+                    # Store index-based variable name 'p{idx}' and value/color
+                    raw_ptrs.append({'id': f"p{idx}", 'v': ptr.value, 'c': ptr.color_expression})
+
+                # Sort by value to establish the logical nesting hierarchy (A < B < C)
+                # We use the current frame's values to determine the structure of the ternary nest.
+                raw_ptrs.sort(key=lambda x: x['v'])
+
+                if not raw_ptrs:
+                    final_formula = props.led_base_color
+                else:
+                    # Start with the last "else" which is the color of the last pointer
+                    current_str = f"({raw_ptrs[-1]['c']})"
+
+                    # Iterate backwards
+                    for j in range(len(raw_ptrs) - 2, -1, -1):
+                        p_curr = raw_ptrs[j]
+                        p_next = raw_ptrs[j + 1]
+                        # Use variable name {p_next['id']} instead of literal value
+                        current_str = f"({p_curr['c']}) if i < {p_next['id']} else {current_str}"
+
+                    p0 = raw_ptrs[0]
+                    final_formula = f"({props.led_base_color}) if i < {p0['id']} else {current_str}"
 
             output_lines.append(f"    led:")
             output_lines.append(f"      mode: \"expression\"")
             output_lines.append(f"      rate: 50")
-            safe_formula = drone.drone_props.led_formula.replace('"', '\\"')
+            safe_formula = final_formula.replace('"', '\\"')
             output_lines.append(f"      formula: \"{safe_formula}\"")
 
         try:
@@ -464,6 +606,8 @@ class VIEW3D_PT_drone_swarm(bpy.types.Panel):
         layout.separator()
 
         if obj and "servo_1" in obj:
+            props = obj.drone_props
+
             layout.label(text=f"Selected: {obj.name}")
             col = layout.column(align=True)
             col.label(text="Servo Angles (deg):")
@@ -472,7 +616,29 @@ class VIEW3D_PT_drone_swarm(bpy.types.Panel):
 
             layout.separator()
             layout.label(text="LED Configuration:")
-            layout.prop(obj.drone_props, "led_formula", text="")
+            layout.prop(props, "led_mode", text="Mode")
+
+            if props.led_mode == 'EXPRESSION':
+                layout.prop(props, "led_formula", text="")
+            else:
+                # Pointer Mode UI
+                box = layout.box()
+                box.label(text="Base Color (Start):")
+                box.prop(props, "led_base_color", text="")
+
+                box.label(text="Pointers (Split Points):")
+
+                row = box.row()
+                row.template_list("UL_DronePointerList", "", props, "led_pointers", props, "active_pointer_index")
+
+                col = row.column(align=True)
+                col.operator("drone.add_pointer", icon='ADD', text="")
+                col.operator("drone.remove_pointer", icon='REMOVE', text="")
+
+                # Hint for usage
+                box.label(text="Pos | Right-Side Color", icon='INFO')
+
+            layout.separator()
             layout.operator("drone.force_update_leds", text="Test/Update LEDs", icon='LIGHT')
         else:
             layout.label(text="Select a drone to animate", icon='INFO')
@@ -482,7 +648,6 @@ class VIEW3D_PT_drone_swarm(bpy.types.Panel):
         layout.label(text="Export Config:")
         layout.prop(scene.drone_props, "export_at_keyframes")
 
-        # Only show Rate if NOT using Keyframes mode
         if not scene.drone_props.export_at_keyframes:
             layout.prop(scene.drone_props, "export_rate")
 
@@ -494,8 +659,12 @@ class VIEW3D_PT_drone_swarm(bpy.types.Panel):
 # ------------------------------------------------------------------------
 
 classes = (
+    LEDPointer,
     DroneProperties,
     OBJECT_OT_add_drone,
+    DRONE_OT_add_pointer,
+    DRONE_OT_remove_pointer,
+    UL_DronePointerList,
     DRONE_OT_force_update,
     EXPORT_OT_drone_yaml,
     VIEW3D_PT_drone_swarm,
@@ -509,13 +678,11 @@ def register():
     bpy.types.Scene.drone_props = PointerProperty(type=DroneProperties)
     bpy.types.Object.drone_props = PointerProperty(type=DroneProperties)
 
-    # Register Handler
     if update_leds_handler not in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.append(update_leds_handler)
 
 
 def unregister():
-    # Unregister Handler
     if update_leds_handler in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.remove(update_leds_handler)
 
