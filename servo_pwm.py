@@ -105,7 +105,7 @@ if __name__ == '__main__':
             name=f"servo_{i}",
             initial_values=[0.0],  # Controller assumes 0 start; hardware will snap on first update
             callback=make_servo_callback(i),
-            ranges=ranges
+            ranges=ranges[i]
         )
 
     try:
