@@ -582,11 +582,12 @@ class Controller:
                     self.mocap.unsubscribe_point(leader_id)
                 self.cf.commander.send_notify_setpoint_stop()
         else:
+            if len(waypoints[0]) == 4:
+                for w in waypoints:
+                    w.append(delta_t)
             self.run_control_loop(waypoints, angles, pointers, params)
         # elif len(waypoints) and len(angles):
-        #     if len(waypoints[0]) == 4:
-        #         for w in waypoints:
-        #             w.append(delta_t)
+
         #     self.sync_pos_servo(waypoints, angles, iterations, params)
         # elif len(angles):
         #     self.run_servo(angles, delta_t, iterations)
