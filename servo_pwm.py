@@ -83,6 +83,7 @@ if __name__ == '__main__':
 
     offsets = [0, -180] if args.servo_type == 'a' else [-90, -270]
     ranges = [(0, 180), (180, 360)] if args.servo_type == 'a' else [(90, 270), (270, 450)]
+    initial_values = (1, 181) if args.servo_type == 'a' else (181, 361)
     servos = Servo(args.n, offsets)
 
     # ---------------------------------------------------------
@@ -103,7 +104,7 @@ if __name__ == '__main__':
 
         controller.register_group(
             name=f"servo_{i}",
-            initial_values=[ranges[i][0]+1],  # Controller assumes 0 start; hardware will snap on first update
+            initial_values=[initial_values[i]],  # Controller assumes 0 start; hardware will snap on first update
             callback=make_servo_callback(i),
             ranges=[ranges[i]]
         )
