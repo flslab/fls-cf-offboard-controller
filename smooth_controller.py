@@ -141,4 +141,5 @@ class SmoothController:
 
     def stop(self):
         self.running = False
-        self.worker_thread.join()
+        if self.worker_thread.is_alive():
+            self.worker_thread.join()
