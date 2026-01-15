@@ -31,6 +31,7 @@ from config import (
 )
 
 from mocap import Mocap
+from smooth_controller import SmoothController
 from tracker import Tracker
 from logger import setup_logging
 
@@ -127,6 +128,8 @@ class Controller:
         self.flight_duration = 0
         self.led_running = False
         self.led_thread = None
+        self.animation_start_time = 0
+        self.smooth_controller = None
 
         self.log_data = copy.deepcopy(LOG_VARS)
         self.log_times = []
@@ -165,6 +168,7 @@ class Controller:
     def start(self):
         self.load_manifest()
         self.check_deck()
+        self.setup_smooth_controller()
         self.setup_led()
         self.setup_servo()
         self.setup_sockets()
@@ -258,21 +262,37 @@ class Controller:
             logger.error(f'No {self.args.check_deck} deck detected!')
             exit()
 
+    def setup_smooth_controller(self):
+        if self.args.servo or self.args.led:
+            self.smooth_controller = SmoothController(rate=self.args.smooth_controller_rate)
+
     def setup_servo(self):
-        if self.args.servo:
-            from servo_pwm import Servo
-            offsets = [0, -180] if self.args.servo_type == 'a' else [-90, -270]
-            self.servo = Servo(self.args.servo_count, offsets)
-            time.sleep(0.1)
-            self._set_safe_servo_angles()
-            logger.info("servo activated")
+        if not self.args.servo:
+            return
+
+        from servo_pwm import Servo
+        offsets = [0, -180] if self.args.servo_type == 'a' else [-90, -270]
+        ranges = [(0, 180), (180, 360)] if args.servo_type == 'a' else [(90, 270), (270, 450)]
+        initial_values = (1, 181) if args.servo_type == 'a' else (181, 361)
+
+        self.servo = Servo(self.args.servo_count, offsets)
+        time.sleep(0.1)
+        self.smooth_controller.register_group(
+            name="servos",
+            initial_values=initial_values,
+            callback=self.servo.set_all,
+            ranges=ranges
+        )
+        self._set_safe_servo_angles()
+        logger.info("servos activated")
 
     def setup_led(self):
         if self.args.led:
-            from led import LED
-            self.led = LED(brightness=self.args.led_brightness, num_pixels=self.args.led_count)
-            self.led.show_single_color(color=(230, 180, 0))
-            logger.debug("led activated")
+            return
+
+        from led import LED
+        self.led = LED(brightness=self.args.led_brightness, num_pixels=self.args.led_count)
+        logger.debug("led activated")
 
     def setup_motion_capture(self):
         if not self.args.vicon:
@@ -332,9 +352,11 @@ class Controller:
 
         logger.info(f"[{self.args.drone_id}] Waiting for START...")
         while True:
-            msg = self.sub_socket.recv_json()
-            if msg.get('cmd') == 'START':
+            if self._safe_sleep(1):
                 break
+            # msg = self.sub_socket.recv_json()
+            # if msg.get('cmd') == 'START':
+            #     break
 
         delay = (int(self.args.drone_id.split('lb')[1]) - 1) * self.manifest['mission']['delta_t']
         logger.info(f"[{self.args.drone_id}] Launching in {delay}s...")
@@ -405,6 +427,9 @@ class Controller:
 
     def setup_params(self):
         logger.info("Setting up parameters...")
+
+        if self.led:
+            self.led.show_single_color(color=(230, 180, 0))
 
         self._activate_kalman_estimator()
         self._set_position_sensitivity(POSITION_STD_DEV)
@@ -496,6 +521,7 @@ class Controller:
         follow = mission_setting.get('follow', False)
         params = mission_setting.get('params', {'linear': False, 'relative': False})
         angles = mission_setting.get('servos', [])
+        pointers = mission_setting.get('pointers', [])
         delta_t = mission_setting['delta_t']
         iterations = mission_setting['iterations']
         led_color = mission_setting.get('color')
@@ -514,7 +540,14 @@ class Controller:
             dt = 6 * dist
 
         if len(angles):
-            self.servo.set_all_smooth(angles[0])
+            self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
+
+        if len(pointers):
+            self.smooth_controller.register_group(
+                name="pointers",
+                initial_values=pointers[0],
+                callback=lambda vals: self.update_led(vals, led_setting)
+            )
 
         if not self.args.ground_test:
             self.commander.go_to(x, y, z, yaw, dt, relative=False)
@@ -526,8 +559,7 @@ class Controller:
         if led_color is not None:
             self.led.show_single_color(led_color)
 
-        if led_setting.get('mode') == 'expression':
-            self.start_led_thread(led_setting)
+        self.animation_start_time = time.time()
 
         if follow:
             leader_id = follow['id']
@@ -547,16 +579,56 @@ class Controller:
                     self._safe_sleep(delta_t)
                     self.mocap.unsubscribe_point(leader_id)
                 self.cf.commander.send_notify_setpoint_stop()
-        elif len(waypoints) and len(angles):
-            if len(waypoints[0]) == 4:
-                for w in waypoints:
-                    w.append(delta_t)
-            self.sync_pos_servo(waypoints, angles, iterations, params)
-        elif len(angles):
-            self.run_servo(angles, delta_t, iterations)
+        else:
+            self.run_control_loop(waypoints, angles, pointers, params)
+        # elif len(waypoints) and len(angles):
+        #     if len(waypoints[0]) == 4:
+        #         for w in waypoints:
+        #             w.append(delta_t)
+        #     self.sync_pos_servo(waypoints, angles, iterations, params)
+        # elif len(angles):
+        #     self.run_servo(angles, delta_t, iterations)
 
-        self.stop_led_thread()
         self.led.clear()
+
+    def run_control_loop(self, waypoints, angles, pointers, params):
+        elapsed_time = 0.0
+        num_steps = max(len(waypoints), len(angles), len(pointers))
+        for i in range(num_steps):
+            duration = waypoints[i][4]
+            if i < len(waypoints):
+                self.commander.go_to(*waypoints[i], **params)
+                logger.info(f"go to {waypoints[i]}")
+            if i < len(angles):
+                self.smooth_controller.set_group_values("servos", angles[i], duration=duration)
+            if i < len(pointers):
+                self.smooth_controller.set_group_values("pointers", pointers[i], duration=duration)
+
+            target_time = self.animation_start_time + elapsed_time + duration
+            sleep_duration = target_time - time.time()
+            elapsed_time += duration
+            # If we are ahead of schedule, sleep the difference
+            if sleep_duration > 0:
+                self._safe_sleep(sleep_duration)
+            else:
+                # If sleep_duration is negative, we are lagging behind!
+                logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
+
+    def update_led(self, pointers, led_setting):
+        formula_str = led_setting["formula"]
+        led_buffer = []
+        current_time = time.time() - self.animation_start_time
+        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math}
+        for j, p in enumerate(pointers):
+            context[f"p{j}"] = p
+
+        for i in range(self.args.led_count):
+            context["i"] = i
+            # Evaluate the string
+            rgb = eval(formula_str, {}, context)
+            led_buffer.append(rgb)
+
+        self.led.set_colors(led_buffer)
 
     def run_led(self, setting):
         start_time = time.time()
@@ -574,7 +646,7 @@ class Controller:
                 rgb = eval(formula_str, {}, context)
                 led_buffer.append(rgb)
 
-                self.led.set_colors(led_buffer)
+            self.led.set_colors(led_buffer)
             time.sleep(1 / rate_hz)
 
     def start_led_thread(self, setting):
@@ -590,7 +662,7 @@ class Controller:
     def run_servo(self, angles, delta_t, iterations):
         for _ in range(iterations):
             for a in angles:
-                self.servo.set_all_smooth(a)
+                self.smooth_controller.set_group_values("servos", a, duration=1.0)
                 self._safe_sleep(delta_t)
 
     def sync_pos_servo(self, waypoints, angles, iterations, params):
@@ -603,7 +675,7 @@ class Controller:
                 duration = w[4]
                 self.commander.go_to(*w, **params)
                 logger.info(f"go to {w}")
-                self.servo.set_all_smooth(a, duration=duration)
+                self.smooth_controller.set_group_values("servos", a, duration=duration)
 
                 target_time = start_time + elapsed_time + duration
                 sleep_duration = target_time - time.time()
@@ -685,6 +757,8 @@ class Controller:
                             self.stop_led_thread()
                             self.led.show_single_color((230, 20, 20))
                         raise EmergencyStopException("Orchestrator requested Emergency Stop")
+                    elif msg.get('cmd') == 'START':
+                        return True
 
                 except zmq.Again:
                     pass
@@ -740,9 +814,9 @@ class Controller:
 
     def _set_safe_servo_angles(self):
         if self.args.servo_type == 'a':
-            self.servo.set_all_smooth([0, 180])
+            self.smooth_controller.set_group_values("servos", [0, 180], 1.0)
         elif self.args.servo_type == 'b':
-            self.servo.set_all_smooth([180, 360])
+            self.smooth_controller.set_group_values("servos", [180, 360], 1.0)
 
     def _start_tracker_process(self):
         """Starts the external C++ localization process."""
@@ -810,6 +884,7 @@ if __name__ == '__main__':
     ap.add_argument("--servo", help="Use servo", action="store_true", default=False)
     ap.add_argument("--servo-type", type=str, help="type of light bender servo setting")
     ap.add_argument("--servo-count", type=int, default=2, help="number of the servos")
+    ap.add_argument("--smooth-controller-rate", type=int, default=30, help="rate of smooth controller update loop")
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)

@@ -9,6 +9,7 @@ class SmoothController:
         """
         self.rate = rate
         self.groups = {}
+        self.update_callbacks = []  # List of generic callbacks to run every loop
         self.running = True
         self.lock = threading.RLock()
         self.worker_thread = threading.Thread(target=self._update_loop, daemon=True)
@@ -58,6 +59,23 @@ class SmoothController:
                     group['start_times'][i] = now
                     group['durations'][i] = duration
 
+    def add_update_callback(self, callback):
+        """
+        Adds a generic callback that is executed on every update loop iteration.
+        Useful for logging, tick hooks, or synchronization.
+        """
+        with self.lock:
+            if callback not in self.update_callbacks:
+                self.update_callbacks.append(callback)
+
+    def remove_update_callback(self, callback):
+        """
+        Removes a previously added generic update callback.
+        """
+        with self.lock:
+            if callback in self.update_callbacks:
+                self.update_callbacks.remove(callback)
+
     def _update_loop(self):
         """
         Background thread loop.
@@ -67,6 +85,14 @@ class SmoothController:
             loop_start = time.time()
 
             with self.lock:
+                # 1. Run generic update callbacks
+                for cb in self.update_callbacks:
+                    try:
+                        cb()
+                    except Exception as e:
+                        print(f"Error in update callback: {e}")
+
+                # 2. Process groups (interpolation)
                 now = time.time()
                 for name, group in self.groups.items():
                     changed = False
@@ -100,7 +126,7 @@ class SmoothController:
                                 current_vals[i] = val
                                 changed = True
 
-                    # If any value in the group changed, trigger the callback
+                    # If any value in the group changed, trigger the group callback
                     if changed:
                         try:
                             group['callback'](list(current_vals))
