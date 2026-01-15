@@ -103,7 +103,7 @@ if __name__ == '__main__':
 
         controller.register_group(
             name=f"servo_{i}",
-            initial_values=[0.0],  # Controller assumes 0 start; hardware will snap on first update
+            initial_values=[ranges[i][0]+1],  # Controller assumes 0 start; hardware will snap on first update
             callback=make_servo_callback(i),
             ranges=[ranges[i]]
         )
