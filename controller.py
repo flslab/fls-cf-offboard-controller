@@ -214,6 +214,7 @@ class Controller:
             self.led.stop()
 
         if self.servo:
+            time.sleep(1.0)
             del self.servo
 
         self.disconnect()
