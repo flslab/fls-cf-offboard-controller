@@ -122,6 +122,7 @@ class SwarmOrchestrator:
                 f"--drone-id {drone['id']} "
                 f"--led --servo --servo-type {drone['type']} "
                 f"--takeoff-altitude {alt} "
+                f"--smooth-controller-rate 50 "
                 f"> drone_{drone['id']}.log 2>&1 < /dev/null &"
             )
         else:
@@ -135,6 +136,8 @@ class SwarmOrchestrator:
                 f"--drone-id {drone['id']} "
                 f"--led --servo --servo-type {drone['type']} "
                 f"--takeoff-altitude {alt} "
+                "--smooth-controller-rate 50 "
+                "--log "
                 f"> drone_{drone['id']}.log 2>&1 < /dev/null &"
             )
 
@@ -320,10 +323,10 @@ class SwarmOrchestrator:
         self.logger.info(f"Processing {len(self.pending_downloads)} pending downloads...")
         remaining = []
         for item in self.pending_downloads:
-            remote = f"{self.common_cfg['work_dir']}/logs/vicon_{item['tag']}.json"
-            local = f"./logs/{item['drone']['id']}_vicon_{item['tag']}.json"
+            remote = f"{self.common_cfg['work_dir']}/logs/{item['tag']}.json"
+            local = f"./logs/{item['drone']['id']}_{item['tag']}.json"
 
-            success = self._download_file(item['drone'], remote, local, "Vicon Log")
+            success = self._download_file(item['drone'], remote, local, "Log")
             if not success:
                 remaining.append(item)
 

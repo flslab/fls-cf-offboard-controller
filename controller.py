@@ -193,16 +193,18 @@ class Controller:
         self.land()
         self._send_landing_confirmation()
 
+        if self.bat_logger:
+            self.bat_logger.stop()
+
         if self.var_logger:
             self.var_logger.stop()
             self.save_log()
 
-        if self.bat_logger:
-            self.bat_logger.stop()
-
         if self.mocap:
             self.mocap.stop()
-            self.save_mocap_log()
+
+        if self.mocap or self.var_logger:
+            self.save_logs()
 
         if self.tracker:
             self.tracker.stop()
@@ -658,31 +660,25 @@ class Controller:
                     # If sleep_duration is negative, we are lagging behind!
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
 
-    def save_log(self):
+    def save_logs(self):
         log_dir = self.args.log_dir
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
 
-        filename = os.path.join(log_dir, f"cf_{self.args.tag}.json")
+        output_data = {}
 
-        output_data = {
-            "time": self.log_times,
-            "params": self.log_data
-        }
+        if self.mocap:
+            output_data["frames"] = self.mocap_frames
+        if self.var_logger:
+            output_data["cf"] = {
+                "time": self.log_times,
+                "params": self.log_data
+            }
+
+        filename = os.path.join(log_dir, f"{self.args.tag}.json")
         with open(filename, 'w') as f:
             json.dump(output_data, f)
         logger.info(f"Logs saved to {filename}")
-
-    def save_mocap_log(self):
-        log_dir = self.args.log_dir
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir, exist_ok=True)
-
-        filename = os.path.join(log_dir, f"vicon_{self.args.tag}.json")
-
-        with open(filename, "w") as f:
-            json.dump({"frames": self.mocap_frames}, f)
-        logger.info(f"Mocap log saved in {filename}")
 
     def _safe_sleep_standalone(self, seconds):
         is_battery_critical = self.battery_critical.wait(timeout=seconds)
