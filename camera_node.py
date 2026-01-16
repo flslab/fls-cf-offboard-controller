@@ -1,3 +1,5 @@
+import argparse
+
 import yaml
 import zmq
 import subprocess
@@ -16,8 +18,9 @@ def load_manifest():
 
 
 class CameraNode:
-    def __init__(self, manifest):
+    def __init__(self, manifest, args):
         self.manifest = manifest
+        self.args = args
         self.ctrl = manifest['controller']
         self.context = zmq.Context()
         self.recording_process = None
@@ -44,13 +47,9 @@ class CameraNode:
                 "-o", OUTPUT_FILENAME,
                 "--width", "1920",
                 "--height", "1080",
-                "--autofocus-mode", "manual",
-                "--lens-position", "0.5",
-                "--shutter", "30000",
-                "--gain", "2.0",
-                "--awb", "indoor",
                 "--nopreview"
             ]
+            cmd += self.args.params
             try:
                 # Start process in new process group for clean termination
                 self.recording_process = subprocess.Popen(
@@ -112,6 +111,9 @@ class CameraNode:
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--params", "-p", nargs="?", default=[])
+    args = ap.parse_args()
     manifest = load_manifest()
-    node = CameraNode(manifest)
+    node = CameraNode(manifest, args)
     node.run()
