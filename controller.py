@@ -403,7 +403,7 @@ class Controller:
             return
 
         logger.info("Setting up logging...")
-        self.var_logger = LogConfig(name='Controller', period_in_ms=10)
+        self.var_logger = LogConfig(name='Controller', period_in_ms=100)
 
         for par, conf in LOG_VARS.items():
             self.var_logger.add_variable(par, conf["type"])
