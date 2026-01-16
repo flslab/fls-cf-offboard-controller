@@ -132,7 +132,7 @@ def load_ground_truth_trajectory(yaml_path):
 
     times = [0.0]
     for i in range(1, len(waypoints)):
-        dt = waypoints[i, 4]
+        dt = waypoints[i, 4] if len(waypoints[i]) == 5 else drone_data['delta_t']
         times.append(times[-1] + dt)
 
     times = np.array(times)
@@ -398,7 +398,7 @@ def calculate_rmse(json_file, yaml_file):
 
 if __name__ == "__main__":
     # File paths (adjust if needed)
-    json_path = 'logs/lb2_log_test_keyframe_linear_2026-01-15_15-04-08.json'
-    yaml_path = 'mission/led_test_moving.yaml'
+    json_path = 'logs/lb2_log_test_10hz_2026-01-15_14-57-14.json'
+    yaml_path = 'mission/led_test_moving_10hz.yaml'
 
     calculate_rmse(json_path, yaml_path)
