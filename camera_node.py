@@ -37,7 +37,6 @@ class CameraNode:
 
     def start_recording(self):
         if self.recording_process is None:
-            self.logger.info("Starting Recording...")
             # Using libcamera-vid.
             # -t 0: Record indefinitely until signal.
             # --inline: Improves compatibility for streaming/concatenation
@@ -50,6 +49,8 @@ class CameraNode:
                 "--nopreview"
             ]
             cmd += self.args.params
+            self.logger.info(f"Starting Recording with these settings: {cmd}")
+
             try:
                 # Start process in new process group for clean termination
                 self.recording_process = subprocess.Popen(
