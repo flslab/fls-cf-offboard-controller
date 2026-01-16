@@ -113,7 +113,7 @@ class CameraNode:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--params", "-p", nargs="?", default=[])
+    ap.add_argument("--params", "-p", type=str, nargs="*", default=[])
     args = ap.parse_args()
     manifest = load_manifest()
     node = CameraNode(manifest, args)
