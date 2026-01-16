@@ -551,6 +551,8 @@ class Controller:
         if self.manifest['mission']['require_handshake']:
             self.handshake()
 
+        self.animation_start_time = time.time()
+
         if len(pointers):
             self.smooth_controller.register_group(
                 name="pointers",
@@ -565,8 +567,6 @@ class Controller:
 
         if led_color is not None:
             self.led.show_single_color(led_color)
-
-        self.animation_start_time = time.time()
 
         if follow:
             leader_id = follow['id']
@@ -604,6 +604,7 @@ class Controller:
     def run_control_loop(self, waypoints, angles, pointers, params):
         elapsed_time = 0.0
         num_steps = max(len(waypoints), len(angles), len(pointers))
+        print(num_steps, waypoints)
         if num_steps == 1:
             self._safe_sleep(waypoints[0][4])
             return
