@@ -544,6 +544,13 @@ class Controller:
         if len(angles):
             self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
 
+        if not self.args.ground_test:
+            self.commander.go_to(x, y, z, yaw, dt, relative=False)
+            self._safe_sleep(dt + 1)
+
+        if self.manifest['mission']['require_handshake']:
+            self.handshake()
+
         if len(pointers):
             self.smooth_controller.register_group(
                 name="pointers",
@@ -555,13 +562,6 @@ class Controller:
             def update_led_cb():
                 self.update_led(pointers, led_setting)
             self.smooth_controller.add_update_callback(update_led_cb)
-
-        if not self.args.ground_test:
-            self.commander.go_to(x, y, z, yaw, dt, relative=False)
-            self._safe_sleep(dt + 1)
-
-        if self.manifest['mission']['require_handshake']:
-            self.handshake()
 
         if led_color is not None:
             self.led.show_single_color(led_color)
