@@ -47,7 +47,7 @@ class CameraNode:
                 "--autofocus-mode", "manual",
                 "--lens-position", "0.5",
                 "--shutter", "30000",
-                "--gain", "1.0",
+                "--gain", "2.0",
                 "--awb", "indoor",
                 "--nopreview"
             ]
