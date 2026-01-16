@@ -588,7 +588,7 @@ class Controller:
                 self.cf.commander.send_notify_setpoint_stop()
         else:
             if not len(waypoints):
-                waypoints.append(target)
+                waypoints.append([target[0], target[1], target[2], target[3], delta_t])
             if len(waypoints[0]) == 4:
                 for w in waypoints:
                     w.append(delta_t)
@@ -604,7 +604,6 @@ class Controller:
     def run_control_loop(self, waypoints, angles, pointers, params):
         elapsed_time = 0.0
         num_steps = max(len(waypoints), len(angles), len(pointers))
-        print(num_steps, waypoints)
         if num_steps == 1:
             self._safe_sleep(waypoints[0][4])
             return
