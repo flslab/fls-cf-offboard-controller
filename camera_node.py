@@ -49,7 +49,7 @@ class CameraNode:
                 "--height", "1080",
                 "--nopreview"
             ]
-            cmd += self.args.params
+            cmd += self.args["params"]
             self.logger.info(f"Starting Recording with these settings: {cmd}")
 
             try:
