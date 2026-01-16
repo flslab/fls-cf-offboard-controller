@@ -581,8 +581,8 @@ class Controller:
                     self._safe_sleep(delta_t)
                     self.mocap.unsubscribe_object(leader_obj_name)
                 elif self.args.vicon_mode == "pointcloud":
-                    leader_init_pos = leader_drone['init_pos']
-                    self.mocap.subscribe_point(leader_init_pos,
+                    leader_target_pos = self.mission['drones'][leader_id]['target'][:3]
+                    self.mocap.subscribe_point(leader_target_pos,
                                                lambda frame: self._follow_with_offset(frame, follow['offset']),
                                                name=leader_id)
                     self._safe_sleep(delta_t)
