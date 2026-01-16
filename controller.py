@@ -551,6 +551,11 @@ class Controller:
                 callback=lambda vals: self.update_led(vals, led_setting)
             )
 
+        elif led_setting['mode'] == 'expression':
+            def update_led_cb():
+                self.update_led(pointers, led_setting)
+            self.smooth_controller.add_update_callback(update_led_cb)
+
         if not self.args.ground_test:
             self.commander.go_to(x, y, z, yaw, dt, relative=False)
             self._safe_sleep(dt + 1)
@@ -586,12 +591,11 @@ class Controller:
                 for w in waypoints:
                     w.append(delta_t)
             self.run_control_loop(waypoints, angles, pointers, params)
-        # elif len(waypoints) and len(angles):
 
-        #     self.sync_pos_servo(waypoints, angles, iterations, params)
-        # elif len(angles):
-        #     self.run_servo(angles, delta_t, iterations)
         self.animation_stop_time = time.time()
+
+        if not len(pointers) and led_setting['mode'] == 'expression':
+            self.smooth_controller.remove_update_callback(update_led_cb)
 
         self.led.clear()
 
