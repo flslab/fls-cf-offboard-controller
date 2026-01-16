@@ -398,7 +398,7 @@ def calculate_rmse(json_file, yaml_file):
 
 if __name__ == "__main__":
     # File paths (adjust if needed)
-    json_path = 'logs/lb2_log_test_10hz_2026-01-15_14-57-14.json'
-    yaml_path = 'mission/led_test_moving_10hz.yaml'
+    json_path = 'logs/lb2_log_test_keyframe_linear_2026-01-15_14-54-28.json'
+    yaml_path = 'mission/led_test_moving.yaml'
 
     calculate_rmse(json_path, yaml_path)
