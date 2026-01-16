@@ -1,4 +1,5 @@
 import argparse
+import sys
 
 import yaml
 import zmq
@@ -112,9 +113,7 @@ class CameraNode:
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--params", "-p", type=str, nargs="*", default=[])
-    args = ap.parse_args()
+    args = {"params": sys.argv[1:]}
     manifest = load_manifest()
     node = CameraNode(manifest, args)
     node.run()
