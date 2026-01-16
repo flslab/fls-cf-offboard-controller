@@ -587,6 +587,8 @@ class Controller:
                     self.mocap.unsubscribe_point(leader_id)
                 self.cf.commander.send_notify_setpoint_stop()
         else:
+            if not len(waypoints):
+                waypoints.append(target)
             if len(waypoints[0]) == 4:
                 for w in waypoints:
                     w.append(delta_t)
@@ -602,6 +604,10 @@ class Controller:
     def run_control_loop(self, waypoints, angles, pointers, params):
         elapsed_time = 0.0
         num_steps = max(len(waypoints), len(angles), len(pointers))
+        if num_steps == 1:
+            self._safe_sleep(waypoints[0][4])
+            return
+
         for i in range(1, num_steps):
             duration = waypoints[i][4]
             if i < len(waypoints):
