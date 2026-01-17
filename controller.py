@@ -574,6 +574,7 @@ class Controller:
             leader_id = follow['id']
             leader_drone = self._get_drone_by_id(leader_id)
             if leader_drone:
+                logger.info(f"following {leader_id}")
                 if self.args.vicon_mode == "rigidbody":
                     leader_obj_name = leader_drone['obj_name']
                     self.mocap.subscribe_object(leader_obj_name,
