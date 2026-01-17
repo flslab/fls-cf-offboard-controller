@@ -561,13 +561,11 @@ class Controller:
                 initial_values=pointers[0],
                 callback=lambda vals: self.update_led(vals, led_setting)
             )
-
-        elif led_setting['mode'] == 'expression':
+        elif led_setting.get('mode') == 'expression':
             def update_led_cb():
                 self.update_led(pointers, led_setting)
             self.smooth_controller.add_update_callback(update_led_cb)
-
-        if led_color is not None:
+        elif led_color is not None:
             self.led.show_single_color(led_color)
 
         if follow:
