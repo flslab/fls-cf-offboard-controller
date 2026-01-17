@@ -597,7 +597,7 @@ class Controller:
 
         self.animation_stop_time = time.time()
 
-        if not len(pointers) and led_setting['mode'] == 'expression':
+        if not len(pointers) and led_setting.get('mode') == 'expression':
             self.smooth_controller.remove_update_callback(update_led_cb)
 
         self.led.clear()
