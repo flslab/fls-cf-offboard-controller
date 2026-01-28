@@ -34,7 +34,7 @@ class SwarmOrchestrator:
         # Configuration State
         self.manifest = self._load_manifest()
         self.ctrl_cfg = self.manifest['controller']
-        self.drones = self.manifest['drones']
+        self.drones = self.manifest.get('drones', [])
         self.camera_cfg = self.manifest.get('camera_node')
         self.radio_node = self.manifest.get('radio_node')
         self.common_cfg = self.manifest['common']
@@ -43,6 +43,7 @@ class SwarmOrchestrator:
         # Runtime State
         self.tag = None
         self.running = False
+        self.emergency = False
         self.pending_downloads = self._load_previous_downloads()
         self.landed_drones = set()
         self.ready_ids = set()
@@ -142,10 +143,21 @@ class SwarmOrchestrator:
             )
 
     def _get_camera_cmd(self):
+        camera_params = [
+            "--autofocus-mode", "manual",
+            "--lens-position", "0.5",
+            "--shutter", "35000",
+            "--awb", "indoor",
+        ]
+        if self.args.dark:
+            camera_params += ["--gain", "2.0"]
+        else:
+            camera_params += ["--gain", "0.8"]
+
         return (
             f"bash -c 'cd {self.common_cfg['work_dir']} && "
             f"source {self.common_cfg['venv_path']}/bin/activate && "
-            f"nohup python3 {CAMERA_SCRIPT} > CAM.log 2>&1 < /dev/null &'"
+            f"nohup python3 {CAMERA_SCRIPT} {' '.join(camera_params)} > CAM.log 2>&1 < /dev/null &'"
         )
 
     def _boot_remote_node(self, device_cfg, cmd, node_type="Drone"):
@@ -174,8 +186,12 @@ class SwarmOrchestrator:
             self.logger.info(f"Saved: {local_path}")
             return True
         except FileNotFoundError:
-            self.logger.info(f"File not found, it will be removed from list.")
-            return True
+            if not self.emergency:
+                self.logger.info(f"File not found, it will be removed from list.")
+                return True
+            else:
+                self.logger.info(f"File not found, retry next time.")
+                return False
         except Exception as e:
             self.logger.error(f"Failed to download {description}: {e}")
             return False
@@ -210,10 +226,10 @@ class SwarmOrchestrator:
 
         if remote:
             if not self.radio_node:
-                print("[Orchestrator] ❌ Cannot perform remote reboot: No 'radio_node' in manifest.")
+                print("[Orchestrator] Cannot perform remote reboot: No 'radio_node' in manifest.")
                 return
 
-            print(f"[Orchestrator] 📡 Sending REMOTE REBOOT request to Radio Node ({len(uris)} drones)...")
+            print(f"[Orchestrator] Sending REMOTE REBOOT request to Radio Node ({len(uris)} drones)...")
             msg = {
                 "cmd": "REBOOT",
                 "uris": uris
@@ -373,6 +389,7 @@ class SwarmOrchestrator:
     def emergency_stop(self):
         """Broadcasts emergency command and waits for landing confirmations."""
         self.running = False  # Stop inner loops
+        self.emergency = True
         self.logger.info("!!! TRIGGERING EMERGENCY LANDING !!!")
 
         if self.pub_socket:
@@ -421,6 +438,7 @@ if __name__ == "__main__":
     parser.add_argument("--off", action="store_true", help="shutdown the raspberry pis")
     parser.add_argument("--kill", action="store_true", help="stop the controller")
     parser.add_argument("--ground", action="store_true", help="ground test")
+    parser.add_argument("--dark", action="store_true", help="recording in darkness")
     args = parser.parse_args()
 
     orchestrator = SwarmOrchestrator(args)
