@@ -1,9 +1,9 @@
 bl_info = {
-    "name": "Drone Swarm Animator",
+    "name": "LightBender Swarm Animator",
     "author": "HA",
     "version": (1, 8),
     "blender": (3, 0, 0),
-    "location": "View3D > Sidebar > Drone Swarm",
+    "location": "View3D > Sidebar > LightBender",
     "description": "Create light-element drones, animate LEDs with pointers, and export YAML",
     "category": "Animation",
 }
@@ -43,10 +43,10 @@ class DroneProperties(bpy.types.PropertyGroup):
         name="Type",
         description="Light Element Type",
         items=[
-            ('TYPE_A', "Type A (0-180, 180-360)", "Rod 1: 0-180, Rod 2: 180-360"),
-            ('TYPE_B', "Type B (90-270, 270-450)", "Rod 1: 90-270, Rod 2: 270-450"),
+            ('TYPE_H', "Type H (0-180, 180-360)", "Segment 1: 0-180, Segment 2: 180-360"),
+            ('TYPE_V', "Type V (90-270, 270-450)", "Segment 1: 90-270, Segment 2: 270-450"),
         ],
-        default='TYPE_A'
+        default='TYPE_H'
     )
 
     # LED Control Modes
@@ -133,10 +133,10 @@ class OBJECT_OT_add_drone(bpy.types.Operator):
     drone_type: EnumProperty(
         name="Type",
         items=[
-            ('TYPE_A', "Type A", "Rod 1: 0-180, Rod 2: 180-360"),
-            ('TYPE_B', "Type B", "Type B: 90-270, Rod 2: 270-450"),
+            ('TYPE_H', "Type H", "Segment 1: 0-180, Segment 2: 180-360"),
+            ('TYPE_V', "Type V", "Segments 1: 90-270, Segment 2: 270-450"),
         ],
-        default='TYPE_A'
+        default='TYPE_H'
     )
 
     def execute(self, context):
@@ -147,19 +147,19 @@ class OBJECT_OT_add_drone(bpy.types.Operator):
 
         # Add Custom Properties to Base for Animation
         drone_base["servo_1"] = 0.0
-        drone_base["servo_2"] = 180.0 if self.drone_type == 'TYPE_A' else 270.0
+        drone_base["servo_2"] = 180.0 if self.drone_type == 'TYPE_H' else 270.0
 
         # UI Property definitions for limits
         mgr = drone_base.id_properties_ui("servo_1")
-        if self.drone_type == 'TYPE_A':
+        if self.drone_type == 'TYPE_H':
             mgr.update(min=0.0, max=180.0, soft_min=0.0, soft_max=180.0)
         else:
             mgr.update(min=90.0, max=270.0, soft_min=90.0, soft_max=270.0)
 
         mgr = drone_base.id_properties_ui("servo_2")
-        if self.drone_type == 'TYPE_A':
+        if self.drone_type == 'TYPE_H':
             mgr.update(min=180.0, max=360.0, soft_min=180.0, soft_max=360.0)
-        else:  # Type B
+        else:  # Type V
             mgr.update(min=270.0, max=450.0, soft_min=270.0, soft_max=450.0)
 
         # Attach our custom property group
@@ -590,8 +590,8 @@ class EXPORT_OT_drone_yaml(bpy.types.Operator):
 class VIEW3D_PT_drone_swarm(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "Drone Swarm"
-    bl_label = "Swarm Controls"
+    bl_category = "LightBender"
+    bl_label = "LightBender Controls"
 
     def draw(self, context):
         layout = self.layout
@@ -611,8 +611,8 @@ class VIEW3D_PT_drone_swarm(bpy.types.Panel):
             layout.label(text=f"Selected: {obj.name}")
             col = layout.column(align=True)
             col.label(text="Servo Angles (deg):")
-            col.prop(obj, '["servo_1"]', text="Rod 1")
-            col.prop(obj, '["servo_2"]', text="Rod 2")
+            col.prop(obj, '["servo_1"]', text="Angle 1")
+            col.prop(obj, '["servo_2"]', text="Angle 2")
 
             layout.separator()
             layout.label(text="LED Configuration:")
