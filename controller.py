@@ -522,6 +522,7 @@ class Controller:
         mission_setting = self.mission['drones'][self.args.drone_id]
         target = mission_setting['target']
         waypoints = mission_setting.get('waypoints', [])
+        low_level_setpoint = mission_setting.get('low_level_setpoint', [])
         follow = mission_setting.get('follow', False)
         params = mission_setting.get('params', {'linear': False, 'relative': False})
         angles = mission_setting.get('servos', [])
@@ -587,6 +588,14 @@ class Controller:
                     self._safe_sleep(delta_t)
                     self.mocap.unsubscribe_point(leader_id)
                 self.cf.commander.send_notify_setpoint_stop()
+        elif len(low_level_setpoint):
+            def position_setpoint_cb():
+                self.cf.commander.send_position_setpoint(*low_level_setpoint)
+            self.smooth_controller.add_update_callback(position_setpoint_cb)
+            logger.info(f"send position setpoint {position_setpoint_cb}")
+            self._safe_sleep(delta_t)
+            self.smooth_controller.remove_update_callback(position_setpoint_cb)
+
         else:
             if not len(waypoints):
                 waypoints.append([target[0], target[1], target[2], target[3], delta_t])
@@ -635,7 +644,8 @@ class Controller:
         formula_str = led_setting["formula"]
         led_buffer = []
         current_time = time.time() - self.animation_start_time
-        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math}
+        x, y, z = self._get_latest_mocap_frame()
+        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math, "x": x, "y": y, "z": z}
         for j, p in enumerate(pointers):
             context[f"p{j}"] = p
 
