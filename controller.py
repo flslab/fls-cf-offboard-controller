@@ -593,7 +593,7 @@ class Controller:
             if len(waypoints[0]) == 4:
                 for w in waypoints:
                     w.append(delta_t)
-            self.run_control_loop(waypoints, angles, pointers, params)
+            self.run_control_loop(waypoints, angles, pointers, params, delta_t)
 
         self.animation_stop_time = time.time()
 
@@ -602,7 +602,7 @@ class Controller:
 
         self.led.clear()
 
-    def run_control_loop(self, waypoints, angles, pointers, params):
+    def run_control_loop(self, waypoints, angles, pointers, params, delta_t):
         elapsed_time = 0.0
         num_steps = max(len(waypoints), len(angles), len(pointers))
         if num_steps == 1:
@@ -610,8 +610,10 @@ class Controller:
             return
 
         for i in range(1, num_steps):
-            duration = waypoints[i][4]
+            duration = delta_t
+
             if i < len(waypoints):
+                duration = waypoints[i][4]
                 self.commander.go_to(*waypoints[i], **params)
                 logger.info(f"go to {waypoints[i]}")
             if i < len(angles):
