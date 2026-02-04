@@ -595,7 +595,7 @@ class Controller:
             logger.info(f"send position setpoint {position_setpoint_cb}")
             self._safe_sleep(delta_t)
             self.smooth_controller.remove_update_callback(position_setpoint_cb)
-
+            self.cf.commander.send_notify_setpoint_stop()
         else:
             if not len(waypoints):
                 waypoints.append([target[0], target[1], target[2], target[3], delta_t])
