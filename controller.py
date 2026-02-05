@@ -592,7 +592,7 @@ class Controller:
             def position_setpoint_cb():
                 self.cf.commander.send_position_setpoint(*low_level_setpoint)
             self.smooth_controller.add_update_callback(position_setpoint_cb)
-            logger.info(f"send position setpoint {position_setpoint_cb}")
+            logger.info(f"send position setpoint {low_level_setpoint}")
             self._safe_sleep(delta_t)
             self.smooth_controller.remove_update_callback(position_setpoint_cb)
             self.cf.commander.send_notify_setpoint_stop()
@@ -602,7 +602,7 @@ class Controller:
             if len(waypoints[0]) == 4:
                 for w in waypoints:
                     w.append(delta_t)
-            self.run_control_loop(waypoints, angles, pointers, params, delta_t)
+            self.run_control_loop(waypoints, angles, pointers, params, delta_t, iterations)
 
         self.animation_stop_time = time.time()
 
@@ -611,34 +611,35 @@ class Controller:
 
         self.led.clear()
 
-    def run_control_loop(self, waypoints, angles, pointers, params, delta_t):
+    def run_control_loop(self, waypoints, angles, pointers, params, delta_t, iterations=1):
         elapsed_time = 0.0
         num_steps = max(len(waypoints), len(angles), len(pointers))
         if num_steps == 1:
             self._safe_sleep(waypoints[0][4])
             return
 
-        for i in range(1, num_steps):
-            duration = delta_t
+        for _ in range(iterations):
+            for i in range(1, num_steps):
+                duration = delta_t
 
-            if i < len(waypoints):
-                duration = waypoints[i][4]
-                self.commander.go_to(*waypoints[i], **params)
-                logger.info(f"go to {waypoints[i]}")
-            if i < len(angles):
-                self.smooth_controller.set_group_values("servos", angles[i], duration=duration)
-            if i < len(pointers):
-                self.smooth_controller.set_group_values("pointers", pointers[i], duration=duration)
+                if i < len(waypoints):
+                    duration = waypoints[i][4]
+                    self.commander.go_to(*waypoints[i], **params)
+                    logger.info(f"go to {waypoints[i]}")
+                if i < len(angles):
+                    self.smooth_controller.set_group_values("servos", angles[i], duration=duration)
+                if i < len(pointers):
+                    self.smooth_controller.set_group_values("pointers", pointers[i], duration=duration)
 
-            target_time = self.animation_start_time + elapsed_time + duration
-            sleep_duration = target_time - time.time()
-            elapsed_time += duration
-            # If we are ahead of schedule, sleep the difference
-            if sleep_duration > 0:
-                self._safe_sleep(sleep_duration)
-            else:
-                # If sleep_duration is negative, we are lagging behind!
-                logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
+                target_time = self.animation_start_time + elapsed_time + duration
+                sleep_duration = target_time - time.time()
+                elapsed_time += duration
+                # If we are ahead of schedule, sleep the difference
+                if sleep_duration > 0:
+                    self._safe_sleep(sleep_duration)
+                else:
+                    # If sleep_duration is negative, we are lagging behind!
+                    logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
 
     def update_led(self, pointers, led_setting):
         formula_str = led_setting["formula"]
