@@ -1,8 +1,54 @@
 #!/bin/bash
 
-HOSTS_FILE="/etc/hosts"
-HOST_IP="192.168.1.39"
-HOST_NAME="vicon"
+# ==========================================
+# FLS Offboard Controller Setup Script
+# ==========================================
+
+# Ensure script is run from the repo root
+CURRENT_DIR=$(pwd)
+echo "Running setup from: $CURRENT_DIR"
+
+sudo -v
+
+# ==========================================
+# 1. Python Virtual Environment Setup
+# ==========================================
+echo "--- Python Environment Setup ---"
+
+# Create Venv if it doesn't exist
+if [ ! -d "env" ]; then
+    echo "Creating Python virtual environment (env)..."
+    python3 -m venv env
+else
+    echo "Virtual environment 'env' already exists."
+fi
+
+# Activate the environment for the rest of this script
+echo "Activating virtual environment..."
+source env/bin/activate
+
+# Add to .bashrc for auto-activation on new terminals
+BASHRC_FILE="$HOME/.bashrc"
+ACTIVATE_CMD="source $CURRENT_DIR/env/bin/activate"
+NAVIGATE_CMD="cd $CURRENT_DIR"
+
+echo "Checking .bashrc..."
+if grep -Fq "$ACTIVATE_CMD" "$BASHRC_FILE"; then
+    echo "  [OK] .bashrc already contains activation command."
+else
+    echo "  [UPDATE] Adding auto-activation to $BASHRC_FILE"
+    echo "" >> "$BASHRC_FILE"
+    echo "# FLS Offboard Controller Auto-Setup" >> "$BASHRC_FILE"
+    echo "$NAVIGATE_CMD" >> "$BASHRC_FILE"
+    echo "$ACTIVATE_CMD" >> "$BASHRC_FILE"
+fi
+
+echo ""
+
+# ==========================================
+# 2. System Configurations (RPI Config)
+# ==========================================
+echo "--- System Configuration ---"
 
 RPI_CONFIG_FILE="/boot/firmware/config.txt"
 
@@ -20,103 +66,122 @@ CONFIGS_TO_ADD=(
     "$LED_CONFIG"
 )
 
-CAM_LOC_REPO="https://github.com/flslab/fls-marker-localization.git"
-CAM_LOC_REPO_DIR="$HOME/fls-marker-localization"
-
-sudo -v
-
-# Adding configs
-
 if [ ! -f "$RPI_CONFIG_FILE" ]; then
     echo "Error: File $RPI_CONFIG_FILE not found."
-    exit 1
+    # We don't exit here to allow non-Pi systems to proceed with other steps,
+    # but strictly speaking, this is likely a Pi-only script.
+else
+    echo "Checking configuration in $RPI_CONFIG_FILE..."
+    for config in "${CONFIGS_TO_ADD[@]}"; do
+        if grep -Fxq "$config" "$RPI_CONFIG_FILE"; then
+            echo "  [OK] Already exists: $config"
+        else
+            echo "  [UPDATE] Adding: $config"
+            echo "$config" | sudo tee -a "$RPI_CONFIG_FILE" > /dev/null
+        fi
+    done
 fi
-
-echo "Checking configuration in $RPI_CONFIG_FILE..."
-
-for config in "${CONFIGS_TO_ADD[@]}"; do
-    # -F: Fixed string (not regex)
-    # -x: Exact line match
-    # -q: Quiet (no output)
-    if grep -Fxq "$config" "$RPI_CONFIG_FILE"; then
-        echo "  [OK] Already exists: $config"
-    else
-        echo "  [UPDATE] Adding: $config"
-        # Echo the config line and pipe it into sudo tee -a (append)
-        # > /dev/null suppresses the output of tee to the screen
-        echo "$config" | sudo tee -a "$RPI_CONFIG_FILE" > /dev/null
-    fi
-done
 
 echo ""
 
-# Setting the Vicon host name
-echo "Checking $HOSTS_FILE..."
+# ==========================================
+# 3. Network Configuration (/etc/hosts)
+# ==========================================
+HOSTS_FILE="/etc/hosts"
+HOST_IP="192.168.1.39"
+HOST_NAME="vicon"
 
-# Check using regex (-e):
-# ^          = Start of line (prevents matching 1192.168...)
-# [[:space:]]+ = One or more spaces or tabs
+echo "Checking $HOSTS_FILE..."
 if grep -q -e "^$HOST_IP[[:space:]]\+$HOST_NAME" "$HOSTS_FILE"; then
     echo "  [OK] Entry already exists: $HOST_NAME"
 else
     echo "  [UPDATE] Adding: $HOST_IP $HOST_NAME"
-    # printf generates the line with a tab (\t) and a newline (\n)
-    # We pipe it to 'sudo tee -a' to write to the protected file
     printf "$HOST_IP\t$HOST_NAME\n" | sudo tee -a "$HOSTS_FILE" > /dev/null
 fi
 
+echo ""
+
+# ==========================================
+# 4. USB Permissions (Udev Rules)
+# ==========================================
+echo "--- Udev Rules Setup ---"
+
+UDEV_FILE="/etc/udev/rules.d/99-crazyflie.rules"
+UDEV_CONTENT='SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="5740", MODE="0666"'
+
+if [ -f "$UDEV_FILE" ] && grep -Fq "5740" "$UDEV_FILE"; then
+     echo "  [OK] Crazyflie udev rules already exist."
+else
+    echo "  [UPDATE] Creating/Updating $UDEV_FILE..."
+    echo "$UDEV_CONTENT" | sudo tee "$UDEV_FILE" > /dev/null
+
+    echo "  Reloading udev rules..."
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+fi
+
+echo ""
+
+# ==========================================
+# 5. Install Dependencies
+# ==========================================
+echo "--- Installing Dependencies ---"
+
 mkdir logs -p
 
-# Install motioncapture lib dependencies
-sudo apt install libboost-system-dev libboost-thread-dev libeigen3-dev ninja-build
+# System dependencies
+echo "Installing apt packages..."
+sudo apt update && sudo apt install -y libboost-system-dev libboost-thread-dev libeigen3-dev ninja-build git
+
+# Python dependencies (Installed into the active virtual environment)
+echo "Installing Python requirements..."
 pip install -r requirements.txt
 pip install -r requirements_servo.txt
 pip install -r requirements_led.txt
 
+echo ""
 
-# Define variables for modified libmotioncaputre
+# ==========================================
+# 6. Install Libmotioncapture
+# ==========================================
+echo "--- Installing Libmotioncapture ---"
+
 REPO_URL="https://github.com/Hamedamz/libmotioncapture.git"
 REPO_DIR="libmotioncapture"
 PACKAGE_NAME="motioncapture"
 
 echo "Step 1: Uninstalling existing $PACKAGE_NAME library..."
-pip uninstall -y $PACKAGE_NAME
-
-# Check if uninstall was successful or if package wasn't installed
-if [ $? -eq 0 ]; then
-    echo "Successfully uninstalled $PACKAGE_NAME (or it was not present)."
-else
-    echo "Warning: Failed to uninstall $PACKAGE_NAME."
-fi
+pip uninstall -y $PACKAGE_NAME || true
 
 echo "Step 2: Preparing source code..."
-# Remove existing directory if it exists to ensure a clean install
 if [ -d "$REPO_DIR" ]; then
     echo "Removing existing $REPO_DIR directory..."
     rm -rf "$REPO_DIR"
 fi
 
-# Clone the repository
 echo "Cloning repository from $REPO_URL..."
 git clone --recursive $REPO_URL
 
-# Navigate into the directory
+# Enter directory
 cd $REPO_DIR || { echo "Failed to enter directory $REPO_DIR"; exit 1; }
 
-# Initialize and update submodules (redundant if --recursive is used, but good practice)
 echo "Updating submodules..."
 git submodule update --init --recursive
 
-echo "Step 3: Installing $PACKAGE_NAME from source using pip..."
-# Install the current directory
+echo "Step 3: Installing $PACKAGE_NAME from source..."
+# Since venv is active, this installs to the venv
 pip install .
 
-# Check if install was successful
 if [ $? -eq 0 ]; then
     echo "------------------------------------------------"
-    echo "Success! $PACKAGE_NAME has been installed from source."
+    echo "Success! $PACKAGE_NAME has been installed."
     echo "------------------------------------------------"
 else
     echo "Error: Failed to install $PACKAGE_NAME."
     exit 1
 fi
+
+# Return to original directory
+cd "$CURRENT_DIR"
+
+echo "Setup Complete. Please restart your terminal or run 'source env/bin/activate' to start working."
