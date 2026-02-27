@@ -16,20 +16,22 @@ sudo -v
 echo "--- Python Environment Setup ---"
 
 # Create Venv if it doesn't exist
-if [ ! -d "env" ]; then
+ENV_DIR="$HOME/env"
+
+if [ ! -d "$ENV_DIR" ]; then
     echo "Creating Python virtual environment (env)..."
-    python3 -m venv env
+    python3 -m venv "$ENV_DIR"
 else
     echo "Virtual environment 'env' already exists."
 fi
 
 # Activate the environment for the rest of this script
 echo "Activating virtual environment..."
-source env/bin/activate
+source "$ENV_DIR/bin/activate"
 
 # Add to .bashrc for auto-activation on new terminals
 BASHRC_FILE="$HOME/.bashrc"
-ACTIVATE_CMD="source $CURRENT_DIR/env/bin/activate"
+ACTIVATE_CMD="source $ENV_DIR/bin/activate"
 NAVIGATE_CMD="cd $CURRENT_DIR"
 
 echo "Checking .bashrc..."
