@@ -1,3 +1,4 @@
+import argparse
 import sys
 import time
 import board
@@ -83,12 +84,13 @@ class LED:
 
 
 if __name__ == '__main__':
-    led = LED()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-n", type=int, default=50, help="number of LEDs")
+    ap.add_argument("-t", type=int, default=5, help="duration of test")
+    args = ap.parse_args()
+
+    led = LED(num_pixels=args.n)
     led.show_single_color(color=(200, 230, 0))
 
-    if len(sys.argv) > 1:
-        t = int(sys.argv[1])
-    else:
-        t = 10
-    time.sleep(t)
+    time.sleep(args.t)
     led.stop()
