@@ -1,3 +1,4 @@
+lgpio
 rpi_ws281x
 adafruit-circuitpython-neopixel
 adafruit-blinka

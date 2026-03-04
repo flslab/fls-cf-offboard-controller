@@ -134,6 +134,7 @@ mkdir logs -p
 # System dependencies
 echo "Installing apt packages..."
 sudo apt update && sudo apt install -y libboost-system-dev libboost-thread-dev libeigen3-dev ninja-build git
+sudo apt install swig build-essential python3-dev liblgpio-dev
 
 # Python dependencies (Installed into the active virtual environment)
 echo "Installing Python requirements..."
