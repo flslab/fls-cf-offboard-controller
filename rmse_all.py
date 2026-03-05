@@ -1,5 +1,5 @@
 import matplotlib
-matplotlib.use('macosx')
+matplotlib.use('macosx') # Commented out to prevent errors in non-Mac environments, uncomment if needed.
 
 
 import json
@@ -121,7 +121,11 @@ class DroneProcessor:
         self._load_act()
 
     def _load_gt(self):
-        waypoints = np.array(self.yaml_config['waypoints'])  # [x, y, z, yaw, dt]
+        waypoints = self.yaml_config['waypoints']
+        if not len(waypoints):
+            waypoints.append(self.yaml_config['target'])
+            waypoints.append(self.yaml_config['target'])
+        waypoints = np.array(waypoints)  # [x, y, z, yaw, dt]
         servos = np.array(self.yaml_config['servos'])  # [rod1, rod2]
 
         times = [0.0]
@@ -189,7 +193,9 @@ class DroneProcessor:
         g_pos = self.gt_pos_fn(t_rel)
         g_yaw = self.gt_yaw_fn(t_rel)  # radians
         g_servos = self.gt_servo_fn(t_rel)  # degrees
-        g_rpy = [0.0, 0.0, float(g_yaw)]
+        g_rpy = [0.0, 0.0, float(g_yaw) * 180 / np.pi]
+
+        # print(g_rpy)
 
         # --- Actual State ---
         a_pos = self.act_pos_fn(t_rel)
@@ -224,6 +230,11 @@ def calculate_rmse(yaml_file, tag):
         # Search for log file starting with drone_id
         search_pattern = f"logs/{drone_id}_{tag}*.json"
         files = glob.glob(search_pattern)
+
+        if not files:
+            # Fallback to current directory for user testing if logs/ doesn't exist or is empty
+            search_pattern_local = f"{drone_id}_{tag}*.json"
+            files = glob.glob(search_pattern_local)
 
         if not files:
             print(f"WARNING: No log file found for drone '{drone_id}' (Pattern: {search_pattern}). Skipping.")
@@ -311,6 +322,7 @@ def calculate_rmse(yaml_file, tag):
         # Overall RMSE across entire trajectory
         overall_comb_rmse = np.sqrt(np.mean(comb_arr[valid_comb] ** 2))
         max_comb_rmse = np.nanmax(comb_arr)
+        print(f"COMBINED (All Drones): Overall RMSE {overall_comb_rmse:.2f} mm")
         print(f"COMBINED (All Drones): Max RMSE {max_comb_rmse:.2f} mm")
     else:
         print("COMBINED: No valid data.")
@@ -325,6 +337,44 @@ def calculate_rmse(yaml_file, tag):
             mean_d = np.nanmean(d_rmse)
             print(f"Drone {p.drone_id}: Max RMSE {max_d:.2f} mm, Mean RMSE {mean_d:.2f} mm")
 
+        # ==========================================
+        # 5. EXPORT DATA TO JSON
+        # ==========================================
+        output_filename = f"{tag}_rmse_analysis_output.json"
+        print(f"\nExporting raw data to {output_filename}...")
+
+        # Structure data for export (handle numpy types)
+        export_data = {
+            "timestamps": results['timestamps'].tolist(),
+            "combined_rmse_mm": [None if np.isnan(x) else float(x) for x in results['combined_rmse']],
+            "drones": {}
+        }
+
+        for p in processors:
+            d_data = results['drones'][p.drone_id]
+
+            # Helper to clean numpy arrays in LED lists
+            def clean_leds(led_list):
+                cleaned = []
+                for item in led_list:
+                    if item is None:
+                        cleaned.append(None)
+                    else:
+                        # Rounding to save space, remove round() if max precision needed
+                        cleaned.append(np.round(item, 5).tolist())
+                return cleaned
+
+            export_data["drones"][p.drone_id] = {
+                "rmse_mm": [None if np.isnan(x) else float(x) for x in d_data['rmse']],
+                # These are subsampled (every 10th frame relative to timestamp index)
+                "subsampled_gt_leds": clean_leds(d_data['leds_gt']),
+                "subsampled_act_leds": clean_leds(d_data['leds_act'])
+            }
+
+        with open(output_filename, 'w') as f:
+            json.dump(export_data, f, indent=4)
+        print("Export complete.")
+
     # ==========================================
     # 5. VISUALIZATION
     # ==========================================
@@ -336,6 +386,7 @@ def calculate_rmse(yaml_file, tag):
 
     # Plot Combined
     ax1.plot(timestamps, results['combined_rmse'], 'k-', linewidth=3, alpha=0.8, label='All Drones (Combined)')
+    ax1.axhline(overall_comb_rmse, color='r', linestyle='--', label=f'Overall: {overall_comb_rmse:.3f}mm')
 
     # Plot Individuals
     colors = plt.cm.jet(np.linspace(0, 1, len(processors)))
@@ -373,8 +424,8 @@ def calculate_rmse(yaml_file, tag):
     scatters = {}
     for i, p in enumerate(processors):
         # GT = Solid Circle, Act = Triangle
-        sc_gt = ax_3d.scatter([], [], [], c=colors[i], marker='o', s=15, alpha=0.6, label=f'{p.drone_id} GT')
-        sc_act = ax_3d.scatter([], [], [], c=colors[i], marker='^', s=15, label=f'{p.drone_id} Act')
+        sc_gt = ax_3d.scatter([], [], [], color=colors[i], marker='o', s=15, alpha=0.6, label=f'{p.drone_id} GT')
+        sc_act = ax_3d.scatter([], [], [], color=colors[i], marker='^', s=15, label=f'{p.drone_id} Act')
         scatters[p.drone_id] = (sc_gt, sc_act)
 
     ax_3d.legend()
@@ -448,5 +499,7 @@ def calculate_rmse(yaml_file, tag):
 
 if __name__ == "__main__":
     # Adjust default file if needed
-    yaml_path = 'mission/led_test_moving.yaml'
-    calculate_rmse(yaml_path, 'log_test_keyframe_linear_2026-01-15_14-54-28')
+    yaml_path = 'mission/arrow.yaml'
+    # Use glob to find the json file if the hardcoded one doesn't exist to prevent immediate crashes for user
+    calculate_rmse(yaml_path, 'arrow_leader_follower_2026-01-16_18-41-27')
+
