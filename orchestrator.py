@@ -108,6 +108,8 @@ class SwarmOrchestrator:
 
     def _get_drone_cmd(self, drone):
         alt = self.mission['drones'][drone['id']]['target'][2]
+        servo_count = drone.get('servo_count', 2)
+        led_count = drone.get('led_count', 50)
         if hasattr(drone, "obj_name"):
             mocap_args = f"--obj-name {drone['obj_name']} --vicon-mode rigidbody --vicon-full-pose "
         else:
@@ -121,7 +123,7 @@ class SwarmOrchestrator:
                 f"nohup python3 {DRONE_SCRIPT} "
                 f"--orchestrated --tag {self.tag} --ground-test "
                 f"--drone-id {drone['id']} "
-                f"--led --servo --servo-type {drone['type']} "
+                f"--led --led-count {led_count} --servo --servo-type {drone['type']} --servo-count {servo_count} "
                 f"--takeoff-altitude {alt} "
                 f"--smooth-controller-rate 50 "
                 f"> drone_{drone['id']}.log 2>&1 < /dev/null &"
@@ -135,7 +137,7 @@ class SwarmOrchestrator:
                 f"--orchestrated --tag {self.tag} "
                 f"--vicon {mocap_args} "
                 f"--drone-id {drone['id']} "
-                f"--led --servo --servo-type {drone['type']} "
+                f"--led --led-count {led_count} --servo --servo-type {drone['type']} --servo-count {servo_count} "
                 f"--takeoff-altitude {alt} "
                 "--smooth-controller-rate 50 "
                 "--log "
