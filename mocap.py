@@ -207,7 +207,7 @@ if __name__ == "__main__":
         print(f"Subscribing to Point closest to: {args.point} (Max Jump: {args.max_dist})")
         mw.subscribe_point(
             args.point,
-            lambda frame: print(f"PT: {[round(p, 3) for p in frame['pos']]} (Error^2: {frame['dist_sq']:.2f})"),
+            lambda frame: print(f"PT: {[round(p, 3) for p in frame['tvec']]} (Error^2: {frame['dist_sq']:.2f})"),
             name="my_point",
             max_distance=args.max_dist
         )
