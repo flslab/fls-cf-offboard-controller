@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class Mocap(threading.Thread):
-    def __init__(self, mocap_system_type="vicon", host_name="vicon", mode="rigidbody"):
+    def __init__(self, mocap_system_type="vicon", host_name="192.168.1.39", mode="rigidbody"):
         """
         Args:
             mocap_system_type (str): Type of system (vicon, optitrack, etc).
