@@ -1,4 +1,4 @@
-mname: drawing_s
+name: drawing_s_leader_follower
 drones:
   lb2:
     target: [ -0.16, -0.01, 1.32, 0.0 ]
@@ -14,13 +14,16 @@ drones:
       rate: 50
       formula: "[230, 115, 21] if i > (49 - (t * 25)) else [0, 0, 0]"
   lb3:
-    target: [ 0.16, -0.01, 0.69, 0.0 ]
+    target: [ 0.16, 0.0, 0.69, 0.0 ]
     waypoints: []
     delta_t: 15
     iterations: 1
     params:
       linear: true
       relative: false
+    follow:
+      id: lb2
+      offset: [ 0.32, 0.0, -0.63]
     servos: [ [ 210, 330 ] ]
     led:
       mode: "expression"
@@ -34,6 +37,9 @@ drones:
     params:
       linear: true
       relative: false
+    follow:
+      id: lb2
+      offset: [ 0.16, -0.13, -0.24 ]
     servos: [ [29, 264] ]
     led:
       mode: "expression"
@@ -47,6 +53,9 @@ drones:
     params:
       linear: true
       relative: false
+    follow:
+      id: lb2
+      offset: [ 0.15, 0.145, -0.4 ]
     servos: [ [ 87, 209 ] ]
     led:
       mode: "expression"

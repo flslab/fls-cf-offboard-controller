@@ -3,7 +3,7 @@ drones:
   lb2:
     target: [ -0.30, -0.12, 1.12, 0.0 ]
     waypoints: []
-    delta_t: 15
+    delta_t: 16
     iterations: 1
     params:
       linear: true
@@ -13,39 +13,39 @@ drones:
       mode: "expression"
       rate: 50
       formula: >
-        ([251, 23, 150] if int(t / 2) % 2 == 0 else [251, 186, 23])
+        ([251, 23, 150] if int(t / 2) % 2 == 0 else [5, 160, 250])
         if i > max(19, 49 - (t % 2) * 30)
         else (
-          ([251, 186, 23] if int(t / 2) % 2 == 0 else [251, 23, 150])
+          ([5, 160, 250] if int(t / 2) % 2 == 0 else [251, 23, 150])
           if t > 2 and i > 19
           else 
           [0, 0, 0]
         )
   lb3:
-    target: [ 0.0, -0.12, 0.88, 0.0 ]
+    target: [ -0.05, -0.112, 0.89, 0.0 ]
     waypoints: []
-    delta_t: 15
+    delta_t: 16
     iterations: 1
     params:
       linear: true
       relative: false
-    servos: [ [ 180, 316 ] ]
+    servos: [ [ 180, 317 ] ]
     led:
       mode: "expression"
       rate: 50
       formula: >
-        ([251, 23, 150] if int(t / 2) % 2 == 0 else [251, 186, 23])
+        ([251, 23, 150] if int(t / 2) % 2 == 0 else [5, 160, 250])
         if i > max(19, 49 - (t % 2) * 30)
         else (
-          ([251, 186, 23] if int(t / 2) % 2 == 0 else [251, 23, 150])
+          ([5, 160, 250] if int(t / 2) % 2 == 0 else [251, 23, 150])
           if t > 2 and i > 19
           else 
           [0, 0, 0]
         )
   lb4:
-    target: [ -0.30, 0.12, 0.88, 0.0 ]
+    target: [ -0.30, 0.11, 0.884, 0.0 ]
     waypoints: []
-    delta_t: 15
+    delta_t: 16
     iterations: 1
     params:
       linear: true
@@ -55,31 +55,31 @@ drones:
       mode: "expression"
       rate: 50
       formula: >
-        ([251, 23, 150] if int(t / 2) % 2 == 0 else [251, 186, 23])
+        ([251, 23, 150] if int(t / 2) % 2 == 0 else [5, 160, 250])
         if i > max(19, 49 - (t % 2) * 30)
         else (
-          ([251, 186, 23] if int(t / 2) % 2 == 0 else [251, 23, 150])
+          ([5, 160, 250] if int(t / 2) % 2 == 0 else [251, 23, 150])
           if t > 2 and i > 19
           else 
           [0, 0, 0]
         )
   lb5:
-    target: [ 0.0, 0.12, 1.12, 0.0 ]
+    target: [ -0.05, 0.115, 1.115, 0.0 ]
     waypoints: []
-    delta_t: 15
+    delta_t: 16
     iterations: 1
     params:
       linear: true
       relative: false
-    servos: [ [ 131, 356 ] ]
+    servos: [ [ 138, 358 ] ]
     led:
       mode: "expression"
       rate: 50
       formula: >
-        ([251, 23, 150] if int(t / 2) % 2 == 0 else [251, 186, 23])
+        ([251, 23, 150] if int(t / 2) % 2 == 0 else [5, 160, 250])
         if i < min(31, (t % 2) * 30)
         else (
-          ([251, 186, 23] if int(t / 2) % 2 == 0 else [251, 23, 150])
+          ([5, 160, 250] if int(t / 2) % 2 == 0 else [251, 23, 150])
           if t > 2 and i < 31
           else 
           [0, 0, 0]

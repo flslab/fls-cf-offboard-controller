@@ -1,0 +1,25 @@
+name: arrow_leader_follower
+drones:
+  lb4:
+    target: [ 0.0, -1.25, 1.0 ]
+    waypoints: []
+    delta_t: 8
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [179, 350], [179, 350] ]
+    color: [ 227, 253, 255 ]
+    follow:
+      id: lb5
+      offset: [ 0.0, -0.25, 0 ]
+  lb5: #head
+    target: [ 0.0, -1.0, 1.0, 0.0 ]
+    waypoints: [[0.0, -1.0, 1.0, 0.0], [0.0, 1.0, 1.0, 0.0]]
+    delta_t: 8
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [130, 220], [130, 220] ]
+    color: [ 227, 253, 255 ]
