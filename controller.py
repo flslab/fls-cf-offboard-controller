@@ -461,6 +461,8 @@ class Controller:
 
         if self.args.simple_takeoff:
             self.hover()
+        elif self.args.rotation_tast:
+            self.test_rotation_limit()
         elif self.args.xy_tune:
             self.xy_tune_pattern()
         elif self.args.z_tune:
@@ -523,6 +525,7 @@ class Controller:
         target = mission_setting['target']
         waypoints = mission_setting.get('waypoints', [])
         low_level_setpoint = mission_setting.get('low_level_setpoint', [])
+        rotation_test = mission_setting.get('rotation_test', [])
         follow = mission_setting.get('follow', False)
         params = mission_setting.get('params', {'linear': False, 'relative': False})
         angles = mission_setting.get('servos', [])
@@ -596,6 +599,8 @@ class Controller:
             self._safe_sleep(delta_t)
             self.smooth_controller.remove_update_callback(position_setpoint_cb)
             self.cf.commander.send_notify_setpoint_stop()
+        elif len(rotation_test):
+            self.test_rotation_limit(*rotation_test)
         else:
             if not len(waypoints):
                 waypoints.append([target[0], target[1], target[2], target[3], delta_t])
@@ -685,6 +690,27 @@ class Controller:
                 else:
                     # If sleep_duration is negative, we are lagging behind!
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
+
+    def test_rotation_limit(self, low_limit=400, high_limit=600, num_steps=3, duration=5):
+        dt = 1.0 / self.args.fps if self.args.fps > 0 else 0.01
+        start_t = time.time()
+
+        while time.time() - start_t < 2:
+            self.cf.commander.send_position_setpoint(0.0, 0.0, self.args.takeoff_altitude, 0)
+            self._safe_sleep(dt)
+
+        for yawrate in np.linspace(low_limit, high_limit, num=num_steps):
+
+            start_t = time.time()
+            while time.time() - start_t < duration:
+                self.cf.commander.send_hover_setpoint(0.0, 0.0, yawrate, self.args.takeoff_altitude)
+                self._safe_sleep(dt)
+
+            while time.time() - start_t < duration + 2:
+                self.cf.commander.send_position_setpoint(0.0, 0.0, self.args.takeoff_altitude, 0)
+                self._safe_sleep(dt)
+
+        self.cf.commander.send_notify_setpoint_stop()
 
     def save_logs(self):
         log_dir = self.args.log_dir
@@ -902,6 +928,7 @@ if __name__ == '__main__':
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
     ap.add_argument("--ground-test", action="store_true", help="run mission without flying")
     ap.add_argument("--simple-takeoff", action="store_true", help="takeoff and land")
+    ap.add_argument("--rotation-test", action="store_true", help="test rotation rate")
     ap.add_argument("--xy-tune", action="store_true", help="forward/back left/right flight pattern")
     ap.add_argument("--z-tune", action="store_true", help="up/down flight pattern")
     ap.add_argument("--save-camera", action="store_true",
