@@ -115,21 +115,22 @@ class SwarmOrchestrator:
         else:
             p = drone['init_pos']
             mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
-        return (
-            f"cd {self.common_cfg['work_dir']} && "
-            f"source {self.common_cfg['venv_path']}/bin/activate && "
-            "git pull && "
-            f"nohup python3 {DRONE_SCRIPT} "
-            f"--orchestrated --tag {self.tag} "
-            "--ground-test " if self.args.ground else f"--vicon {mocap_args} "
-            f"--drone-id {drone['id']} "
-            f"--led --led-count {led_count} " if led_count > 0 else " "
-            f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " "
-            f"--takeoff-altitude {alt} "
-            "--smooth-controller-rate 50 "
-            "--log "
-            f"> drone_{drone['id']}.log 2>&1 < /dev/null &"
-        )
+        cmd = [
+            f"cd {self.common_cfg['work_dir']} && ",
+            f"source {self.common_cfg['venv_path']}/bin/activate && ",
+            "git pull && ",
+            f"nohup python3 {DRONE_SCRIPT} ",
+            f"--orchestrated --tag {self.tag} ",
+            "--ground-test " if self.args.ground else f"--vicon {mocap_args} ",
+            f"--drone-id {drone['id']} ",
+            f"--led --led-count {led_count} " if led_count > 0 else " ",
+            f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
+            f"--takeoff-altitude {alt} ",
+            "--smooth-controller-rate 50 ",
+            "--log ",
+            f"> drone_{drone['id']}.log 2>&1 < /dev/null &",
+        ]
+        return " ".join(cmd)
 
     def _get_camera_cmd(self):
         camera_params = [
