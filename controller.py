@@ -692,7 +692,7 @@ class Controller:
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
 
     def test_rotation_limit(self, low_limit=400, high_limit=600, num_steps=3, duration=5):
-        dt = 1.0 / self.args.fps if self.args.fps > 0 else 0.01
+        dt = 1.0 / self.args.smooth_controller_rate
         start_t = time.time()
 
         while time.time() - start_t < 2:
