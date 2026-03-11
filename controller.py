@@ -739,9 +739,11 @@ class Controller:
         is_battery_critical = self.battery_critical.wait(timeout=seconds)
 
         if is_battery_critical:
+            self._prepare_for_emergency_landing()
             raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
 
     def _prepare_for_emergency_landing(self):
+        self.cf.commander.send_notify_setpoint_stop()
         self._set_safe_servo_angles()
         time.sleep(0.6)
         if self.smooth_controller:
