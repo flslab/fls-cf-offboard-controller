@@ -744,6 +744,7 @@ class Controller:
 
     def _prepare_for_emergency_landing(self):
         self.cf.commander.send_notify_setpoint_stop()
+        time.sleep(0.1)
         self._set_safe_servo_angles()
         time.sleep(0.6)
         if self.smooth_controller:
