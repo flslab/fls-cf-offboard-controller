@@ -461,7 +461,7 @@ class Controller:
 
         if self.args.simple_takeoff:
             self.hover()
-        elif self.args.rotation_tast:
+        elif self.args.rotation_test:
             self.test_rotation_limit()
         elif self.args.xy_tune:
             self.xy_tune_pattern()
