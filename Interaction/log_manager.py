@@ -67,7 +67,7 @@ class InteractionLogger(LogManager):
         self.groups[name] = []
 
     def add_log_entry(self, group_name, entry, *args, **kwargs):
-        if self.kf is not None and entry is not None and entry.get('tvec', None) is not None:
+        if group_name == 'frame' and self.kf is not None and entry is not None and entry.get('tvec', None) is not None:
             entry['vel'] = self._update_kf(entry['tvec'])
 
         self.groups[group_name].append(entry)
