@@ -489,6 +489,7 @@ if __name__ == "__main__":
     parser.add_argument("--dark", action="store_true", help="recording in darkness")
     parser.add_argument("--record", action="store_true", help="run the camera only to record")
     parser.add_argument("--radio", action="store_true", help="run mission with CrazyRadio")
+    parser.add_argument("--loadcell", action="store_true", help="run with loadcell")
 
     args = parser.parse_args()
 
