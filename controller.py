@@ -392,7 +392,7 @@ class Controller:
     def takeoff(self):
         if self.args.ground_test:
             return
-        if self.args.skip_takeoff or self.args.gimbal:
+        if self.args.skip_takeoff:
             self.flying = True
             return
         if self.args.interaction:
