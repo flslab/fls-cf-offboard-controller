@@ -331,6 +331,9 @@ class Controller:
         elif self.args.vicon_mode == "pointcloud":
             logger.info(f"Subscribing to Point closest to: {self.args.init_pos}")
             self.mocap.subscribe_point(self.args.init_pos, on_pose, name=self.args.drone_id)
+        else:
+            logger.info(f"Subscribing to Point closest to: {self.args.init_pos} in mix mode")
+            self.mocap.subscribe_point(self.args.init_pos, on_pose, name=self.args.drone_id)
 
         self.mocap.start()
         logger.debug("mocap activated")
