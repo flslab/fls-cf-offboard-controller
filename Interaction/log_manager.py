@@ -46,6 +46,8 @@ class InteractionLogger(LogManager):
         self.live_logger.close()
 
     def init_cf_logger(self, cf, cf_log_vars, cf_log_period=100):
+        self.cf_log_data = copy.deepcopy(cf_log_vars)
+
         self.cf_var_logger = []
         for name, log_group in cf_log_vars.items():
             var_logger = LogConfig(name=f'{name}', period_in_ms=cf_log_period)
