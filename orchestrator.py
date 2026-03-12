@@ -1,6 +1,5 @@
 import argparse
 import os
-
 import yaml
 import json
 import time
@@ -42,11 +41,13 @@ class SwarmOrchestrator:
 
         # Runtime State
         self.tag = None
-        self.running = False
+        self.running = threading.Event()
         self.emergency = False
         self.pending_downloads = self._load_previous_downloads()
         self.landed_drones = set()
         self.ready_ids = set()
+
+        self.loadcell_thread = None
 
         # Network Resources
         self.zmq_context = None
@@ -115,29 +116,33 @@ class SwarmOrchestrator:
             raise Exception("mode not supported")
 
     def _get_drone_cmd_interaction(self, drone):
-        # TODO Shuqin
         alt = self.mission['drones'][drone['id']]['target'][2]
-        servo_count = drone.get('servo_count', 2)
-        led_count = drone.get('led_count', 50)
-        if hasattr(drone, "obj_name"):
-            mocap_args = f"--obj-name {drone['obj_name']} --vicon-mode rigidbody --vicon-full-pose "
-        else:
-            p = drone['init_pos']
-            mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
+        radio_arg = "--radio" if self.args.radio else ""
+        p = drone['init_pos']
+        mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode mixed "
+
+        extra_markers = self.manifest.get('apparatus', None)
+        extra_marker_args = ""
+        if extra_markers:
+            for m in extra_markers:
+                extra_marker_args += f"--extra-marker {m['id']} "
+                init_pos = m.get("init_pos")
+                if init_pos is not None:
+                    extra_marker_args += f"{' '.join(str(c) for c in m['init_pos'])} "
         cmd = [
-            f"cd {self.common_cfg['work_dir']} && ",
-            f"source {self.common_cfg['venv_path']}/bin/activate && ",
-            "git pull && ",
-            f"nohup python3 {DRONE_SCRIPT} ",
-            f"--interaction --orchestrated --tag {self.tag} ",
-            "--ground-test " if self.args.ground else f"--vicon {mocap_args} ",
-            f"--drone-id {drone['id']} ",
-            f"--led --led-count {led_count} " if led_count > 0 else " ",
-            f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
-            f"--takeoff-altitude {alt} ",
-            "--smooth-controller-rate 50 ",
-            "--log ",
-            f"> drone_{drone['id']}.log 2>&1 < /dev/null &",
+            f"cd {self.common_cfg['work_dir']} && "
+            f"source {self.common_cfg['venv_path']}/bin/activate && "
+            "git pull && "
+            f"nohup python3 {DRONE_SCRIPT} "
+            f"--orchestrated --interaction --tag {self.tag} "
+            f"{radio_arg} "
+            f"{extra_marker_args} "
+            f"--vicon {mocap_args} "
+            f"--drone-id {drone['id']} "
+            f"--takeoff-altitude {alt} "
+            "--smooth-controller-rate 50 "
+            "--log "
+            f"> drone_{drone['id']}.log 2>&1 < /dev/null &"
         ]
         return " ".join(cmd)
 
@@ -295,8 +300,9 @@ class SwarmOrchestrator:
                 self.logger.info("Radio Node did not respond after multiple attempts. Reboot failed.")
                 return
         else:
-            for drone in self.drones:
-                reboot_crazyflie(drone['uri'])
+            if not self.args.radio:
+                for drone in self.drones:
+                    reboot_crazyflie(drone['uri'])
         time.sleep(5)  # Wait for reboot
 
     def run(self):
@@ -312,7 +318,7 @@ class SwarmOrchestrator:
         self.logger.info(f"Mission Tag: {self.tag}")
 
         self.setup_network()
-        self.running = True
+        self.running.set()
 
         try:
             # Process Pending Downloads from previous runs
@@ -320,18 +326,28 @@ class SwarmOrchestrator:
 
             self.pub_socket.send_json({"cmd": "_"})
             time.sleep(2)
-            self.reboot_flight_controllers(remote=bool(self.radio_node))
+            if not self.args.record:
+                self.reboot_flight_controllers(remote=bool(self.radio_node))
 
-            for drone in self.drones:
-                cmd = self._get_drone_cmd(drone)
-                if self._boot_remote_node(drone, cmd, "Drone"):
-                    self.pending_downloads.append({'drone': drone, 'tag': self.tag})
+                for drone in self.drones:
+                    cmd = self._get_drone_cmd(drone)
+                    if self._boot_remote_node(drone, cmd, "Drone"):
+                        self.pending_downloads.append({'drone': drone, 'tag': self.tag})
 
+            if self.args.loadcell:
+                from Interaction.loadcell_worker import loadcell_worker
+                self.loadcell_thread = threading.Thread(
+                    target=loadcell_worker,
+                    args=(self.logger, self.running, self.tag)  #
+                )
             if self.camera_cfg:
                 if not self.args.ground:
                     self._boot_remote_node(self.camera_cfg, self._get_camera_cmd(), "Camera")
             else:
                 self.logger.warning("No camera_node found. Skipping.")
+
+            if self.loadcell_thread:
+                self.loadcell_thread.start()
 
             self._wait_for_ready()
 
@@ -377,7 +393,7 @@ class SwarmOrchestrator:
         self.logger.info("Waiting for swarm readiness...")
         total_drones = len(self.drones)
 
-        while len(self.ready_ids) < total_drones and self.running:
+        while len(self.ready_ids) < total_drones and self.running.is_set():
             try:
                 msg = self.pull_socket.recv_json()
                 sender_id = msg.get('id')
@@ -385,6 +401,8 @@ class SwarmOrchestrator:
 
                 if sender_id == 'CAM' and status == 'READY':
                     self.logger.info("Camera Node Ready.")
+                    if self.args.record:
+                        return
                 elif "lb" in sender_id:
                     if status == 'READY' and sender_id not in self.ready_ids:
                         self.ready_ids.add(sender_id)
@@ -395,7 +413,10 @@ class SwarmOrchestrator:
     def _monitor_flight(self):
         launched_drones = len(self.ready_ids)
 
-        while len(self.landed_drones) < launched_drones and self.running:
+        if self.args.record:
+            while self.running.is_set():
+                time.sleep(1)
+        while len(self.landed_drones) < launched_drones and self.running.is_set():
             try:
                 msg = self.pull_socket.recv_json()
                 if msg.get('status') == 'LANDED':
@@ -413,7 +434,7 @@ class SwarmOrchestrator:
 
     def emergency_stop(self):
         """Broadcasts emergency command and waits for landing confirmations."""
-        self.running = False  # Stop inner loops
+        self.running.clear()  # Stop inner loops
         self.emergency = True
         self.logger.info("!!! TRIGGERING EMERGENCY LANDING !!!")
 
@@ -425,7 +446,7 @@ class SwarmOrchestrator:
 
     def cleanup(self):
         self.logger.info("Running cleanup sequence...")
-        self.running = False
+        self.running.clear()
 
         # Stop Camera
         if self.camera_cfg and self.pub_socket and not self.args.ground:
@@ -466,6 +487,9 @@ if __name__ == "__main__":
     parser.add_argument("--kill", action="store_true", help="stop the controller")
     parser.add_argument("--ground", action="store_true", help="ground test")
     parser.add_argument("--dark", action="store_true", help="recording in darkness")
+    parser.add_argument("--record", action="store_true", help="run the camera only to record")
+    parser.add_argument("--radio", action="store_true", help="run mission with CrazyRadio")
+
     args = parser.parse_args()
 
     orchestrator = SwarmOrchestrator(args)

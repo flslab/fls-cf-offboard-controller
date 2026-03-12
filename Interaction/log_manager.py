@@ -1,0 +1,92 @@
+import copy
+import json
+import os
+
+from Interaction.Kalman_Filter import VelocityKalmanFilter
+from Interaction.live_logger import LiveLogger
+from log_manager_abs import LogManager
+from cflib.crazyflie.log import LogConfig
+import time
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class InteractionLogger(LogManager):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cf_var_logger = None
+        self.cf_log_times = []
+        self.cf_log_data = None
+        self.verbose = kwargs.get('verbose', False)
+
+        self.kf = {'x': VelocityKalmanFilter(dt=1 / self.args.fps, process_noise=100.0, measurement_noise=0.00001),
+                   'y': VelocityKalmanFilter(dt=1 / self.args.fps, process_noise=100.0, measurement_noise=0.00001),
+                   'z': VelocityKalmanFilter(dt=1 / self.args.fps, process_noise=100.0, measurement_noise=0.00001)}
+
+        log_dir = kwargs['log_dir']
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        self.live_logger = LiveLogger(os.path.join(log_dir, f"{kwargs['tag']}.json"))
+
+        # self.extra_markers = {}
+        # for marker in self.args.extra_marker:
+        #     self.extra_markers[marker['name']] = []
+
+    def start(self, *args, **kwargs):
+        self.live_logger.mark_start()
+
+    def stop(self, *args, **kwargs):
+        if self.cf_var_logger is not None:
+            for log_config in self.cf_var_logger:
+                log_config.stop()
+
+        self.live_logger.close()
+
+    def init_cf_logger(self, cf, cf_log_vars, cf_log_period=100):
+        self.cf_var_logger = []
+        for name, log_group in cf_log_vars.items():
+            var_logger = LogConfig(name=f'{name}', period_in_ms=cf_log_period)
+
+            for par, conf in log_group.items():
+                var_logger.add_variable(par, conf["type"])
+
+            cf.log.add_config(var_logger)
+            var_logger.data_received_cb.add_callback(self._cf_log_group_callback)
+            var_logger.start()
+
+            self.cf_var_logger.append(var_logger)
+
+        logger.debug("logging activated")
+
+    def add_log_group(self, name, *args, **kwargs):
+        self.groups[name] = []
+
+    def add_log_entry(self, group_name, entry, *args, **kwargs):
+        if self.kf is not None and entry is not None and entry.get('tvec', None) is not None:
+            entry['vel'] = self._update_kf(entry['tvec'])
+
+        self.groups[group_name].append(entry)
+
+        if self.live_logger:
+            self.live_logger.write({"type": group_name, 'name': kwargs.get('name', None), "data": entry})
+
+    def _cf_log_group_callback(self, timestamp, data, log_conf):
+        cur_time = time.time()
+        group_name = log_conf.name
+        data['time'] = cur_time
+        if group_name in self.cf_log_data:
+            # Append data to each variable in the group
+            for var_name, var_info in self.cf_log_data[group_name].items():
+                if var_name in data:
+                    var_info['data'].append(data[var_name])
+
+        if self.live_logger:
+            self.live_logger.write({"type": 'state', "group": group_name, "data": data})
+
+    def _update_kf(self, pos):
+        vel = []
+        if self.kf:
+            for p, kf in zip(pos, self.kf.values()):
+                vel.append(kf.update(p))
+        return vel

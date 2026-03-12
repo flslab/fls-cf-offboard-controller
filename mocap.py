@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class Mocap(threading.Thread):
-    def __init__(self, mocap_system_type="vicon", host_name="192.168.1.39", mode="rigidbody"):
+    def __init__(self, mocap_system_type="vicon", host_name="192.168.1.39", mode="mixed"):
         """
         Args:
             mocap_system_type (str): Type of system (vicon, optitrack, etc).
@@ -54,7 +54,7 @@ class Mocap(threading.Thread):
             now = time.time()
 
             # --- Rigid Body Mode ---
-            if self.mode == "rigidbody":
+            if self.mode == "rigidbody" or self.mode == 'mixed':
                 # Grab reference to list (thread-safe copy logic in subscribe handles the writer side)
                 current_targets = self.objects_to_track
 
@@ -73,7 +73,7 @@ class Mocap(threading.Thread):
                                 })
 
             # --- Point Cloud Mode ---
-            elif self.mode == "pointcloud":
+            if self.mode == "pointcloud" or self.mode == 'mixed':
                 if hasattr(mc, 'pointCloud') and mc.pointCloud is not None:
                     # 1. Convert SDK PointCloud to Numpy Array (N x 3)
                     # C++ Type: Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor>

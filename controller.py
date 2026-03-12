@@ -24,13 +24,10 @@ from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.utils import uri_helper
 from cflib.utils.reset_estimator import reset_estimator
 
-from config import (
-    DEFAULT_URI, LOG_VARS, DEFAULT_HEIGHT, DEFAULT_DURATION,
-    PID_VALUES_PROP_2, POSITION_STD_DEV, ORIENTATION_STD_DEV,
-    MIN_LIHV_VOLT
-)
+from Interaction.interactions import InteractionsControl
 
 from mocap import Mocap
+from restart import reboot_crazyflie
 from smooth_controller import SmoothController
 from tracker import Tracker
 from logger import setup_logging
@@ -104,13 +101,28 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
 class Controller:
     def __init__(self, args):
         self.args = args
-        self.uri = uri_helper.uri_from_env(default=DEFAULT_URI)
+
+        if getattr(self.args, 'illumination', False):
+            import config as cfg
+            self.cfg = cfg
+        elif getattr(self.args, 'interaction', False):
+            import Interaction.config as cfg
+            self.cfg = cfg
+        if self.args.takeoff_altitude is None:
+            self.args.takeoff_altitude = self.cfg.DEFAULT_HEIGHT
+        if self.args.t is None:
+            self.args.t = self.cfg.DEFAULT_DURATION
+
+        if self.args.radio:
+            self.uri = uri_helper.uri_from_env(default=self.cfg.DEFAULT_RADIO_URI)
+        else:
+            self.uri = uri_helper.uri_from_env(default=self.cfg.DEFAULT_URI)
         self.scf = None
         self.cf = None
         self.commander = None
         self.manifest = None
         self.mission = None
-        self.min_voltage = MIN_LIHV_VOLT * 2
+        self.min_voltage = self.cfg.MIN_LIHV_VOLT * 2
 
         self.mocap = None
         self.servo = None
@@ -142,6 +154,10 @@ class Controller:
             self._safe_sleep = self._safe_sleep_standalone
 
     def __enter__(self):
+        if self.args.radio:
+            reboot_crazyflie(self.uri)
+            time.sleep(5)
+
         self.connect()
         return self
 
@@ -367,12 +383,17 @@ class Controller:
         time.sleep(delay)
 
     def save_init_coord(self):
-        if self.mocap:
+        if self.mocap and not self.args.ground_test and not (self.args.skip_landing and self.args.skip_takeoff):
             self.init_coord = self._get_latest_mocap_frame()["tvec"]
 
     def takeoff(self):
         if self.args.ground_test:
             return
+        if self.args.skip_takeoff or self.args.gimbal:
+            self.flying = True
+            return
+        if self.args.interation:
+            self.log_manager.start()
 
         logger.info(f"Taking off to {args.takeoff_altitude}m ...")
         self.flying = True
@@ -381,6 +402,8 @@ class Controller:
         self._safe_sleep(t + 1)
 
     def land(self):
+        if self.args.skip_landing:
+            return
         logger.info("Landing...")
         z = self.args.takeoff_altitude
         if self.init_coord:
@@ -407,11 +430,16 @@ class Controller:
             from log_manager import IlluminationLogger
             self.log_manager = IlluminationLogger(verbose=self.args.verbose)
             self.log_manager.start()
-            self.log_manager.init_cf_logger(self.cf, LOG_VARS, self.args.cf_log_period)
+            self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
             self.log_manager.add_log_group("frames")
 
         elif self.args.interation:
-            pass  # TODO Shuqin
+            from Interaction.log_manager import InteractionLogger
+            self.log_manager = InteractionLogger(verbose=self.args.verbose)
+            self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
+            self.log_manager.add_log_group("frames")
+            self.log_manager.add_log_group("events")
+            self.log_manager.add_log_group("commands")
         else:
             raise Exception("No mode is passed. Passing either --illumination or --interation is required.")
 
@@ -439,13 +467,14 @@ class Controller:
             self.led.show_single_color(color=(230, 180, 0))
 
         self._activate_kalman_estimator()
-        self._set_position_sensitivity(POSITION_STD_DEV)
-        self._set_orientation_sensitivity(ORIENTATION_STD_DEV)
+        if self.args.vicon:
+            self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
+            self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
         self._activate_pid_controller()
         self._activate_high_level_commander()
-        self._set_pid_values(PID_VALUES_PROP_2)
+        self._set_pid_values(self.cfg.PID_VALUES)
 
-        if not self.args.ground_test:
+        if self.args.vicon and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
             reset_estimator(self.cf)
 
         if self.led:
@@ -473,16 +502,20 @@ class Controller:
         elif self.args.trajectory:
             self.fly_trajectory(self.args.trajectory)
         elif self.args.orchestrated:
-            self.orchestrated_mission()
-        elif self.args.interation:
-            pass  # TODO Shuqin
+            if self.args.illumination:
+                self.orchestrated_mission()
+            elif self.args.interation:
+                IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission['Interaction'])
+                IC.run()
         else:
             logger.info(f"Hovering for {self.args.t} seconds...")
             self._safe_sleep(self.args.t)
 
-    def hover(self):
-        self.commander.go_to(0.0, 0.0, self.args.takeoff_altitude, 0, 0.5, relative=False)
-        self._safe_sleep(self.args.t)
+    def hover(self, hover_time=0.5):
+        if hover_time is None:
+            hover_time = self.args.t
+        self.commander.go_to(0.0, 0.0, self.args.takeoff_altitude, 0, hover_time, relative=False)
+        self._safe_sleep(hover_time)
 
     def xy_tune_pattern(self):
         logger.info("Executing XY Tune Pattern...")
@@ -882,8 +915,8 @@ if __name__ == '__main__':
     ap.add_argument("--orchestrated", action="store_true", help="orchestrated by orchestrator")
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
-    ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=DEFAULT_HEIGHT, type=float)
-    ap.add_argument("-t", help="flight duration", default=DEFAULT_DURATION, type=float)
+    ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=None, type=float)
+    ap.add_argument("-t", help="flight duration", default=None, type=float)
     ap.add_argument("--fps", type=int, default=120, help="position estimation rate, works with --localize")
     ap.add_argument("--led", help="Turn LEDs on", action="store_true", default=False)
     ap.add_argument("--led-brightness", type=float, default=1.0, help="change led brightness between 0 and 1")
@@ -902,7 +935,7 @@ if __name__ == '__main__':
                     help="if passed send both position and orientation otherwise send only position")
     ap.add_argument("--obj-name", type=str,
                     help="object name in mocap system, works with --vicon.")
-    ap.add_argument("--vicon-mode", default="rigidbody", choices=["rigidbody", "pointcloud"], help="Tracking mode")
+    ap.add_argument("--vicon-mode", default="mixed", choices=["rigidbody", "pointcloud", "mixed"], help="Tracking mode")
     ap.add_argument("--init-pos", type=float, nargs=3, help="Initial point x y z", default=[0.0, 0.0, 0.0])
     ap.add_argument("--save-vicon", action="store_true", help="track with vicon and save the data")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
@@ -916,6 +949,9 @@ if __name__ == '__main__':
                     help="save camera at 1/10 of original fps, works with --localize")
     ap.add_argument("--stream-camera", action="store_true",
                     help="stream camera at 1/10 of original fps, works with --localize")
+    ap.add_argument("--skip-takeoff", action="store_true", help="run mission without taking off")
+    ap.add_argument("--skip-landing", action="store_true", help="run mission without landing")
+    ap.add_argument("--radio", action="store_true", help="run mission without CrazyRadio")
 
     args = ap.parse_args()
 

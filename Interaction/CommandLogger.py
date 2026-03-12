@@ -4,9 +4,9 @@ import time
 
 
 class CommandLogger:
-    def __init__(self, target, liveLogger, execute=True):
+    def __init__(self, target, log_function, execute=True):
         # Setup background logging
-        self.liveLogger = liveLogger
+        self.log_function = log_function
         self.start_time = time.time()
         self._wrapped_instance = target
         self.class_name = target.__class__.__name__
@@ -26,8 +26,8 @@ class CommandLogger:
             @functools.wraps(attr)  # Keeps the original function's name and docstring
             def wrapper(*args, **kwargs):
                 timestamp = time.time() - self.start_time
-                log_entry = {'time': timestamp, 'command': f"{self.class_name}.{name}", "args": args,  "kwargs": kwargs}
-                self.liveLogger.write(log_entry)
+                log_entry = {'time': timestamp, "args": args,  "kwargs": kwargs}
+                self.log_function(group_name='command', data=log_entry, name=f"{self.class_name}.{name}")
 
                 if self.execution:
                     return attr(*args, **kwargs)

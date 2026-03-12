@@ -241,3 +241,5 @@ PID_VALUES_PROP_2 = {
     'pid_rate.omyFiltCut': '160',
     'pid_rate.omzFiltCut': '160'
 }
+
+PID_VALUES = PID_VALUES_PROP_2
