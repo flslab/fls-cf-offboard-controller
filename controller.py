@@ -435,7 +435,7 @@ class Controller:
 
         elif self.args.interaction:
             from Interaction.log_manager import InteractionLogger
-            self.log_manager = InteractionLogger(verbose=self.args.verbose, vicon_rate=self.args.fps)
+            self.log_manager = InteractionLogger(controller_args=self.args)
             self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
             self.log_manager.add_log_group("frames")
             self.log_manager.add_log_group("events")

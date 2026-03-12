@@ -18,17 +18,18 @@ class InteractionLogger(LogManager):
         self.cf_var_logger = None
         self.cf_log_times = []
         self.cf_log_data = None
-        self.verbose = kwargs.get('verbose', False)
+        self.args = kwargs.get('controller_args', False)
+        self.verbose = self.args.get('verbose', False)
 
-        dt = 1/kwargs.get('vicon_rate', 120)
+        dt = 1/self.args.get('vicon_rate', 120)
         self.kf = {'x': VelocityKalmanFilter(dt=dt, process_noise=100.0, measurement_noise=0.00001),
                    'y': VelocityKalmanFilter(dt=dt, process_noise=100.0, measurement_noise=0.00001),
                    'z': VelocityKalmanFilter(dt=dt, process_noise=100.0, measurement_noise=0.00001)}
 
-        log_dir = kwargs['log_dir']
+        log_dir = self.args.log_dir
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
-        self.live_logger = LiveLogger(os.path.join(log_dir, f"{kwargs['tag']}.json"))
+        self.live_logger = LiveLogger(os.path.join(log_dir, f"{self.args.tag}.json"))
 
         # self.extra_markers = {}
         # for marker in self.args.extra_marker:
