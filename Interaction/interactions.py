@@ -101,7 +101,7 @@ class InteractionsControl:
         self.log_manager.add_log_entry('events', data, name=event_name)
 
     def _get_latest_drone_state(self):
-        self.log_manager.get_latest_group_log_data(group_name='POS_ORI')
+        self.log_manager.get_latest_group_log_data('POS_ORI')
 
     def _get_latest_drone_pos(self, vel=False):
         if vel:
