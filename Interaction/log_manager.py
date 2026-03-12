@@ -20,9 +20,10 @@ class InteractionLogger(LogManager):
         self.cf_log_data = None
         self.verbose = kwargs.get('verbose', False)
 
-        self.kf = {'x': VelocityKalmanFilter(dt=1 / self.args.fps, process_noise=100.0, measurement_noise=0.00001),
-                   'y': VelocityKalmanFilter(dt=1 / self.args.fps, process_noise=100.0, measurement_noise=0.00001),
-                   'z': VelocityKalmanFilter(dt=1 / self.args.fps, process_noise=100.0, measurement_noise=0.00001)}
+        dt = 1/kwargs.get('vicon_rate', 120)
+        self.kf = {'x': VelocityKalmanFilter(dt=dt, process_noise=100.0, measurement_noise=0.00001),
+                   'y': VelocityKalmanFilter(dt=dt, process_noise=100.0, measurement_noise=0.00001),
+                   'z': VelocityKalmanFilter(dt=dt, process_noise=100.0, measurement_noise=0.00001)}
 
         log_dir = kwargs['log_dir']
         if not os.path.exists(log_dir):
