@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class InteractionsControl:
 
-    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=False, execute=True, *args, **kwargs):
+    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=False, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
