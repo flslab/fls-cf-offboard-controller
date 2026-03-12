@@ -6,7 +6,7 @@ import cflib.crazyflie
 import numpy as np
 
 from Interaction.CommandLogger import CommandLogger
-from flight_behaviors import load_commands
+from Interaction.flight_behaviors import load_commands
 
 
 logger = logging.getLogger(__name__)
