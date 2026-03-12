@@ -27,7 +27,7 @@ class CommandLogger:
             def wrapper(*args, **kwargs):
                 timestamp = time.time() - self.start_time
                 log_entry = {'time': timestamp, "args": args,  "kwargs": kwargs}
-                self.log_function(group_name='command', data=log_entry, name=f"{self.class_name}.{name}")
+                self.log_function(group_name='command', entry=log_entry, name=f"{self.class_name}.{name}")
 
                 if self.execution:
                     return attr(*args, **kwargs)
