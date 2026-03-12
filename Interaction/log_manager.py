@@ -77,7 +77,7 @@ class InteractionLogger(LogManager):
         cur_time = time.time()
         group_name = log_conf.name
         data['time'] = cur_time
-        if group_name in self.cf_log_data:
+        if group_name in self.cf_log_data.keys():
             # Append data to each variable in the group
             for var_name, var_info in self.cf_log_data[group_name].items():
                 if var_name in data:
