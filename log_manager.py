@@ -35,7 +35,7 @@ class IlluminationLogger(LogManager):
             "stop_time": end_time,
         }
 
-        for group, entries in self.groups:
+        for group, entries in self.groups.items():
             output_data[group] = entries
 
         if self.cf_var_logger:
