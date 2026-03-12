@@ -100,16 +100,8 @@ class InteractionsControl:
 
         self.log_manager.add_log_entry(self, 'events', data, name=event_name)
 
-    def _get_latest_log_data(self, log_group='POS_ORI'):
-        latest_values = {}
-        for par, info in self.log_data[log_group].items():
-            data_list = info.get("data", [])
-            if data_list:
-                latest_values[par] = data_list[-1]
-            else:
-                latest_values[par] = None
-        return latest_values
-
+    def _get_latest_drone_state(self):
+        self.log_manager.get_latest_group_log_data(group_name='POS_ORI')
 
     def _get_latest_drone_pos(self, vel=False):
         if vel:
@@ -150,7 +142,6 @@ class InteractionsControl:
 
         last_pos = self._get_latest_drone_pos()
         hover_pos = [last_pos[0], last_pos[1], z]
-        self._log_event('Hover')
 
         self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 2)
         self._safe_sleep(2)
@@ -163,7 +154,7 @@ class InteractionsControl:
         start_time = time.time()
         while time.time() - start_time < duration:
 
-            state = self._get_latest_log_data()
+            state = self._get_latest_drone_state()
             if not state:
                 state = {}
 
