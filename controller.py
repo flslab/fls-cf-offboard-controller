@@ -116,7 +116,7 @@ class Controller:
         self.servo = None
         self.led = None
         self.tracker = None
-        self.var_logger = None
+        self.log_manager = None
         self.bat_logger = None
         self.sub_socket = None
         self.push_socket = None
@@ -130,8 +130,6 @@ class Controller:
         self.animation_stop_time = 0
         self.smooth_controller = None
 
-        self.log_data = copy.deepcopy(LOG_VARS)
-        self.log_times = []
         self.flying = False
         self.failsafe = False
         self.init_coord = None
@@ -199,14 +197,16 @@ class Controller:
         if self.bat_logger:
             self.bat_logger.stop()
 
-        if self.var_logger:
-            self.var_logger.stop()
-
         if self.mocap:
             self.mocap.stop()
 
-        if self.mocap or self.var_logger:
-            self.save_logs()
+        if self.log_manager:
+            self.log_manager.stop(
+                log_dir=self.args.log_dir,
+                tag=self.args.tag,
+                animation_start_time=self.animation_start_time,
+                animation_stop_time=self.animation_stop_time
+            )
 
         if self.tracker:
             self.tracker.stop()
@@ -403,14 +403,17 @@ class Controller:
             return
 
         logger.info("Setting up logging...")
-        self.var_logger = LogConfig(name='Controller', period_in_ms=100)
+        if self.args.illumination:
+            from log_manager import IlluminationLogger
+            self.log_manager = IlluminationLogger(verbose=self.args.verbose)
+            self.log_manager.start()
+            self.log_manager.init_cf_logger(self.cf, LOG_VARS, self.args.cf_log_period)
+            self.log_manager.add_log_group("frames")
 
-        for par, conf in LOG_VARS.items():
-            self.var_logger.add_variable(par, conf["type"])
-
-        self.cf.log.add_config(self.var_logger)
-        self.var_logger.data_received_cb.add_callback(self._log_callback)
-        self.var_logger.start()
+        elif self.args.interation:
+            pass  # TODO Shuqin
+        else:
+            raise Exception("No mode is passed. Passing either --illumination or --interation is required.")
 
         logger.debug("logging activated")
 
@@ -471,6 +474,8 @@ class Controller:
             self.fly_trajectory(self.args.trajectory)
         elif self.args.orchestrated:
             self.orchestrated_mission()
+        elif self.args.interation:
+            pass  # TODO Shuqin
         else:
             logger.info(f"Hovering for {self.args.t} seconds...")
             self._safe_sleep(self.args.t)
@@ -712,29 +717,6 @@ class Controller:
 
         self.cf.commander.send_notify_setpoint_stop()
 
-    def save_logs(self):
-        log_dir = self.args.log_dir
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir, exist_ok=True)
-
-        output_data = {
-            "start_time": self.animation_start_time,
-            "stop_time": self.animation_stop_time,
-        }
-
-        if self.mocap:
-            output_data["frames"] = self.mocap_frames
-        if self.var_logger:
-            output_data["cf"] = {
-                "time": self.log_times,
-                "params": self.log_data
-            }
-
-        filename = os.path.join(log_dir, f"{self.args.tag}.json")
-        with open(filename, 'w') as f:
-            json.dump(output_data, f)
-        logger.info(f"Logs saved to {filename}")
-
     def _safe_sleep_standalone(self, seconds):
         is_battery_critical = self.battery_critical.wait(timeout=seconds)
 
@@ -744,7 +726,7 @@ class Controller:
 
     def _prepare_for_emergency_landing(self):
         self.cf.commander.send_notify_setpoint_stop()
-        time.sleep(0.1)
+        time.sleep(0.01)
         self._set_safe_servo_angles()
         time.sleep(0.6)
         if self.smooth_controller:
@@ -812,13 +794,6 @@ class Controller:
             })
             logger.info("Sent landing confirmation")
 
-    def _log_callback(self, timestamp, data, log_conf):
-        self.log_times.append(time.time())
-        for par in self.log_data.keys():
-            self.log_data[par]["data"].append(data[par])
-            if self.args.verbose:
-                logging.info(f"{par} = {data[par]}")
-
     def _set_pid_values(self, pid_dict):
         for param, value in pid_dict.items():
             self.cf.param.set_value(param, value)
@@ -883,10 +858,10 @@ class Controller:
         self._log_mocap(frame)
 
     def _log_mocap(self, frame):
-        self.mocap_frames.append(frame)
+        self.log_manager.add_log_entry("frames", frame)
 
     def _get_latest_mocap_frame(self):
-        return self.mocap_frames[-1]
+        return self.log_manager.groups['frames'][-1]
 
     def _get_drone_by_id(self, drone_id):
         for drone in self.manifest['drones']:
@@ -905,6 +880,8 @@ if __name__ == '__main__':
     ap.add_argument("--tag", default=tag, type=str, help="tag included in filename of saved log files")
     ap.add_argument("--drone-id", type=str, help="drone id")
     ap.add_argument("--orchestrated", action="store_true", help="orchestrated by orchestrator")
+    ap.add_argument("--illumination", action="store_true", help="illumination application")
+    ap.add_argument("--interaction", action="store_true", help="interaction application")
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=DEFAULT_HEIGHT, type=float)
     ap.add_argument("-t", help="flight duration", default=DEFAULT_DURATION, type=float)
     ap.add_argument("--fps", type=int, default=120, help="position estimation rate, works with --localize")
@@ -917,6 +894,8 @@ if __name__ == '__main__':
     ap.add_argument("--smooth-controller-rate", type=int, default=30, help="rate of smooth controller update loop")
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
+    ap.add_argument("--cf-log-period", type=int, default=50, help="log period of cf logger in millisecond")
+    ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
     ap.add_argument("--vicon-full-pose", action="store_true",
@@ -926,7 +905,6 @@ if __name__ == '__main__':
     ap.add_argument("--vicon-mode", default="rigidbody", choices=["rigidbody", "pointcloud"], help="Tracking mode")
     ap.add_argument("--init-pos", type=float, nargs=3, help="Initial point x y z", default=[0.0, 0.0, 0.0])
     ap.add_argument("--save-vicon", action="store_true", help="track with vicon and save the data")
-    ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
     ap.add_argument("--ground-test", action="store_true", help="run mission without flying")

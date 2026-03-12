@@ -107,6 +107,15 @@ class SwarmOrchestrator:
         self.logger.info(f"ZMQ Server Online at {self.ctrl_cfg['ip']}")
 
     def _get_drone_cmd(self, drone):
+        if self.args.interaction:
+            return self._get_drone_cmd_interaction(drone)
+        elif self.args.illumination:
+            return self._get_drone_cmd_illumination(drone)
+        else:
+            raise Exception("mode not supported")
+
+    def _get_drone_cmd_interaction(self, drone):
+        # TODO Shuqin
         alt = self.mission['drones'][drone['id']]['target'][2]
         servo_count = drone.get('servo_count', 2)
         led_count = drone.get('led_count', 50)
@@ -120,7 +129,33 @@ class SwarmOrchestrator:
             f"source {self.common_cfg['venv_path']}/bin/activate && ",
             "git pull && ",
             f"nohup python3 {DRONE_SCRIPT} ",
-            f"--orchestrated --tag {self.tag} ",
+            f"--interaction --orchestrated --tag {self.tag} ",
+            "--ground-test " if self.args.ground else f"--vicon {mocap_args} ",
+            f"--drone-id {drone['id']} ",
+            f"--led --led-count {led_count} " if led_count > 0 else " ",
+            f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
+            f"--takeoff-altitude {alt} ",
+            "--smooth-controller-rate 50 ",
+            "--log ",
+            f"> drone_{drone['id']}.log 2>&1 < /dev/null &",
+        ]
+        return " ".join(cmd)
+
+    def _get_drone_cmd_illumination(self, drone):
+        alt = self.mission['drones'][drone['id']]['target'][2]
+        servo_count = drone.get('servo_count', 2)
+        led_count = drone.get('led_count', 50)
+        if hasattr(drone, "obj_name"):
+            mocap_args = f"--obj-name {drone['obj_name']} --vicon-mode rigidbody --vicon-full-pose "
+        else:
+            p = drone['init_pos']
+            mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
+        cmd = [
+            f"cd {self.common_cfg['work_dir']} && ",
+            f"source {self.common_cfg['venv_path']}/bin/activate && ",
+            "git pull && ",
+            f"nohup python3 {DRONE_SCRIPT} ",
+            f"--illumination --orchestrated --tag {self.tag} ",
             "--ground-test " if self.args.ground else f"--vicon {mocap_args} ",
             f"--drone-id {drone['id']} ",
             f"--led --led-count {led_count} " if led_count > 0 else " ",
@@ -425,6 +460,8 @@ class SwarmOrchestrator:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--illumination", action="store_true", help="illumination application")
+    parser.add_argument("--interaction", action="store_true", help="interaction application")
     parser.add_argument("--off", action="store_true", help="shutdown the raspberry pis")
     parser.add_argument("--kill", action="store_true", help="stop the controller")
     parser.add_argument("--ground", action="store_true", help="ground test")
