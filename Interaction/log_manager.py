@@ -21,7 +21,7 @@ class InteractionLogger(LogManager):
         self.args = kwargs.get('controller_args', False)
         self.verbose = self.args.verbose
 
-        dt = 1/self.args.get('vicon_rate', 120)
+        dt = 1/self.args.fps
         self.kf = {'x': VelocityKalmanFilter(dt=dt, process_noise=100.0, measurement_noise=0.00001),
                    'y': VelocityKalmanFilter(dt=dt, process_noise=100.0, measurement_noise=0.00001),
                    'z': VelocityKalmanFilter(dt=dt, process_noise=100.0, measurement_noise=0.00001)}
