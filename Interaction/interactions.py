@@ -98,7 +98,7 @@ class InteractionsControl:
             data = {}
         data["time"]: round(time.time(), 6)
 
-        self.log_manager.add_log_entry(self, 'events', data, name=event_name)
+        self.log_manager.add_log_entry('events', data, name=event_name)
 
     def _get_latest_drone_state(self):
         self.log_manager.get_latest_group_log_data(group_name='POS_ORI')
