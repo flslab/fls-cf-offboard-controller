@@ -23,7 +23,7 @@ class InteractionsControl:
             self.hl_commander = CommandLogger(self.cf.high_level_commander, log_function=log_manager.add_log_entry, execute=execute)
             self.lo_commander = CommandLogger(self.cf.commander, log_function=log_manager.add_log_entry, execute=execute)
         else:
-            self.lo_commander = cf.commander
+            self.hl_commander = self.cf.high_level_commander
             self.lo_commander = self.cf.commander
         self._safe_sleep = sleep_function
 
