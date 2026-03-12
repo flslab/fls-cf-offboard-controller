@@ -392,7 +392,7 @@ class Controller:
         if self.args.skip_takeoff or self.args.gimbal:
             self.flying = True
             return
-        if self.args.interation:
+        if self.args.interaction:
             self.log_manager.start()
 
         logger.info(f"Taking off to {args.takeoff_altitude}m ...")
@@ -433,7 +433,7 @@ class Controller:
             self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
             self.log_manager.add_log_group("frames")
 
-        elif self.args.interation:
+        elif self.args.interaction:
             from Interaction.log_manager import InteractionLogger
             self.log_manager = InteractionLogger(verbose=self.args.verbose)
             self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
@@ -441,7 +441,7 @@ class Controller:
             self.log_manager.add_log_group("events")
             self.log_manager.add_log_group("commands")
         else:
-            raise Exception("No mode is passed. Passing either --illumination or --interation is required.")
+            raise Exception("No mode is passed. Passing either --illumination or --interaction is required.")
 
         logger.debug("logging activated")
 
@@ -504,8 +504,8 @@ class Controller:
         elif self.args.orchestrated:
             if self.args.illumination:
                 self.orchestrated_mission()
-            elif self.args.interation:
-                IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission['Interaction'])
+            elif self.args.interaction:
+                IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission['Interaction'], self.args.smooth_controller_rate)
                 IC.run()
         else:
             logger.info(f"Hovering for {self.args.t} seconds...")
