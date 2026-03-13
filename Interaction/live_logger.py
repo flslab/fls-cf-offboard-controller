@@ -10,6 +10,7 @@ class LiveLogger:
         self.log_file = open(file_dir, "w")
         self.log_file.write("[\n")
         self.logger_function = logger_function
+        self.first_item = True
 
     def write(self, data):
         if self.logger_function:
@@ -34,7 +35,11 @@ class LiveLogger:
             try:
                 item = self.buffer.get_nowait()
                 # We use a comma-prefix if you are building a JSON array manually
-                items_to_write.append(",\n" + json.dumps(item))
+                if self.first_item:
+                    items_to_write.append(json.dumps(item))
+                    self.first_item = False
+                else:
+                    items_to_write.append(",\n" + json.dumps(item))
                 self.buffer.task_done()
             except queue.Empty:
                 break
