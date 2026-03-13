@@ -121,7 +121,7 @@ class InteractionsControl:
         fric_coe=-1.0,
         base_attitude=1,
         duration=60,
-        grace_time=1,
+        grace_time=0,
         v_scalar=100,
     ):
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
