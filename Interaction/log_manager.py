@@ -22,9 +22,9 @@ class InteractionLogger(LogManager):
         self.verbose = self.args.verbose
 
         dt = 1/self.args.fps
-        self.kf = {'x': VelocityKalmanFilter(dt=dt, process_noise=10.0, measurement_noise=0.001**2),
-                   'y': VelocityKalmanFilter(dt=dt, process_noise=10.0, measurement_noise=0.001**2),
-                   'z': VelocityKalmanFilter(dt=dt, process_noise=10.0, measurement_noise=0.001**2)}
+        self.kf = {'x': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001**2),
+                   'y': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001**2),
+                   'z': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001**2)}
 
         log_dir = self.args.log_dir
         if not os.path.exists(log_dir):
