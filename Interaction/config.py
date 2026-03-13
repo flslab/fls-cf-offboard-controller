@@ -399,7 +399,7 @@ VEL_ORI = {
 
 
 # LOG_VARS = {'POS_ORI': POS_ORI, 'VEL_ACC': VEL_ACC, 'MOT_BAT': MOT_BAT}
-LOG_VARS = {'POS_ORI': POS_ORI}
+# LOG_VARS = {'POS_ORI': POS_ORI}
 LOG_VARS = {'VEL_ORI': VEL_ORI}
 
 # PID Configurations
