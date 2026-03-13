@@ -179,7 +179,7 @@ class InteractionsControl:
 
             elif status == 1:  # pushed by user
                 # interact_vel = (vel / speed) * min((speed - 0.01), 0)
-                if np.linalg.norm(prev_interact_vel) > 0 and np.dot(vel, prev_interact_vel) < 0:
+                if np.linalg.norm(prev_interact_vel) > 0 > np.dot(vel, prev_interact_vel):
                     logger.info("Ignoring interaction: Direction change > 90 degrees.")
                     interact_vel = np.array([0.0, 0.0, 0.0])
                 else:
