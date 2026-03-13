@@ -28,7 +28,21 @@ class InteractionsControl:
         self._safe_sleep = sleep_function
 
     def run(self) -> None:
-        self._run_translation()
+        self.test_flight()
+        # self._run_translation()
+
+    def test_flight(self):
+
+        try:
+            st = time.time()
+            while time.time() < st + 10:
+                self.lo_commander.send_position_setpoint(1, 1, 1, 0)
+                self._safe_sleep(1)
+        except Exception as e:
+            tb_info = traceback.format_exc()
+            logging.error(f"Test Error: {e}\nTraceback:\n{tb_info}")
+        finally:
+            self.lo_commander.send_notify_setpoint_stop()
 
     def _run_force_render(self) -> None:
         """Execute the force-render haptic interaction."""
