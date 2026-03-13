@@ -281,7 +281,7 @@ class InteractionsControl:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], z, 0)
                     self._safe_sleep(dt)
 
-                hover_pos = pos
+                # hover_pos = pos
                 status = 0
 
 
