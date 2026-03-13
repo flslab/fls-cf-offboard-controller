@@ -179,7 +179,7 @@ class InteractionsControl:
             speed = np.linalg.norm(vel)
 
             if status == 0:  # wait for user interaction
-                if detect_speed_threshold(speed) and check_external_force(vel, current_pitch, current_roll):
+                if detect_speed_threshold(speed):
                     logger.info(f"Switching to Translation From {status}.")
                     # self._log_event('Translation')
                     status = 1
