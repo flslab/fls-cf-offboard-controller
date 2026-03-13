@@ -197,7 +197,7 @@ class InteractionsControl:
 
                 target_pos = pos + interact_vel * dt * v_scalar
 
-                if not check_external_force(vel, current_pitch, current_roll):
+                if not detect_speed_threshold(speed):
                     prev_interact_vel = np.zeros(3)
                     if fric_coe > 0:
                         logger.info(f"Switching to Coasting From {status}.")
