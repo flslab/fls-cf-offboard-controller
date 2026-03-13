@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class InteractionsControl:
 
-    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=False, *args, **kwargs):
+    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
@@ -28,13 +28,7 @@ class InteractionsControl:
         self._safe_sleep = sleep_function
 
     def run(self) -> None:
-        start_time = time.time()
-        logging.info(f"testing")
-        while time.time() < start_time + 10:
-            self.lo_commander.send_position_setpoint(1, 1, 1, 0)
-            self._safe_sleep(0.01)
-
-        # self._run_translation()
+        self._run_translation()
 
     def _run_force_render(self) -> None:
         """Execute the force-render haptic interaction."""
