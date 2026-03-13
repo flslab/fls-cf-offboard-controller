@@ -224,7 +224,7 @@ class InteractionsControl:
                     elif grace_time > 0:
                         logger.info(f"Switching to Grace Hover From {status}.")
                         # self._log_event('Grace Hover')
-                        hover_pos = target_pos
+                        hover_pos = target_pos + interaction_heading/np.linalg.norm(interaction_heading) * dt * v_scalar
                         status = 3
 
                         log_data = {
