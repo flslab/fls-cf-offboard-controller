@@ -150,8 +150,8 @@ class InteractionsControl:
         logger.info("Starting Force Feedback Interaction mode...")
         self._log_event('Waiting For User Interaction')
 
-        interact_vel = [0, 0, 0]
         brake_p, brake_r = 0, 0
+        prev_interact_vel = np.zeros(3)
         start_time = time.time()
         while time.time() - start_time < duration:
 
@@ -179,10 +179,16 @@ class InteractionsControl:
 
             elif status == 1:  # pushed by user
                 # interact_vel = (vel / speed) * min((speed - 0.01), 0)
-                interact_vel = vel
+                if np.linalg.norm(prev_interact_vel) > 0 and np.dot(vel, prev_interact_vel) < 0:
+                    logger.info("Ignoring interaction: Direction change > 90 degrees.")
+                    interact_vel = np.array([0.0, 0.0, 0.0])
+                else:
+                    interact_vel = vel
+
                 target_pos = pos + interact_vel * dt * v_scalar
 
                 if speed < vel_threshold:
+                    prev_interact_vel = np.zeros(3)
                     if fric_coe > 0:
                         logger.info(f"Switching to Coasting From {status}.")
                         # self._log_event('Coasting')
