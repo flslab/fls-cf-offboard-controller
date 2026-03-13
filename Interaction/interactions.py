@@ -238,7 +238,7 @@ class InteractionsControl:
                     else:
                         logger.info(f"Switching to Hover From {status}.")
                         hover_pos = target_pos
-                        status = 3
+                        status = 1
 
                         log_data = {
                             "speed": round(speed, 3),
