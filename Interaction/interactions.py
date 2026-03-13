@@ -129,7 +129,18 @@ class InteractionsControl:
         self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar * dt}, name='Translation Config')
         status = 0
 
-        def detect_user_interact(s):
+        def check_external_force(vel_vec, pitch, roll):
+            tilt_vec = np.array([-np.sin(np.radians(pitch)), np.sin(np.radians(roll))])
+
+            vel_vec = np.array(vel_vec[:2])
+
+            dot_product = np.dot(tilt_vec, vel_vec)
+
+            if dot_product < -0.1:  # Threshold to ignore noise
+                return True
+            return False
+
+        def detect_speed_threshold(s):
             if s > vel_threshold:
                 logger.info(f"User Pushing: Vel: {s:.3f}")
                 return True
@@ -170,7 +181,7 @@ class InteractionsControl:
             speed = np.linalg.norm(vel)
 
             if status == 0:  # wait for user interaction
-                if detect_user_interact(speed):
+                if detect_speed_threshold(speed) and check_external_force(vel, current_pitch, current_roll):
                     logger.info(f"Switching to Translation From {status}.")
                     # self._log_event('Translation')
                     status = 1
@@ -188,7 +199,7 @@ class InteractionsControl:
 
                 target_pos = pos + interact_vel * dt * v_scalar
 
-                if speed < vel_threshold:
+                if not detect_speed_threshold(speed) and not check_external_force(vel, current_pitch, current_roll):
                     prev_interact_vel = np.zeros(3)
                     if fric_coe > 0:
                         logger.info(f"Switching to Coasting From {status}.")
