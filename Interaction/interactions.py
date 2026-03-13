@@ -184,7 +184,6 @@ class InteractionsControl:
                     # self._log_event('Translation')
                     status = 1
                     prev_interact_vel = vel
-
                     continue
                 else:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], z, 0)
