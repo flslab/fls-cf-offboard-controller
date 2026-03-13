@@ -64,6 +64,7 @@ class InteractionsControl:
                 fric_coe=translation_setting['friction_coefficient'],
                 base_attitude=translation_setting['base_attitude'],
                 duration=translation_setting['duration'],
+                v_scalar=translation_setting['v_scalar']
             )
         except Exception as e:
             tb_info = traceback.format_exc()
