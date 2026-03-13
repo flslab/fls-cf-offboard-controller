@@ -211,7 +211,8 @@ class InteractionsControl:
                         status = 3
 
                         log_data = {
-                            "vel": round(speed, 3),
+                            "speed": round(speed, 3),
+                            "vel": [round(x, 3) for x in vel],
                             "Pos": [round(x, 3) for x in pos],
                             "Target": [round(x, 3) for x in hover_pos]
                         }
@@ -223,7 +224,8 @@ class InteractionsControl:
                         status = 3
 
                         log_data = {
-                            "vel": round(speed, 3),
+                            "speed": round(speed, 3),
+                            "vel": [round(x, 3) for x in vel],
                             "Pos": [round(x, 3) for x in pos],
                             "Target": [round(x, 3) for x in target_pos]
                         }
@@ -231,7 +233,8 @@ class InteractionsControl:
                         continue
 
                 log_data = {
-                    "vel": round(speed, 3),
+                    "speed": round(speed, 3),
+                    "vel": [round(x, 3) for x in vel],
                     "Pos": [round(x, 3) for x in pos],
                     "Target": [round(x, 3) for x in target_pos]
                 }
