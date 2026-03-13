@@ -28,7 +28,9 @@ class InteractionsControl:
         self._safe_sleep = sleep_function
 
     def run(self) -> None:
-        for i in range(50):
+        start_time = time.time()
+        logging.info(f"testing")
+        while time.time() < start_time + 10:
             self.lo_commander.send_position_setpoint(1, 1, 1, 0)
             self._safe_sleep(0.01)
 
