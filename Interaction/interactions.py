@@ -193,6 +193,7 @@ class InteractionsControl:
                 if np.linalg.norm(prev_interact_vel) > 0 > np.dot(vel, prev_interact_vel):
                     logger.info("Ignoring interaction: Direction change > 90 degrees.")
                     interact_vel = np.array([0.0, 0.0, 0.0])
+                    speed = 0
                 else:
                     # prev_interact_vel = vel
                     interact_vel = vel
