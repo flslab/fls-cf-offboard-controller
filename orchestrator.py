@@ -118,7 +118,6 @@ class SwarmOrchestrator:
     def _get_drone_cmd_interaction(self, drone):
         alt = self.mission['drones'][drone['id']]['target'][2]
         radio_arg = "--radio" if self.args.radio else ""
-        ctrl_rate = 20 if self.args.radio else 50
         p = drone['init_pos']
         mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode mixed "
 
@@ -141,7 +140,7 @@ class SwarmOrchestrator:
             f"--vicon {mocap_args} "
             f"--drone-id {drone['id']} "
             f"--takeoff-altitude {alt} "
-            f"--smooth-controller-rate {ctrl_rate} "
+            "--smooth-controller-rate 50 "
             "--log "
             f"> drone_{drone['id']}.log 2>&1 < /dev/null &"
         ]
