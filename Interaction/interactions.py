@@ -96,7 +96,7 @@ class InteractionsControl:
     def _log_event(self, event_name, data=None):
         if data is None:
             data = {}
-        data["time"]: round(time.time(), 6)
+        data["time"] = round(time.time(), 6)
 
         self.log_manager.add_log_entry('events', data, name=event_name)
 
