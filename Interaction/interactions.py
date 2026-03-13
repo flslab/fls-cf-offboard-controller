@@ -193,6 +193,7 @@ class InteractionsControl:
                     logger.info("Ignoring interaction: Direction change > 90 degrees.")
                     interact_vel = np.array([0.0, 0.0, 0.0])
                 else:
+                    prev_interact_vel = vel
                     interact_vel = vel
 
                 target_pos = pos + interact_vel * dt * v_scalar
