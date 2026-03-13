@@ -201,7 +201,7 @@ class InteractionsControl:
                         log_data = {"vel": speed, 'Pos': list(pos), 'Target': list(hover_pos)}
                         self._log_event("User Disengage", log_data)
 
-                log_data = {"vel": speed, 'Pos': list(pos), 'Target': list(target_pos),}
+                log_data = {"vel": speed, 'Pos': list(pos), 'Target': list(target_pos)}
                 self._log_event("User Pushing", log_data)
 
                 if base_attitude < 0:
