@@ -78,7 +78,7 @@ class InteractionLogger(LogManager):
 
     def get_latest_group_log_data(self, log_group):
         latest_values = {}
-        for par, info in self.cf_var_logger[log_group].items():
+        for par, info in self.cf_log_data[log_group].items():
             data_list = info.get("data", [])
             if data_list:
                 latest_values[par] = data_list[-1]
