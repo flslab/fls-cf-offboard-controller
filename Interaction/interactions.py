@@ -29,10 +29,10 @@ class InteractionsControl:
 
     def run(self) -> None:
         for i in range(50):
-            self.lo_commander.send_position_setpoint(1,1, 1, 0)
+            self.lo_commander.send_position_setpoint(1, 1, 1, 0)
             self._safe_sleep(0.01)
 
-        self._run_translation()
+        # self._run_translation()
 
     def _run_force_render(self) -> None:
         """Execute the force-render haptic interaction."""
