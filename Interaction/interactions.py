@@ -186,15 +186,20 @@ class InteractionsControl:
                         # self._log_event('Coasting')
                         status = 2
                         continue
-                    else:
+                    elif grace_time > 0:
                         logger.info(f"Switching to Grace Hover From {status}.")
                         # self._log_event('Grace Hover')
                         hover_pos = target_pos
                         status = 3
 
-                        log_data = {"vel": speed, 'Pos': list(pos), 'Target': list(hover_pos),}
+                        log_data = {"vel": speed, 'Pos': list(pos), 'Target': list(hover_pos)}
                         self._log_event("User Disengage", log_data)
-                        continue
+                    else:
+                        logger.info(f"Switching to Hover From {status}.")
+                        hover_pos = target_pos
+                        status = 3
+                        log_data = {"vel": speed, 'Pos': list(pos), 'Target': list(hover_pos)}
+                        self._log_event("User Disengage", log_data)
 
                 log_data = {"vel": speed, 'Pos': list(pos), 'Target': list(target_pos),}
                 self._log_event("User Pushing", log_data)
