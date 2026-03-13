@@ -161,7 +161,7 @@ class InteractionsControl:
         logger.info("Starting Force Feedback Interaction mode...")
         self._log_event('Waiting For User Interaction')
 
-        prev_interact_vel = np.zeros(3)
+        interaction_heading = np.zeros(3)
         start_time = time.time()
         while time.time() - start_time < duration:
 
@@ -183,14 +183,14 @@ class InteractionsControl:
                     logger.info(f"Switching to Translation From {status}.")
                     # self._log_event('Translation')
                     status = 1
-                    prev_interact_vel = vel
+                    interaction_heading = vel
                     continue
                 else:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], z, 0)
 
             elif status == 1:  # pushed by user
                 # interact_vel = (vel / speed) * min((speed - 0.01), 0)
-                if np.linalg.norm(prev_interact_vel) > 0 > np.dot(vel, prev_interact_vel):
+                if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
                     logger.info("Ignoring interaction: Direction change > 90 degrees.")
                     interact_vel = np.array([0.0, 0.0, 0.0])
                     speed = 0
@@ -201,7 +201,7 @@ class InteractionsControl:
                 target_pos = pos + interact_vel * dt * v_scalar
 
                 if not detect_speed_threshold(speed):
-                    prev_interact_vel = np.zeros(3)
+                    interaction_heading = np.zeros(3)
                     if fric_coe > 0:
                         logger.info(f"Switching to Coasting From {status}.")
                         # self._log_event('Coasting')
@@ -238,6 +238,7 @@ class InteractionsControl:
                 log_data = {
                     "speed": round(speed, 3),
                     "vel": [round(x, 3) for x in vel],
+                    "heading": [round(x, 3) for x in interaction_heading],
                     "Pos": [round(x, 3) for x in pos],
                     "Target": [round(x, 3) for x in target_pos]
                 }
