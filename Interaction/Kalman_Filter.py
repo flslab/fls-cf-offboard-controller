@@ -2,7 +2,7 @@ import numpy as np
 
 
 class VelocityKalmanFilter:
-    def __init__(self, dt, process_noise=100, measurement_noise=0.001**2):
+    def __init__(self, dt, process_noise=10, measurement_noise=0.001**2):
         # Time step
         self.dt = dt
 
