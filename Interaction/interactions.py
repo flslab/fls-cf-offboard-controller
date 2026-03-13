@@ -136,24 +136,21 @@ class InteractionsControl:
         fric_coe=-1.0,
         base_attitude=1,
         duration=60,
-        grace_time=0,
+        grace_time=1,
         v_scalar=100,
     ):
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
         self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar * dt}, name='Translation Config')
         status = 0
 
-        def check_external_force(vel_vec, pitch, roll, vel_noise_threshold=0.05):
+        def check_external_force(vel_vec, pitch, roll):
             tilt_vec = np.array([-np.sin(np.radians(pitch)), np.sin(np.radians(roll))])
-            vel_vec_xy = np.array(vel_vec[:2])
-            vel_vec_xy[np.abs(vel_vec_xy) < vel_noise_threshold] = 0.0
 
-            if np.count_nonzero(vel_vec_xy) == 0:
-                return False
+            vel_vec = np.array(vel_vec[:2])
 
-            dot_product = np.dot(tilt_vec, vel_vec_xy)
+            dot_product = np.dot(tilt_vec, vel_vec)
 
-            if dot_product < -0.1:  # Threshold to detect opposing force
+            if dot_product < -0.1:  # Threshold to ignore noise
                 return True
             return False
 
@@ -193,12 +190,10 @@ class InteractionsControl:
             pos[2] = z
             vel[2] = 0
 
-            if status == 0:  # wait for user interaction
+            speed = np.linalg.norm(vel)
 
-                speed = np.linalg.norm(vel)
-                is_fast_enough = detect_speed_threshold(speed)
-                is_external_force = check_external_force(vel, current_pitch, current_roll)
-                if is_fast_enough and is_external_force:
+            if status == 0:  # wait for user interaction
+                if detect_speed_threshold(speed):
                     logger.info(f"Switching to Translation From {status}.")
                     # self._log_event('Translation')
                     status = 1
@@ -214,16 +209,8 @@ class InteractionsControl:
                     interact_vel = np.array([0.0, 0.0, 0.0])
                     speed = 0
                 else:
-                    heading_norm_sq = np.dot(interaction_heading, interaction_heading)
-
-                    if heading_norm_sq > 0:
-                        # Project vel onto interaction_heading
-                        interact_vel = (np.dot(vel, interaction_heading) / heading_norm_sq) * interaction_heading
-                    else:
-                        # Fallback in case interaction_heading is perfectly zero
-                        interact_vel = vel
-
-                    speed = np.linalg.norm(interact_vel)
+                    # prev_interact_vel = vel
+                    interact_vel = vel
 
                 target_pos = pos + interact_vel * dt * v_scalar
 
