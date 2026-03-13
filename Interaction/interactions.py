@@ -177,7 +177,8 @@ class InteractionsControl:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], z, 0)
 
             elif status == 1:  # pushed by user
-                interact_vel = (vel / speed) * min((speed - 0.01), 0)
+                # interact_vel = (vel / speed) * min((speed - 0.01), 0)
+                interact_vel = vel
                 target_pos = pos + interact_vel * dt * v_scalar
 
                 if speed < vel_threshold:
