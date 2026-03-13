@@ -142,7 +142,6 @@ class InteractionsControl:
 
         def detect_speed_threshold(s):
             if s > vel_threshold:
-                logger.info(f"User Pushing: Vel: {s:.3f}")
                 return True
             return False
 
@@ -162,7 +161,6 @@ class InteractionsControl:
         logger.info("Starting Force Feedback Interaction mode...")
         self._log_event('Waiting For User Interaction')
 
-        brake_p, brake_r = 0, 0
         prev_interact_vel = np.zeros(3)
         start_time = time.time()
         while time.time() - start_time < duration:
@@ -199,7 +197,7 @@ class InteractionsControl:
 
                 target_pos = pos + interact_vel * dt * v_scalar
 
-                if not detect_speed_threshold(speed) and not check_external_force(vel, current_pitch, current_roll):
+                if not check_external_force(vel, current_pitch, current_roll):
                     prev_interact_vel = np.zeros(3)
                     if fric_coe > 0:
                         logger.info(f"Switching to Coasting From {status}.")
