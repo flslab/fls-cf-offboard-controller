@@ -181,4 +181,6 @@ pyrightconfig.json
 logs/
 swarm_manifest.yaml
 
+downloads.json
+
 # End of https://www.toptal.com/developers/gitignore/api/python
