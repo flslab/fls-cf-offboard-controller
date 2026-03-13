@@ -364,8 +364,43 @@ MOT_BAT = {
 }
 
 
+VEL_ORI = {
+    "stateEstimate.vx": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "stateEstimate.vy": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "stateEstimate.vz": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "stateEstimate.roll": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "stateEstimate.pitch": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "stateEstimate.yaw": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    }
+}
+
+
 # LOG_VARS = {'POS_ORI': POS_ORI, 'VEL_ACC': VEL_ACC, 'MOT_BAT': MOT_BAT}
 LOG_VARS = {'POS_ORI': POS_ORI}
+LOG_VARS = {'VEL_ORI': VEL_ORI}
 
 # PID Configurations
 PID_VALUES_PROP_2 = {

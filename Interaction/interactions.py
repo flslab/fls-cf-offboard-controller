@@ -102,7 +102,7 @@ class InteractionsControl:
         self.log_manager.add_log_entry('events', data, name=event_name)
 
     def _get_latest_drone_state(self):
-        self.log_manager.get_latest_group_log_data('POS_ORI')
+        return self.log_manager.get_latest_group_log_data()
 
     def _get_latest_drone_pos(self, vel=False):
         if vel:
@@ -126,6 +126,7 @@ class InteractionsControl:
         v_scalar=100,
     ):
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
+        self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar * dt}, name='Translation Config')
         status = 0
 
         def detect_user_interact(s):

@@ -443,6 +443,8 @@ class Controller:
             self.log_manager.add_log_group("frames")
             self.log_manager.add_log_group("events")
             self.log_manager.add_log_group("commands")
+            self.log_manager.add_log_group("configs")
+
         else:
             raise Exception("No mode is passed. Passing either --illumination or --interaction is required.")
 

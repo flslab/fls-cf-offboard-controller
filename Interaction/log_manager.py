@@ -76,7 +76,10 @@ class InteractionLogger(LogManager):
             self.live_logger.write({"type": group_name, 'name': kwargs.get('name', None), "data": entry})
 
 
-    def get_latest_group_log_data(self, log_group):
+    def get_latest_group_log_data(self, log_group=None):
+        if log_group is None:
+            log_group = list(self.cf_log_data.keys())[1]
+
         latest_values = {}
         for par, info in self.cf_log_data[log_group].items():
             data_list = info.get("data", [])
