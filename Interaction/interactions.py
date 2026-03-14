@@ -250,16 +250,16 @@ class InteractionsControl:
                         self._log_event("User Disengage", log_data)
                         continue
 
-                log_data = {
-                    "speed": round(speed, 3),
-                    "vel": [round(x, 3) for x in vel],
-                    "heading": [round(x, 3) for x in interaction_heading],
-                    "Pos": [round(x, 3) for x in pos],
-                    "Target": [round(x, 3) for x in target_pos]
-                }
-                self._log_event("User Pushing", log_data)
-
                 if base_attitude < 0:
+
+                    log_data = {
+                        "speed": round(speed, 3),
+                        "vel": [round(x, 3) for x in vel],
+                        "heading": [round(x, 3) for x in interaction_heading],
+                        "Pos": [round(x, 3) for x in pos],
+                        "Target": [round(x, 3) for x in target_pos]
+                    }
+                    self._log_event("User Pushing", log_data)
                     self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], z, 0)
                 else:
                     target_pitch, target_roll = calculate_braking_angles(*interact_vel[:2])

@@ -2,3 +2,5 @@ pyzmq
 PyYAML
 cflib
 pyserial
+fabric
+invoke
