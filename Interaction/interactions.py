@@ -28,8 +28,8 @@ class InteractionsControl:
         self._safe_sleep = sleep_function
 
     def run(self) -> None:
-        # self.test_flight()
-        self._run_translation()
+        self._run_rotation_limit()
+        # self._run_translation()
 
     def test_flight(self):
 
@@ -41,6 +41,19 @@ class InteractionsControl:
         except Exception as e:
             tb_info = traceback.format_exc()
             logging.error(f"Test Error: {e}\nTraceback:\n{tb_info}")
+        finally:
+            self.lo_commander.send_notify_setpoint_stop()
+
+    def _run_rotation_limit(self) -> None:
+        """Execute the force-render haptic interaction."""
+        try:
+            setting = self.mission['Rotation_Test']
+            rads_to_deg = 57.3
+            yawrate = setting['rads_per_sec'] * rads_to_deg
+            self.test_rotation_limit(yawrate=yawrate, duration=setting['duration'])
+        except Exception as e:
+            tb_info = traceback.format_exc()
+            logging.error(f"Render Error: {e}\nTraceback:\n{tb_info}")
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
@@ -129,6 +142,23 @@ class InteractionsControl:
         hover_pos = [1, 2, 3]
         self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 5, relative=False)
         self._safe_sleep(5)
+
+    def test_rotation_limit(self, yawrate, duration=5):
+        dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
+        start_t = time.time()
+
+        while time.time() - start_t < 2:
+            self.lo_commander.send_position_setpoint(0.0, 0.0, 1.0, 0)
+            self._safe_sleep(dt)
+
+        start_t = time.time()
+        while time.time() - start_t < duration:
+            self.lo_commander.send_hover_setpoint(0.0, 0.0, yawrate, 1.0)
+            self._safe_sleep(dt)
+
+        while time.time() - start_t < duration + 2:
+            self.lo_commander.send_position_setpoint(0.0, 0.0, 1.0, 0)
+            self._safe_sleep(dt)
 
     def interaction_translation_vel(
         self,

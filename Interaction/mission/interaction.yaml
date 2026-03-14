@@ -13,3 +13,7 @@ Interaction:
     duration: 60
     v_scalar: 10
     grace_time: 2
+
+Rotation_Test:
+  rads_per_sec: 7
+  duration: 5
