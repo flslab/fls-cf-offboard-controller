@@ -12,7 +12,7 @@ Interaction:
     base_attitude: 0
     duration: 60
     v_scalar: 10
-    grace_time: 2
+    grace_time: 0.1
 
   rotation_test:
     rads_per_sec: 3.49066
