@@ -47,7 +47,7 @@ class InteractionsControl:
     def _run_rotation_limit(self) -> None:
         """Execute the force-render haptic interaction."""
         try:
-            setting = self.mission['Rotation_Test']
+            setting = self.mission['rotation_test']
             rads_to_deg = 57.3
             yawrate = setting['rads_per_sec'] * rads_to_deg
             self.test_rotation_limit(yawrate=yawrate, duration=setting['duration'])
