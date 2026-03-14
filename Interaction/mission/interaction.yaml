@@ -12,4 +12,4 @@ Interaction:
     base_attitude: -1
     duration: 60
     v_scalar: 10
-    grace_time: 1
+    grace_time: 2
