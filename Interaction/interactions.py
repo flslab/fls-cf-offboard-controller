@@ -28,8 +28,8 @@ class InteractionsControl:
         self._safe_sleep = sleep_function
 
     def run(self) -> None:
-        self._run_rotation_limit()
-        # self._run_translation()
+        # self._run_rotation_limit()
+        self._run_translation()
 
     def test_flight(self):
 
