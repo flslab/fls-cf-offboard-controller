@@ -292,6 +292,13 @@ class InteractionsControl:
                     self._log_event("User Pushing", log_data)
                     self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], z, 0)
                 else:
+                    log_data = {
+                        "speed": round(speed, 3),
+                        "vel": [round(x, 3) for x in vel],
+                        "heading": [round(x, 3) for x in interaction_heading],
+                        "Pos": [round(x, 3) for x in pos],
+                    }
+                    self._log_event("User Pushing", log_data)
                     target_pitch, target_roll = calculate_braking_angles(*interact_vel[:2])
                     self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, z)
 
