@@ -48,3 +48,13 @@ Add to `/boot/firmware/config.txt`
 dtoverlay=pwm
 ```
 
+CrazyRadio:
+To run the controller on your Linux PC or a Raspberry Pi and control the flight of an FLS (built upon a CrazyBolt FC) or a Crazyflie drone using a CrazyRadio, please read:
+
+https://www.bitcraze.io/documentation/repository/crazyflie-lib-python/master/installation/usb_permissions/
+
+After installing, run ```lsusb``` in the terminal, check if it shows device with ```ID 1915:7777``` or ```0483:5740```:
+```
+Bus 00X Device 00X: ID 1915:7777 Nordic Semiconductor ASA Bitcraze Crazyradio (PA) dongle
+```
+
