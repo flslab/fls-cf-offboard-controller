@@ -171,7 +171,7 @@ class InteractionsControl:
         v_scalar=100,
     ):
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
-        self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar * dt, 'Stabilize Time': grace_time}, name='Translation Config')
+        self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar * dt, "Orientation CMD": base_attitude, 'Stabilize Time': grace_time}, name='Translation Config')
         status = 0
 
         def check_external_force(vel_vec, pitch, roll):
