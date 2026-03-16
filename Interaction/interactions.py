@@ -32,8 +32,8 @@ class InteractionsControl:
         self.bounds = self.mission.get('boundary_limits', None)
 
     def run(self) -> None:
-        # self._run_rotation_limit()
-        self._run_translation()
+        self._run_rotation_limit()
+        # self._run_translation()
 
     def check_interaction_boundary(self, pos=None):
         if self.bounds is None:
