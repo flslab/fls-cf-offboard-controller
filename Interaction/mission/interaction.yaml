@@ -15,8 +15,8 @@ Interaction:
     grace_time: 2
 
   rotation_test:
-    rads_per_sec: 3.49066
-    duration: 5
+    rads_per_sec: 1
+    duration: 10
   
   boundary_limits:
     x_min: -7.0
