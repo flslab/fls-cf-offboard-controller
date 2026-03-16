@@ -20,7 +20,7 @@ LOCALIZATION_SHM_NAME = "/pos_shared_mem"
 
 # Battery
 # MIN_LIHV_VOLT = 3.5
-MIN_LIHV_VOLT = 1.3
+MIN_LIHV_VOLT = 1.2
 
 PI = 3.141592653589793
 
