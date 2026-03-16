@@ -32,8 +32,12 @@ class InteractionsControl:
         self.bounds = self.mission.get('boundary_limits', None)
 
     def run(self) -> None:
-        self._run_rotation_limit()
-        # self._run_translation()
+        if self.mission['act'] == 'rotation_test':
+            self._run_rotation_limit()
+
+        if self.mission['act'] == 'translation':
+            self._run_translation()
+        return
 
     def check_interaction_boundary(self, pos=None):
         if self.bounds is None:
@@ -245,9 +249,9 @@ class InteractionsControl:
 
             pos, vel = self._get_latest_drone_pos(vel=True)
 
-            self.check_interaction_boundary(pos)
-            pos[2] = z
-            vel[2] = 0
+            if z is not None:
+                pos[2] = z
+                vel[2] = 0
 
             speed = np.linalg.norm(vel)
 
@@ -259,7 +263,7 @@ class InteractionsControl:
                     interaction_heading = vel
                     continue
                 else:
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], z, 0)
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
             elif status == 1:  # pushed by user
                 # interact_vel = (vel / speed) * min((speed - 0.01), 0)
@@ -272,6 +276,8 @@ class InteractionsControl:
                     interact_vel = vel
 
                 target_pos = pos + interact_vel * dt * v_scalar
+
+                self.check_interaction_boundary(target_pos)
 
                 if not detect_speed_threshold(speed):
                     interaction_heading = np.zeros(3)
@@ -318,7 +324,7 @@ class InteractionsControl:
                         "Target": [round(x, 3) for x in target_pos]
                     }
                     self._log_event("User Pushing", log_data)
-                    self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], z, 0)
+                    self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
                 else:
                     log_data = {
                         "speed": round(speed, 3),
@@ -332,8 +338,10 @@ class InteractionsControl:
 
             elif status == 2:  # coasting
                 end_pos, coast_t = self.calculate_coasting(pos, vel, fric_coe)
+
+                self.check_interaction_boundary(end_pos)
                 self.lo_commander.send_notify_setpoint_stop()
-                self.hl_commander.go_to(end_pos[0], end_pos[1], z, 0, coast_t, relative=False)
+                self.hl_commander.go_to(end_pos[0], end_pos[1], end_pos[2], 0, coast_t, relative=False)
                 self._safe_sleep(coast_t)
                 logger.info(f"Switching to Hover From {status}.")
                 hover_pos = end_pos
@@ -344,7 +352,7 @@ class InteractionsControl:
 
                 grace_start = time.time()
                 while time.time() < grace_time + grace_start:
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], z, 0)
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
 
                 # hover_pos = pos
