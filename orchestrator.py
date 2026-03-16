@@ -117,7 +117,7 @@ class SwarmOrchestrator:
 
     def _get_drone_cmd_interaction(self, drone):
         alt = self.mission['drones'][drone['id']]['target'][2]
-        radio_arg = f"--radio {self.mission['drones'][drone['id']]['uri']}" if self.args.radio else ""
+        radio_arg = f"--radio {drone['uri']}" if self.args.radio else ""
         p = drone['init_pos']
         mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode mixed "
 

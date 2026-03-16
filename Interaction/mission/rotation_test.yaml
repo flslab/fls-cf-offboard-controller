@@ -7,8 +7,8 @@ drones:
 Interaction:
   action: rotation_test
   config:
-    rads_per_sec: 3.49066
-    duration: 5
+    rads_per_sec: 1
+    duration: 20
   
   boundary_limits:
     x_min: -7.0
