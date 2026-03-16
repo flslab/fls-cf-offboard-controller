@@ -253,6 +253,7 @@ class InteractionsControl:
 
             pos, vel = self._get_latest_drone_pos(vel=True)
 
+            self.check_interaction_boundary(pos)
             if z is not None:
                 pos[2] = z
                 vel[2] = 0
@@ -281,7 +282,7 @@ class InteractionsControl:
 
                 target_pos = pos + interact_vel * dt * v_scalar
 
-                self.check_interaction_boundary(target_pos)
+                # self.check_interaction_boundary(target_pos)
 
                 if not detect_speed_threshold(speed):
                     interaction_heading = np.zeros(3)
@@ -343,7 +344,7 @@ class InteractionsControl:
             elif status == 2:  # coasting
                 end_pos, coast_t = self.calculate_coasting(pos, vel, fric_coe)
 
-                self.check_interaction_boundary(end_pos)
+                # self.check_interaction_boundary(end_pos)
                 self.lo_commander.send_notify_setpoint_stop()
                 self.hl_commander.go_to(end_pos[0], end_pos[1], end_pos[2], 0, coast_t, relative=False)
                 self._safe_sleep(coast_t)
