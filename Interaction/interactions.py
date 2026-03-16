@@ -229,7 +229,10 @@ class InteractionsControl:
             return pitch, roll
 
         last_pos = self._get_latest_drone_pos()
-        hover_pos = [last_pos[0], last_pos[1], z]
+        if z is not None:
+            hover_pos = [last_pos[0], last_pos[1], z]
+        else:
+            hover_pos = [last_pos[0], last_pos[1], last_pos[2]]
 
         self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 2)
         self._safe_sleep(2)
