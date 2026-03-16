@@ -32,11 +32,11 @@ class InteractionsControl:
         self.bounds = self.mission.get('boundary_limits', None)
 
     def run(self) -> None:
-        logger.info(f"{self.mission['action']}")
-        if self.mission['action'] == 'rotation_test':
+        action = self.mission['Interaction']['action']
+        if action == 'rotation_test':
             self._run_rotation_limit()
 
-        elif self.mission['action'] == 'translation':
+        elif action == 'translation':
             self._run_translation()
         return
 

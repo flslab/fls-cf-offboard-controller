@@ -5,7 +5,7 @@ drones:
     apparatus_offset: [ -0.125, -0.05, 0.170 ]
 
 Interaction:
-  action: 'rotation_test'
+  action: rotation_test
   config:
     rads_per_sec: 1
     duration: 20
