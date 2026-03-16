@@ -11,6 +11,9 @@ from Interaction.flight_behaviors import load_commands
 
 logger = logging.getLogger(__name__)
 
+class BoundaryExceededError(Exception):
+    """Exception raised when the drone leaves the defined interaction space."""
+    pass
 
 class InteractionsControl:
 
@@ -26,10 +29,33 @@ class InteractionsControl:
             self.hl_commander = self.cf.high_level_commander
             self.lo_commander = self.cf.commander
         self._safe_sleep = sleep_function
+        self.bounds = self.mission.get('boundary_limits', None)
 
     def run(self) -> None:
         # self._run_rotation_limit()
         self._run_translation()
+
+    def check_interaction_boundary(self, pos=None):
+        if self.bounds is None:
+            return
+
+        if pos is None:
+            pos = self._get_latest_drone_pos()
+
+        if pos is None or len(pos) < 3:
+            logger.warning("Could not retrieve position for boundary check.")
+            return
+
+        x, y, z = pos[0], pos[1], pos[2]
+
+        if not (self.bounds['x_min'] <= x <= self.bounds['x_max']):
+            raise BoundaryExceededError(f"X position ({x:.3f}) breached bounds [{self.bounds['x_min']}, {self.bounds['x_max']}]")
+
+        if not (self.bounds['y_min'] <= y <= self.bounds['y_max']):
+            raise BoundaryExceededError(f"Y position ({y:.3f}) breached bounds [{self.bounds['y_min']}, {self.bounds['y_max']}]")
+
+        if not (self.bounds['z_min'] <= z <= self.bounds['z_max']):
+            raise BoundaryExceededError(f"Z position ({z:.3f}) breached bounds [{self.bounds['z_min']}, {self.bounds['z_max']}]")
 
     def test_flight(self):
 
@@ -218,6 +244,8 @@ class InteractionsControl:
             current_roll = state.get('stateEstimate.roll', 0.0)
 
             pos, vel = self._get_latest_drone_pos(vel=True)
+
+            self.check_interaction_boundary(self, pos=pos)
             pos[2] = z
             vel[2] = 0
 

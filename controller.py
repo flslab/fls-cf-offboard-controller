@@ -510,8 +510,9 @@ class Controller:
             if self.args.illumination:
                 self.orchestrated_mission()
             elif self.args.interaction:
-                IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission['Interaction'], self.args.smooth_controller_rate)
                 try:
+                    IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission['Interaction'],
+                                             self.args.smooth_controller_rate)
                     IC.run()
                 except Exception as e:
                     logging.error(f"Interaction Error: {e}\n")
