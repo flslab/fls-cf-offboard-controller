@@ -511,7 +511,12 @@ class Controller:
                 self.orchestrated_mission()
             elif self.args.interaction:
                 IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission['Interaction'], self.args.smooth_controller_rate)
-                IC.run()
+                try:
+                    IC.run()
+                except Exception as e:
+                    logging.error(f"Interaction Error: {e}\n")
+                finally:
+                    self.cf.commander.send_notify_setpoint_stop()
         else:
             logger.info(f"Hovering for {self.args.t} seconds...")
             self._safe_sleep(self.args.t)
