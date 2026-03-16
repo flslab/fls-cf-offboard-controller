@@ -1,6 +1,8 @@
 import copy
 import json
 import os
+import re
+import subprocess
 
 from Interaction.Kalman_Filter import VelocityKalmanFilter
 from Interaction.live_logger import LiveLogger
@@ -21,15 +23,16 @@ class InteractionLogger(LogManager):
         self.args = kwargs.get('controller_args', False)
         self.verbose = self.args.verbose
 
-        dt = 1/self.args.fps
-        self.kf = {'x': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001**2),
-                   'y': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001**2),
-                   'z': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001**2)}
+        dt = 1 / self.args.fps
+        self.kf = {'x': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
+                   'y': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
+                   'z': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2)}
 
         log_dir = self.args.log_dir
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
         self.live_logger = LiveLogger(os.path.join(log_dir, f"{self.args.tag}.json"))
+        self.get_git_version()
 
         # self.extra_markers = {}
         # for marker in self.args.extra_marker:
@@ -75,7 +78,6 @@ class InteractionLogger(LogManager):
         if self.live_logger:
             self.live_logger.write({"type": group_name, 'name': kwargs.get('name', None), "data": entry})
 
-
     def get_latest_group_log_data(self, log_group=None):
         if log_group is None:
             log_group = list(self.cf_log_data.keys())[0]
@@ -108,3 +110,16 @@ class InteractionLogger(LogManager):
             for p, kf in zip(pos, self.kf.values()):
                 vel.append(kf.update(p))
         return vel
+
+    import subprocess
+
+    def get_git_version(self):
+        try:
+            self.add_log_group("git")
+            output = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
+
+            if self.live_logger:
+                self.live_logger.write({"type": 'git', "data": {'version': output}})
+            return
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return "Git is not installed or not found in PATH."
