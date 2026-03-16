@@ -114,7 +114,7 @@ class Controller:
             self.args.t = self.cfg.DEFAULT_DURATION
 
         if self.args.radio:
-            self.uri = uri_helper.uri_from_env(default=self.cfg.DEFAULT_RADIO_URI)
+            self.uri = uri_helper.uri_from_env(default=self.args.radio)
         else:
             self.uri = uri_helper.uri_from_env(default=self.cfg.DEFAULT_URI)
         self.scf = None
@@ -962,7 +962,7 @@ if __name__ == '__main__':
                     help="stream camera at 1/10 of original fps, works with --localize")
     ap.add_argument("--skip-takeoff", action="store_true", help="run mission without taking off")
     ap.add_argument("--skip-landing", action="store_true", help="run mission without landing")
-    ap.add_argument("--radio", action="store_true", help="run mission without CrazyRadio")
+    ap.add_argument("--radio", type=str, help="specify the CrazyRadio URI (e.g., 'radio://0/6/1M/E7E7E7E704')")
 
     args = ap.parse_args()
 
