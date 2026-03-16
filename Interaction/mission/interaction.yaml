@@ -11,7 +11,7 @@ Interaction:
     friction_coefficient: -0.01
     base_attitude: -1
     duration: 60
-    v_scalar: 50
+    v_scalar: 20
     grace_time: 1
 
   rotation_test:
