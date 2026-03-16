@@ -513,7 +513,7 @@ class Controller:
                 self.orchestrated_mission()
             elif self.args.interaction:
                 try:
-                    IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission['Interaction'],
+                    IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                              self.args.smooth_controller_rate)
                     IC.run()
                 except Exception as e:

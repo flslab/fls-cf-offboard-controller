@@ -32,6 +32,7 @@ class InteractionsControl:
         self.bounds = self.mission.get('boundary_limits', None)
 
     def run(self) -> None:
+        logger.info(f"{self.mission['action']}")
         if self.mission['action'] == 'rotation_test':
             self._run_rotation_limit()
 
@@ -77,7 +78,7 @@ class InteractionsControl:
     def _run_rotation_limit(self) -> None:
         """Execute the force-render haptic interaction."""
         try:
-            setting = self.mission['rotation_test']
+            setting = self.mission['Interaction']['config']
             rads_to_deg = 57.3
             yawrate = setting['rads_per_sec'] * rads_to_deg
             self.test_rotation_limit(yawrate=yawrate, duration=setting['duration'])
@@ -114,7 +115,7 @@ class InteractionsControl:
     def _run_translation(self) -> None:
         """Run the velocity-based translation interaction."""
         try:
-            translation_setting = self.mission['translation']
+            translation_setting = self.mission['Interaction']['config']
             self.interaction_translation_vel(
                 vel_threshold=translation_setting['delta_v'],
                 z=translation_setting['z'],
