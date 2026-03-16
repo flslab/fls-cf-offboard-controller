@@ -1,7 +1,7 @@
 # Connection Settings
 DEFAULT_URI = 'usb://0'
 # DEFAULT_RADIO_URI = 'radio://0/100/2M/E7E7E7E706'
-DEFAULT_RADIO_URI = 'radio://0/6/1M/E7E7E7E702'
+DEFAULT_RADIO_URI = 'radio://0/6/1M/E7E7E7E704'
 
 # URI_DEFAULT = 'radio://0/80/2M/E7E7E7E713'
 

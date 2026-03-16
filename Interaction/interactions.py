@@ -245,7 +245,7 @@ class InteractionsControl:
 
             pos, vel = self._get_latest_drone_pos(vel=True)
 
-            self.check_interaction_boundary(self, pos=pos)
+            self.check_interaction_boundary(pos)
             pos[2] = z
             vel[2] = 0
 
