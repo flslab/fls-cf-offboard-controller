@@ -220,15 +220,27 @@ class InteractionsControl:
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
         if isinstance(grace_time, (int, float)):
             get_grace_time = lambda a, v: grace_time
-            self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt, "Orientation CMD": base_attitude, 'Stabilize Time': grace_time}, name='Translation Config')
+            stabilize_time = grace_time
 
         else:
             import joblib
-            from sklearn.preprocessing import PolynomialFeatures
+            # Load the dictionary containing both the transformer and the model
             saved_poly_data = joblib.load(grace_time)
+
+            poly_transformer = saved_poly_data['poly']  # Assuming 'poly' is the key for PolynomialFeatures
             loaded_model = saved_poly_data['model']
-            get_grace_time = lambda a, v: loaded_model.predict(loaded_model.transform([[a, v]]))[0] + 0.2
-            self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt, "Orientation CMD": base_attitude, 'Stabilize Time': 'dynamic'}, name='Translation Config')
+
+            # Use the transformer to expand features before predicting
+            get_grace_time = lambda a, v: loaded_model.predict(
+                poly_transformer.transform([[a, v]])
+            )[0] + 0.2
+            stabilize_time = 'dynamic'
+
+        self.log_manager.add_log_entry(group_name="configs",
+                                   entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt,
+                                          "Orientation CMD": base_attitude, 'Stabilize Time': stabilize_time},
+                                   name='Translation Config')
+
         status = 0
 
         def check_external_force(vel_vec, pitch, roll):
