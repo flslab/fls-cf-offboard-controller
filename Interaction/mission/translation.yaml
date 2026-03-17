@@ -10,7 +10,7 @@ Interaction:
     delta_v: 0.2
     z: Null
     friction_coefficient: -0.01
-    base_attitude: -1
+    base_attitude: 0
     duration: 60
     v_scalar: [10, 10, 2]
     grace_time: 2
