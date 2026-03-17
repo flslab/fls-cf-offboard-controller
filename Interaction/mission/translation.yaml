@@ -12,8 +12,8 @@ Interaction:
     friction_coefficient: -0.01
     base_attitude: 0
     duration: 60
-    v_scalar: [10, 10, 2]
-    grace_time: 1
+    v_scalar: [10, 10, 4]
+    grace_time: './Interaction/analysis/stabilizing_time.pkl'
 
 boundary_limits:
   x_min: -7.0

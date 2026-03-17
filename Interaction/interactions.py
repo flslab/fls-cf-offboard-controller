@@ -3,6 +3,7 @@ import time
 import traceback
 
 import cflib.crazyflie
+import joblib
 import numpy as np
 
 from Interaction.CommandLogger import CommandLogger
@@ -218,7 +219,15 @@ class InteractionsControl:
         else:
             v_scalar = np.array(v_scalar)
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
-        self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt, "Orientation CMD": base_attitude, 'Stabilize Time': grace_time}, name='Translation Config')
+        if isinstance(grace_time, (int, float)):
+            get_grace_time = lambda a, v: grace_time
+            self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt, "Orientation CMD": base_attitude, 'Stabilize Time': grace_time}, name='Translation Config')
+
+        else:
+            saved_poly_data = joblib.load(grace_time)
+            loaded_model = saved_poly_data['model']
+            get_grace_time = lambda a, v: loaded_model.predict(loaded_model.transform([[a, v]]))[0] + 0.2
+            self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt, "Orientation CMD": base_attitude, 'Stabilize Time': 'dynamic'}, name='Translation Config')
         status = 0
 
         def check_external_force(vel_vec, pitch, roll):
@@ -307,7 +316,7 @@ class InteractionsControl:
                         # self._log_event('Coasting')
                         status = 2
                         continue
-                    elif grace_time > 0:
+                    else:
                         logger.info(f"Switching to Grace Hover From {status}.")
                         # self._log_event('Grace Hover')
                         hover_pos = target_pos
@@ -317,24 +326,12 @@ class InteractionsControl:
                             "speed": round(speed, 3),
                             "vel": [round(x, 3) for x in vel],
                             "Pos": [round(x, 3) for x in pos],
-                            "Target": [round(x, 3) for x in hover_pos]
+                            "Target": [round(x, 3) for x in hover_pos],
+                            "Stabilize Time": grace_time
                         }
                         self._log_event("User Disengage", log_data)
                         tilte_angle = calculate_tilt(current_roll, current_pitch)
-                        grace_time = 0.06 * tilte_angle + 0.55
-                        continue
-                    else:
-                        logger.info(f"Switching to Hover From {status}.")
-                        hover_pos = target_pos
-                        status = 1
-
-                        log_data = {
-                            "speed": round(speed, 3),
-                            "vel": [round(x, 3) for x in vel],
-                            "Pos": [round(x, 3) for x in pos],
-                            "Target": [round(x, 3) for x in target_pos]
-                        }
-                        self._log_event("User Disengage", log_data)
+                        grace_time = get_grace_time(abs(tilte_angle), vel)
                         continue
 
                 if base_attitude < 0:
