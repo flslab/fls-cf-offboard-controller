@@ -344,7 +344,7 @@ class InteractionsControl:
                         }
                         self._log_event("User Disengage", log_data)
                         tilte_angle = calculate_tilt(current_roll, current_pitch)
-                        grace_time = get_grace_time(abs(tilte_angle), vel)
+                        grace_time = get_grace_time(abs(tilte_angle), speed)
                         continue
 
                 if base_attitude < 0:
