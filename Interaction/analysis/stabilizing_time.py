@@ -40,7 +40,7 @@ def extract_stopping_data(file_path, low_speed_threshold=5):
 
             if roll is not None and init_speed is not None:
                 # Calculate Angle: arccos(cos(roll)*cos(pitch))
-                angle_rad = np.arccos(np.cos(roll) * np.cos(pitch))
+                angle_rad = np.arccos(np.cos(np.deg2rad(roll)) * np.cos(np.deg2rad(pitch)))
                 angle_deg = np.degrees(angle_rad)
 
                 # 3. Look forward for the 'End Time'
@@ -100,23 +100,23 @@ if not df.empty:
 
         # joblib.dump(model_log, 'power_law_model.pkl')
 
-    # --- 2. Polynomial Model (Degree 2) ---
-    poly = PolynomialFeatures(degree=7, include_bias=False)
-    X_poly = poly.fit_transform(df[['A', 'V']])
-    y = df['T']
-
-    model_poly = LinearRegression().fit(X_poly, y)
-
-    # Generate the equation string dynamically
-    features = poly.get_feature_names_out(['A', 'V'])
-    eqn_parts = [f"{model_poly.intercept_:.4f}"]
-    for coef, name in zip(model_poly.coef_, features):
-        eqn_parts.append(f"({coef:.4f} * {name})")
-
-    print("--- Polynomial Model (Degree 2) ---")
-    print(f"Poly Equation: T = {' + '.join(eqn_parts)}")
-    print(f"R^2: {model_poly.score(X_poly, y):.4f}")
-    # print(f"{model_poly.coef_}")
-    joblib.dump({'model': model_poly, 'poly': poly}, 'stabilizing_time.pkl')
-else:
-    print("No valid stopping events were found in the log.")
+#     # --- 2. Polynomial Model (Degree 2) ---
+#     poly = PolynomialFeatures(degree=5, include_bias=False)
+#     X_poly = poly.fit_transform(df[['A', 'V']])
+#     y = df['T']
+#
+#     model_poly = LinearRegression().fit(X_poly, y)
+#
+#     # Generate the equation string dynamically
+#     features = poly.get_feature_names_out(['A', 'V'])
+#     eqn_parts = [f"{model_poly.intercept_:.4f}"]
+#     for coef, name in zip(model_poly.coef_, features):
+#         eqn_parts.append(f"({coef:.4f} * {name})")
+#
+#     print("--- Polynomial Model (Degree 2) ---")
+#     print(f"Poly Equation: T = {' + '.join(eqn_parts)}")
+#     print(f"R^2: {model_poly.score(X_poly, y):.4f}")
+#     # print(f"{model_poly.coef_}")
+#     joblib.dump({'model': model_poly, 'poly': poly}, 'stabilizing_time.pkl')
+# else:
+#     print("No valid stopping events were found in the log.")

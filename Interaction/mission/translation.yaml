@@ -7,13 +7,13 @@ drones:
 Interaction:
   action: translation
   config:
-    delta_v: 0.2
+    delta_v: 0.1
     z: Null
     friction_coefficient: -0.01
     base_attitude: 0
     duration: 60
     v_scalar: [10, 10, 4]
-    grace_time: './Interaction/analysis/stabilizing_time.pkl'
+    grace_time: 1
 
 boundary_limits:
   x_min: -7.0
