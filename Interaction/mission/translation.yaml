@@ -12,7 +12,7 @@ Interaction:
     friction_coefficient: -0.01
     base_attitude: 0
     duration: 60
-    v_scalar: [10, 10, 4]
+    v_scalar: [10, 10, 3]
     grace_time: 1
 
 boundary_limits:
