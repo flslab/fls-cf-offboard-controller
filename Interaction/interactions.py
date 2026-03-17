@@ -335,7 +335,8 @@ class InteractionsControl:
                         hover_pos = target_pos
                         status = 3
 
-                        grace_time = get_grace_time(abs(tilte_angle), speed)
+                        tilt_angle = calculate_tilt(current_roll, current_pitch)
+                        grace_time = get_grace_time(abs(tilt_angle), speed)
                         log_data = {
                             "speed": round(speed, 3),
                             "vel": [round(x, 3) for x in vel],
@@ -344,7 +345,6 @@ class InteractionsControl:
                             "Stabilize Time": grace_time
                         }
                         self._log_event("User Disengage", log_data)
-                        tilte_angle = calculate_tilt(current_roll, current_pitch)
                         continue
 
                 if base_attitude < 0:
