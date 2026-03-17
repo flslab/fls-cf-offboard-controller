@@ -13,7 +13,7 @@ Interaction:
     base_attitude: 0
     duration: 60
     v_scalar: [10, 10, 2]
-    grace_time: 2
+    grace_time: 1
 
 boundary_limits:
   x_min: -7.0
