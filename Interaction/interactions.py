@@ -3,7 +3,6 @@ import time
 import traceback
 
 import cflib.crazyflie
-import joblib
 import numpy as np
 
 from Interaction.CommandLogger import CommandLogger
@@ -224,6 +223,8 @@ class InteractionsControl:
             self.log_manager.add_log_entry(group_name="configs", entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt, "Orientation CMD": base_attitude, 'Stabilize Time': grace_time}, name='Translation Config')
 
         else:
+            import joblib
+            from sklearn.preprocessing import PolynomialFeatures
             saved_poly_data = joblib.load(grace_time)
             loaded_model = saved_poly_data['model']
             get_grace_time = lambda a, v: loaded_model.predict(loaded_model.transform([[a, v]]))[0] + 0.2
