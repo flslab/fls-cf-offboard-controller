@@ -15,6 +15,18 @@ class BoundaryExceededError(Exception):
     """Exception raised when the drone leaves the defined interaction space."""
     pass
 
+
+def calculate_tilt(roll, pitch, degrees=True):
+    if degrees:
+        roll = np.radians(roll)
+        pitch = np.radians(pitch)
+
+    # Calculate the cosine of the total tilt
+    cos_tilt = np.cos(roll) * np.cos(pitch)
+    tilt_rad = np.arccos(np.clip(cos_tilt, -1.0, 1.0))
+
+    return np.degrees(tilt_rad) if degrees else tilt_rad
+
 class InteractionsControl:
 
     def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True, *args, **kwargs):
@@ -308,6 +320,8 @@ class InteractionsControl:
                             "Target": [round(x, 3) for x in hover_pos]
                         }
                         self._log_event("User Disengage", log_data)
+                        tilte_angle = calculate_tilt(current_roll, current_pitch)
+                        grace_time = 0.06 * tilte_angle + 0.55
                         continue
                     else:
                         logger.info(f"Switching to Hover From {status}.")
