@@ -343,7 +343,7 @@ class InteractionsControl:
                     }
                     self._log_event("User Pushing", log_data)
                     target_pitch, target_roll = calculate_braking_angles(*interact_vel[:2])
-                    self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, z)
+                    self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
 
             elif status == 2:  # coasting
                 end_pos, coast_t = self.calculate_coasting(pos, vel, fric_coe)
