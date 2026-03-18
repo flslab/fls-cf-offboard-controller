@@ -771,14 +771,14 @@ class Controller:
             raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
 
     def _prepare_for_emergency_landing(self):
-        self.cf.commander.send_notify_setpoint_stop()
-        time.sleep(0.01)
         self._set_safe_servo_angles()
         time.sleep(0.6)
         if self.smooth_controller:
             self.smooth_controller.stop()
         if self.led:
             self.led.show_single_color((230, 20, 20))
+        self.cf.commander.send_notify_setpoint_stop()
+        time.sleep(0.01)
 
     def _safe_sleep_orchestrated(self, duration):
         """
