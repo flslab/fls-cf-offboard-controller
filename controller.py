@@ -709,8 +709,8 @@ class Controller:
         formula_str = led_setting["formula"]
         led_buffer = []
         current_time = time.time() - self.animation_start_time
-        x, y, z = self._get_latest_mocap_frame()
-        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math, "x": x, "y": y, "z": z}
+        # x, y, z = self._get_latest_mocap_frame()
+        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math}
         for j, p in enumerate(pointers):
             context[f"p{j}"] = p
 
