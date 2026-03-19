@@ -575,6 +575,7 @@ class Controller:
         mission_setting = self.mission['drones'][self.args.drone_id]
         target = mission_setting['target']
         waypoints = mission_setting.get('waypoints', [])
+        position_offset = mission_setting.get('position_offset', None)
         low_level_setpoint = mission_setting.get('low_level_setpoint', [])
         rotation_test = mission_setting.get('rotation_test', [])
         follow = mission_setting.get('follow', False)
@@ -585,6 +586,13 @@ class Controller:
         iterations = mission_setting['iterations']
         led_color = mission_setting.get('color')
         led_setting = mission_setting.get('led', {})
+
+        if position_offset:
+            for i in range(3):
+                target[i] += position_offset[i]
+            for j in range(len(waypoints)):
+                for i in range(3):
+                    waypoints[j][i] += position_offset[i]
 
         if len(target) == 3:
             target.append(0.0)
