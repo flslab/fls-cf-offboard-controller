@@ -4,4 +4,3 @@ cflib
 pyserial
 fabric
 invoke
-joblib
