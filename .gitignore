@@ -90,12 +90,6 @@ target/
 profile_default/
 ipython_config.py
 
-# UploadVideoLogs
-UploadVideoLogs/credentials/oauth-client.json
-UploadVideoLogs/credentials/service-account.json
-UploadVideoLogs/credentials/token.pkl
-UploadVideoLogs/logs/
-
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
 #   intended to run in multiple environments; otherwise, check them in:
