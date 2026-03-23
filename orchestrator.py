@@ -137,7 +137,7 @@ class SwarmOrchestrator:
             f"--orchestrated --interaction --tag {self.tag} "
             f"{radio_arg} "
             f"{extra_marker_args} "
-            f"--vicon {mocap_args} "
+            f"--vicon {mocap_args} --fps 50"
             f"--drone-id {drone['id']} "
             f"--takeoff-altitude {alt} "
             "--smooth-controller-rate 50 "
