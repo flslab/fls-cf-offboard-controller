@@ -117,6 +117,8 @@ class SwarmOrchestrator:
 
     def _get_drone_cmd_interaction(self, drone):
         alt = self.mission['drones'][drone['id']]['target'][2]
+        servo_count = drone.get('servo_count', 2)
+        led_count = drone.get('led_count', 50)
         radio_arg = f"--radio {drone['uri']}" if self.args.radio else ""
         p = drone['init_pos']
         mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
@@ -139,6 +141,8 @@ class SwarmOrchestrator:
             f"{extra_marker_args} "
             f"--vicon {mocap_args} "
             f"--drone-id {drone['id']} "
+            f"--led --led-count {led_count} " if led_count > 0 else " ",
+            f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
             f"--takeoff-altitude {alt} "
             "--smooth-controller-rate 50 "
             "--log "
