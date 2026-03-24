@@ -1,7 +1,7 @@
 name: arrow_interaction
 drones:
   lb4:
-    target: [ 0.0, -1.25, 1.0 ]
+    target: [ 0.0, 0.2, 1.0 ]
     waypoints: []
     delta_t: 60
     iterations: 1
@@ -14,10 +14,11 @@ drones:
       id: lb5
       offset: [ 0.0, -0.25, 0 ]
   lb5: #head
-    target: [ 0.0, -1.0, 1.0, 0.0 ]
-    waypoints: [[0.0, -1.0, 1.0, 0.0]]
+    target: [ 0.0, 0.5, 1.0, 0.0 ]
+    waypoints: []
     delta_t: 60
     iterations: 1
+    interaction: True
     params:
       linear: true
       relative: false
