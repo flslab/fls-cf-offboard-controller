@@ -119,7 +119,7 @@ class SwarmOrchestrator:
         alt = self.mission['drones'][drone['id']]['target'][2]
         radio_arg = f"--radio {drone['uri']}" if self.args.radio else ""
         p = drone['init_pos']
-        mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode mixed "
+        mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
 
         extra_markers = self.manifest.get('apparatus', None)
         extra_marker_args = ""

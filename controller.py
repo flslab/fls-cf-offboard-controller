@@ -513,9 +513,11 @@ class Controller:
                 self.orchestrated_mission()
             elif self.args.interaction:
                 try:
-                    IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                             self.args.smooth_controller_rate)
-                    IC.run()
+                    # IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                    #                          self.args.smooth_controller_rate)
+                    # IC.run()
+
+                    self.orchestrated_mission_interaction()
                 except Exception as e:
                     logging.error(f"Interaction Error: {e}\n")
                 finally:
@@ -570,6 +572,98 @@ class Controller:
         for p in trajectory:
             self.commander.go_to(*p, 0, 1 / fps)
             self._safe_sleep(1 / fps)
+
+    def orchestrated_mission_interaction(self):
+        mission_setting = self.mission['drones'][self.args.drone_id]
+        target = mission_setting['target']
+        waypoints = mission_setting.get('waypoints', [])
+        position_offset = mission_setting.get('position_offset', None)
+        low_level_setpoint = mission_setting.get('low_level_setpoint', [])
+        rotation_test = mission_setting.get('rotation_test', [])
+        follow = mission_setting.get('follow', False)
+        params = mission_setting.get('params', {'linear': False, 'relative': False})
+        angles = mission_setting.get('servos', [])
+        pointers = mission_setting.get('pointers', [])
+        delta_t = mission_setting['delta_t']
+        iterations = mission_setting['iterations']
+        led_color = mission_setting.get('color')
+        led_setting = mission_setting.get('led', {})
+        interaction = mission_setting.get('interaction', False)
+
+        if position_offset:
+            for i in range(3):
+                target[i] += position_offset[i]
+            for j in range(len(waypoints)):
+                for i in range(3):
+                    waypoints[j][i] += position_offset[i]
+
+        if len(target) == 3:
+            target.append(0.0)
+        if len(target) == 4:
+            target.append(0.0)
+        x, y, z, yaw, _ = target
+
+        dt = 3
+        if self.init_coord:
+            xi, yi, _ = self.init_coord
+            dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
+            dt = 6 * dist
+
+        if len(angles):
+            self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
+
+        if not self.args.ground_test:
+            self.commander.go_to(x, y, z, yaw, dt, relative=False)
+            self._safe_sleep(dt + 1)
+
+        if self.manifest['mission']['require_handshake']:
+            self.handshake()
+
+        self.animation_start_time = time.time()
+
+        if len(pointers):
+            self.smooth_controller.register_group(
+                name="pointers",
+                initial_values=pointers[0],
+                callback=lambda vals: self.update_led(vals, led_setting)
+            )
+        elif led_setting.get('mode') == 'expression':
+            def update_led_cb():
+                self.update_led(pointers, led_setting)
+            self.smooth_controller.add_update_callback(update_led_cb)
+        elif led_color is not None:
+            self.led.show_single_color(led_color)
+
+        if follow:
+            leader_id = follow['id']
+            leader_drone = self._get_drone_by_id(leader_id)
+            if leader_drone:
+                logger.info(f"following {leader_id}")
+                if self.args.vicon_mode == "rigidbody":
+                    leader_obj_name = leader_drone['obj_name']
+                    self.mocap.subscribe_object(leader_obj_name,
+                                                lambda frame: self._follow_with_offset(frame, follow['offset']))
+                    self._safe_sleep(delta_t)
+                    self.mocap.unsubscribe_object(leader_obj_name)
+                elif self.args.vicon_mode == "pointcloud":
+                    leader_target_pos = self.mission['drones'][leader_id]['target'][:3]
+                    self.mocap.subscribe_point(leader_target_pos,
+                                               lambda frame: self._follow_with_offset(frame, follow['offset']),
+                                               name=leader_id)
+                    self._safe_sleep(delta_t)
+                    self.mocap.unsubscribe_point(leader_id)
+                self.cf.commander.send_notify_setpoint_stop()
+
+        elif interaction:
+            IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                                     self.args.smooth_controller_rate)
+            IC.run()
+        self.animation_stop_time = time.time()
+
+        if not len(pointers) and led_setting.get('mode') == 'expression':
+            self.smooth_controller.remove_update_callback(update_led_cb)
+
+        self.led.clear()
 
     def orchestrated_mission(self):
         mission_setting = self.mission['drones'][self.args.drone_id]

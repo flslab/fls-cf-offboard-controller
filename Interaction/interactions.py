@@ -175,6 +175,7 @@ class InteractionsControl:
     def _get_latest_drone_state(self):
         return self.log_manager.get_latest_group_log_data()
 
+
     def _get_latest_drone_pos(self, vel=False):
         if vel:
             return np.array(self.log_manager.groups['frames'][-1]["tvec"]), np.array(self.log_manager.groups['frames'][-1].get("vel", None))
@@ -202,6 +203,12 @@ class InteractionsControl:
         while time.time() - start_t < duration + 2:
             self.lo_commander.send_position_setpoint(0.0, 0.0, 1.0, 0)
             self._safe_sleep(dt)
+
+
+    def _get_drone_by_id(self, drone_id):
+        for drone in self.manifest['drones']:
+            if drone['id'] == drone_id:
+                return drone
 
     def interaction_translation_vel(
         self,
@@ -464,7 +471,6 @@ class InteractionsControl:
                 logger.info(f"Error: Unknown commander type '{prefix}'")
 
         logger.info("Execution finished.")
-
 
     # @Todo
     # def force_render(self):
