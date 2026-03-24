@@ -137,12 +137,13 @@ class SwarmOrchestrator:
             "git pull && "
             f"nohup python3 {DRONE_SCRIPT} "
             f"--orchestrated --interaction --tag {self.tag} "
+            "--intractable-illumination" if self.args.intractable_illumination else " "
             f"{radio_arg} "
             f"{extra_marker_args} "
             f"--vicon {mocap_args} "
             f"--drone-id {drone['id']} "
-            f"--led --led-count {led_count} " if led_count > 0 else " ",
-            f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
+            f"--led --led-count {led_count} " if led_count > 0 and not self.args.radio else " ",
+            f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 and not self.args.radio else " ",
             f"--takeoff-altitude {alt} "
             "--smooth-controller-rate 50 "
             "--log "
@@ -487,6 +488,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--illumination", action="store_true", help="illumination application")
     parser.add_argument("--interaction", action="store_true", help="interaction application")
+    parser.add_argument("--intractable-illumination", action="store_true", help="interaction application with illumination")
     parser.add_argument("--off", action="store_true", help="shutdown the raspberry pis")
     parser.add_argument("--kill", action="store_true", help="stop the controller")
     parser.add_argument("--ground", action="store_true", help="ground test")

@@ -513,11 +513,13 @@ class Controller:
                 self.orchestrated_mission()
             elif self.args.interaction:
                 try:
-                    # IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                    #                          self.args.smooth_controller_rate)
-                    # IC.run()
+                    if self.args.intractable_illumination:
+                        self.orchestrated_mission_interaction()
+                    else:
+                        IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                                                 self.args.smooth_controller_rate)
+                        IC.run()
 
-                    self.orchestrated_mission_interaction()
                 except Exception as e:
                     logging.error(f"Interaction Error: {e}\n")
                 finally:
@@ -1030,6 +1032,7 @@ if __name__ == '__main__':
     ap.add_argument("--orchestrated", action="store_true", help="orchestrated by orchestrator")
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
+    ap.add_argument("--intractable-illumination", action="store_true", help="interaction application with illumination")
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=None, type=float)
     ap.add_argument("-t", help="flight duration", default=None, type=float)
     ap.add_argument("--fps", type=int, default=120, help="position estimation rate, works with --localize")
@@ -1067,6 +1070,7 @@ if __name__ == '__main__':
     ap.add_argument("--skip-takeoff", action="store_true", help="run mission without taking off")
     ap.add_argument("--skip-landing", action="store_true", help="run mission without landing")
     ap.add_argument("--radio", type=str, help="specify the CrazyRadio URI (e.g., 'radio://0/6/1M/E7E7E7E704')")
+
 
     args = ap.parse_args()
 
