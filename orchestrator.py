@@ -137,13 +137,13 @@ class SwarmOrchestrator:
             "git pull && "
             f"nohup python3 {DRONE_SCRIPT} "
             f"--orchestrated --interaction --tag {self.tag} "
-            "--intractable-illumination" if self.args.intractable_illumination else " "
+            # f"--intractable-illumination" if self.args.intractable_illumination else " ",
             f"{radio_arg} "
             f"{extra_marker_args} "
             f"--vicon {mocap_args} "
             f"--drone-id {drone['id']} "
-            f"--led --led-count {led_count} " if led_count > 0 and not self.args.radio else " ",
-            f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 and not self.args.radio else " ",
+            # f"--led --led-count {led_count} " if led_count > 0 and not self.args.radio else " ",
+            # f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 and not self.args.radio else " ",
             f"--takeoff-altitude {alt} "
             "--smooth-controller-rate 50 "
             "--log "
