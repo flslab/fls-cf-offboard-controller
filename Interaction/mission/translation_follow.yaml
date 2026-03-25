@@ -4,7 +4,7 @@ drones:
     target: [0.4229, -0.5848, 1]
     follow:
       id: block
-      offset: [ 0.8, 0, 0]
+      offset: [0.8, 0, 0.2]
   block:
     target: [-0.4840, -0.5793, 0.8775]
 
