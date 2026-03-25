@@ -519,6 +519,7 @@ class Controller:
                         mission_setting = self.mission['drones'][self.args.drone_id]
                         follow = mission_setting.get('follow', None)
                         if follow:
+                            self.log_manager.add_log_group(follow['id'])
                             if self.args.vicon_mode == "rigidbody":
                                 self.mocap.subscribe_object(follow['id'],
                                                             lambda frame: self._log_mocap(frame, follow['id']))
