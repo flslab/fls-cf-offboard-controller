@@ -37,7 +37,7 @@ class InteractionsControl:
         self.pos_group_name = 'frames' if leader_info is None else f"{leader_info['id']}"
 
         log_function = log_manager.add_log_entry if log_command else None
-        offset = np.zeros(3) if leader_info is None else f"{leader_info['offset']}"
+        offset = np.zeros(3) if leader_info is None else leader_info['offset']
         self.hl_commander = CommandWrapper(self.cf.high_level_commander, log_function=log_function, execute=execute, offset=offset)
         self.lo_commander = CommandWrapper(self.cf.commander, log_function=log_function, execute=execute, offset=offset)
         self._safe_sleep = sleep_function

@@ -35,6 +35,7 @@ class CommandWrapper:
                     modified_args[0] = float(modified_args[0]) + self.offset[0]
                     modified_args[1] = float(modified_args[1]) + self.offset[1]
                     modified_args[2] = float(modified_args[2]) + self.offset[2]
+
                     args = tuple(modified_args)
 
                 if self.log_function:
