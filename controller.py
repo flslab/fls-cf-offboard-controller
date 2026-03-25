@@ -516,8 +516,20 @@ class Controller:
                     if self.args.intractable_illumination:
                         self.orchestrated_mission_interaction()
                     else:
+                        mission_setting = self.mission['drones'][self.args.drone_id]
+                        follow = mission_setting.get('follow', None)
+                        if follow:
+                            if self.args.vicon_mode == "rigidbody":
+                                self.mocap.subscribe_object(follow['id'],
+                                                            lambda frame: self._log_mocap(frame, follow['id']))
+                            elif self.args.vicon_mode == "pointcloud":
+                                leader_target_pos = self.mission['drones'][follow['id']]['target'][:3]
+                                self.mocap.subscribe_point(leader_target_pos,
+                                                           lambda frame: self._log_mocap(frame, follow['id']),
+                                                           name=follow['id'])
+
                         IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                                 self.args.smooth_controller_rate)
+                                                 self.args.smooth_controller_rate, leader_info=follow)
                         IC.run()
 
                 except Exception as e:
@@ -1030,8 +1042,8 @@ class Controller:
         self.scf.cf.extpos.send_extpose(*frame['tvec'], *frame['quat'])
         self._log_mocap(frame)
 
-    def _log_mocap(self, frame):
-        self.log_manager.add_log_entry("frames", frame, name=self.args.tag)
+    def _log_mocap(self, frame, group_name='frames'):
+        self.log_manager.add_log_entry(group_name, frame)
 
     def _get_latest_mocap_frame(self):
         return self.log_manager.groups['frames'][-1]

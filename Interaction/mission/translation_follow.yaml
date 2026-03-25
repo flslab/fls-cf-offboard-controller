@@ -1,7 +1,12 @@
 name: translation
 drones:
   lb6:
-    target: [ 0.0, 0.0, 1.0 ]
+    target: [0.4229, -0.5848, 1]
+    follow:
+      id: block
+      offset: [ 0.8, 0, 0]
+  block:
+    target: [-0.4840, -0.5793, 0.8775]
 
 Interaction:
   action: translation
@@ -11,7 +16,7 @@ Interaction:
     friction_coefficient: -0.01
     base_attitude: -1
     duration: 20
-    v_scalar: [10, 10, 3]
+    v_scalar: [2, 2, 3]
     grace_time: 2
 
 boundary_limits:

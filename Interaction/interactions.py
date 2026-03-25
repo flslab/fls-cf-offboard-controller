@@ -5,7 +5,7 @@ import traceback
 import cflib.crazyflie
 import numpy as np
 
-from Interaction.CommandLogger import CommandLogger
+from Interaction.CommandWrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
 
 
@@ -29,17 +29,17 @@ def calculate_tilt(roll, pitch, degrees=True):
 
 class InteractionsControl:
 
-    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True, *args, **kwargs):
+    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True, leader_info=None, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
         self.ctrl_rate = ctrl_rate
-        if log_command:
-            self.hl_commander = CommandLogger(self.cf.high_level_commander, log_function=log_manager.add_log_entry, execute=execute)
-            self.lo_commander = CommandLogger(self.cf.commander, log_function=log_manager.add_log_entry, execute=execute)
-        else:
-            self.hl_commander = self.cf.high_level_commander
-            self.lo_commander = self.cf.commander
+        self.pos_group_name = 'frames' if leader_info is None else f"{leader_info['id']}"
+
+        log_function = log_manager.add_log_entry if log_command else None
+        offset = np.zeros(3) if leader_info is None else f"{leader_info['offset']}"
+        self.hl_commander = CommandWrapper(self.cf.high_level_commander, log_function=log_function, execute=execute, offset=offset)
+        self.lo_commander = CommandWrapper(self.cf.commander, log_function=log_function, execute=execute, offset=offset)
         self._safe_sleep = sleep_function
         self.bounds = self.mission.get('boundary_limits', None)
 
@@ -57,7 +57,7 @@ class InteractionsControl:
             return
 
         if pos is None:
-            pos = self._get_latest_drone_pos()
+            pos = self._get_latest_pos()
 
         if pos is None or len(pos) < 3:
             logger.warning("Could not retrieve position for boundary check.")
@@ -176,11 +176,11 @@ class InteractionsControl:
         return self.log_manager.get_latest_group_log_data()
 
 
-    def _get_latest_drone_pos(self, vel=False):
+    def _get_latest_pos(self, vel=False):
         if vel:
-            return np.array(self.log_manager.groups['frames'][-1]["tvec"]), np.array(self.log_manager.groups['frames'][-1].get("vel", None))
+            return np.array(self.log_manager.groups[self.pos_group_name][-1]["tvec"]), np.array(self.log_manager.groups[self.pos_group_name][-1].get("vel", None))
         else:
-            return np.array(self.log_manager.groups['frames'][-1]["tvec"])
+            return np.array(self.log_manager.groups[self.pos_group_name][-1]["tvec"])
 
     def test_HRI_tunnel(self):
         hover_pos = [1, 2, 3]
@@ -273,7 +273,7 @@ class InteractionsControl:
             roll = max(min(roll, 20), -20)
             return pitch, roll
 
-        last_pos = self._get_latest_drone_pos()
+        last_pos = self._get_latest_pos()
         if z is not None:
             hover_pos = [last_pos[0], last_pos[1], z]
         else:
@@ -296,7 +296,7 @@ class InteractionsControl:
             current_pitch = state.get('stateEstimate.pitch', 0.0)
             current_roll = state.get('stateEstimate.roll', 0.0)
 
-            pos, vel = self._get_latest_drone_pos(vel=True)
+            pos, vel = self._get_latest_pos(vel=True)
 
             self.check_interaction_boundary(pos)
             if z is not None:

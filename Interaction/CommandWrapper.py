@@ -2,15 +2,18 @@ import datetime
 import functools
 import time
 
+import numpy as np
 
-class CommandLogger:
-    def __init__(self, target, log_function, execute=True):
+
+class CommandWrapper:
+    def __init__(self, target, log_function, execute=True, offset=np.zeros(3)):
         # Setup background logging
         self.log_function = log_function
         self.start_time = time.time()
         self._wrapped_instance = target
         self.class_name = target.__class__.__name__
         self.execution = execute
+        self.offset = offset
 
     def set_start_time(self, timestamp=None):
         if not timestamp:
@@ -25,9 +28,19 @@ class CommandLogger:
         if callable(attr) and not name.startswith('_'):
             @functools.wraps(attr)  # Keeps the original function's name and docstring
             def wrapper(*args, **kwargs):
-                timestamp = time.time() - self.start_time
-                log_entry = {'time': timestamp, "args": args,  "kwargs": kwargs}
-                self.log_function(group_name='commands', entry=log_entry, name=f"{self.class_name}.{name}")
+                if name == 'send_position_setpoint' or 'go_to':
+                    # args are likely (x, y, z, yaw)
+                    # We convert to list to mutate them
+                    modified_args = list(args)
+                    modified_args[0] += self.offset[0]  # x
+                    modified_args[1] += self.offset[1]  # y
+                    modified_args[2] += self.offset[2]  # z
+                    args = tuple(modified_args)
+
+                if self.log_function:
+                    timestamp = time.time() - self.start_time
+                    log_entry = {'time': timestamp, "args": args,  "kwargs": kwargs}
+                    self.log_function(group_name='commands', entry=log_entry, name=f"{self.class_name}.{name}")
 
                 if self.execution:
                     return attr(*args, **kwargs)
