@@ -273,7 +273,13 @@ class InteractionsControl:
             roll = max(min(roll, 20), -20)
             return pitch, roll
 
-        last_pos = self._get_latest_pos()
+        while True:
+            try:
+                last_pos = self._get_latest_pos()
+                break
+            except Exception as e:
+                time.sleep(0.001)
+
         if z is not None:
             hover_pos = [last_pos[0], last_pos[1], z]
         else:
