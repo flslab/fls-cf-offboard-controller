@@ -346,7 +346,7 @@ class SwarmOrchestrator:
                     args=(self.logger, self.running, self.tag)  #
                 )
             if self.camera_cfg:
-                if not self.args.ground:
+                if not self.args.ground and not self.args.skip_record:
                     self._boot_remote_node(self.camera_cfg, self._get_camera_cmd(), "Camera")
             else:
                 self.logger.warning("No camera_node found. Skipping.")
@@ -494,6 +494,7 @@ if __name__ == "__main__":
     parser.add_argument("--ground", action="store_true", help="ground test")
     parser.add_argument("--dark", action="store_true", help="recording in darkness")
     parser.add_argument("--record", action="store_true", help="run the camera only to record")
+    parser.add_argument("--skip-record", action="store_true", help="run without the camera")
     parser.add_argument("--radio", action="store_true", help="run mission with CrazyRadio")
     parser.add_argument("--loadcell", action="store_true", help="run with loadcell")
 

@@ -218,7 +218,7 @@ class InteractionsControl:
         base_attitude=1,
         duration=60,
         grace_time=1,
-            v_scalar=None,
+        v_scalar=None,
     ):
         if v_scalar is None:
             v_scalar = np.array([10, 10, 2])

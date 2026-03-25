@@ -641,6 +641,7 @@ class Controller:
             leader_drone = self._get_drone_by_id(leader_id)
             if leader_drone:
                 logger.info(f"following {leader_id}")
+
                 if self.args.vicon_mode == "rigidbody":
                     leader_obj_name = leader_drone['obj_name']
                     self.mocap.subscribe_object(leader_obj_name,
@@ -651,6 +652,28 @@ class Controller:
                     leader_target_pos = self.mission['drones'][leader_id]['target'][:3]
                     self.mocap.subscribe_point(leader_target_pos,
                                                lambda frame: self._follow_with_offset(frame, follow['offset']),
+                                               name=leader_id)
+                    self._safe_sleep(delta_t)
+                    self.mocap.unsubscribe_point(leader_id)
+                self.cf.commander.send_notify_setpoint_stop()
+        elif follow:
+            leader_id = follow['id']
+            leader_drone = self._get_drone_by_id(leader_id)
+            if leader_drone:
+                logger.info(f"following {leader_id}")
+                self.log_manager.add_log_group("leader")
+
+                if self.args.vicon_mode == "rigidbody":
+                    leader_obj_name = leader_drone['obj_name']
+                    self.mocap.subscribe_object(leader_obj_name,
+                                                lambda frame: self.log_manager.add_log_entry("leader", frame, name=leader_id)
+)
+                    self._safe_sleep(delta_t)
+                    self.mocap.unsubscribe_object(leader_obj_name)
+                elif self.args.vicon_mode == "pointcloud":
+                    leader_target_pos = self.mission['drones'][leader_id]['target'][:3]
+                    self.mocap.subscribe_point(leader_target_pos,
+                                               lambda frame: self.log_manager.add_log_entry("leader", frame, name=leader_id),
                                                name=leader_id)
                     self._safe_sleep(delta_t)
                     self.mocap.unsubscribe_point(leader_id)
@@ -1008,7 +1031,7 @@ class Controller:
         self._log_mocap(frame)
 
     def _log_mocap(self, frame):
-        self.log_manager.add_log_entry("frames", frame)
+        self.log_manager.add_log_entry("frames", frame, name=self.args.tag)
 
     def _get_latest_mocap_frame(self):
         return self.log_manager.groups['frames'][-1]
