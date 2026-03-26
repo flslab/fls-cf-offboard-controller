@@ -12,7 +12,7 @@ Interaction:
   action: translation
   config:
     delta_v: 0.13
-    z: 1.1
+    z: 0.8692
     friction_coefficient: -0.01
     base_attitude: -1
     duration: 20
