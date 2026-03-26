@@ -650,47 +650,44 @@ class Controller:
             self.led.show_single_color(led_color)
 
         if follow:
+            # leader_id = follow['id']
+            # leader_drone = self._get_drone_by_id(leader_id)
+            # if leader_drone:
+            #     logger.info(f"following {leader_id}")
+            #
+            #     if self.args.vicon_mode == "rigidbody":
+            #         leader_obj_name = leader_drone['obj_name']
+            #         self.mocap.subscribe_object(leader_obj_name,
+            #                                     lambda frame: self._follow_with_offset(frame, follow['offset']))
+            #         self._safe_sleep(delta_t)
+            #         self.mocap.unsubscribe_object(leader_obj_name)
+            #     elif self.args.vicon_mode == "pointcloud":
+            #         leader_target_pos = self.mission['drones'][leader_id]['target'][:3]
+            #         self.mocap.subscribe_point(leader_target_pos,
+            #                                    lambda frame: self._follow_with_offset(frame, follow['offset']),
+            #                                    name=leader_id)
+            #         self._safe_sleep(delta_t)
+            #         self.mocap.unsubscribe_point(leader_id)
+            #     self.cf.commander.send_notify_setpoint_stop()
             leader_id = follow['id']
             leader_drone = self._get_drone_by_id(leader_id)
             if leader_drone:
                 logger.info(f"following {leader_id}")
-
+                self.log_manager.add_log_group(follow['id'])
                 if self.args.vicon_mode == "rigidbody":
-                    leader_obj_name = leader_drone['obj_name']
-                    self.mocap.subscribe_object(leader_obj_name,
-                                                lambda frame: self._follow_with_offset(frame, follow['offset']))
-                    self._safe_sleep(delta_t)
-                    self.mocap.unsubscribe_object(leader_obj_name)
+                    self.mocap.subscribe_object(follow['id'],
+                                                lambda frame: self._log_mocap(frame, follow['id']))
                 elif self.args.vicon_mode == "pointcloud":
-                    leader_target_pos = self.mission['drones'][leader_id]['target'][:3]
+                    leader_target_pos = self.mission['drones'][follow['id']]['target'][:3]
                     self.mocap.subscribe_point(leader_target_pos,
-                                               lambda frame: self._follow_with_offset(frame, follow['offset']),
-                                               name=leader_id)
-                    self._safe_sleep(delta_t)
-                    self.mocap.unsubscribe_point(leader_id)
-                self.cf.commander.send_notify_setpoint_stop()
-        elif follow:
-            leader_id = follow['id']
-            leader_drone = self._get_drone_by_id(leader_id)
-            if leader_drone:
-                logger.info(f"following {leader_id}")
-                self.log_manager.add_log_group("leader")
+                                               lambda frame: self._log_mocap(frame, follow['id']),
+                                               name=follow['id'])
 
-                if self.args.vicon_mode == "rigidbody":
-                    leader_obj_name = leader_drone['obj_name']
-                    self.mocap.subscribe_object(leader_obj_name,
-                                                lambda frame: self.log_manager.add_log_entry("leader", frame, name=leader_id)
-)
-                    self._safe_sleep(delta_t)
-                    self.mocap.unsubscribe_object(leader_obj_name)
-                elif self.args.vicon_mode == "pointcloud":
-                    leader_target_pos = self.mission['drones'][leader_id]['target'][:3]
-                    self.mocap.subscribe_point(leader_target_pos,
-                                               lambda frame: self.log_manager.add_log_entry("leader", frame, name=leader_id),
-                                               name=leader_id)
-                    self._safe_sleep(delta_t)
-                    self.mocap.unsubscribe_point(leader_id)
-                self.cf.commander.send_notify_setpoint_stop()
+            IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                                     self.args.smooth_controller_rate, leader_info=follow)
+            IC.run()
+            self.mocap.unsubscribe_point(leader_id)
+            self.cf.commander.send_notify_setpoint_stop()
 
         elif interaction:
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,

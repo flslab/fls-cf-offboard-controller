@@ -345,7 +345,7 @@ class InteractionsControl:
                     else:
                         logger.info(f"Switching to Grace Hover From {status}.")
                         # self._log_event('Grace Hover')
-                        hover_pos =  pos + interact_vel * dt
+                        hover_pos = pos + interact_vel * dt
                         status = 3
 
                         tilt_angle = calculate_tilt(current_roll, current_pitch)
