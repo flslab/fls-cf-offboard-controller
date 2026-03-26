@@ -136,12 +136,12 @@ class SwarmOrchestrator:
             f"source {self.common_cfg['venv_path']}/bin/activate && "
             "git pull && "
             f"nohup python3 {DRONE_SCRIPT} "
-            f"--orchestrated --interaction --tag {self.tag} "
+            f"--orchestrated --interaction --tag {self.tag} ",
             f"--intractable-illumination" if getattr(self.args, 'intractable_illumination', False) else "",
             f"{radio_arg} "
             f"{extra_marker_args} "
             f"--vicon {mocap_args} "
-            f"--drone-id {drone['id']} "
+            f"--drone-id {drone['id']} ",
             f"--led --led-count {led_count} " if led_count > 0 and not self.args.radio else " ",
             f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 and not self.args.radio else " ",
             f"--takeoff-altitude {alt} "

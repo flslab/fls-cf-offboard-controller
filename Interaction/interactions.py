@@ -219,6 +219,7 @@ class InteractionsControl:
         duration=60,
         grace_time=1,
         v_scalar=None,
+        alpha_vel=1
     ):
         if v_scalar is None:
             v_scalar = np.array([10, 10, 2])
@@ -302,8 +303,14 @@ class InteractionsControl:
             current_pitch = state.get('stateEstimate.pitch', 0.0)
             current_roll = state.get('stateEstimate.roll', 0.0)
 
+            state_vx = state.get('stateEstimate.vx', 0.0)
+            state_vy = state.get('stateEstimate.vy', 0.0)
+            state_vz = state.get('stateEstimate.vz', 0.0)
+            state_vel = np.array([state_vx, state_vy, state_vz])
+
             pos, vel = self._get_latest_pos(vel=True)
 
+            vel = (alpha_vel * vel) + ((1.0 - alpha_vel) * state_vel)
             self.check_interaction_boundary(pos)
             if z is not None:
                 pos[2] = z
