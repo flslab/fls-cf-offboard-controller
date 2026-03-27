@@ -1,12 +1,12 @@
 name: translation
 drones:
   lb6:
-    target: [0.3592, -0.5941, 1]
+    target: [0.3645, -0.5644, 0.9680]
     follow:
       id: block
-      offset: [0.3821, 0.0083, 0.0194]
+      offset: [0.15, 0, 0.1]
   block:
-    target: [-0.0229, -0.5858, 0.8692]
+    target: [0.0222, -0.5538, 0.8633]
 
 Interaction:
   action: translation
