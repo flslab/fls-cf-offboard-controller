@@ -120,8 +120,13 @@ class SwarmOrchestrator:
         servo_count = drone.get('servo_count', 2)
         led_count = drone.get('led_count', 50)
         radio_arg = f"--radio {drone['uri']}" if self.args.radio else ""
-        p = drone['init_pos']
-        mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
+        p = drone.get('init_pos', None)
+        obj_name = drone.get('label', None)
+        if p:
+            mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
+        elif obj_name:
+            mocap_args = f"--obj-name {obj_name} --vicon-mode rigidbody "
+
 
         extra_markers = self.manifest.get('apparatus', None)
         extra_marker_args = ""
@@ -132,6 +137,7 @@ class SwarmOrchestrator:
                 if init_pos is not None:
                     extra_marker_args += f"{' '.join(str(c) for c in m['init_pos'])} "
         cmd = [
+            f"pkill -f python3 && "
             f"cd {self.common_cfg['work_dir']} && "
             f"source {self.common_cfg['venv_path']}/bin/activate && "
             "git pull && "
