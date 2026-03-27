@@ -1,7 +1,7 @@
 name: translation
 drones:
   lb6:
-    target: [0.3592, -0.5941, 0.8886]
+    target: [0.3592, -0.5941, 1]
     follow:
       id: block
       offset: [0.3821, 0.0083, 0.0194]
@@ -12,7 +12,7 @@ Interaction:
   action: translation
   config:
     delta_v: 0.13
-    z: 0.8692
+    z: 1
     friction_coefficient: -0.01
     base_attitude: -1
     duration: 20
