@@ -26,7 +26,7 @@ class Mocap(threading.Thread):
         # Shared state
         self.objects_to_track = []  # For RigidBodies: list of (name, callback)
         self.points_to_track = []  # For PointCloud: list of mutable dicts
-        self.anchor = None
+        self.anchor_data = None
 
         # Lock is ONLY for writers (subscribe/unsubscribe), not the reader (run)
         self._write_lock = threading.Lock()
