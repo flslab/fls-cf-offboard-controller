@@ -137,7 +137,6 @@ class SwarmOrchestrator:
                 if init_pos is not None:
                     extra_marker_args += f"{' '.join(str(c) for c in m['init_pos'])} "
         cmd = [
-            f"pkill -f python3 && "
             f"cd {self.common_cfg['work_dir']} && "
             f"source {self.common_cfg['venv_path']}/bin/activate && "
             "git pull && "
