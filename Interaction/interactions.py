@@ -45,9 +45,9 @@ class InteractionsControl:
 
     def run(self) -> None:
         # Recap missions use the 'Recap' key instead of 'Interaction'.
-        if self.mission.get('Recap'):
-            self.run_recap()
-            return
+        # if self.mission.get('Recap'):
+        #     self.run_recap()
+        #     return
 
         action = self.mission['Interaction']['action']
         if action == 'rotation_test':
@@ -118,7 +118,6 @@ class InteractionsControl:
     def run_recap(self, file) -> None:
         """Replay a single recorded command log. File selection and takeoff/land
         orchestration are handled by controller.py before calling IC.run()."""
-        recap_cfg = self.mission['Recap']
         try:
             cmds = load_commands(file)
             self.execute_commands(cmds)

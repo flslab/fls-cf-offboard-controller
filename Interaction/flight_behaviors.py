@@ -147,7 +147,7 @@ def set_pwm_all(cf, pwm):
 def stop_pwm_override(cf):
     cf.param.set_value('motorPowerSet.enable', '0')
 
-def load_commands(log_file_path):
+def load_commands(log_file_path, reset_start=False):
     """
     Reads a JSON log file (list of typed entries) and returns only the
     'commands' entries, remapped to the format expected by execute_commands:
@@ -158,16 +158,17 @@ def load_commands(log_file_path):
 
     start_time = 0.0
 
-    # First pass: find the start time
-    for entry in entries:
-        if entry.get('type') == 'start':
-            data = entry.get('data')
-            # Handle if data is a dict ({"time": 123}) or a direct value (123)
-            if isinstance(data, dict):
-                start_time = data.get('time', 0.0)
-            else:
-                start_time = float(data)
-            break
+    if reset_start:
+        # First pass: find the start time
+        for entry in entries:
+            if entry.get('type') == 'start':
+                data = entry.get('data')
+                # Handle if data is a dict ({"time": 123}) or a direct value (123)
+                if isinstance(data, dict):
+                    start_time = data.get('time', 0.0)
+                else:
+                    start_time = float(data)
+                break
 
     cmds = []
     # Second pass: process the commands
@@ -183,12 +184,40 @@ def load_commands(log_file_path):
             'args': data.get('args', []),
             'kwargs': data.get('kwargs', {}),
         })
+    return cmds
 
 
 
 if __name__ == '__main__':
-    URI = 'radio://0/6/1M/E7E7E7E703'
-    with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
-        commands = load_commands('../translation/translation_bh1_traj.json')
+    # URI = 'radio://0/6/1M/E7E7E7E703'
+    # with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
+    commands = load_commands('../recap_logs/3_poking.json')
+    def execute_commands(cmds):
+        """
+        Reads a JSON command log and executes it, routing to either
+        the standard Commander or the HighLevelCommander.
+        """
+        # logger.info(f"Executing log with {len(cmds)} entries...")
+        start_real_time = time.time()
 
+        for entry in cmds:
+            target_log_time = entry['time']
+            command_full_name = entry['command']
+            args = entry['args']
+            kwargs = entry['kwargs']
 
+            current_elapsed = time.time() - start_real_time
+            wait_duration = target_log_time - current_elapsed
+            if wait_duration > 0:
+                # self._safe_sleep(wait_duration)
+                print(f"Wait: {wait_duration}")
+
+            parts = command_full_name.split(".")
+            if len(parts) != 2:
+                # logger.info(f"Skipping malformed command: {command_full_name}")
+                continue
+
+            prefix, method_name = parts
+            print(parts)
+
+    execute_commands(commands)
