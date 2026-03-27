@@ -119,10 +119,9 @@ class InteractionsControl:
         """Replay a single recorded command log. File selection and takeoff/land
         orchestration are handled by controller.py before calling IC.run()."""
         recap_cfg = self.mission['Recap']
-        alpha_vel = recap_cfg.get('alpha_vel', 1.0)
         try:
-            cmds = load_commands(recap_cfg['file'])
-            self.execute_commands(cmds, alpha_vel=alpha_vel)
+            cmds = load_commands(recap_cfg['files'])
+            self.execute_commands(cmds)
         except Exception as e:
             tb_info = traceback.format_exc()
             logging.error(f"Recap Error: {e}\nTraceback:\n{tb_info}")
@@ -448,13 +447,10 @@ class InteractionsControl:
 
         return [end_x, end_y, end_z], time_to_stop
 
-    def execute_commands(self, cmds, alpha_vel=1.0):
+    def execute_commands(self, cmds):
         """
         Reads a JSON command log and executes it, routing to either
         the standard Commander or the HighLevelCommander.
-
-        alpha_vel: velocity blend factor used during the original recording session
-                   (stored for reference / future use; command replay does not re-apply it).
         """
         commander_map = {
             "Commander": self.lo_commander,

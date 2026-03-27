@@ -149,10 +149,25 @@ def stop_pwm_override(cf):
 
 def load_commands(log_file_path):
     """
-    Reads the JSON file and returns a list of command dictionaries.
+    Reads a JSON log file (list of typed entries) and returns only the
+    'commands' entries, remapped to the format expected by execute_commands:
+        {"command": <name>, "time": <float>, "args": [...], "kwargs": {...}}
     """
     with open(log_file_path, 'r') as f:
-        return json.load(f)
+        entries = json.load(f)
+
+    cmds = []
+    for entry in entries:
+        if entry.get('type') != 'commands':
+            continue
+        data = entry.get('data', {})
+        cmds.append({
+            'command': entry['name'],
+            'time':    data['time'],
+            'args':    data.get('args', []),
+            'kwargs':  data.get('kwargs', {}),
+        })
+    return cmds
 
 
 
