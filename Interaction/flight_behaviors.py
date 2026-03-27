@@ -156,19 +156,33 @@ def load_commands(log_file_path):
     with open(log_file_path, 'r') as f:
         entries = json.load(f)
 
+    start_time = 0.0
+
+    # First pass: find the start time
+    for entry in entries:
+        if entry.get('type') == 'start':
+            data = entry.get('data')
+            # Handle if data is a dict ({"time": 123}) or a direct value (123)
+            if isinstance(data, dict):
+                start_time = data.get('time', 0.0)
+            else:
+                start_time = float(data)
+            break
+
     cmds = []
+    # Second pass: process the commands
     for entry in entries:
         if entry.get('type') != 'commands':
             continue
+
         data = entry.get('data', {})
+
         cmds.append({
             'command': entry['name'],
-            'time':    data['time'],
-            'args':    data.get('args', []),
-            'kwargs':  data.get('kwargs', {}),
+            'time': data['time'] - start_time,  # Relative to start
+            'args': data.get('args', []),
+            'kwargs': data.get('kwargs', {}),
         })
-    return cmds
-
 
 
 
