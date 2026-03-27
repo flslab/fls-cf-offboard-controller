@@ -3,7 +3,7 @@ drones:
   lb6:
     target: [ 0.0, 0.0, 1.0 ]
 
-anchor: [-0.2102, 0.5035, 0.8429]
+#anchor: [-0.2102, 0.5035, 0.8429]
 
 Recap:
   files:
