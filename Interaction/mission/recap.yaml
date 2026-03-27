@@ -4,7 +4,11 @@ drones:
     target: [ 0.0, 0.0, 1.0 ]
 
 Recap:
-  file: ./logs/
+  files:
+    - ./logs/session1.json
+    - ./logs/session2.json
+  iterations: 3
+  anchor: [ 0.0, 0.0, 1.0 ]   # [x, y, z] position the drone returns to between files
 
 boundary_limits:
   x_min: -7.0

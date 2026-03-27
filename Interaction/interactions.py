@@ -44,13 +44,16 @@ class InteractionsControl:
         self.bounds = self.mission.get('boundary_limits', None)
 
     def run(self) -> None:
+        # Recap missions use the 'Recap' key instead of 'Interaction'.
+        if self.mission.get('Recap'):
+            self._run_recap()
+            return
+
         action = self.mission['Interaction']['action']
         if action == 'rotation_test':
             self._run_rotation_limit()
-
         elif action == 'translation':
             self._run_translation()
-        return
 
     def check_interaction_boundary(self, pos=None):
         if self.bounds is None:
@@ -113,16 +116,19 @@ class InteractionsControl:
             self.lo_commander.send_notify_setpoint_stop()
 
     def _run_recap(self) -> None:
-        """Replay a recorded command log specified by --recap <file>."""
+        """Replay a single recorded command log. File selection and takeoff/land
+        orchestration are handled by controller.py before calling IC.run()."""
+        recap_cfg = self.mission['Recap']
+        alpha_vel = recap_cfg.get('alpha_vel', 1.0)
         try:
-            cmds = load_commands(self.mission['Recap']['file'])
-            self.execute_commands(cmds)
-            # self.hover(10)
+            cmds = load_commands(recap_cfg['file'])
+            self.execute_commands(cmds, alpha_vel=alpha_vel)
         except Exception as e:
             tb_info = traceback.format_exc()
             logging.error(f"Recap Error: {e}\nTraceback:\n{tb_info}")
         finally:
             self.lo_commander.send_notify_setpoint_stop()
+
 
     def _run_translation(self) -> None:
         """Run the velocity-based translation interaction."""
@@ -442,10 +448,13 @@ class InteractionsControl:
 
         return [end_x, end_y, end_z], time_to_stop
 
-    def execute_commands(self, cmds):
+    def execute_commands(self, cmds, alpha_vel=1.0):
         """
         Reads a JSON command log and executes it, routing to either
         the standard Commander or the HighLevelCommander.
+
+        alpha_vel: velocity blend factor used during the original recording session
+                   (stored for reference / future use; command replay does not re-apply it).
         """
         commander_map = {
             "Commander": self.lo_commander,

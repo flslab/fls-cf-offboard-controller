@@ -424,6 +424,42 @@ class Controller:
             self.cf.high_level_commander.stop()
             self.flying = False
 
+    def _recap_takeoff(self):
+        """Takeoff for a Recap iteration (flight-only, no log-start side-effects)."""
+        if self.args.ground_test or self.args.skip_takeoff:
+            self.flying = True
+            return
+        logger.info(f"[Recap] Taking off to {self.args.takeoff_altitude}m ...")
+        self.flying = True
+        t = self.args.takeoff_altitude * 2
+        self.cf.high_level_commander.takeoff(self.args.takeoff_altitude, t)
+        self._safe_sleep(t + 1)
+        # Refresh init_coord so land() can return to the right spot.
+        if self.mocap:
+            self.init_coord = self._get_latest_mocap_frame()["tvec"]
+
+    def _recap_land(self):
+        """Land after a Recap iteration and wait for the drone to settle."""
+        if self.args.skip_landing:
+            return
+        logger.info("[Recap] Landing...")
+        z = self.args.takeoff_altitude
+        if self.init_coord:
+            x, y, z = self._get_latest_mocap_frame()["tvec"]
+            xi, yi, _ = self.init_coord
+            dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
+            dt = 2 * dist
+            self.commander.go_to(xi, yi, z, 0, dt, relative=False)
+            time.sleep(dt + 0.5)
+        if self.flying:
+            dt = z * 6
+            self.cf.high_level_commander.land(0.12, dt)
+            time.sleep(dt + 1)
+            self.cf.high_level_commander.stop()
+            self.flying = False
+        # Brief pause between iterations so the drone can fully settle.
+        time.sleep(2)
+
     def setup_logging(self):
         if not self.args.log:
             return
@@ -515,6 +551,38 @@ class Controller:
                 try:
                     if self.args.intractable_illumination:
                         self.orchestrated_mission_interaction()
+                    elif self.mission.get("Recap", None):
+                        recap_cfg = self.mission["Recap"]
+                        n = recap_cfg.get("iterations", 1)
+                        anchor = recap_cfg.get("anchor", None)       # [x, y, z] or None
+
+                        # Support both single file (legacy) and list of files.
+                        raw_files = recap_cfg.get("files", recap_cfg.get("file"))
+                        if isinstance(raw_files, str):
+                            files = [raw_files]
+                        else:
+                            files = list(raw_files)
+
+                        logger.info(f"Recap mode: {n} iteration(s) x {len(files)} file(s)")
+                        first_run = True
+                        for i in range(n):
+                            for j, file_path in enumerate(files):
+                                logger.info(f"--- Recap iteration {i + 1}/{n}, file {j + 1}/{len(files)}: {file_path} ---")
+
+                                # Skip takeoff only on the very first run (already airborne).
+                                if not first_run:
+                                    self._recap_takeoff()
+                                first_run = False
+
+
+                                # Build a per-file mission dict so IC sees the right file + alpha_vel.
+                                IC = InteractionsControl(
+                                    self.cf, self._safe_sleep,
+                                    self.log_manager, self.mission,
+                                    self.args.smooth_controller_rate
+                                )
+                                IC.run()
+                                self._recap_land()
                     else:
                         mission_setting = self.mission['drones'][self.args.drone_id]
                         follow = mission_setting.get('follow', None)
