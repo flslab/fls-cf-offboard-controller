@@ -549,7 +549,6 @@ class Controller:
                 self.orchestrated_mission()
             elif self.args.interaction:
                 self._safe_sleep(10)
-
                 return
                 # try:
                 #
