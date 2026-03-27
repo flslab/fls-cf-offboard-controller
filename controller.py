@@ -581,7 +581,7 @@ class Controller:
                                     self.log_manager, self.mission,
                                     self.args.smooth_controller_rate
                                 )
-                                IC.run_recap(self, file_path)
+                                IC.run_recap(file_path)
                                 self._recap_land()
                     else:
                         mission_setting = self.mission['drones'][self.args.drone_id]
