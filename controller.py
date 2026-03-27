@@ -549,12 +549,16 @@ class Controller:
                 self.orchestrated_mission()
             elif self.args.interaction:
                 try:
+
+                    anchor = self.mission.get("Anchor", None)
+                    if anchor:
+                        self.mocap.set_anchor_point(anchor)
+
                     if self.args.intractable_illumination:
                         self.orchestrated_mission_interaction()
                     elif self.mission.get("Recap", None):
                         recap_cfg = self.mission["Recap"]
                         n = recap_cfg.get("iterations", 1)
-                        anchor = recap_cfg.get("anchor", None)       # [x, y, z] or None
 
                         # Support both single file (legacy) and list of files.
                         raw_files = recap_cfg.get("files", recap_cfg.get("file"))
