@@ -46,7 +46,7 @@ class InteractionsControl:
     def run(self) -> None:
         # Recap missions use the 'Recap' key instead of 'Interaction'.
         if self.mission.get('Recap'):
-            self._run_recap()
+            self.run_recap()
             return
 
         action = self.mission['Interaction']['action']
@@ -115,12 +115,12 @@ class InteractionsControl:
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
-    def _run_recap(self) -> None:
+    def run_recap(self, file) -> None:
         """Replay a single recorded command log. File selection and takeoff/land
         orchestration are handled by controller.py before calling IC.run()."""
         recap_cfg = self.mission['Recap']
         try:
-            cmds = load_commands(recap_cfg['files'])
+            cmds = load_commands(file)
             self.execute_commands(cmds)
         except Exception as e:
             tb_info = traceback.format_exc()
