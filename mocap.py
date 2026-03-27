@@ -26,6 +26,7 @@ class Mocap(threading.Thread):
         # Shared state
         self.objects_to_track = []  # For RigidBodies: list of (name, callback)
         self.points_to_track = []  # For PointCloud: list of mutable dicts
+        self.anchor = None
 
         # Lock is ONLY for writers (subscribe/unsubscribe), not the reader (run)
         self._write_lock = threading.Lock()
@@ -34,6 +35,95 @@ class Mocap(threading.Thread):
         self.running = False
         self.join()
 
+    def _get_pointcloud_array(self, mc):
+        """Fetches and formats the point cloud array if applicable."""
+        if self.mode in ['pointcloud', 'mixed'] and hasattr(mc, 'pointCloud') and mc.pointCloud is not None:
+            try:
+                return np.array(mc.pointCloud, copy=False) * 1000.0
+            except (ValueError, TypeError):
+                return np.array(mc.pointCloud) * 1000.0
+        return None
+
+    def _calculate_noise_offset(self, mc, anchor, cloud_arr):
+        """Calculates the global offset based on the anchor's drift."""
+        current_noise_offset = np.array([0.0, 0.0, 0.0])
+
+        if anchor is None:
+            return current_noise_offset
+
+        if anchor['type'] == 'rigidbody' and self.mode in ['rigidbody', 'mixed']:
+            for name, obj in mc.rigidBodies.items():
+                if name == anchor['name']:
+                    pos = np.array([float(obj.position[0]), float(obj.position[1]), float(obj.position[2])])
+                    if anchor['initial_pos'] is None:
+                        anchor['initial_pos'] = pos
+                    anchor['offset'] = pos - anchor['initial_pos']
+                    break
+            current_noise_offset = anchor['offset']
+
+        elif anchor['type'] == 'pointcloud' and cloud_arr is not None and len(cloud_arr) > 0:
+            diff = cloud_arr - anchor['current_pos']
+            dist_sq = np.einsum('ij,ij->i', diff, diff)
+            min_idx = np.argmin(dist_sq)
+            min_dist_sq = dist_sq[min_idx]
+
+            max_dist_sq = anchor['max_dist_sq'] if anchor['captured'] else anchor['max_dist_sq'] * 4
+            if min_dist_sq <= max_dist_sq:
+                anchor['captured'] = True
+                closest_point = cloud_arr[min_idx]
+                anchor['current_pos'] = closest_point
+                anchor['offset'] = (closest_point - anchor['initial_pos']) / 1000.0
+
+            current_noise_offset = anchor['offset']
+
+        return current_noise_offset
+
+    def _process_rigid_bodies(self, mc, targets, offset, frame_count, now):
+        """Applies offset to rigid bodies and triggers callbacks."""
+        if self.mode not in ['rigidbody', 'mixed']:
+            return
+
+        for name, obj in mc.rigidBodies.items():
+            for obj_name, callback in targets:
+                if name == obj_name:
+                    pos = np.array([float(obj.position[0]), float(obj.position[1]), float(obj.position[2])])
+                    quat = obj.rotation
+                    corrected_pos = pos - offset
+
+                    if callback:
+                        callback({
+                            "frame_id": frame_count,
+                            "tvec": [float(corrected_pos[0]), float(corrected_pos[1]), float(corrected_pos[2])],
+                            "quat": [float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
+                            "time": now
+                        })
+
+    def _process_point_clouds(self, cloud_arr, targets, offset, frame_count, now):
+        """Applies offset to point clouds and triggers callbacks."""
+        if self.mode not in ['pointcloud', 'mixed'] or cloud_arr is None or len(cloud_arr) == 0:
+            return
+
+        for pt_data in targets:
+            target_pos = pt_data['current_pos']
+            diff = cloud_arr - target_pos
+            dist_sq = np.einsum('ij,ij->i', diff, diff)
+            min_idx = np.argmin(dist_sq)
+            min_dist_sq = dist_sq[min_idx]
+
+            max_dist_sq = pt_data['max_dist_sq'] if pt_data['captured'] else pt_data['max_dist_sq'] * 4
+            if min_dist_sq <= max_dist_sq:
+                pt_data['captured'] = True
+                closest_point = cloud_arr[min_idx]
+                pt_data['current_pos'] = closest_point
+
+                if pt_data['callback']:
+                    corrected_pos = closest_point - (offset * 1000.0)
+                    pt_data['callback']({
+                        "frame_id": frame_count,
+                        "tvec": (corrected_pos / 1000.0).tolist(),
+                        "dist_sq": float(min_dist_sq),
+                        "time": now
+                    })
     def run(self):
         logger.info(f"Connecting to {self.mocap_system_type} at {self.host_name} in {self.mode} mode...")
         try:
@@ -53,83 +143,39 @@ class Mocap(threading.Thread):
 
             now = time.time()
 
-            # --- Rigid Body Mode ---
-            if self.mode == "rigidbody" or self.mode == 'mixed':
-                # Grab reference to list (thread-safe copy logic in subscribe handles the writer side)
-                current_targets = self.objects_to_track
+            # Grab references once per frame
+            with self._write_lock:
+                anchor = self.anchor_data
+                current_targets_rb = list(self.objects_to_track)
+                current_targets_pc = list(self.points_to_track)
 
-                # Iterate over all rigid bodies provided by the SDK
-                for name, obj in mc.rigidBodies.items():
-                    for obj_name, callback in current_targets:
-                        if name == obj_name:
-                            pos = obj.position
-                            quat = obj.rotation
-                            if callback:
-                                callback({
-                                    "frame_id": frame_count,
-                                    "tvec": [float(pos[0]), float(pos[1]), float(pos[2])],
-                                    "quat": [float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
-                                    "time": now
-                                })
-
-            # --- Point Cloud Mode ---
-            if self.mode == "pointcloud" or self.mode == 'mixed':
-                if hasattr(mc, 'pointCloud') and mc.pointCloud is not None:
-                    # 1. Convert SDK PointCloud to Numpy Array (N x 3)
-                    # C++ Type: Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor>
-                    # This maps efficiently to a numpy array, often allowing zero-copy access.
-                    try:
-                        # copy=False attempts to use the existing buffer without duplication
-                        cloud_arr = np.array(mc.pointCloud, copy=False) * 1000
-                    except (ValueError, TypeError):
-                        # Fallback if the binding returns a list or requires a copy
-                        cloud_arr = np.array(mc.pointCloud) * 1000
-
-                    if len(cloud_arr) > 0:
-                        # We only lock briefly to get the reference to our tracking list
-                        with self._write_lock:
-                            current_points = list(self.points_to_track)
-
-                        for pt_data in current_points:
-                            target_pos = pt_data['current_pos']
-
-                            # --- Efficient Nearest Neighbor Search ---
-                            # Vectorized calculation of Squared Euclidean Distance
-                            # (x-x0)^2 + (y-y0)^2 + (z-z0)^2
-                            diff = cloud_arr - target_pos
-
-                            # Einstein summation is often faster/cleaner for dot products on rows
-                            # Equivalent to: np.sum(diff**2, axis=1)
-                            dist_sq = np.einsum('ij,ij->i', diff, diff)
-
-                            # Find index of the minimum distance
-                            min_idx = np.argmin(dist_sq)
-                            min_dist_sq = dist_sq[min_idx]
-
-                            # SAFETY GUARD: Only update if the point is within the allowed radius.
-                            # If min_dist_sq is too large, it implies the point is occluded or
-                            # not published, and the "closest" point is actually just some other random marker.
-                            max_dist_sq = pt_data['max_dist_sq'] if pt_data['captured'] else pt_data['max_dist_sq'] * 4
-                            if min_dist_sq <= max_dist_sq:
-                                pt_data['captured'] = True
-                                closest_point = cloud_arr[min_idx]
-
-                                # Update 'current_pos' to the new found point.
-                                # This allows us to "track" the point as it moves across the volume.
-                                pt_data['current_pos'] = closest_point
-
-                                if pt_data['callback']:
-                                    pt_data['callback']({
-                                        "frame_id": frame_count,
-                                        "tvec": (closest_point / 1000).tolist(),
-                                        "dist_sq": float(min_dist_sq),
-                                        "time": now
-                                    })
-                            # else:
-                            #   Point lost/occluded. We keep 'current_pos' at the last valid location
-                            #   so we can re-acquire the point when it reappears nearby.
+            # The loop logic is now clean and modular
+            cloud_arr = self._get_pointcloud_array(mc)
+            current_noise_offset = self._calculate_noise_offset(mc, anchor, cloud_arr)
+            self._process_rigid_bodies(mc, current_targets_rb, current_noise_offset, frame_count, now)
+            self._process_point_clouds(cloud_arr, current_targets_pc, current_noise_offset, frame_count, now)
 
             frame_count += 1
+
+    def set_anchor_rigidbody(self, obj_name):
+        with self._write_lock:
+            self.anchor_data = {
+                'type': 'rigidbody',
+                'name': obj_name,
+                'initial_pos': None,
+                'offset': np.array([0.0, 0.0, 0.0])
+            }
+
+    def set_anchor_point(self, initial_point, max_distance=0.05):
+        with self._write_lock:
+            self.anchor_data = {
+                'type': 'pointcloud',
+                'initial_pos': np.array(initial_point, dtype=float) * 1000,
+                'current_pos': np.array(initial_point, dtype=float) * 1000,
+                'max_dist_sq': (max_distance * 1000) ** 2,
+                'captured': False,
+                'offset': np.array([0.0, 0.0, 0.0])
+            }
 
     def subscribe_object(self, obj_name, callback):
         """Subscribe to a named rigid body (RigidBody Mode)."""

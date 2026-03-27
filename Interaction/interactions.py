@@ -115,7 +115,7 @@ class InteractionsControl:
     def _run_recap(self) -> None:
         """Replay a recorded command log specified by --recap <file>."""
         try:
-            cmds = load_commands(self.args.recap)
+            cmds = load_commands(self.mission['Recap']['file'])
             self.execute_commands(cmds)
             # self.hover(10)
         except Exception as e:
