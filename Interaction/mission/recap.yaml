@@ -5,8 +5,8 @@ drones:
 
 Recap:
   files:
-    - ./logs/3_poking.json
-    - ./logs/3_flicking.json
+    - ./recap_logs/3_poking.json
+    - ./recap_logs/3_flicking.json
   iterations: 10
 #  anchor: [ 0.0, 0.0, 1.0 ]   # [x, y, z] position the drone returns to between files
 
