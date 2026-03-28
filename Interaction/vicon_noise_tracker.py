@@ -122,7 +122,7 @@ def run_tracker(subject: str, out_path: str, stop_event=None):
                     quality = float("nan")
 
                 pos_m = [tvec[0] / 1000.0, tvec[1] / 1000.0, tvec[2] / 1000.0]
-                records.append({"time": time.time(), "pos": pos_m, "marker_residual_mm": quality})
+                records.append({"time": time.time(), "pos": pos_m, "object_quality": quality})
 
                 _log.debug(
                     f"[NoiseTracker] t={time.time()-t_start:.1f}s  "
@@ -143,7 +143,7 @@ def run_tracker(subject: str, out_path: str, stop_event=None):
 
     # ── analysis ─────────────────────────────────────────────────────────────
     positions = np.array([r["pos"]               for r in records])
-    qualities = np.array([r["marker_residual_mm"] for r in records])
+    qualities = np.array([r["object_quality"] for r in records])
     N = len(records)
     duration = records[-1]["time"] - records[0]["time"]
 
@@ -162,7 +162,7 @@ def run_tracker(subject: str, out_path: str, stop_event=None):
 
     _log.info(f"[NoiseTracker] {N} frames over {duration:.1f}s  |  "
               f"Global RMSE: {rmse_3d*1000:.3f} mm  |  "
-              + (f"Marker residual mean: {valid_q.mean():.3f} mm" if len(valid_q) else ""))
+              + (f"Object Quality: {valid_q.mean():.3f}" if len(valid_q) else ""))
     _log.info(f"[NoiseTracker] Packet inter-arrival time (ms) — "
               f"Mean: {iat_mean:.3f}  Max: {iat_max:.3f}  "
               f"Min: {iat_min:.3f}  Median: {iat_median:.3f}")
@@ -179,8 +179,7 @@ def run_tracker(subject: str, out_path: str, stop_event=None):
             "rmse_3d_m":  rmse_3d,
             "rmse_3d_mm": rmse_3d * 1000,
         },
-        "local_noise_marker_residual_mm": {
-            "description": "RMS marker fitting residual in mm (lower=better, no upper bound)",
+        "local_noise_object_quality": {
             "mean":   float(np.nanmean(qualities)),
             "std":    float(np.nanstd(qualities)),
             "median": float(np.nanmedian(qualities)),

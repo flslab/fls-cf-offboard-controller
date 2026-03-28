@@ -49,6 +49,7 @@ class SwarmOrchestrator:
         self.ready_ids = set()
 
         self.loadcell_thread = None
+        self.vicon_tracker_thread = None
 
         # Network Resources
         self.zmq_context = None
@@ -153,19 +154,19 @@ class SwarmOrchestrator:
             f"--takeoff-altitude {alt} "
             "--smooth-controller-rate 50 "
             "--log "
-            "--cf-log-period 10 "
             "--skip-takeoff --skip-landing "
             f"> drone_{drone['id']}.log 2>&1 < /dev/null &",
         ]
+
         # If a reference object is configured, also launch the noise tracker on the drone.
         ref_obj = self.common_cfg.get('reference_object')
         if ref_obj:
             vicon_log = f"{self.common_cfg['work_dir']}/logs/vicon_{self.tag}.json"
             cmd.append(
-                f" nohup python3 Interaction/vicon_noise_tracker.py "
+                f"&& nohup python3 Interaction/vicon_noise_tracker.py "
                 f"--subject {ref_obj} --duration 10 "
                 f"--out {vicon_log} "
-                f"> noise.log 2>&1 < /dev/null &"
+                f"> vicon_noise.log 2>&1 < /dev/null &"
             )
 
         return " ".join(cmd)
@@ -376,6 +377,20 @@ class SwarmOrchestrator:
             if self.loadcell_thread:
                 self.loadcell_thread.start()
 
+            # if self.args.interaction:
+            #     ref_obj = self.common_cfg.get('reference_object')
+            #     if ref_obj:
+            #         log_path = os.path.join('./logs', f'vicon_{self.tag}.json')
+            #         self.logger.info(f"Starting Vicon noise tracker for '{ref_obj}' → {log_path}")
+            #         self.vicon_tracker_thread = threading.Thread(
+            #             target=run_tracker,
+            #             args=(ref_obj, log_path, self.running),
+            #             daemon=True,
+            #             name="vicon_noise_tracker",
+            #         )
+            #         self.vicon_tracker_thread.start()
+            #     else:
+            #         self.logger.warning("No 'reference_object' in swarm_manifest common — skipping Vicon noise tracker.")
 
             self._wait_for_ready()
 
