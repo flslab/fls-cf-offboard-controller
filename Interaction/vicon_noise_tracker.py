@@ -152,6 +152,14 @@ def run_tracker(subject: str, out_path: str, stop_event=None):
     rmse_3d            = rmse_about_mean(positions)
     valid_q            = qualities[~np.isnan(qualities)]
 
+    # Per-frame distance from centroid (mm)
+    dist_from_centroid_mm = np.linalg.norm((positions - centroid) * 1000.0, axis=1)
+    dist_mean   = float(dist_from_centroid_mm.mean())
+    dist_max    = float(dist_from_centroid_mm.max())
+    dist_min    = float(dist_from_centroid_mm.min())
+    dist_median = float(np.median(dist_from_centroid_mm))
+    dist_std    = float(dist_from_centroid_mm.std())
+
     # ── Packet inter-arrival time ─────────────────────────────────────────────
     timestamps_s  = np.array([r["time"] for r in records])
     iat_ms        = np.diff(timestamps_s) * 1000.0   # ms
@@ -163,6 +171,9 @@ def run_tracker(subject: str, out_path: str, stop_event=None):
     _log.info(f"[NoiseTracker] {N} frames over {duration:.1f}s  |  "
               f"Global RMSE: {rmse_3d*1000:.3f} mm  |  "
               + (f"Object Quality: {valid_q.mean():.3f}" if len(valid_q) else ""))
+    _log.info(f"[NoiseTracker] Distance from centroid (mm) — "
+              f"Mean: {dist_mean:.3f}  Max: {dist_max:.3f}  "
+              f"Min: {dist_min:.3f}  Median: {dist_median:.3f}  Std: {dist_std:.3f}")
     _log.info(f"[NoiseTracker] Packet inter-arrival time (ms) — "
               f"Mean: {iat_mean:.3f}  Max: {iat_max:.3f}  "
               f"Min: {iat_min:.3f}  Median: {iat_median:.3f}")
@@ -178,7 +189,15 @@ def run_tracker(subject: str, out_path: str, stop_event=None):
             "std_z_m":    std_z,
             "rmse_3d_m":  rmse_3d,
             "rmse_3d_mm": rmse_3d * 1000,
+            "distance_from_centroid_mm": {
+                "mean":   dist_mean,
+                "max":    dist_max,
+                "min":    dist_min,
+                "median": dist_median,
+                "std":    dist_std,
+            },
         },
+
         "local_noise_object_quality": {
             "mean":   float(np.nanmean(qualities)),
             "std":    float(np.nanstd(qualities)),

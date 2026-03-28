@@ -163,13 +163,13 @@ class SwarmOrchestrator:
         if ref_obj:
             vicon_log = f"{self.common_cfg['work_dir']}/logs/vicon_{self.tag}.json"
             cmd.append(
-                f"&& nohup python3 Interaction/vicon_noise_tracker.py "
+                f"nohup python3 Interaction/vicon_noise_tracker.py "
                 f"--subject {ref_obj} --duration 10 "
                 f"--out {vicon_log} "
                 f"> vicon_noise.log 2>&1 < /dev/null &"
             )
 
-        return " ".join(cmd)
+        return f" ".join(cmd)
 
     def _get_drone_cmd_illumination(self, drone):
         alt = self.mission['drones'][drone['id']]['target'][2]
