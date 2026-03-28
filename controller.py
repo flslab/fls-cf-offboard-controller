@@ -548,9 +548,9 @@ class Controller:
             if self.args.illumination:
                 self.orchestrated_mission()
             elif self.args.interaction:
-                anchor = self.mission.get("Anchor", None)
+                anchor = self.mission.get("anchor", None)
                 if anchor:
-                    logger.info("Tracking Anchor")
+                    # logger.info("Tracking Anchor")
                     self.mocap.set_anchor_point(anchor)
                 self._safe_sleep(10)
                 return
