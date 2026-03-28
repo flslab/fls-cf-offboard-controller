@@ -548,7 +548,7 @@ class Controller:
             if self.args.illumination:
                 self.orchestrated_mission()
             elif self.args.interaction:
-                self._safe_sleep(10)
+                self._safe_sleep(30)
                 return
                 # try:
                 #
