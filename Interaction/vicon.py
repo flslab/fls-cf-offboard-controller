@@ -192,7 +192,7 @@ if __name__ == "__main__":
     # name = "ClientPull"
 
     name = "ServerPush"
-    vw = ViconWrapper(marker_type='mixed', log_level=logging.DEBUG)
+    vw = ViconWrapper(marker_type='unlabeled', log_level=logging.DEBUG)
     vw.start()
     time.sleep(args.t)
     vw.stop()
