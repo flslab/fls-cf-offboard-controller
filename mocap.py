@@ -52,6 +52,7 @@ class Mocap(threading.Thread):
             return current_noise_offset
 
         if anchor['type'] == 'rigidbody' and self.mode in ['rigidbody', 'mixed']:
+            tracked = False
             for name, obj in mc.rigidBodies.items():
                 if name == anchor['name']:
                     pos = np.array([float(obj.position[0]), float(obj.position[1]), float(obj.position[2])])
@@ -59,6 +60,9 @@ class Mocap(threading.Thread):
                         anchor['initial_pos'] = pos
                     anchor['offset'] = pos - anchor['initial_pos']
                     break
+            if not tracked:
+                logger.info("Anchor Not Tracked")
+
             current_noise_offset = anchor['offset']
 
         elif anchor['type'] == 'pointcloud' and cloud_arr is not None and len(cloud_arr) > 0:
@@ -73,10 +77,10 @@ class Mocap(threading.Thread):
                 closest_point = cloud_arr[min_idx]
                 anchor['current_pos'] = closest_point
                 anchor['offset'] = (closest_point - anchor['initial_pos']) / 1000.0
+            else:
+                logger.info("Anchor Not Tracked")
 
             current_noise_offset = anchor['offset']
-        else:
-            logger.info("Anchor Not Tracked")
 
         return current_noise_offset
 
