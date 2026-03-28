@@ -552,64 +552,64 @@ class Controller:
                 if anchor:
                     logger.info(f"Tracking Anchor: {anchor}")
                     self.mocap.set_anchor_point(anchor)
-                self._safe_sleep(10)
-                return
-                # try:
-                #     if self.args.intractable_illumination:
-                #         self.orchestrated_mission_interaction()
-                #     elif self.mission.get("Recap", None):
-                #         recap_cfg = self.mission["Recap"]
-                #         n = recap_cfg.get("iterations", 1)
-                #
-                #         # Support both single file (legacy) and list of files.
-                #         raw_files = recap_cfg.get("files", recap_cfg.get("file"))
-                #         if isinstance(raw_files, str):
-                #             files = [raw_files]
-                #         else:
-                #             files = list(raw_files)
-                #
-                #         logger.info(f"Recap mode: {n} iteration(s) x {len(files)} file(s)")
-                #         first_run = True
-                #         for i in range(n):
-                #             for j, file_path in enumerate(files):
-                #                 logger.info(f"--- Recap iteration {i + 1}/{n}, file {j + 1}/{len(files)}: {file_path} ---")
-                #
-                #                 # Skip takeoff only on the very first run (already airborne).
-                #                 if not first_run:
-                #                     self._recap_takeoff()
-                #                 first_run = False
-                #
-                #
-                #                 # Build a per-file mission dict so IC sees the right file + alpha_vel.
-                #                 IC = InteractionsControl(
-                #                     self.cf, self._safe_sleep,
-                #                     self.log_manager, self.mission,
-                #                     self.args.smooth_controller_rate
-                #                 )
-                #                 IC.run_recap(file_path)
-                #                 self._recap_land()
-                #     else:
-                #         mission_setting = self.mission['drones'][self.args.drone_id]
-                #         follow = mission_setting.get('follow', None)
-                #         if follow:
-                #             self.log_manager.add_log_group(follow['id'])
-                #             if self.args.vicon_mode == "rigidbody":
-                #                 self.mocap.subscribe_object(follow['id'],
-                #                                             lambda frame: self._log_mocap(frame, follow['id']))
-                #             elif self.args.vicon_mode == "pointcloud":
-                #                 leader_target_pos = self.mission['drones'][follow['id']]['target'][:3]
-                #                 self.mocap.subscribe_point(leader_target_pos,
-                #                                            lambda frame: self._log_mocap(frame, follow['id']),
-                #                                            name=follow['id'])
-                #
-                #         IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                #                                  self.args.smooth_controller_rate, leader_info=follow)
-                #         IC.run()
-                #
-                # except Exception as e:
-                #     logging.error(f"Interaction Error: {e}\n")
-                # finally:
-                #     self.cf.commander.send_notify_setpoint_stop()
+                # self._safe_sleep(10)
+                # return
+                try:
+                    if self.args.intractable_illumination:
+                        self.orchestrated_mission_interaction()
+                    elif self.mission.get("Recap", None):
+                        recap_cfg = self.mission["Recap"]
+                        n = recap_cfg.get("iterations", 1)
+
+                        # Support both single file (legacy) and list of files.
+                        raw_files = recap_cfg.get("files", recap_cfg.get("file"))
+                        if isinstance(raw_files, str):
+                            files = [raw_files]
+                        else:
+                            files = list(raw_files)
+
+                        logger.info(f"Recap mode: {n} iteration(s) x {len(files)} file(s)")
+                        first_run = True
+                        for i in range(n):
+                            for j, file_path in enumerate(files):
+                                logger.info(f"--- Recap iteration {i + 1}/{n}, file {j + 1}/{len(files)}: {file_path} ---")
+
+                                # Skip takeoff only on the very first run (already airborne).
+                                if not first_run:
+                                    self._recap_takeoff()
+                                first_run = False
+
+
+                                # Build a per-file mission dict so IC sees the right file + alpha_vel.
+                                IC = InteractionsControl(
+                                    self.cf, self._safe_sleep,
+                                    self.log_manager, self.mission,
+                                    self.args.smooth_controller_rate
+                                )
+                                IC.run_recap(file_path)
+                                self._recap_land()
+                    else:
+                        mission_setting = self.mission['drones'][self.args.drone_id]
+                        follow = mission_setting.get('follow', None)
+                        if follow:
+                            self.log_manager.add_log_group(follow['id'])
+                            if self.args.vicon_mode == "rigidbody":
+                                self.mocap.subscribe_object(follow['id'],
+                                                            lambda frame: self._log_mocap(frame, follow['id']))
+                            elif self.args.vicon_mode == "pointcloud":
+                                leader_target_pos = self.mission['drones'][follow['id']]['target'][:3]
+                                self.mocap.subscribe_point(leader_target_pos,
+                                                           lambda frame: self._log_mocap(frame, follow['id']),
+                                                           name=follow['id'])
+
+                        IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                                                 self.args.smooth_controller_rate, leader_info=follow)
+                        IC.run()
+
+                except Exception as e:
+                    logging.error(f"Interaction Error: {e}\n")
+                finally:
+                    self.cf.commander.send_notify_setpoint_stop()
         else:
             logger.info(f"Hovering for {self.args.t} seconds...")
             self._safe_sleep(self.args.t)
