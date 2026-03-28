@@ -548,14 +548,12 @@ class Controller:
             if self.args.illumination:
                 self.orchestrated_mission()
             elif self.args.interaction:
+                anchor = self.mission.get("Anchor", None)
+                if anchor:
+                    self.mocap.set_anchor_point(anchor)
                 self._safe_sleep(30)
                 return
                 # try:
-                #
-                #     anchor = self.mission.get("Anchor", None)
-                #     if anchor:
-                #         self.mocap.set_anchor_point(anchor)
-                #
                 #     if self.args.intractable_illumination:
                 #         self.orchestrated_mission_interaction()
                 #     elif self.mission.get("Recap", None):

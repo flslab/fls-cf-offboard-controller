@@ -75,6 +75,8 @@ class Mocap(threading.Thread):
                 anchor['offset'] = (closest_point - anchor['initial_pos']) / 1000.0
 
             current_noise_offset = anchor['offset']
+        else:
+            logger.info("Anchor Not Tracked")
 
         return current_noise_offset
 
@@ -121,6 +123,7 @@ class Mocap(threading.Thread):
                     pt_data['callback']({
                         "frame_id": frame_count,
                         "tvec": (corrected_pos / 1000.0).tolist(),
+                        "noise": (offset * 1000.0),
                         "dist_sq": float(min_dist_sq),
                         "time": now
                     })
