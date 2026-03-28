@@ -129,11 +129,20 @@ class ViconWrapper(threading.Thread):
                             now = time.time()
                             full_report = ""
 
-                            for x, y, z in translation:
-                                # Appending a new f-string to the existing string
-                                full_report += f"   * marker: [{x/1000:.4f}, {y/1000:.4f}, {z/1000:.4f}]\n"
+                            for idx, (x, y, z) in enumerate(translation):
+                                # Quality is only available for labeled (rigidbody) subjects.
+                                quality_str = ""
+                                if labeled_object_count is not None and idx < labeled_object_count:
+                                    subject_name = client.get_subject_name(idx)
+                                    try:
+                                        quality = client.get_subject_quality(subject_name)
+                                        quality_str = f"  quality={quality:.3f}"
+                                    except Exception:
+                                        quality_str = "  quality=N/A"
+                                full_report += f"   * marker: [{x/1000:.4f}, {y/1000:.4f}, {z/1000:.4f}]{quality_str}\n"
 
                             self.logger.info(f"\tPosition (m): \n{full_report}")
+
                             # pos_x, pos_y, pos_z = translation[:, 0], translation[:, 1], translation[:, 2]
                             #
                             # with self.condition:
@@ -183,7 +192,7 @@ if __name__ == "__main__":
     # name = "ClientPull"
 
     name = "ServerPush"
-    vw = ViconWrapper(marker_type='unlabeled', log_level=logging.DEBUG)
+    vw = ViconWrapper(marker_type='mixed', log_level=logging.DEBUG)
     vw.start()
     time.sleep(args.t)
     vw.stop()

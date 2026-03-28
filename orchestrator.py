@@ -18,6 +18,7 @@ from invoke.exceptions import CommandTimedOut
 # Assumed local modules based on your import list
 from logger import setup_logging
 from restart import reboot_crazyflie
+# from Interaction.vicon_noise_tracker import run_tracker
 
 MANIFEST_FILE = 'swarm_manifest.yaml'
 DRONE_SCRIPT = 'controller.py'
@@ -48,6 +49,7 @@ class SwarmOrchestrator:
         self.ready_ids = set()
 
         self.loadcell_thread = None
+        self.vicon_tracker_thread = None
 
         # Network Resources
         self.zmq_context = None
@@ -359,6 +361,21 @@ class SwarmOrchestrator:
 
             if self.loadcell_thread:
                 self.loadcell_thread.start()
+
+            # if self.args.interaction:
+            #     ref_obj = self.common_cfg.get('reference_object')
+            #     if ref_obj:
+            #         log_path = os.path.join('./logs', f'vicon_{self.tag}.json')
+            #         self.logger.info(f"Starting Vicon noise tracker for '{ref_obj}' → {log_path}")
+            #         self.vicon_tracker_thread = threading.Thread(
+            #             target=run_tracker,
+            #             args=(ref_obj, log_path, self.running),
+            #             daemon=True,
+            #             name="vicon_noise_tracker",
+            #         )
+            #         self.vicon_tracker_thread.start()
+            #     else:
+            #         self.logger.warning("No 'reference_object' in swarm_manifest common — skipping Vicon noise tracker.")
 
             self._wait_for_ready()
 

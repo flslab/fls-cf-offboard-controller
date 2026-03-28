@@ -10,7 +10,7 @@ Recap:
     - ./recap_logs/3_poking.json
     - ./recap_logs/3_flicking.json
   iterations: 10
-#  anchor: [ 0.0, 0.0, 1.0 ]   # [x, y, z] position the drone returns to between files
+  anchor: [ 0.0, 0.0, 1.0 ]   # [x, y, z] position the drone returns to between files
 
 boundary_limits:
   x_min: -7.0

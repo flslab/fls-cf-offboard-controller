@@ -100,7 +100,7 @@ class Mocap(threading.Thread):
                         callback({
                             "frame_id": frame_count,
                             "tvec": [float(corrected_pos[0]), float(corrected_pos[1]), float(corrected_pos[2])],
-                            "noise": (offset * 1000.0).tolist(),
+                            "noise": offset.tolist(),
                             "quat": [float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
                             "time": now
                         })
@@ -124,11 +124,11 @@ class Mocap(threading.Thread):
                 pt_data['current_pos'] = closest_point
 
                 if pt_data['callback']:
-                    corrected_pos = closest_point - (offset * 1000.0)
+                    corrected_pos = (closest_point / 1000.0) - offset
                     pt_data['callback']({
                         "frame_id": frame_count,
-                        "tvec": (corrected_pos / 1000.0).tolist(),
-                        "noise": (offset * 1000.0).tolist(),
+                        "tvec": corrected_pos.tolist(),
+                        "noise": offset.tolist(),
                         "dist_sq": float(min_dist_sq),
                         "time": now
                     })
