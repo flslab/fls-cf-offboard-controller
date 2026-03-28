@@ -551,7 +551,7 @@ class Controller:
                 anchor = self.mission.get("Anchor", None)
                 if anchor:
                     self.mocap.set_anchor_point(anchor)
-                self._safe_sleep(30)
+                self._safe_sleep(10)
                 return
                 # try:
                 #     if self.args.intractable_illumination:
