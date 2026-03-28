@@ -123,7 +123,7 @@ class Mocap(threading.Thread):
                     pt_data['callback']({
                         "frame_id": frame_count,
                         "tvec": (corrected_pos / 1000.0).tolist(),
-                        "noise": (offset * 1000.0),
+                        "noise": (offset * 1000.0).tolist(),
                         "dist_sq": float(min_dist_sq),
                         "time": now
                     })
