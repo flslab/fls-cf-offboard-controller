@@ -100,6 +100,7 @@ class Mocap(threading.Thread):
                         callback({
                             "frame_id": frame_count,
                             "tvec": [float(corrected_pos[0]), float(corrected_pos[1]), float(corrected_pos[2])],
+                            "noise": (offset * 1000.0).tolist(),
                             "quat": [float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
                             "time": now
                         })
