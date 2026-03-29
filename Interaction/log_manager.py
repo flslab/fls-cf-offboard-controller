@@ -23,10 +23,7 @@ class InteractionLogger(LogManager):
         self.args = kwargs.get('controller_args', False)
         self.verbose = self.args.verbose
 
-        dt = 1 / self.args.fps
-        self.kf = {'x': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
-                   'y': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
-                   'z': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2)}
+        self.group_kfs = {}
 
         log_dir = self.args.log_dir
         if not os.path.exists(log_dir):
@@ -66,14 +63,22 @@ class InteractionLogger(LogManager):
 
         logger.debug("logging activated")
 
-    def add_log_group(self, name, *args, **kwargs):
+    def add_log_group(self, name, *args, use_kf=False, **kwargs):
         self.groups[name] = []
+        if use_kf:
+            dt = 1 / self.args.fps
+            self.group_kfs[name] = {
+                'x': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
+                'y': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
+                'z': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
+            }
 
     def add_log_entry(self, group_name, entry, *args, **kwargs):
         if group_name not in self.groups.keys():
             self.groups[group_name] = []
-        if self.kf is not None and entry is not None and entry.get('tvec', None) is not None:
-            entry['vel'] = self._update_kf(entry['tvec'])
+        kf = self.group_kfs.get(group_name)
+        if kf is not None and entry is not None and entry.get('tvec', None) is not None:
+            entry['vel'] = self._update_kf(entry['tvec'], kf)
 
         self.groups[group_name].append(entry)
 
@@ -106,12 +111,8 @@ class InteractionLogger(LogManager):
         if self.live_logger:
             self.live_logger.write({"type": 'state', "group": group_name, "data": data})
 
-    def _update_kf(self, pos):
-        vel = []
-        if self.kf:
-            for p, kf in zip(pos, self.kf.values()):
-                vel.append(kf.update(p))
-        return vel
+    def _update_kf(self, pos, kf):
+        return [axis_kf.update(p) for p, axis_kf in zip(pos, kf.values())]
 
     import subprocess
 

@@ -10,6 +10,7 @@ drones:
       relative: false
     servos: [ [179, 350], [179, 350] ]
     color: [ 227, 253, 255 ]
+    network_follow: true
     follow:
       id: lb5
       offset: [ -0.30, -0.30, 0 ]

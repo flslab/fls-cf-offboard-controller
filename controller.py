@@ -476,7 +476,7 @@ class Controller:
             from Interaction.log_manager import InteractionLogger
             self.log_manager = InteractionLogger(controller_args=self.args)
             self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
-            self.log_manager.add_log_group("frames")
+            self.log_manager.add_log_group("frames", kf=True)
             self.log_manager.add_log_group("events")
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("configs")
@@ -600,7 +600,7 @@ class Controller:
                             mission_setting = self.mission['drones'][self.args.drone_id]
                             follow = mission_setting.get('follow', None)
                             if follow:
-                                self.log_manager.add_log_group(follow['id'])
+                                self.log_manager.add_log_group(follow['id'], kf=True)
                                 if self.args.vicon_mode == "rigidbody":
                                     self.mocap.subscribe_object(follow['id'],
                                                                 lambda frame: self._log_mocap(frame, follow['id']))
@@ -732,7 +732,7 @@ class Controller:
         elif led_color is not None:
             self.led.show_single_color(led_color)
 
-        if follow:
+        if follow and not network_follow:
             # leader_id = follow['id']
             # leader_drone = self._get_drone_by_id(leader_id)
             # if leader_drone:
@@ -754,15 +754,16 @@ class Controller:
             #     self.cf.commander.send_notify_setpoint_stop()
             leader_id = follow['id']
             leader_drone = self._get_drone_by_id(leader_id)
+
             if leader_drone:
                 logger.info(f"following {leader_id}")
-                self.log_manager.add_log_group(follow['id'])
-                if self.args.vicon_mode == "rigidbody":
-                    self.mocap.subscribe_object(follow['id'],
-                                                lambda frame: self._log_mocap(frame, follow['id']))
-                elif self.args.vicon_mode == "pointcloud":
-                    leader_target_pos = self.mission['drones'][follow['id']]['target'][:3]
-                    self.mocap.subscribe_point(leader_target_pos,
+                self.log_manager.add_log_group(follow['id'], kf=True)
+            if self.args.vicon_mode == "rigidbody":
+                self.mocap.subscribe_object(follow['id'],
+                                            lambda frame: self._log_mocap(frame, follow['id']))
+            elif self.args.vicon_mode == "pointcloud":
+                leader_target_pos = self.mission['drones'][follow['id']]['target'][:3]
+                self.mocap.subscribe_point(leader_target_pos,
                                                lambda frame: self._log_mocap(frame, follow['id']),
                                                name=follow['id'])
 
@@ -772,10 +773,38 @@ class Controller:
             self.mocap.unsubscribe_point(leader_id)
             self.cf.commander.send_notify_setpoint_stop()
 
-        elif interaction:
+        elif network_follow:
+            interaction_drone_ip = self._get_interaction_drone_ip()
+            zmq_interact_port = self.manifest['controller'].get('zmq_interact_port', 5560)
+            ctx = zmq.Context()
+            interact_sub = ctx.socket(zmq.SUB)
+            interact_sub.connect(f"tcp://{interaction_drone_ip}:{zmq_interact_port}")
+            interact_sub.setsockopt_string(zmq.SUBSCRIBE, "")
+            logger.info(f"Network follow: subscribed to {interaction_drone_ip}:{zmq_interact_port}")
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                     self.args.smooth_controller_rate)
+                                     self.args.smooth_controller_rate, leader_info=follow,
+                                     sub_socket=interact_sub)
             IC.run()
+            interact_sub.close()
+
+        elif interaction:
+            has_followers = any(
+                self.mission.get('drones', {}).get(d['id'], {}).get('network_follow', False)
+                for d in self.manifest['drones']
+            )
+            interact_pub = None
+            if has_followers:
+                zmq_interact_port = self.manifest['controller'].get('zmq_interact_port', 5560)
+                ctx = zmq.Context()
+                interact_pub = ctx.socket(zmq.PUB)
+                interact_pub.bind(f"tcp://*:{zmq_interact_port}")
+                time.sleep(0.5)  # allow subscribers to connect before first broadcast
+                logger.info(f"Interaction broadcast on port {zmq_interact_port}")
+            IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                                     self.args.smooth_controller_rate, pub_socket=interact_pub)
+            IC.run()
+            if interact_pub is not None:
+                interact_pub.close()
         self.animation_stop_time = time.time()
 
         if not len(pointers) and led_setting.get('mode') == 'expression':
@@ -1133,6 +1162,12 @@ class Controller:
         for drone in self.manifest['drones']:
             if drone['id'] == drone_id:
                 return drone
+
+    def _get_interaction_drone_ip(self):
+        for drone in self.manifest['drones']:
+            if self.mission.get('drones', {}).get(drone['id'], {}).get('interaction', False):
+                return drone['ip']
+        raise RuntimeError("No drone with 'interaction: true' found in mission config")
 
     def _follow_with_offset(self, frame, offset):
         x, y, z = frame['tvec']

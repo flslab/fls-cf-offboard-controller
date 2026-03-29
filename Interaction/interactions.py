@@ -4,6 +4,7 @@ import traceback
 
 import cflib.crazyflie
 import numpy as np
+import zmq
 
 from Interaction.CommandWrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
@@ -29,15 +30,18 @@ def calculate_tilt(roll, pitch, degrees=True):
 
 class InteractionsControl:
 
-    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True, leader_info=None, *args, **kwargs):
+    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True, leader_info=None, pub_socket=None, sub_socket=None, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
         self.ctrl_rate = ctrl_rate
-        self.pos_group_name = 'frames' if leader_info is None else f"{leader_info['id']}"
+        self.pub_socket = pub_socket
+        self.sub_socket = sub_socket
+        # Network followers use their own 'frames' position, not the leader's mocap group
+        self.pos_group_name = 'frames' if (leader_info is None or sub_socket is not None) else f"{leader_info['id']}"
 
         log_function = log_manager.add_log_entry if log_command else None
-        offset = np.zeros(3) if leader_info is None else leader_info['offset']
+        offset = np.zeros(3) if leader_info is None else np.array(leader_info['offset'])
         self.hl_commander = CommandWrapper(self.cf.high_level_commander, log_function=log_function, execute=execute, offset=offset)
         self.lo_commander = CommandWrapper(self.cf.commander, log_function=log_function, execute=execute, offset=offset)
         self._safe_sleep = sleep_function
@@ -48,6 +52,10 @@ class InteractionsControl:
         # if self.mission.get('Recap'):
         #     self.run_recap()
         #     return
+
+        if self.sub_socket is not None:
+            self._run_network_follow()
+            return
 
         action = self.mission['Interaction']['action']
         if action == 'rotation_test':
@@ -139,11 +147,30 @@ class InteractionsControl:
                 base_attitude=translation_setting['base_attitude'],
                 duration=translation_setting['duration'],
                 v_scalar=translation_setting['v_scalar'],
-                grace_time=translation_setting['grace_time']
+                grace_time=translation_setting['grace_time'],
+                pub_socket=self.pub_socket,
             )
         except Exception as e:
             tb_info = traceback.format_exc()
             logging.error(f"Translation Error: {e}\nTraceback:\n{tb_info}")
+        finally:
+            self.lo_commander.send_notify_setpoint_stop()
+
+    def _run_network_follow(self) -> None:
+        """Run as a network follower, mirroring the interaction drone's state."""
+        try:
+            translation_setting = self.mission['Interaction']['config']
+            self.interaction_follow_network(
+                sub_socket=self.sub_socket,
+                z=translation_setting['z'],
+                fric_coe=translation_setting['friction_coefficient'],
+                base_attitude=translation_setting['base_attitude'],
+                duration=translation_setting['duration'],
+                v_scalar=translation_setting['v_scalar'],
+            )
+        except Exception as e:
+            tb_info = traceback.format_exc()
+            logging.error(f"Network Follow Error: {e}\nTraceback:\n{tb_info}")
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
@@ -223,7 +250,8 @@ class InteractionsControl:
         duration=60,
         grace_time=1,
         v_scalar=None,
-        alpha_vel=1
+        alpha_vel=1,
+        pub_socket=None,
     ):
         if v_scalar is None:
             v_scalar = np.array([10, 10, 2])
@@ -322,6 +350,9 @@ class InteractionsControl:
 
             speed = np.linalg.norm(vel)
 
+            if pub_socket is not None:
+                pub_socket.send_json({"status": status, "vel": vel.tolist(), "speed": float(speed)})
+
             if status == 0:  # wait for user interaction
                 if detect_speed_threshold(speed):
                     logger.info(f"Switching to Translation From {status}.")
@@ -416,6 +447,111 @@ class InteractionsControl:
                 status = 0
 
 
+            self._safe_sleep(dt)
+
+        self.lo_commander.send_notify_setpoint_stop()
+
+    def interaction_follow_network(
+        self,
+        sub_socket,
+        z=1,
+        fric_coe=-1.0,
+        base_attitude=1,
+        duration=60,
+        v_scalar=None,
+    ):
+        """Mirror the interaction drone's push state received over ZMQ.
+
+        alpha_vel is always 1 for followers — velocity comes entirely from the
+        network message, not from the drone's own state estimator.
+        """
+        if v_scalar is None:
+            v_scalar = np.array([10, 10, 2])
+        else:
+            v_scalar = np.array(v_scalar)
+
+        dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
+
+        def calculate_braking_angles(v_x, v_y, base_att=base_attitude):
+            pitch = np.sign(v_x) * base_att
+            roll = -np.sign(v_y) * base_att
+            pitch = max(min(pitch, 20), -20)
+            roll = max(min(roll, 20), -20)
+            return pitch, roll
+
+        # Wait for first own position fix
+        while True:
+            try:
+                last_pos = self._get_latest_pos()
+                break
+            except Exception:
+                time.sleep(0.001)
+
+        if z is not None:
+            hover_pos = np.array([last_pos[0], last_pos[1], z], dtype=float)
+        else:
+            hover_pos = np.array([last_pos[0], last_pos[1], last_pos[2]], dtype=float)
+
+        self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 2)
+        self._safe_sleep(2)
+
+        logger.info("Starting Network Follow mode...")
+
+        poller = zmq.Poller()
+        poller.register(sub_socket, zmq.POLLIN)
+
+        prev_remote_status = 0
+        coasting_triggered = False
+        start_time = time.time()
+
+        while time.time() - start_time < duration:
+            # Drain the socket and keep only the latest message
+            msg = None
+            while dict(poller.poll(0)).get(sub_socket):
+                try:
+                    msg = sub_socket.recv_json(flags=zmq.NOBLOCK)
+                except zmq.Again:
+                    break
+
+            if msg is not None:
+                remote_status = msg.get('status', 0)
+                remote_vel = np.array(msg.get('vel', [0.0, 0.0, 0.0]))
+            else:
+                remote_status = prev_remote_status
+                remote_vel = np.zeros(3)
+
+            pos = self._get_latest_pos()
+            self.check_interaction_boundary(pos)
+            if z is not None:
+                pos[2] = z
+                remote_vel[2] = 0.0
+
+            if remote_status in (0, 3):
+                # Interaction drone is hovering/in grace — hold own hover position
+                if prev_remote_status == 1:
+                    # Transition out of push: update hover to current position
+                    hover_pos = pos.copy()
+                self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                coasting_triggered = False
+
+            elif remote_status == 1:
+                target_pos = pos + remote_vel * dt * v_scalar
+                if base_attitude < 0:
+                    self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
+                else:
+                    target_pitch, target_roll = calculate_braking_angles(*remote_vel[:2])
+                    self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
+
+            elif remote_status == 2 and not coasting_triggered:
+                # Execute coasting once per coasting phase
+                end_pos, coast_t = self.calculate_coasting(pos, remote_vel, fric_coe)
+                self.lo_commander.send_notify_setpoint_stop()
+                self.hl_commander.go_to(end_pos[0], end_pos[1], end_pos[2], 0, coast_t, relative=False)
+                hover_pos = np.array(end_pos, dtype=float)
+                coasting_triggered = True
+                self._safe_sleep(coast_t)
+
+            prev_remote_status = remote_status
             self._safe_sleep(dt)
 
         self.lo_commander.send_notify_setpoint_stop()
