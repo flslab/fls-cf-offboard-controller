@@ -1,9 +1,9 @@
-name: translation
+name: translation_anchor
 drones:
   lb6:
     target: [-0.4889, -0.4515, 1]
 
-anchor: [-0.2567, 0.5563, 0.8426]
+anchor: [-0.2706, 0.5795, 0.8424]
 
 Interaction:
   action: translation
