@@ -154,6 +154,7 @@ class SwarmOrchestrator:
             f"--takeoff-altitude {alt} "
             "--smooth-controller-rate 50 "
             "--log "
+            "--cf-log-period 8 "
             # "--skip-takeoff --skip-landing "
             f"> drone_{drone['id']}.log 2>&1 < /dev/null &",
         ]
