@@ -7,7 +7,7 @@ anchor: [-0.3258, 0.5392, 0.8425]
 
 Interaction:
   action: translation
-  iteration: 3
+  iteration: 1
   config:
     delta_v: 0.13
     z: 1.1
