@@ -576,6 +576,7 @@ class Controller:
 
                                 # Skip takeoff only on the very first run (already airborne).
                                 if not first_run:
+                                    self._recap_land()
                                     self._recap_takeoff()
                                 first_run = False
 
@@ -587,7 +588,6 @@ class Controller:
                                     self.args.smooth_controller_rate
                                 )
                                 IC.run_recap(file_path)
-                                self._recap_land()
                     else:
                         n = self.mission["Interaction"].get("iteration", 1)
                         logger.info(f"Iteration {n}")
