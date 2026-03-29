@@ -395,7 +395,8 @@ class SwarmOrchestrator:
 
             self._wait_for_ready()
 
-            # input(">>> All Green. Press ENTER to Launch Swarm (Ctrl+C to Abort)...")
+            if not self.args.skip_confirm:
+                input(">>> All Green. Press ENTER to Launch Swarm (Ctrl+C to Abort)...")
             self.logger.info("Broadcasting START...")
             self.pub_socket.send_json({"cmd": "START"})
 
@@ -548,7 +549,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip-record", action="store_true", help="run without the camera")
     parser.add_argument("--radio", action="store_true", help="run mission with CrazyRadio")
     parser.add_argument("--loadcell", action="store_true", help="run with loadcell")
-
+    parser.add_argument("--skip-confirm", action="store_true", help="run without pressing enter")
     args = parser.parse_args()
 
     orchestrator = SwarmOrchestrator(args)

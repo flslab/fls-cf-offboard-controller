@@ -589,7 +589,7 @@ class Controller:
                                 IC.run_recap(file_path)
                                 self._recap_land()
                     else:
-                        n = self.mission["Interaction"].get("iterations", 1)
+                        n = self.mission["Interaction"].get("iteration", 1)
                         logger.info(f"Iteration {n}")
                         first_run = True
                         for i in range(n):
