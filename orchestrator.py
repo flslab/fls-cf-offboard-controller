@@ -34,6 +34,9 @@ class SwarmOrchestrator:
         # Configuration State
         self.manifest = self._load_manifest()
         self.ctrl_cfg = self.manifest['controller']
+        if args.http_port:    self.ctrl_cfg['http_port']    = args.http_port
+        if args.zmq_cmd_port: self.ctrl_cfg['zmq_cmd_port'] = args.zmq_cmd_port
+        if args.zmq_ack_port: self.ctrl_cfg['zmq_ack_port'] = args.zmq_ack_port
         self.drones = self.manifest.get('drones', [])
         self.camera_cfg = self.manifest.get('camera_node')
         self.radio_node = self.manifest.get('radio_node')
@@ -222,8 +225,6 @@ class SwarmOrchestrator:
 
         try:
             conn = Connection(host=device_cfg['ip'], user=device_cfg['user'], connect_timeout=5)
-            # Push manifest
-            conn.put(MANIFEST_FILE, remote=f"{self.common_cfg['work_dir']}/swarm_manifest.yaml")
             # Run command (detach)
             conn.run(cmd, timeout=2, pty=False)
             return True
@@ -550,6 +551,9 @@ if __name__ == "__main__":
     parser.add_argument("--radio", action="store_true", help="run mission with CrazyRadio")
     parser.add_argument("--loadcell", action="store_true", help="run with loadcell")
     parser.add_argument("--skip-confirm", action="store_true", help="run without pressing enter")
+    parser.add_argument("--http-port",    type=int, default=None, help="override manifest http_port")
+    parser.add_argument("--zmq-cmd-port", type=int, default=None, help="override manifest zmq_cmd_port")
+    parser.add_argument("--zmq-ack-port", type=int, default=None, help="override manifest zmq_ack_port")
     args = parser.parse_args()
 
     orchestrator = SwarmOrchestrator(args)

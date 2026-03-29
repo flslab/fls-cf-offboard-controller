@@ -1,4 +1,6 @@
+import json
 import logging
+import socket
 import time
 import traceback
 
@@ -8,6 +10,47 @@ import zmq
 
 from Interaction.CommandWrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
+
+
+class UDPPublisher:
+    """Sends JSON datagrams to a fixed list of (ip, port) peers."""
+
+    def __init__(self, peer_ips, port):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.targets = [(ip, port) for ip in peer_ips]
+
+    def send_json(self, data):
+        payload = json.dumps(data).encode()
+        for addr in self.targets:
+            try:
+                self.sock.sendto(payload, addr)
+            except OSError:
+                pass
+
+    def close(self):
+        self.sock.close()
+
+
+class UDPSubscriber:
+    """Non-blocking UDP receiver. recv_latest() drains the buffer and returns the newest datagram."""
+
+    def __init__(self, port):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(('', port))
+        self.sock.setblocking(False)
+
+    def recv_latest(self):
+        latest = None
+        while True:
+            try:
+                data, _ = self.sock.recvfrom(4096)
+                latest = json.loads(data.decode())
+            except (BlockingIOError, json.JSONDecodeError, OSError):
+                break
+        return latest
+
+    def close(self):
+        self.sock.close()
 
 
 logger = logging.getLogger(__name__)
@@ -30,13 +73,14 @@ def calculate_tilt(roll, pitch, degrees=True):
 
 class InteractionsControl:
 
-    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True, leader_info=None, pub_socket=None, sub_socket=None, *args, **kwargs):
+    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True, leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
         self.ctrl_rate = ctrl_rate
         self.pub_socket = pub_socket
         self.sub_socket = sub_socket
+        self.drone_id = drone_id
         # Network followers use their own 'frames' position, not the leader's mocap group
         self.pos_group_name = 'frames' if (leader_info is None or sub_socket is not None) else f"{leader_info['id']}"
 
@@ -52,6 +96,10 @@ class InteractionsControl:
         # if self.mission.get('Recap'):
         #     self.run_recap()
         #     return
+
+        if self.pub_socket is not None and self.sub_socket is not None:
+            self._run_peer_translation()
+            return
 
         if self.sub_socket is not None:
             self._run_network_follow()
@@ -154,6 +202,28 @@ class InteractionsControl:
         except Exception as e:
             tb_info = traceback.format_exc()
             logging.error(f"Translation Error: {e}\nTraceback:\n{tb_info}")
+        finally:
+            self.lo_commander.send_notify_setpoint_stop()
+
+    def _run_peer_translation(self) -> None:
+        """Run symmetric peer interaction — every drone can push and follow."""
+        try:
+            translation_setting = self.mission['Interaction']['config']
+            self.interaction_peer_translation_vel(
+                drone_id=self.drone_id,
+                vel_threshold=translation_setting['delta_v'],
+                z=translation_setting['z'],
+                fric_coe=translation_setting['friction_coefficient'],
+                base_attitude=translation_setting['base_attitude'],
+                duration=translation_setting['duration'],
+                v_scalar=translation_setting['v_scalar'],
+                grace_time=translation_setting['grace_time'],
+                pub_socket=self.pub_socket,
+                sub_socket=self.sub_socket,
+            )
+        except Exception as e:
+            tb_info = traceback.format_exc()
+            logging.error(f"Peer Translation Error: {e}\nTraceback:\n{tb_info}")
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
@@ -447,6 +517,245 @@ class InteractionsControl:
                 # hover_pos = pos
                 status = 0
 
+
+            self._safe_sleep(dt)
+
+        self.lo_commander.send_notify_setpoint_stop()
+
+    def interaction_peer_translation_vel(
+        self,
+        drone_id,
+        vel_threshold=0.01,
+        z=1,
+        fric_coe=-1.0,
+        base_attitude=1,
+        duration=60,
+        grace_time=1,
+        v_scalar=None,
+        pub_socket=None,
+        sub_socket=None,
+    ):
+        """Symmetric peer interaction: every drone can be pushed and mirrors others.
+
+        When this drone detects a user push it broadcasts per-step offsets to peers.
+        When it receives a push message from a peer it applies the offset to its own
+        hover position. If both happen simultaneously the push with the latest
+        push_start_time wins; the loser reverts to its pre-push hover position.
+        """
+        if v_scalar is None:
+            v_scalar = np.array([10, 10, 2])
+        else:
+            v_scalar = np.array(v_scalar)
+
+        dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
+
+        if isinstance(grace_time, (int, float)):
+            get_grace_time = lambda a, v: grace_time
+            stabilize_time = grace_time
+        else:
+            import joblib
+            saved_poly_data = joblib.load(grace_time)
+            poly_transformer = saved_poly_data['poly']
+            loaded_model = saved_poly_data['model']
+            get_grace_time = lambda a, v: loaded_model.predict(
+                poly_transformer.transform([[a, v]])
+            )[0] + 0.2
+            stabilize_time = 'dynamic'
+
+        grace_time_val = grace_time if isinstance(grace_time, (int, float)) else 2.0
+
+        def drain_sub():
+            return sub_socket.recv_latest() if sub_socket is not None else None
+
+        def detect_speed_threshold(s):
+            return s > vel_threshold
+
+        def calculate_braking_angles(v_x, v_y, base_att=base_attitude):
+            pitch = np.sign(v_x) * base_att
+            roll = -np.sign(v_y) * base_att
+            pitch = max(min(pitch, 20), -20)
+            roll = max(min(roll, 20), -20)
+            return pitch, roll
+
+        while True:
+            try:
+                last_pos = self._get_latest_pos()
+                break
+            except Exception:
+                time.sleep(0.001)
+
+        if z is not None:
+            hover_pos = np.array([last_pos[0], last_pos[1], z], dtype=float)
+        else:
+            hover_pos = last_pos.copy().astype(float)
+
+        self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 2)
+        self._safe_sleep(2)
+
+        logger.info("Starting Peer Interaction mode...")
+        self._log_event('Waiting For User Interaction')
+
+        self.log_manager.add_log_entry(
+            group_name="configs",
+            entry={'delta_v': vel_threshold, 'Delta': dt, 'Stabilize Time': stabilize_time},
+            name='Peer Config',
+        )
+
+        status = 0
+        push_start_time = None
+        hover_pos_before_push = None
+        interaction_heading = np.zeros(3)
+        # Accumulated displacement (target_pos - hover_pos_before_push) sent to peers
+        accumulated_offset = np.zeros(3)
+        # Receiver side: own hover position at the moment the peer's push began
+        peer_hover_start = None
+        peer_push_start_time = None
+
+        start_time = time.time()
+        while time.time() - start_time < duration:
+
+            peer_msg = drain_sub()
+
+            state = self._get_latest_drone_state()
+            if not state:
+                state = {}
+
+            current_pitch = state.get('stateEstimate.pitch', 0.0)
+            current_roll = state.get('stateEstimate.roll', 0.0)
+
+            pos, vel = self._get_latest_pos(vel=True)
+            self.check_interaction_boundary(pos)
+            if z is not None:
+                pos[2] = z
+                vel[2] = 0.0
+
+            speed = np.linalg.norm(vel)
+
+            if status == 0:
+                if peer_msg and peer_msg.get('type') == 'push':
+                    # New push from a different peer_push_start_time → anchor our hover start
+                    if peer_msg['push_start_time'] != peer_push_start_time:
+                        peer_push_start_time = peer_msg['push_start_time']
+                        peer_hover_start = hover_pos.copy()
+                    accumulated = np.array(peer_msg['accumulated_offset'])
+                    if z is not None:
+                        accumulated[2] = 0.0
+                    hover_pos = peer_hover_start + accumulated
+                    if z is not None:
+                        hover_pos[2] = z
+                    self.check_interaction_boundary(hover_pos)
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                else:
+                    if peer_msg and peer_msg.get('type') == 'disengage':
+                        peer_push_start_time = None
+                        peer_hover_start = None
+                    if detect_speed_threshold(speed):
+                        logger.info("Peer mode: local user push detected.")
+                        status = 1
+                        push_start_time = time.time()
+                        hover_pos_before_push = hover_pos.copy()
+                        accumulated_offset = np.zeros(3)
+                        interaction_heading = vel.copy()
+                        continue
+                    else:
+                        self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+
+            elif status == 1:
+                # Peer push is newer → it wins; revert and follow peer
+                if peer_msg and peer_msg.get('type') == 'push':
+                    peer_start = peer_msg.get('push_start_time', 0.0)
+                    if peer_start > push_start_time:
+                        logger.info("Peer push is newer — abandoning local push, reverting position.")
+                        pub_socket.send_json({"type": "disengage", "drone_id": drone_id})
+                        hover_pos = hover_pos_before_push.copy()
+                        push_start_time = None
+                        hover_pos_before_push = None
+                        accumulated_offset = np.zeros(3)
+                        interaction_heading = np.zeros(3)
+                        status = 0
+                        peer_push_start_time = peer_start
+                        peer_hover_start = hover_pos.copy()
+                        accumulated = np.array(peer_msg['accumulated_offset'])
+                        if z is not None:
+                            accumulated[2] = 0.0
+                        hover_pos = peer_hover_start + accumulated
+                        if z is not None:
+                            hover_pos[2] = z
+                        self.lo_commander.send_notify_setpoint_stop()
+                        self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 0.5, relative=False)
+                        self._safe_sleep(0.5)
+                        continue
+
+                if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
+                    interact_vel = np.zeros(3)
+                    speed = 0.0
+                else:
+                    interact_vel = vel
+
+                target_pos = pos + interact_vel * dt * v_scalar
+                accumulated_offset = target_pos - hover_pos_before_push
+
+                if not detect_speed_threshold(speed):
+                    interaction_heading = np.zeros(3)
+                    pub_socket.send_json({"type": "disengage", "drone_id": drone_id})
+                    accumulated_offset = np.zeros(3)
+                    if fric_coe > 0:
+                        logger.info("Peer mode: switching to coasting.")
+                        status = 2
+                    else:
+                        logger.info("Peer mode: switching to grace hover.")
+                        hover_pos = pos + interact_vel * dt
+                        status = 3
+                        tilt_angle = calculate_tilt(current_roll, current_pitch)
+                        grace_time_val = get_grace_time(abs(tilt_angle), speed)
+                        self._log_event("User Disengage", {
+                            "speed": round(speed, 3),
+                            "vel": [round(x, 3) for x in vel],
+                            "Pos": [round(x, 3) for x in pos],
+                            "Target": [round(x, 3) for x in hover_pos],
+                            "Stabilize Time": grace_time_val,
+                        })
+                    continue
+
+                pub_socket.send_json({
+                    "type": "push",
+                    "drone_id": drone_id,
+                    "accumulated_offset": accumulated_offset.tolist(),
+                    "push_start_time": push_start_time,
+                })
+
+                if base_attitude < 0:
+                    self._log_event("User Pushing", {
+                        "speed": round(speed, 3),
+                        "vel": [round(x, 3) for x in vel],
+                        "Pos": [round(x, 3) for x in pos],
+                        "Target": [round(x, 3) for x in target_pos],
+                    })
+                    self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
+                else:
+                    target_pitch, target_roll = calculate_braking_angles(*interact_vel[:2])
+                    self._log_event("User Pushing", {
+                        "speed": round(speed, 3),
+                        "vel": [round(x, 3) for x in vel],
+                        "Pos": [round(x, 3) for x in pos],
+                    })
+                    self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
+
+            elif status == 2:  # coasting
+                end_pos, coast_t = self.calculate_coasting(pos, vel, fric_coe)
+                self.lo_commander.send_notify_setpoint_stop()
+                self.hl_commander.go_to(end_pos[0], end_pos[1], end_pos[2], 0, coast_t, relative=False)
+                self._safe_sleep(coast_t)
+                hover_pos = np.array(end_pos, dtype=float)
+                status = 0
+                continue
+
+            elif status == 3:  # grace period
+                grace_start = time.time()
+                while time.time() < grace_time_val + grace_start:
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    self._safe_sleep(dt)
+                status = 0
 
             self._safe_sleep(dt)
 

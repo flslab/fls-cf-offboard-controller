@@ -687,6 +687,7 @@ class Controller:
         led_color = mission_setting.get('color')
         led_setting = mission_setting.get('led', {})
         interaction = mission_setting.get('interaction', False)
+        peer_mode = self.mission.get('Interaction', {}).get('peer', False)
 
         if position_offset:
             for i in range(3):
@@ -732,7 +733,22 @@ class Controller:
         elif led_color is not None:
             self.led.show_single_color(led_color)
 
-        if follow and not network_follow:
+        if peer_mode:
+            from Interaction.interactions import UDPPublisher, UDPSubscriber
+            port = self.manifest['controller'].get('zmq_interact_port', 5560)
+            peer_ips = [d['ip'] for d in self.manifest['drones'] if d['id'] != self.args.drone_id]
+            interact_pub = UDPPublisher(peer_ips, port)
+            interact_sub = UDPSubscriber(port)
+            time.sleep(0.2)
+            logger.info(f"Peer mode: UDP bound on :{port}, sending to {peer_ips}")
+            IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                                     self.args.smooth_controller_rate, drone_id=self.args.drone_id,
+                                     pub_socket=interact_pub, sub_socket=interact_sub)
+            IC.run()
+            interact_pub.close()
+            interact_sub.close()
+
+        elif follow and not network_follow:
             # leader_id = follow['id']
             # leader_drone = self._get_drone_by_id(leader_id)
             # if leader_drone:
