@@ -148,7 +148,7 @@ class InteractionsControl:
                 duration=translation_setting['duration'],
                 v_scalar=translation_setting['v_scalar'],
                 grace_time=translation_setting['grace_time'],
-                # alpha_vel=1,
+                alpha_vel=translation_setting.get('alpha_vel', 1),
                 pub_socket=self.pub_socket,
             )
         except Exception as e:
