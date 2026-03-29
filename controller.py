@@ -679,6 +679,7 @@ class Controller:
         low_level_setpoint = mission_setting.get('low_level_setpoint', [])
         rotation_test = mission_setting.get('rotation_test', [])
         follow = mission_setting.get('follow', False)
+        network_follow = mission_setting.get('network_follow', False)
         params = mission_setting.get('params', {'linear': False, 'relative': False})
         angles = mission_setting.get('servos', [])
         pointers = mission_setting.get('pointers', [])
