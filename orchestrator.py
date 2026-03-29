@@ -395,7 +395,7 @@ class SwarmOrchestrator:
 
             self._wait_for_ready()
 
-            input(">>> All Green. Press ENTER to Launch Swarm (Ctrl+C to Abort)...")
+            # input(">>> All Green. Press ENTER to Launch Swarm (Ctrl+C to Abort)...")
             self.logger.info("Broadcasting START...")
             self.pub_socket.send_json({"cmd": "START"})
 

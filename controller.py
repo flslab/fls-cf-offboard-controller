@@ -589,22 +589,32 @@ class Controller:
                                 IC.run_recap(file_path)
                                 self._recap_land()
                     else:
-                        mission_setting = self.mission['drones'][self.args.drone_id]
-                        follow = mission_setting.get('follow', None)
-                        if follow:
-                            self.log_manager.add_log_group(follow['id'])
-                            if self.args.vicon_mode == "rigidbody":
-                                self.mocap.subscribe_object(follow['id'],
-                                                            lambda frame: self._log_mocap(frame, follow['id']))
-                            elif self.args.vicon_mode == "pointcloud":
-                                leader_target_pos = self.mission['drones'][follow['id']]['target'][:3]
-                                self.mocap.subscribe_point(leader_target_pos,
-                                                           lambda frame: self._log_mocap(frame, follow['id']),
-                                                           name=follow['id'])
+                        n = self.mission["Interaction"].get("iterations", 1)
+                        logger.info(f"Iteration {n}")
+                        first_run = True
+                        for i in range(n):
 
-                        IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                                 self.args.smooth_controller_rate, leader_info=follow)
-                        IC.run()
+                            if not first_run:
+                                self._recap_takeoff()
+                            first_run = False
+                            mission_setting = self.mission['drones'][self.args.drone_id]
+                            follow = mission_setting.get('follow', None)
+                            if follow:
+                                self.log_manager.add_log_group(follow['id'])
+                                if self.args.vicon_mode == "rigidbody":
+                                    self.mocap.subscribe_object(follow['id'],
+                                                                lambda frame: self._log_mocap(frame, follow['id']))
+                                elif self.args.vicon_mode == "pointcloud":
+                                    leader_target_pos = self.mission['drones'][follow['id']]['target'][:3]
+                                    self.mocap.subscribe_point(leader_target_pos,
+                                                               lambda frame: self._log_mocap(frame, follow['id']),
+                                                               name=follow['id'])
+
+                            IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                                                     self.args.smooth_controller_rate, leader_info=follow)
+                            IC.run()
+
+                            self._recap_land()
 
                 except Exception as e:
                     logging.error(f"Interaction Error: {e}\n")
