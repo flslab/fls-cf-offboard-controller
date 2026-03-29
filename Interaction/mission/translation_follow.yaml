@@ -6,7 +6,7 @@ drones:
       id: block
       offset: [0.2, 0, 0.1]
   block:
-    target: [-0.3723, 0.5029, 0.8389]
+    target: [-0.5736, -0.5297, 0.8941]
 
 Interaction:
   action: translation
