@@ -63,9 +63,9 @@ class InteractionLogger(LogManager):
 
         logger.debug("logging activated")
 
-    def add_log_group(self, name, *args, use_kf=False, **kwargs):
+    def add_log_group(self, name, *args, kf=False, **kwargs):
         self.groups[name] = []
-        if use_kf:
+        if kf:
             dt = 1 / self.args.fps
             self.group_kfs[name] = {
                 'x': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
