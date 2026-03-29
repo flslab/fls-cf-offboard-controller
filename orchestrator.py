@@ -18,6 +18,7 @@ from invoke.exceptions import CommandTimedOut
 # Assumed local modules based on your import list
 from logger import setup_logging
 from restart import reboot_crazyflie
+
 # from Interaction.vicon_noise_tracker import run_tracker
 
 MANIFEST_FILE = 'swarm_manifest.yaml'
@@ -34,9 +35,12 @@ class SwarmOrchestrator:
         # Configuration State
         self.manifest = self._load_manifest()
         self.ctrl_cfg = self.manifest['controller']
-        if args.http_port:    self.ctrl_cfg['http_port']    = args.http_port
-        if args.zmq_cmd_port: self.ctrl_cfg['zmq_cmd_port'] = args.zmq_cmd_port
-        if args.zmq_ack_port: self.ctrl_cfg['zmq_ack_port'] = args.zmq_ack_port
+        if args.http_port:
+            self.ctrl_cfg['http_port'] = args.http_port
+        if args.zmq_cmd_port:
+            self.ctrl_cfg['zmq_cmd_port'] = args.zmq_cmd_port
+        if args.zmq_ack_port:
+            self.ctrl_cfg['zmq_ack_port'] = args.zmq_ack_port
         self.drones = self.manifest.get('drones', [])
         self.camera_cfg = self.manifest.get('camera_node')
         self.radio_node = self.manifest.get('radio_node')
@@ -132,7 +136,6 @@ class SwarmOrchestrator:
         elif obj_name:
             mocap_args = f"--obj-name {obj_name} --vicon-mode rigidbody "
 
-
         extra_markers = self.manifest.get('apparatus', None)
         extra_marker_args = ""
         if extra_markers:
@@ -225,6 +228,8 @@ class SwarmOrchestrator:
 
         try:
             conn = Connection(host=device_cfg['ip'], user=device_cfg['user'], connect_timeout=5)
+            # Push manifest
+            conn.put(MANIFEST_FILE, remote=f"{self.common_cfg['work_dir']}/swarm_manifest.yaml")
             # Run command (detach)
             conn.run(cmd, timeout=2, pty=False)
             return True
@@ -361,7 +366,7 @@ class SwarmOrchestrator:
                     if self._boot_remote_node(drone, cmd, "Drone"):
                         entry = {'drone': drone, 'tag': self.tag}
                         if self.args.interaction and self.common_cfg.get('reference_object'):
-                            entry['vicon_log'] = True   # also download vicon_{tag}.json
+                            entry['vicon_log'] = True  # also download vicon_{tag}.json
                         self.pending_downloads.append(entry)
 
             if self.args.loadcell:
@@ -427,12 +432,12 @@ class SwarmOrchestrator:
         remaining = []
         for item in self.pending_downloads:
             drone = item['drone']
-            tag   = item['tag']
-            work  = self.common_cfg['work_dir']
+            tag = item['tag']
+            work = self.common_cfg['work_dir']
 
             # Main controller log
             remote = f"{work}/logs/{tag}.json"
-            local  = f"./logs/{drone['id']}_{tag}.json"
+            local = f"./logs/{drone['id']}_{tag}.json"
             success = self._download_file(drone, remote, local, "Log")
 
             # Vicon noise log (only if tracker was launched)
@@ -541,7 +546,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--illumination", action="store_true", help="illumination application")
     parser.add_argument("--interaction", action="store_true", help="interaction application")
-    parser.add_argument("--intractable-illumination", action="store_true", help="interaction application with illumination")
+    parser.add_argument("--intractable-illumination", action="store_true",
+                        help="interaction application with illumination")
     parser.add_argument("--off", action="store_true", help="shutdown the raspberry pis")
     parser.add_argument("--kill", action="store_true", help="stop the controller")
     parser.add_argument("--ground", action="store_true", help="ground test")
@@ -551,7 +557,7 @@ if __name__ == "__main__":
     parser.add_argument("--radio", action="store_true", help="run mission with CrazyRadio")
     parser.add_argument("--loadcell", action="store_true", help="run with loadcell")
     parser.add_argument("--skip-confirm", action="store_true", help="run without pressing enter")
-    parser.add_argument("--http-port",    type=int, default=None, help="override manifest http_port")
+    parser.add_argument("--http-port", type=int, default=None, help="override manifest http_port")
     parser.add_argument("--zmq-cmd-port", type=int, default=None, help="override manifest zmq_cmd_port")
     parser.add_argument("--zmq-ack-port", type=int, default=None, help="override manifest zmq_ack_port")
     args = parser.parse_args()
