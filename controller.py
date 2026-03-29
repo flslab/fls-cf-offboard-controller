@@ -595,6 +595,7 @@ class Controller:
                         for i in range(n):
 
                             if not first_run:
+                                self._recap_land()
                                 self._recap_takeoff()
                             first_run = False
                             mission_setting = self.mission['drones'][self.args.drone_id]
@@ -613,8 +614,6 @@ class Controller:
                             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                                      self.args.smooth_controller_rate, leader_info=follow)
                             IC.run()
-
-                            self._recap_land()
 
                 except Exception as e:
                     logging.error(f"Interaction Error: {e}\n")
