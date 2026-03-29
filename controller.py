@@ -734,7 +734,7 @@ class Controller:
             self.led.show_single_color(led_color)
 
         if peer_mode:
-            from Interaction.interactions import UDPPublisher, UDPSubscriber
+            from Interaction.UDPHelper import UDPPublisher, UDPSubscriber
             port = self.manifest['controller'].get('zmq_interact_port', 5560)
             peer_ips = [d['ip'] for d in self.manifest['drones'] if d['id'] != self.args.drone_id]
             interact_pub = UDPPublisher(peer_ips, port)

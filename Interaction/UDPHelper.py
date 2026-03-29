@@ -1,6 +1,6 @@
-
 import json
 import socket
+
 
 class UDPPublisher:
     """Sends JSON datagrams to a fixed list of (ip, port) peers."""
@@ -41,4 +41,3 @@ class UDPSubscriber:
 
     def close(self):
         self.sock.close()
-

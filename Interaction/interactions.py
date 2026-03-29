@@ -1,6 +1,4 @@
-import json
 import logging
-import socket
 import time
 import traceback
 
@@ -11,49 +9,8 @@ import zmq
 from Interaction.CommandWrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
 
-
-class UDPPublisher:
-    """Sends JSON datagrams to a fixed list of (ip, port) peers."""
-
-    def __init__(self, peer_ips, port):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.targets = [(ip, port) for ip in peer_ips]
-
-    def send_json(self, data):
-        payload = json.dumps(data).encode()
-        for addr in self.targets:
-            try:
-                self.sock.sendto(payload, addr)
-            except OSError:
-                pass
-
-    def close(self):
-        self.sock.close()
-
-
-class UDPSubscriber:
-    """Non-blocking UDP receiver. recv_latest() drains the buffer and returns the newest datagram."""
-
-    def __init__(self, port):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(('', port))
-        self.sock.setblocking(False)
-
-    def recv_latest(self):
-        latest = None
-        while True:
-            try:
-                data, _ = self.sock.recvfrom(4096)
-                latest = json.loads(data.decode())
-            except (BlockingIOError, json.JSONDecodeError, OSError):
-                break
-        return latest
-
-    def close(self):
-        self.sock.close()
-
-
 logger = logging.getLogger(__name__)
+
 
 class BoundaryExceededError(Exception):
     """Exception raised when the drone leaves the defined interaction space."""
@@ -71,9 +28,11 @@ def calculate_tilt(roll, pitch, degrees=True):
 
     return np.degrees(tilt_rad) if degrees else tilt_rad
 
+
 class InteractionsControl:
 
-    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True, leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, *args, **kwargs):
+    def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True,
+                 leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
@@ -86,7 +45,8 @@ class InteractionsControl:
 
         log_function = log_manager.add_log_entry if log_command else None
         offset = np.zeros(3) if leader_info is None else np.array(leader_info['offset'])
-        self.hl_commander = CommandWrapper(self.cf.high_level_commander, log_function=log_function, execute=execute, offset=offset)
+        self.hl_commander = CommandWrapper(self.cf.high_level_commander, log_function=log_function, execute=execute,
+                                           offset=offset)
         self.lo_commander = CommandWrapper(self.cf.commander, log_function=log_function, execute=execute, offset=offset)
         self._safe_sleep = sleep_function
         self.bounds = self.mission.get('boundary_limits', None)
@@ -125,13 +85,16 @@ class InteractionsControl:
         x, y, z = pos[0], pos[1], pos[2]
 
         if not (self.bounds['x_min'] <= x <= self.bounds['x_max']):
-            raise BoundaryExceededError(f"X position ({x:.3f}) breached bounds [{self.bounds['x_min']}, {self.bounds['x_max']}]")
+            raise BoundaryExceededError(
+                f"X position ({x:.3f}) breached bounds [{self.bounds['x_min']}, {self.bounds['x_max']}]")
 
         if not (self.bounds['y_min'] <= y <= self.bounds['y_max']):
-            raise BoundaryExceededError(f"Y position ({y:.3f}) breached bounds [{self.bounds['y_min']}, {self.bounds['y_max']}]")
+            raise BoundaryExceededError(
+                f"Y position ({y:.3f}) breached bounds [{self.bounds['y_min']}, {self.bounds['y_max']}]")
 
         if not (self.bounds['z_min'] <= z <= self.bounds['z_max']):
-            raise BoundaryExceededError(f"Z position ({z:.3f}) breached bounds [{self.bounds['z_min']}, {self.bounds['z_max']}]")
+            raise BoundaryExceededError(
+                f"Z position ({z:.3f}) breached bounds [{self.bounds['z_min']}, {self.bounds['z_max']}]")
 
     def test_flight(self):
 
@@ -182,7 +145,6 @@ class InteractionsControl:
             logging.error(f"Recap Error: {e}\nTraceback:\n{tb_info}")
         finally:
             self.lo_commander.send_notify_setpoint_stop()
-
 
     def _run_translation(self) -> None:
         """Run the velocity-based translation interaction."""
@@ -266,7 +228,6 @@ class InteractionsControl:
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
-
     def _log_event(self, event_name, data=None):
         if data is None:
             data = {}
@@ -277,10 +238,10 @@ class InteractionsControl:
     def _get_latest_drone_state(self):
         return self.log_manager.get_latest_group_log_data()
 
-
     def _get_latest_pos(self, vel=False):
         if vel:
-            return np.array(self.log_manager.groups[self.pos_group_name][-1]["tvec"]), np.array(self.log_manager.groups[self.pos_group_name][-1].get("vel", None))
+            return np.array(self.log_manager.groups[self.pos_group_name][-1]["tvec"]), np.array(
+                self.log_manager.groups[self.pos_group_name][-1].get("vel", None))
         else:
             return np.array(self.log_manager.groups[self.pos_group_name][-1]["tvec"])
 
@@ -306,23 +267,22 @@ class InteractionsControl:
             self.lo_commander.send_position_setpoint(0.0, 0.0, 1.0, 0)
             self._safe_sleep(dt)
 
-
     def _get_drone_by_id(self, drone_id):
         for drone in self.manifest['drones']:
             if drone['id'] == drone_id:
                 return drone
 
     def interaction_translation_vel(
-        self,
-        vel_threshold=0.01,
-        z=1,
-        fric_coe=-1.0,
-        base_attitude=1,
-        duration=60,
-        grace_time=1,
-        v_scalar=None,
-        alpha_vel=1,
-        pub_socket=None,
+            self,
+            vel_threshold=0.01,
+            z=1,
+            fric_coe=-1.0,
+            base_attitude=1,
+            duration=60,
+            grace_time=1,
+            v_scalar=None,
+            alpha_vel=1,
+            pub_socket=None,
     ):
         if v_scalar is None:
             v_scalar = np.array([10, 10, 2])
@@ -348,9 +308,9 @@ class InteractionsControl:
             stabilize_time = 'dynamic'
 
         self.log_manager.add_log_entry(group_name="configs",
-                                   entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt,
-                                          "Orientation CMD": base_attitude, 'Stabilize Time': stabilize_time},
-                                   name='Translation Config')
+                                       entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt,
+                                              "Orientation CMD": base_attitude, 'Stabilize Time': stabilize_time},
+                                       name='Translation Config')
 
         status = 0
 
@@ -517,23 +477,22 @@ class InteractionsControl:
                 # hover_pos = pos
                 status = 0
 
-
             self._safe_sleep(dt)
 
         self.lo_commander.send_notify_setpoint_stop()
 
     def interaction_peer_translation_vel(
-        self,
-        drone_id,
-        vel_threshold=0.01,
-        z=1,
-        fric_coe=-1.0,
-        base_attitude=1,
-        duration=60,
-        grace_time=1,
-        v_scalar=None,
-        pub_socket=None,
-        sub_socket=None,
+            self,
+            drone_id,
+            vel_threshold=0.01,
+            z=1,
+            fric_coe=-1.0,
+            base_attitude=1,
+            duration=60,
+            grace_time=1,
+            v_scalar=None,
+            pub_socket=None,
+            sub_socket=None,
     ):
         """Symmetric peer interaction: every drone can be pushed and mirrors others.
 
@@ -762,13 +721,13 @@ class InteractionsControl:
         self.lo_commander.send_notify_setpoint_stop()
 
     def interaction_follow_network(
-        self,
-        sub_socket,
-        z=1,
-        fric_coe=-1.0,
-        base_attitude=1,
-        duration=60,
-        v_scalar=None,
+            self,
+            sub_socket,
+            z=1,
+            fric_coe=-1.0,
+            base_attitude=1,
+            duration=60,
+            v_scalar=None,
     ):
         """Mirror the interaction drone's push state received over ZMQ.
 
