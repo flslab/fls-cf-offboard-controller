@@ -571,6 +571,10 @@ class InteractionsControl:
         peer_push_start_time = None
         # Suppress local interaction detection while a peer is actively pushing
         receiving_peer_push = False
+        # Time of last received peer push msg (for timeout detection)
+        last_peer_push_time = None
+        # Time when follower entered grace (after peer user_disengage), None if not in grace
+        peer_grace_start = None
 
         start_time = time.time()
         while time.time() - start_time < duration:
@@ -593,37 +597,69 @@ class InteractionsControl:
             speed = np.linalg.norm(vel)
 
             if status == 0:
-                if peer_msg and peer_msg.get('type') == 'push':
-                    leader_id = peer_msg.get('drone_id')
-                    # New push from a different peer_push_start_time → anchor our hover start
-                    if peer_msg['push_start_time'] != peer_push_start_time:
-                        peer_push_start_time = peer_msg['push_start_time']
-                        peer_hover_start = hover_pos.copy()
-                        self._log_event("Peer Push Received", {
-                            "leader_id": leader_id,
-                            "push_start_time": peer_push_start_time,
-                            "Pos": [round(x, 3) for x in pos],
-                        })
-                    receiving_peer_push = True
-                    accumulated = np.array(peer_msg['accumulated_offset'])
-                    if z is not None:
-                        accumulated[2] = 0.0
-                    hover_pos = peer_hover_start + accumulated
-                    if z is not None:
-                        hover_pos[2] = z
-                    self.check_interaction_boundary(hover_pos)
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                if receiving_peer_push:
+                    if peer_grace_start is not None:
+                        # Follower grace: hold position until leader signals done or timer expires
+                        if peer_msg and peer_msg.get('type') == 'grace_done':
+                            leader_id = peer_msg.get('drone_id')
+                            self._log_event("Peer Grace Done Received", {
+                                "leader_id": leader_id,
+                                "Pos": [round(x, 3) for x in pos],
+                            })
+                            receiving_peer_push = False
+                            peer_grace_start = None
+                            last_peer_push_time = None
+                            peer_push_start_time = None
+                            peer_hover_start = None
+                        elif time.time() - peer_grace_start > grace_time_val:
+                            logger.info("Peer mode: follower grace timeout — resuming detection.")
+                            receiving_peer_push = False
+                            peer_grace_start = None
+                            last_peer_push_time = None
+                            peer_push_start_time = None
+                            peer_hover_start = None
+                        else:
+                            self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    else:
+                        # Active following
+                        if peer_msg and peer_msg.get('type') == 'push':
+                            leader_id = peer_msg.get('drone_id')
+                            if peer_msg['push_start_time'] != peer_push_start_time:
+                                peer_push_start_time = peer_msg['push_start_time']
+                                peer_hover_start = hover_pos.copy()
+                                self._log_event("Peer Push Received", {
+                                    "leader_id": leader_id,
+                                    "push_start_time": peer_push_start_time,
+                                    "Pos": [round(x, 3) for x in pos],
+                                })
+                            last_peer_push_time = time.time()
+                            accumulated = np.array(peer_msg['accumulated_offset'])
+                            if z is not None:
+                                accumulated[2] = 0.0
+                            hover_pos = peer_hover_start + accumulated
+                            if z is not None:
+                                hover_pos[2] = z
+                            self.check_interaction_boundary(hover_pos)
+                            self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                        elif peer_msg and peer_msg.get('type') == 'user_disengage':
+                            leader_id = peer_msg.get('drone_id')
+                            self._log_event("Peer Disengage Received", {
+                                "leader_id": leader_id,
+                                "Pos": [round(x, 3) for x in pos],
+                            })
+                            peer_grace_start = time.time()
+                            self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                        elif last_peer_push_time is not None and time.time() - last_peer_push_time > grace_time_val:
+                            # No push for too long — give up following
+                            logger.info("Peer mode: no push received — giving up following.")
+                            receiving_peer_push = False
+                            last_peer_push_time = None
+                            peer_push_start_time = None
+                            peer_hover_start = None
+                        else:
+                            self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                 else:
-                    if peer_msg and peer_msg.get('type') == 'disengage':
-                        leader_id = peer_msg.get('drone_id')
-                        self._log_event("Peer Disengage Received", {
-                            "leader_id": leader_id,
-                            "Pos": [round(x, 3) for x in pos],
-                        })
-                        receiving_peer_push = False
-                        peer_push_start_time = None
-                        peer_hover_start = None
-                    if not receiving_peer_push and detect_speed_threshold(speed):
+                    if detect_speed_threshold(speed):
                         logger.info("Peer mode: local user push detected.")
                         status = 1
                         push_start_time = time.time()
@@ -641,7 +677,7 @@ class InteractionsControl:
                     if peer_start > push_start_time:
                         leader_id = peer_msg.get('drone_id')
                         logger.info("Peer push is newer — abandoning local push, reverting position.")
-                        pub_socket.send_json({"type": "disengage", "drone_id": drone_id})
+                        pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
                         self._log_event("User Disengage", {
                             "leader_id": drone_id,
                             "reason": "peer_push_won",
@@ -654,6 +690,8 @@ class InteractionsControl:
                         interaction_heading = np.zeros(3)
                         status = 0
                         receiving_peer_push = True
+                        peer_grace_start = None
+                        last_peer_push_time = time.time()
                         peer_push_start_time = peer_start
                         peer_hover_start = hover_pos.copy()
                         self._log_event("Peer Push Received", {
@@ -683,7 +721,7 @@ class InteractionsControl:
 
                 if not detect_speed_threshold(speed):
                     interaction_heading = np.zeros(3)
-                    pub_socket.send_json({"type": "disengage", "drone_id": drone_id})
+                    pub_socket.send_json({"type": "user_disengage", "drone_id": drone_id})
                     accumulated_offset = np.zeros(3)
                     if fric_coe > 0:
                         logger.info("Peer mode: switching to coasting.")
@@ -736,6 +774,8 @@ class InteractionsControl:
                 self.hl_commander.go_to(end_pos[0], end_pos[1], end_pos[2], 0, coast_t, relative=False)
                 self._safe_sleep(coast_t)
                 hover_pos = np.array(end_pos, dtype=float)
+                pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
+                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()]})
                 status = 0
                 continue
 
@@ -744,6 +784,8 @@ class InteractionsControl:
                 while time.time() < grace_time_val + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
+                pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
+                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()]})
                 status = 0
 
             self._safe_sleep(dt)
