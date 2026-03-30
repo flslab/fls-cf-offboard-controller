@@ -659,7 +659,27 @@ class InteractionsControl:
                         else:
                             self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                 else:
-                    if detect_speed_threshold(speed):
+                    if peer_msg and peer_msg.get('type') == 'push':
+                        leader_id = peer_msg.get('drone_id')
+                        peer_push_start_time = peer_msg['push_start_time']
+                        peer_hover_start = hover_pos.copy()
+                        last_peer_push_time = time.time()
+                        peer_grace_start = None
+                        receiving_peer_push = True
+                        self._log_event("Peer Push Received", {
+                            "leader_id": leader_id,
+                            "push_start_time": peer_push_start_time,
+                            "Pos": [round(x, 3) for x in pos],
+                        })
+                        accumulated = np.array(peer_msg['accumulated_offset'])
+                        if z is not None:
+                            accumulated[2] = 0.0
+                        hover_pos = peer_hover_start + accumulated
+                        if z is not None:
+                            hover_pos[2] = z
+                        self.check_interaction_boundary(hover_pos)
+                        self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    elif detect_speed_threshold(speed):
                         logger.info("Peer mode: local user push detected.")
                         status = 1
                         push_start_time = time.time()
