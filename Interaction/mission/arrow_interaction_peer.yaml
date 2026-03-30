@@ -24,6 +24,7 @@ drones:
 Interaction:
   action: translation
   peer: true
+  peer_transport: tcp
   config:
     delta_v: 0.2
     z: 1

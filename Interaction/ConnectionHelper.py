@@ -1,5 +1,6 @@
 import json
 import socket
+import zmq
 
 
 class UDPPublisher:
@@ -41,3 +42,43 @@ class UDPSubscriber:
 
     def close(self):
         self.sock.close()
+
+
+class TCPPeerPublisher:
+    """ZMQ PUB socket — broadcasts JSON to all peer subscribers."""
+
+    def __init__(self, port):
+        self._ctx = zmq.Context()
+        self._sock = self._ctx.socket(zmq.PUB)
+        self._sock.bind(f"tcp://*:{port}")
+
+    def send_json(self, data):
+        self._sock.send_json(data)
+
+    def close(self):
+        self._sock.close()
+        self._ctx.term()
+
+
+class TCPPeerSubscriber:
+    """ZMQ SUB socket — drains all pending messages and returns the latest."""
+
+    def __init__(self, peer_ips, port):
+        self._ctx = zmq.Context()
+        self._sock = self._ctx.socket(zmq.SUB)
+        self._sock.setsockopt_string(zmq.SUBSCRIBE, "")
+        for ip in peer_ips:
+            self._sock.connect(f"tcp://{ip}:{port}")
+
+    def recv_latest(self):
+        latest = None
+        while True:
+            try:
+                latest = self._sock.recv_json(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                break
+        return latest
+
+    def close(self):
+        self._sock.close()
+        self._ctx.term()
