@@ -569,6 +569,8 @@ class InteractionsControl:
         # Receiver side: own hover position at the moment the peer's push began
         peer_hover_start = None
         peer_push_start_time = None
+        # Suppress local interaction detection while a peer is actively pushing
+        receiving_peer_push = False
 
         start_time = time.time()
         while time.time() - start_time < duration:
@@ -592,10 +594,17 @@ class InteractionsControl:
 
             if status == 0:
                 if peer_msg and peer_msg.get('type') == 'push':
+                    leader_id = peer_msg.get('drone_id')
                     # New push from a different peer_push_start_time → anchor our hover start
                     if peer_msg['push_start_time'] != peer_push_start_time:
                         peer_push_start_time = peer_msg['push_start_time']
                         peer_hover_start = hover_pos.copy()
+                        self._log_event("Peer Push Received", {
+                            "leader_id": leader_id,
+                            "push_start_time": peer_push_start_time,
+                            "Pos": [round(x, 3) for x in pos],
+                        })
+                    receiving_peer_push = True
                     accumulated = np.array(peer_msg['accumulated_offset'])
                     if z is not None:
                         accumulated[2] = 0.0
@@ -606,9 +615,15 @@ class InteractionsControl:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                 else:
                     if peer_msg and peer_msg.get('type') == 'disengage':
+                        leader_id = peer_msg.get('drone_id')
+                        self._log_event("Peer Disengage Received", {
+                            "leader_id": leader_id,
+                            "Pos": [round(x, 3) for x in pos],
+                        })
+                        receiving_peer_push = False
                         peer_push_start_time = None
                         peer_hover_start = None
-                    if detect_speed_threshold(speed):
+                    if not receiving_peer_push and detect_speed_threshold(speed):
                         logger.info("Peer mode: local user push detected.")
                         status = 1
                         push_start_time = time.time()
@@ -624,16 +639,28 @@ class InteractionsControl:
                 if peer_msg and peer_msg.get('type') == 'push':
                     peer_start = peer_msg.get('push_start_time', 0.0)
                     if peer_start > push_start_time:
+                        leader_id = peer_msg.get('drone_id')
                         logger.info("Peer push is newer — abandoning local push, reverting position.")
                         pub_socket.send_json({"type": "disengage", "drone_id": drone_id})
+                        self._log_event("User Disengage", {
+                            "leader_id": drone_id,
+                            "reason": "peer_push_won",
+                            "Pos": [round(x, 3) for x in pos],
+                        })
                         hover_pos = hover_pos_before_push.copy()
                         push_start_time = None
                         hover_pos_before_push = None
                         accumulated_offset = np.zeros(3)
                         interaction_heading = np.zeros(3)
                         status = 0
+                        receiving_peer_push = True
                         peer_push_start_time = peer_start
                         peer_hover_start = hover_pos.copy()
+                        self._log_event("Peer Push Received", {
+                            "leader_id": leader_id,
+                            "push_start_time": peer_push_start_time,
+                            "Pos": [round(x, 3) for x in pos],
+                        })
                         accumulated = np.array(peer_msg['accumulated_offset'])
                         if z is not None:
                             accumulated[2] = 0.0
@@ -668,6 +695,7 @@ class InteractionsControl:
                         tilt_angle = calculate_tilt(current_roll, current_pitch)
                         grace_time_val = get_grace_time(abs(tilt_angle), speed)
                         self._log_event("User Disengage", {
+                            "leader_id": drone_id,
                             "speed": round(speed, 3),
                             "vel": [round(x, 3) for x in vel],
                             "Pos": [round(x, 3) for x in pos],
@@ -685,6 +713,7 @@ class InteractionsControl:
 
                 if base_attitude < 0:
                     self._log_event("User Pushing", {
+                        "leader_id": drone_id,
                         "speed": round(speed, 3),
                         "vel": [round(x, 3) for x in vel],
                         "Pos": [round(x, 3) for x in pos],
@@ -694,6 +723,7 @@ class InteractionsControl:
                 else:
                     target_pitch, target_roll = calculate_braking_angles(*interact_vel[:2])
                     self._log_event("User Pushing", {
+                        "leader_id": drone_id,
                         "speed": round(speed, 3),
                         "vel": [round(x, 3) for x in vel],
                         "Pos": [round(x, 3) for x in pos],

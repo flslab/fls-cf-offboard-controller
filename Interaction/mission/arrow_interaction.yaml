@@ -8,8 +8,7 @@ drones:
     params:
       linear: true
       relative: false
-#    servos: [ [179, 350], [179, 350] ]
-    servos: [ [0, 180], [0, 180] ]
+    servos: [ [179, 350], [179, 350] ]
 
     color: [ 227, 253, 255 ]
   lb5: #head
