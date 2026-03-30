@@ -26,7 +26,7 @@ Interaction:
   action: translation
   peer: true
   config:
-    delta_v: 0.13
+    delta_v: 0.2
     z: 1
     friction_coefficient: -0.01
     base_attitude: -1
