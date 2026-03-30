@@ -1,4 +1,4 @@
-name: arrow_interaction
+name: arrow_interaction_peer
 drones:
   lb3:
     target: [ -0.3, 0.2, 1.0 ]
