@@ -1,4 +1,5 @@
 import argparse
+import io
 import os
 import yaml
 import json
@@ -228,8 +229,9 @@ class SwarmOrchestrator:
 
         try:
             conn = Connection(host=device_cfg['ip'], user=device_cfg['user'], connect_timeout=5)
-            # Push manifest
-            conn.put(MANIFEST_FILE, remote=f"{self.common_cfg['work_dir']}/swarm_manifest.yaml")
+            # Push manifest from in-memory state (reflects any arg overrides) without touching local file
+            manifest_buf = io.BytesIO(yaml.dump(self.manifest).encode('utf-8'))
+            conn.put(manifest_buf, remote=f"{self.common_cfg['work_dir']}/swarm_manifest.yaml")
             # Run command (detach)
             conn.run(cmd, timeout=2, pty=False)
             return True
