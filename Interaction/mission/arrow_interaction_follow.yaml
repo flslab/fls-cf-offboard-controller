@@ -18,6 +18,7 @@ drones:
     waypoints: []
     delta_t: 60
     iterations: 1
+    interaction: true
     params:
       linear: true
       relative: false
