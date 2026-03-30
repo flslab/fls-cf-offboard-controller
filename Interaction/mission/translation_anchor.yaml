@@ -7,13 +7,13 @@ anchor: [-0.3434, 0.5727, 0.8417]
 
 Interaction:
   action: translation
-  iteration: 1
+  iteration: 3
   config:
     delta_v: 0.13
     z: 1.1
     friction_coefficient: -0.01
     base_attitude: -1
-    duration: 20
+    duration: 30
     v_scalar: [10, 10, 3]
     grace_time: 2
     alpha_vel: 1          # velocity blending factor (0=state estimator only, 1=mocap only)
