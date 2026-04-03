@@ -871,11 +871,6 @@ class Controller:
             dt = 6 * dist
 
         if len(angles):
-            if self.args.morphing:
-                def update_servos_cb():
-                    self.update_servos()
-                self.smooth_controller.add_update_callback(update_servos_cb)
-            else:
                 self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
 
         if not self.args.ground_test:
@@ -1017,7 +1012,7 @@ class Controller:
         self.smooth_controller.set_group_values(
             "servos",
             target.tolist(),
-            duration=1.0,
+            duration=1.0 / max(1, self.args.smooth_controller_rate),
         )
 
     def run_servo(self, angles, delta_t, iterations):
