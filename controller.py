@@ -1017,7 +1017,7 @@ class Controller:
         self.smooth_controller.set_group_values(
             "servos",
             target.tolist(),
-            duration=1.0 / max(1, self.args.smooth_controller_rate),
+            duration=1.0),
         )
 
     def run_servo(self, angles, delta_t, iterations):
