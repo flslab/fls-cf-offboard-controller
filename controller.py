@@ -1009,13 +1009,6 @@ class Controller:
         for i, (lo, hi) in enumerate(limits):
             target[i] = float(np.clip(target[i], lo, hi))
 
-        # Avoid spamming tiny corrections.
-        if self._last_servo_target is not None:
-            if np.allclose(target, self._last_servo_target, atol=0.5):
-                return
-
-        self._last_servo_target = target.copy()
-
         self.smooth_controller.set_group_values(
             "servos",
             target.tolist(),
