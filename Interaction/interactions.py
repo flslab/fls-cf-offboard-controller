@@ -380,10 +380,7 @@ class InteractionsControl:
                 vel[2] = 0
 
             speed = np.linalg.norm(vel)
-
-            if pub_socket is not None:
-                pub_socket.send_json({"status": status, "vel": vel.tolist(), "speed": float(speed)})
-
+            
             if status == 0:  # wait for user interaction
                 if detect_speed_threshold(speed):
                     logger.info(f"Switching to Translation From {status}.")
@@ -641,6 +638,13 @@ class InteractionsControl:
                                 hover_pos[2] = z
                             self.check_interaction_boundary(hover_pos)
                             self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                            self._log_event("Peer Pushing", {
+                                "leader_id": leader_id,
+                                "push_start_time": peer_push_start_time,
+                                "accumulated_offset": accumulated.tolist(),
+                                "Pos": [round(x, 3) for x in pos],
+                                "Target": [round(x, 3) for x in hover_pos],
+                            })
                         elif peer_msg and peer_msg.get('type') == 'user_disengage':
                             leader_id = peer_msg.get('drone_id')
                             self._log_event("Peer Disengage Received", {
@@ -679,6 +683,13 @@ class InteractionsControl:
                             hover_pos[2] = z
                         self.check_interaction_boundary(hover_pos)
                         self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                        self._log_event("Peer Pushing", {
+                            "leader_id": leader_id,
+                            "push_start_time": peer_push_start_time,
+                            "accumulated_offset": accumulated.tolist(),
+                            "Pos": [round(x, 3) for x in pos],
+                            "Target": [round(x, 3) for x in hover_pos],
+                        })
                     elif detect_speed_threshold(speed):
                         logger.info("Peer mode: local user push detected.")
                         status = 1
