@@ -294,6 +294,11 @@ class SwarmOrchestrator:
                 return
 
             print(f"[Orchestrator] Sending REMOTE REBOOT request to Radio Node ({len(uris)} drones)...")
+            
+            # Connect existing sockets to radio node since it now binds to receive/send messages
+            self.pub_socket.connect(f"tcp://{self.radio_node['ip']}:{self.ctrl_cfg['zmq_cmd_port']}")
+            self.pull_socket.connect(f"tcp://{self.radio_node['ip']}:{self.ctrl_cfg['zmq_ack_port']}")
+
             msg = {
                 "cmd": "REBOOT",
                 "uris": uris
