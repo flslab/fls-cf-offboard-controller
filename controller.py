@@ -994,6 +994,8 @@ class Controller:
     def update_servos(self):
         latest_angles = self._get_latest_angles()
 
+        logger.info(f"angles: {latest_angles}")
+        
         roll_deg, pitch_deg = latest_angles[0], latest_angles[1]
 
         if self.args.servo_type == "a":
