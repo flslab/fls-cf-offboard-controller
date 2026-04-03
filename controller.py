@@ -992,7 +992,7 @@ class Controller:
         self.led.set_colors(led_buffer)
 
     def update_servos(self):
-        latest_angles = self._get_latest_angles
+        latest_angles = self._get_latest_angles()
 
         roll_deg, pitch_deg = latest_angles[0], latest_angles[1]
 
