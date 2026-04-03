@@ -871,7 +871,12 @@ class Controller:
             dt = 6 * dist
 
         if len(angles):
-            self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
+            if self.args.morphing:
+                def update_servos_cb():
+                    self.update_servos()
+                self.smooth_controller.add_update_callback(update_servos_cb)
+            else:
+                self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
 
         if not self.args.ground_test:
             self.commander.go_to(x, y, z, yaw, dt, relative=False)
@@ -973,8 +978,8 @@ class Controller:
         formula_str = led_setting["formula"]
         led_buffer = []
         current_time = time.time() - self.animation_start_time
-        # x, y, z = self._get_latest_mocap_frame()
-        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math}
+        x, y, z = self._get_latest_mocap_frame()["tvec"]
+        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math, "x": x, "y": y, "z": z}
         for j, p in enumerate(pointers):
             context[f"p{j}"] = p
 
@@ -985,6 +990,67 @@ class Controller:
             led_buffer.append(rgb)
 
         self.led.set_colors(led_buffer)
+    
+    def _quat_to_roll_pitch_deg(self, quat):
+        x, y, z, w = quat
+
+        # Roll (x-axis rotation)
+        t0 = 2.0 * (w * x + y * z)
+        t1 = 1.0 - 2.0 * (x * x + y * y)
+        roll = math.atan2(t0, t1)
+
+        # Pitch (y-axis rotation)
+        t2 = 2.0 * (w * y - z * x)
+        t2 = max(-1.0, min(1.0, t2))
+        pitch = math.asin(t2)
+
+        return math.degrees(roll), math.degrees(pitch)
+
+
+    def update_servos(self):
+        if not self.args.servo or self.servo is None or self.smooth_controller is None:
+            return
+        if not self.flying:
+            return
+        if not self.log_manager or "frames" not in self.log_manager.groups:
+            return
+
+        frames = self.log_manager.groups["frames"]
+        if not frames:
+            return
+
+        frame = frames[-1]
+        quat = frame.get("quat")
+        if quat is None or len(quat) != 4:
+            return
+
+        roll_deg, pitch_deg = self._quat_to_roll_pitch_deg(quat)
+
+        if self.args.servo_type == "a":
+            target = np.array([0.0 - pitch_deg, 180.0 + roll_deg], dtype=float)
+            limits = [(0.0, 180.0), (180.0, 360.0)]
+        elif self.args.servo_type == "b":
+            target = np.array([180.0 - pitch_deg, 360.0 + roll_deg], dtype=float)
+            limits = [(90.0, 270.0), (270.0, 450.0)]
+        else:
+            return
+
+        # Keep values inside the configured servo range.
+        for i, (lo, hi) in enumerate(limits):
+            target[i] = float(np.clip(target[i], lo, hi))
+
+        # Avoid spamming tiny corrections.
+        if self._last_servo_target is not None:
+            if np.allclose(target, self._last_servo_target, atol=0.5):
+                return
+
+        self._last_servo_target = target.copy()
+
+        self.smooth_controller.set_group_values(
+            "servos",
+            target.tolist(),
+            duration=1.0 / max(1, self.args.smooth_controller_rate),
+        )
 
     def run_servo(self, angles, delta_t, iterations):
         for _ in range(iterations):
@@ -1207,6 +1273,7 @@ if __name__ == '__main__':
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
     ap.add_argument("--intractable-illumination", action="store_true", help="interaction application with illumination")
+    ap.add_argument("--morphing", action="store_true", help="illumination application with morphing emulator")
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=None, type=float)
     ap.add_argument("-t", help="flight duration", default=None, type=float)
     ap.add_argument("--fps", type=int, default=120, help="position estimation rate, works with --localize")
