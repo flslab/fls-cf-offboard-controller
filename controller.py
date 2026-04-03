@@ -995,14 +995,14 @@ class Controller:
         latest_angles = self._get_latest_angles()
 
         logger.info(f"angles: {latest_angles}")
-        
-        roll_deg, pitch_deg = latest_angles[0], latest_angles[1]
+
+        roll_deg = latest_angles[0]
 
         if self.args.servo_type == "a":
-            target = np.array([0.0 - pitch_deg, 180.0 + roll_deg], dtype=float)
+            target = np.array([0.0 - roll_deg, 180.0 + roll_deg], dtype=float)
             limits = [(0.0, 180.0), (180.0, 360.0)]
         elif self.args.servo_type == "b":
-            target = np.array([180.0 - pitch_deg, 360.0 + roll_deg], dtype=float)
+            target = np.array([180.0 - roll_deg, 360.0 + roll_deg], dtype=float)
             limits = [(90.0, 270.0), (270.0, 450.0)]
         else:
             return
@@ -1010,6 +1010,8 @@ class Controller:
         # Keep values inside the configured servo range.
         for i, (lo, hi) in enumerate(limits):
             target[i] = float(np.clip(target[i], lo, hi))
+
+        logger.info(f"list: {target.tolist()}")
 
         self.smooth_controller.set_group_values(
             "servos",
