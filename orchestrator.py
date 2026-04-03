@@ -394,7 +394,7 @@ class SwarmOrchestrator:
             self.pub_socket.send_json({"cmd": "_"})
             time.sleep(2)
             if not self.args.record:
-                self.reboot_flight_controllers(remote=bool(self.radio_node))
+                #self.reboot_flight_controllers(remote=bool(self.radio_node))
 
                 for drone in self.drones:
                     cmd = self._get_drone_cmd(drone)

@@ -1218,9 +1218,9 @@ class Controller:
         return self.log_manager.groups['frames'][-1]
     
     def _get_latest_angles(self):
-        latest_roll = self.log_manager.groups["params"]["stateEstimate.roll"]["data"][-1]
-        latest_pitch = self.log_manager.groups["params"]["stateEstimate.pitch"]["data"][-1]
-        latest_yaw = self.log_manager.groups["params"]["stateEstimate.yaw"]["data"][-1]
+        latest_roll = self.log_manager.cf_log_data["stateEstimate.roll"]["data"][-1]
+        latest_pitch = self.log_manager.cf_log_data["stateEstimate.pitch"]["data"][-1]
+        latest_yaw = self.log_manager.cf_log_data["stateEstimate.yaw"]["data"][-1]
 
         # [roll, pitch, yaw] in degrees
         latest_angles = [latest_roll, latest_pitch, latest_yaw]
