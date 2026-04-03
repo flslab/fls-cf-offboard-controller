@@ -1012,6 +1012,7 @@ class Controller:
             target[i] = float(np.clip(target[i], lo, hi))
 
         logger.info(f"list: {target.tolist()}")
+        logger.info(f"duration: {1.0 / max(1, self.args.smooth_controller_rate)}")
 
         self.smooth_controller.set_group_values(
             "servos",
