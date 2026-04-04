@@ -893,6 +893,7 @@ class Controller:
                 initial_values=pointers[0],
                 callback=lambda vals: self.update_led(vals, led_setting)
             )
+            logger.info(f"Registered pointers with initial value: {pointers[0]}")
         elif led_setting.get('mode') == 'expression':
             def update_led_cb():
                 self.update_led(pointers, led_setting)
