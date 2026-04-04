@@ -990,47 +990,19 @@ class Controller:
             led_buffer.append(rgb)
 
         self.led.set_colors(led_buffer)
-    
-    def _quat_to_roll_pitch_deg(self, quat):
-        x, y, z, w = quat
-
-        # Roll (x-axis rotation)
-        t0 = 2.0 * (w * x + y * z)
-        t1 = 1.0 - 2.0 * (x * x + y * y)
-        roll = math.atan2(t0, t1)
-
-        # Pitch (y-axis rotation)
-        t2 = 2.0 * (w * y - z * x)
-        t2 = max(-1.0, min(1.0, t2))
-        pitch = math.asin(t2)
-
-        return math.degrees(roll), math.degrees(pitch)
-
 
     def update_servos(self):
-        if not self.args.servo or self.servo is None or self.smooth_controller is None:
-            return
-        if not self.flying:
-            return
-        if not self.log_manager or "frames" not in self.log_manager.groups:
-            return
+        latest_angles = self._get_latest_angles()
 
-        frames = self.log_manager.groups["frames"]
-        if not frames:
-            return
+        logger.info(f"angles: {latest_angles}")
 
-        frame = frames[-1]
-        quat = frame.get("quat")
-        if quat is None or len(quat) != 4:
-            return
-
-        roll_deg, pitch_deg = self._quat_to_roll_pitch_deg(quat)
+        roll_deg = latest_angles[0]
 
         if self.args.servo_type == "H":
-            target = np.array([0.0 - pitch_deg, 180.0 + roll_deg], dtype=float)
+            target = np.array([0.0 - roll_deg, 180.0 + roll_deg], dtype=float)
             limits = [(0.0, 180.0), (180.0, 360.0)]
         elif self.args.servo_type == "V":
-            target = np.array([180.0 - pitch_deg, 360.0 + roll_deg], dtype=float)
+            target = np.array([180.0 - roll_deg, 360.0 + roll_deg], dtype=float)
             limits = [(90.0, 270.0), (270.0, 450.0)]
         else:
             return
@@ -1039,12 +1011,8 @@ class Controller:
         for i, (lo, hi) in enumerate(limits):
             target[i] = float(np.clip(target[i], lo, hi))
 
-        # Avoid spamming tiny corrections.
-        if self._last_servo_target is not None:
-            if np.allclose(target, self._last_servo_target, atol=0.5):
-                return
-
-        self._last_servo_target = target.copy()
+        logger.info(f"list: {target.tolist()}")
+        logger.info(f"duration: {1.0 / max(1, self.args.smooth_controller_rate)}")
 
         self.smooth_controller.set_group_values(
             "servos",
@@ -1246,6 +1214,16 @@ class Controller:
 
     def _get_latest_mocap_frame(self):
         return self.log_manager.groups['frames'][-1]
+
+    def _get_latest_angles(self):
+        latest_roll = self.log_manager.cf_log_data["stateEstimate.roll"]["data"][-1]
+        latest_pitch = self.log_manager.cf_log_data["stateEstimate.pitch"]["data"][-1]
+        latest_yaw = self.log_manager.cf_log_data["stateEstimate.yaw"]["data"][-1]
+
+        # [roll, pitch, yaw] in degrees
+        latest_angles = [latest_roll, latest_pitch, latest_yaw]
+
+        return latest_angles
 
     def _get_drone_by_id(self, drone_id):
         for drone in self.manifest['drones']:
