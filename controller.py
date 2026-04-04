@@ -291,9 +291,9 @@ class Controller:
             return
 
         from servo_pwm import Servo
-        offsets = [0, -180] if self.args.servo_type == 'a' else [-90, -270]
-        ranges = [(0, 180), (180, 360)] if args.servo_type == 'a' else [(90, 270), (270, 450)]
-        initial_values = (1, 181) if args.servo_type == 'a' else (181, 361)
+        offsets = [0, -180] if self.args.servo_type == "H" else [-90, -270]
+        ranges = [(0, 180), (180, 360)] if args.servo_type == "H" else [(90, 270), (270, 450)]
+        initial_values = (1, 181) if args.servo_type == "H" else (181, 361)
 
         self.servo = Servo(self.args.servo_count, offsets)
         time.sleep(0.1)
@@ -1026,10 +1026,10 @@ class Controller:
 
         roll_deg, pitch_deg = self._quat_to_roll_pitch_deg(quat)
 
-        if self.args.servo_type == "a":
+        if self.args.servo_type == "H":
             target = np.array([0.0 - pitch_deg, 180.0 + roll_deg], dtype=float)
             limits = [(0.0, 180.0), (180.0, 360.0)]
-        elif self.args.servo_type == "b":
+        elif self.args.servo_type == "V":
             target = np.array([180.0 - pitch_deg, 360.0 + roll_deg], dtype=float)
             limits = [(90.0, 270.0), (270.0, 450.0)]
         else:
@@ -1202,9 +1202,9 @@ class Controller:
         self.cf.param.set_value('locSrv.extPosStdDev', std_dev)
 
     def _set_safe_servo_angles(self):
-        if self.args.servo_type == 'a':
+        if self.args.servo_type == "H":
             self.smooth_controller.set_group_values("servos", [0, 180], 0.5)
-        elif self.args.servo_type == 'b':
+        elif self.args.servo_type == "V":
             self.smooth_controller.set_group_values("servos", [180, 360], 0.5)
 
     def _start_tracker_process(self):
@@ -1281,7 +1281,7 @@ if __name__ == '__main__':
     ap.add_argument("--led-brightness", type=float, default=1.0, help="change led brightness between 0 and 1")
     ap.add_argument("--led-count", type=int, default=50, help="Number of LEDs")
     ap.add_argument("--servo", help="Use servo", action="store_true", default=False)
-    ap.add_argument("--servo-type", type=str, help="type of light bender servo setting")
+    ap.add_argument("--servo-type", type=str, choices=["H", "V"], default="H", help="type of light bender servo setting")
     ap.add_argument("--servo-count", type=int, default=2, help="number of the servos")
     ap.add_argument("--smooth-controller-rate", type=int, default=30, help="rate of smooth controller update loop")
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")
