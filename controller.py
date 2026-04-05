@@ -675,12 +675,12 @@ class Controller:
             peer_ips = [d['ip'] for d in self.manifest['drones'] if d['id'] != self.args.drone_id]
             peer_transport = self.mission.get('Interaction', {}).get('peer_transport', 'udp').lower()
             if peer_transport == 'tcp':
-                from Interaction.UDPHelper import TCPPeerPublisher, TCPPeerSubscriber
+                from Interaction.ConnectionHelper import TCPPeerPublisher, TCPPeerSubscriber
                 interact_pub = TCPPeerPublisher(port)
                 interact_sub = TCPPeerSubscriber(peer_ips, port)
                 logger.info(f"Peer mode: TCP/ZMQ bound on :{port}, peers={peer_ips}")
             else:
-                from Interaction.UDPHelper import UDPPublisher, UDPSubscriber
+                from Interaction.ConnectionHelper import UDPPublisher, UDPSubscriber
                 interact_pub = UDPPublisher(peer_ips, port)
                 interact_sub = UDPSubscriber(port)
                 logger.info(f"Peer mode: UDP bound on :{port}, peers={peer_ips}")
@@ -774,6 +774,10 @@ class Controller:
 
     def interation_switch(self):
         try:
+            if self.args.ground_test:
+                self._safe_sleep(30)
+                return
+
             if self.args.intractable_illumination:
                 self.orchestrated_mission_interaction()
             elif self.mission.get("Recap", None):
