@@ -185,9 +185,9 @@ class Controller:
 
     def start(self):
         self.load_manifest()
+        self.download_mission_config()
         self.setup_motion_capture()
         self.setup_sockets()
-        self.download_mission_config()
         if not self.args.droneless:
             self.check_deck()
             self.setup_smooth_controller()
