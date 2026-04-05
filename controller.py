@@ -185,9 +185,10 @@ class Controller:
 
     def start(self):
         self.load_manifest()
-        self.setup_motion_capture()
         self.setup_sockets()
         self.download_mission_config()
+        self.setup_logging()
+        self.setup_motion_capture()
         if not self.args.droneless:
             self.check_deck()
             self.setup_smooth_controller()
@@ -196,7 +197,6 @@ class Controller:
             self.setup_battery_watcher()
             self.setup_tracker()
             self.setup_params()
-        self.setup_logging()
 
         self.handshake()
 
