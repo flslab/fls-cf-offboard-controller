@@ -132,6 +132,7 @@ class SwarmOrchestrator:
         servo_count = drone.get('servo_count', 2)
         led_count = drone.get('led_count', 50)
         radio_arg = f"--radio {drone['uri']}" if self.args.radio else ""
+        droneless_arg = "--droneless" if self.args.droneless else ""
         p = drone.get('init_pos', None)
         obj_name = drone.get('label', None)
         if p:
@@ -154,15 +155,17 @@ class SwarmOrchestrator:
             f"nohup python3 {DRONE_SCRIPT} "
             f"--orchestrated --interaction --tag {self.tag} ",
             f"--intractable-illumination" if getattr(self.args, 'intractable_illumination', False) else "",
+            f"--ground-test " if self.args.ground else "",
             f"{radio_arg} "
             f"{extra_marker_args} "
             f"--vicon {mocap_args} "
             f"--drone-id {drone['id']} ",
             f"--led --led-count {led_count} " if led_count > 0 and not self.args.radio else " ",
-            f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 and not self.args.radio else " ",
+            f"--servo --servo-type {drone.get('type', 'H')} --servo-count {servo_count} " if servo_count > 0 and not self.args.radio else " ",
             f"--takeoff-altitude {alt} "
             "--smooth-controller-rate 50 "
             "--log "
+            f"{droneless_arg} "
             # "--cf-log-period 10 "
             # "--skip-takeoff --skip-landing "
             f"> drone_{drone['id']}.log 2>&1 < /dev/null &",
@@ -596,6 +599,8 @@ if __name__ == "__main__":
     parser.add_argument("--http-port", type=int, default=None, help="override manifest http_port")
     parser.add_argument("--zmq-cmd-port", type=int, default=None, help="override manifest zmq_cmd_port")
     parser.add_argument("--zmq-ack-port", type=int, default=None, help="override manifest zmq_ack_port")
+    parser.add_argument("--droneless", action="store_true", help="Run without FC conneced")
+
     args = parser.parse_args()
 
     orchestrator = SwarmOrchestrator(args)

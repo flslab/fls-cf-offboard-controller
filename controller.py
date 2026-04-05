@@ -158,6 +158,11 @@ class Controller:
             reboot_crazyflie(self.uri)
             time.sleep(5)
 
+        if self.args.droneless:
+            logger.info("Testing Without Drone")
+            self.cf = Crazyflie()
+            return self
+
         self.connect()
         return self
 
@@ -180,23 +185,27 @@ class Controller:
 
     def start(self):
         self.load_manifest()
-        self.check_deck()
-        self.setup_smooth_controller()
-        self.setup_led()
-        self.setup_servo()
-        self.setup_sockets()
-        self.setup_logging()
-        self.setup_battery_watcher()
-        self.download_mission_config()
         self.setup_motion_capture()
-        self.setup_tracker()
-        self.setup_params()
+        self.setup_sockets()
+        self.download_mission_config()
+        if not self.args.droneless:
+            self.check_deck()
+            self.setup_smooth_controller()
+            self.setup_led()
+            self.setup_servo()
+            self.setup_logging()
+            self.setup_battery_watcher()
+            self.setup_tracker()
+            self.setup_params()
+
         self.handshake()
-        if self.led:
-            self.led.clear()
-        self.save_init_coord()
-        self.arm()
-        self.takeoff()
+
+        if not self.args.droneless:
+            if self.led:
+                self.led.clear()
+            self.save_init_coord()
+            self.arm()
+            self.takeoff()
         self.run_mission()
 
     def stop(self):
@@ -625,6 +634,7 @@ class Controller:
         led_setting = mission_setting.get('led', {})
         interaction = mission_setting.get('interaction', False)
         peer_mode = self.mission.get('Interaction', {}).get('peer', False)
+        execution = False if self.args.droneless else True
 
         if position_offset:
             for i in range(3):
@@ -687,7 +697,7 @@ class Controller:
             time.sleep(0.2)
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id,
-                                     pub_socket=interact_pub, sub_socket=interact_sub)
+                                     pub_socket=interact_pub, sub_socket=interact_sub, execute=execution)
             IC.run()
             interact_pub.close()
             interact_sub.close()
@@ -728,7 +738,7 @@ class Controller:
                                                name=follow['id'])
 
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                     self.args.smooth_controller_rate, leader_info=follow)
+                                     self.args.smooth_controller_rate, leader_info=follow, execute=execution)
             IC.run()
             self.mocap.unsubscribe_point(leader_id)
             self.cf.commander.send_notify_setpoint_stop()
@@ -743,7 +753,7 @@ class Controller:
             logger.info(f"Network follow: subscribed to {interaction_drone_ip}:{zmq_interact_port}")
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, leader_info=follow,
-                                     sub_socket=interact_sub)
+                                     sub_socket=interact_sub, execute=execution)
             IC.run()
             interact_sub.close()
 
@@ -761,7 +771,7 @@ class Controller:
                 time.sleep(0.5)  # allow subscribers to connect before first broadcast
                 logger.info(f"Interaction broadcast on port {zmq_interact_port}")
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                     self.args.smooth_controller_rate, pub_socket=interact_pub)
+                                     self.args.smooth_controller_rate, pub_socket=interact_pub, execute=execution)
             IC.run()
             if interact_pub is not None:
                 interact_pub.close()
@@ -1299,6 +1309,7 @@ if __name__ == '__main__':
     ap.add_argument("--skip-takeoff", action="store_true", help="run mission without taking off")
     ap.add_argument("--skip-landing", action="store_true", help="run mission without landing")
     ap.add_argument("--radio", type=str, help="specify the CrazyRadio URI (e.g., 'radio://0/6/1M/E7E7E7E704')")
+    ap.add_argument("--droneless", action="store_true", help="run mission without connecting to fc")
 
 
     args = ap.parse_args()
