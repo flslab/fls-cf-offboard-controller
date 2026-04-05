@@ -187,10 +187,10 @@ class Controller:
         self.setup_sockets()
         self.setup_logging()
         self.setup_battery_watcher()
+        self.download_mission_config()
         self.setup_motion_capture()
         self.setup_tracker()
         self.setup_params()
-        self.download_mission_config()
         self.handshake()
         if self.led:
             self.led.clear()
@@ -291,9 +291,9 @@ class Controller:
             return
 
         from servo_pwm import Servo
-        offsets = [0, -180] if self.args.servo_type == 'a' else [-90, -270]
-        ranges = [(0, 180), (180, 360)] if args.servo_type == 'a' else [(90, 270), (270, 450)]
-        initial_values = (1, 181) if args.servo_type == 'a' else (181, 361)
+        offsets = [0, -180] if self.args.servo_type == "H" else [-90, -270]
+        ranges = [(0, 180), (180, 360)] if args.servo_type == "H" else [(90, 270), (270, 450)]
+        initial_values = (1, 181) if args.servo_type == "H" else (181, 361)
 
         self.servo = Servo(self.args.servo_count, offsets)
         time.sleep(0.1)
@@ -336,6 +336,12 @@ class Controller:
             self.mocap.subscribe_point(self.args.init_pos, on_pose, name=self.args.drone_id)
 
         self.mocap.start()
+
+        anchor = self.mission.get("anchor", None)
+        if anchor:
+            logger.info(f"Tracking Anchor: {anchor}")
+            self.mocap.set_anchor_point(anchor)
+
         logger.debug("mocap activated")
 
     def setup_tracker(self):
@@ -548,77 +554,8 @@ class Controller:
             if self.args.illumination:
                 self.orchestrated_mission()
             elif self.args.interaction:
-                anchor = self.mission.get("anchor", None)
-                if anchor:
-                    logger.info(f"Tracking Anchor: {anchor}")
-                    self.mocap.set_anchor_point(anchor)
-                # self._safe_sleep(10)
-                # return
-                try:
-                    if self.args.intractable_illumination:
-                        self.orchestrated_mission_interaction()
-                    elif self.mission.get("Recap", None):
-                        recap_cfg = self.mission["Recap"]
-                        n = recap_cfg.get("iterations", 1)
+                self.interation_switch()
 
-                        # Support both single file (legacy) and list of files.
-                        raw_files = recap_cfg.get("files", recap_cfg.get("file"))
-                        if isinstance(raw_files, str):
-                            files = [raw_files]
-                        else:
-                            files = list(raw_files)
-
-                        logger.info(f"Recap mode: {n} iteration(s) x {len(files)} file(s)")
-                        first_run = True
-                        for i in range(n):
-                            for j, file_path in enumerate(files):
-                                logger.info(f"--- Recap iteration {i + 1}/{n}, file {j + 1}/{len(files)}: {file_path} ---")
-
-                                # Skip takeoff only on the very first run (already airborne).
-                                if not first_run:
-                                    self._recap_land()
-                                    self._recap_takeoff()
-                                first_run = False
-
-
-                                # Build a per-file mission dict so IC sees the right file + alpha_vel.
-                                IC = InteractionsControl(
-                                    self.cf, self._safe_sleep,
-                                    self.log_manager, self.mission,
-                                    self.args.smooth_controller_rate
-                                )
-                                IC.run_recap(file_path)
-                    else:
-                        n = self.mission["Interaction"].get("iteration", 1)
-                        logger.info(f"Iteration {n}")
-                        first_run = True
-                        for i in range(n):
-
-                            if not first_run:
-                                self._recap_land()
-                                self._recap_takeoff()
-                            first_run = False
-                            mission_setting = self.mission['drones'][self.args.drone_id]
-                            follow = mission_setting.get('follow', None)
-                            if follow:
-                                self.log_manager.add_log_group(follow['id'], kf=True)
-                                if self.args.vicon_mode == "rigidbody":
-                                    self.mocap.subscribe_object(follow['id'],
-                                                                lambda frame: self._log_mocap(frame, follow['id']))
-                                elif self.args.vicon_mode == "pointcloud":
-                                    leader_target_pos = self.mission['drones'][follow['id']]['target'][:3]
-                                    self.mocap.subscribe_point(leader_target_pos,
-                                                               lambda frame: self._log_mocap(frame, follow['id']),
-                                                               name=follow['id'])
-
-                            IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                                     self.args.smooth_controller_rate, leader_info=follow)
-                            IC.run()
-
-                except Exception as e:
-                    logging.error(f"Interaction Error: {e}\n")
-                finally:
-                    self.cf.commander.send_notify_setpoint_stop()
         else:
             logger.info(f"Hovering for {self.args.t} seconds...")
             self._safe_sleep(self.args.t)
@@ -835,6 +772,72 @@ class Controller:
 
         self.led.clear()
 
+    def interation_switch(self):
+        try:
+            if self.args.intractable_illumination:
+                self.orchestrated_mission_interaction()
+            elif self.mission.get("Recap", None):
+                recap_cfg = self.mission["Recap"]
+                n = recap_cfg.get("iterations", 1)
+
+                # Support both single file (legacy) and list of files.
+                raw_files = recap_cfg.get("files", recap_cfg.get("file"))
+                if isinstance(raw_files, str):
+                    files = [raw_files]
+                else:
+                    files = list(raw_files)
+
+                logger.info(f"Recap mode: {n} iteration(s) x {len(files)} file(s)")
+                first_run = True
+                for i in range(n):
+                    for j, file_path in enumerate(files):
+                        logger.info(f"--- Recap iteration {i + 1}/{n}, file {j + 1}/{len(files)}: {file_path} ---")
+
+                        # Skip takeoff only on the very first run (already airborne).
+                        if not first_run:
+                            self._recap_land()
+                            self._recap_takeoff()
+                        first_run = False
+
+                        # Build a per-file mission dict so IC sees the right file + alpha_vel.
+                        IC = InteractionsControl(
+                            self.cf, self._safe_sleep,
+                            self.log_manager, self.mission,
+                            self.args.smooth_controller_rate
+                        )
+                        IC.run_recap(file_path)
+            else:
+                n = self.mission["Interaction"].get("iteration", 1)
+                logger.info(f"Iteration {n}")
+                first_run = True
+                for i in range(n):
+
+                    if not first_run:
+                        self._recap_land()
+                        self._recap_takeoff()
+                    first_run = False
+                    mission_setting = self.mission['drones'][self.args.drone_id]
+                    follow = mission_setting.get('follow', None)
+                    if follow:
+                        self.log_manager.add_log_group(follow['id'], kf=True)
+                        if self.args.vicon_mode == "rigidbody":
+                            self.mocap.subscribe_object(follow['id'],
+                                                        lambda frame: self._log_mocap(frame, follow['id']))
+                        elif self.args.vicon_mode == "pointcloud":
+                            leader_target_pos = self.mission['drones'][follow['id']]['target'][:3]
+                            self.mocap.subscribe_point(leader_target_pos,
+                                                       lambda frame: self._log_mocap(frame, follow['id']),
+                                                       name=follow['id'])
+
+                    IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                                             self.args.smooth_controller_rate, leader_info=follow)
+                    IC.run()
+
+        except Exception as e:
+            logging.error(f"Interaction Error: {e}\n")
+        finally:
+            self.cf.commander.send_notify_setpoint_stop()
+
     def orchestrated_mission(self):
         mission_setting = self.mission['drones'][self.args.drone_id]
         target = mission_setting['target']
@@ -871,7 +874,12 @@ class Controller:
             dt = 6 * dist
 
         if len(angles):
-            self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
+            if self.args.morphing:
+                def update_servos_cb():
+                    self.update_servos()
+                self.smooth_controller.add_update_callback(update_servos_cb)
+            else:
+                self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
 
         if not self.args.ground_test:
             self.commander.go_to(x, y, z, yaw, dt, relative=False)
@@ -888,6 +896,8 @@ class Controller:
                 initial_values=pointers[0],
                 callback=lambda vals: self.update_led(vals, led_setting)
             )
+            logger.info(f"Registered pointers with initial value: {pointers[0]}")
+            self.update_led(pointers[0], led_setting)
         elif led_setting.get('mode') == 'expression':
             def update_led_cb():
                 self.update_led(pointers, led_setting)
@@ -973,8 +983,9 @@ class Controller:
         formula_str = led_setting["formula"]
         led_buffer = []
         current_time = time.time() - self.animation_start_time
-        # x, y, z = self._get_latest_mocap_frame()
-        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math}
+        x, y, z = self._get_latest_mocap_frame()["tvec"]
+        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math, "x": x, "y": y, "z": z}
+        print(formula_str)
         for j, p in enumerate(pointers):
             context[f"p{j}"] = p
 
@@ -985,6 +996,35 @@ class Controller:
             led_buffer.append(rgb)
 
         self.led.set_colors(led_buffer)
+
+    def update_servos(self):
+        latest_angles = self._get_latest_angles()
+
+        logger.info(f"angles: {latest_angles}")
+
+        roll_deg = latest_angles[0]
+
+        if self.args.servo_type == "H":
+            target = np.array([0.0 - roll_deg, 180.0 + roll_deg], dtype=float)
+            limits = [(0.0, 180.0), (180.0, 360.0)]
+        elif self.args.servo_type == "V":
+            target = np.array([180.0 - roll_deg, 360.0 + roll_deg], dtype=float)
+            limits = [(90.0, 270.0), (270.0, 450.0)]
+        else:
+            return
+
+        # Keep values inside the configured servo range.
+        for i, (lo, hi) in enumerate(limits):
+            target[i] = float(np.clip(target[i], lo, hi))
+
+        logger.info(f"list: {target.tolist()}")
+        logger.info(f"duration: {1.0 / max(1, self.args.smooth_controller_rate)}")
+
+        self.smooth_controller.set_group_values(
+            "servos",
+            target.tolist(),
+            duration=1.0 / max(1, self.args.smooth_controller_rate),
+        )
 
     def run_servo(self, angles, delta_t, iterations):
         for _ in range(iterations):
@@ -1136,9 +1176,9 @@ class Controller:
         self.cf.param.set_value('locSrv.extPosStdDev', std_dev)
 
     def _set_safe_servo_angles(self):
-        if self.args.servo_type == 'a':
+        if self.args.servo_type == "H":
             self.smooth_controller.set_group_values("servos", [0, 180], 0.5)
-        elif self.args.servo_type == 'b':
+        elif self.args.servo_type == "V":
             self.smooth_controller.set_group_values("servos", [180, 360], 0.5)
 
     def _start_tracker_process(self):
@@ -1181,6 +1221,16 @@ class Controller:
     def _get_latest_mocap_frame(self):
         return self.log_manager.groups['frames'][-1]
 
+    def _get_latest_angles(self):
+        latest_roll = self.log_manager.cf_log_data["stateEstimate.roll"]["data"][-1]
+        latest_pitch = self.log_manager.cf_log_data["stateEstimate.pitch"]["data"][-1]
+        latest_yaw = self.log_manager.cf_log_data["stateEstimate.yaw"]["data"][-1]
+
+        # [roll, pitch, yaw] in degrees
+        latest_angles = [latest_roll, latest_pitch, latest_yaw]
+
+        return latest_angles
+
     def _get_drone_by_id(self, drone_id):
         for drone in self.manifest['drones']:
             if drone['id'] == drone_id:
@@ -1207,6 +1257,7 @@ if __name__ == '__main__':
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
     ap.add_argument("--intractable-illumination", action="store_true", help="interaction application with illumination")
+    ap.add_argument("--morphing", action="store_true", help="illumination application with morphing emulator")
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=None, type=float)
     ap.add_argument("-t", help="flight duration", default=None, type=float)
     ap.add_argument("--fps", type=int, default=120, help="position estimation rate, works with --localize")
@@ -1214,7 +1265,7 @@ if __name__ == '__main__':
     ap.add_argument("--led-brightness", type=float, default=1.0, help="change led brightness between 0 and 1")
     ap.add_argument("--led-count", type=int, default=50, help="Number of LEDs")
     ap.add_argument("--servo", help="Use servo", action="store_true", default=False)
-    ap.add_argument("--servo-type", type=str, help="type of light bender servo setting")
+    ap.add_argument("--servo-type", type=str, choices=["H", "V"], default="H", help="type of light bender servo setting")
     ap.add_argument("--servo-count", type=int, default=2, help="number of the servos")
     ap.add_argument("--smooth-controller-rate", type=int, default=30, help="rate of smooth controller update loop")
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")

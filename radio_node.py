@@ -24,10 +24,10 @@ class RadioGatewayNode:
         self.context = zmq.Context()
 
         self.push_socket = self.context.socket(zmq.PUSH)
-        self.push_socket.connect(f"tcp://{self.ctrl['ip']}:{self.ctrl['zmq_ack_port']}")
+        self.push_socket.bind(f"tcp://*:{self.ctrl['zmq_ack_port']}")
 
         self.sub_socket = self.context.socket(zmq.SUB)
-        self.sub_socket.connect(f"tcp://{self.ctrl['ip']}:{self.ctrl['zmq_cmd_port']}")
+        self.sub_socket.bind(f"tcp://*:{self.ctrl['zmq_cmd_port']}")
         self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
     def handle_reboot(self, uris):

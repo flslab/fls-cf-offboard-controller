@@ -70,20 +70,20 @@ def range_test(servos, a, b, n=5):
         time.sleep(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("-n", default=2, type=int, help="number of servos [1, 4]")
     ap.add_argument("-i", action="store_true")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--smooth", action="store_true")
-    ap.add_argument("--servo-type", type=str, default="a", choices=["a", "b"], help="type of LightBender servo setting. a: 0 to 180 degrees (default), b: 90 to 270 degrees")
+    ap.add_argument("--servo-type", type=str, default="H", choices=["H", "V"], help="type of LightBender servo setting. a: 0 to 180 degrees (default), b: 90 to 270 degrees")
     ap.add_argument("--range-test", type=int, nargs=3, default=[], help="range test angle1 angle2 repetitions")
     ap.add_argument("--set-all", type=int, nargs="+", default=[], help="set angles")
     args = ap.parse_args()
 
-    offsets = [0, -180] if args.servo_type == 'a' else [-90, -270]
-    ranges = [(0, 180), (180, 360)] if args.servo_type == 'a' else [(90, 270), (270, 450)]
-    initial_values = (1, 181) if args.servo_type == 'a' else (181, 361)
+    offsets = [0, -180] if args.servo_type == "H" else [-90, -270]
+    ranges = [(0, 180), (180, 360)] if args.servo_type == "H" else [(90, 270), (270, 450)]
+    initial_values = (1, 181) if args.servo_type == "H" else (181, 361)
     servos = Servo(args.n, offsets)
 
     # ---------------------------------------------------------
