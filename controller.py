@@ -484,13 +484,15 @@ class Controller:
             from log_manager import IlluminationLogger
             self.log_manager = IlluminationLogger(verbose=self.args.verbose)
             self.log_manager.start()
-            self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
+            if not self.args.droneless:
+                self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
             self.log_manager.add_log_group("frames")
 
         elif self.args.interaction:
             from Interaction.log_manager import InteractionLogger
             self.log_manager = InteractionLogger(controller_args=self.args)
-            self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
+            if not self.args.droneless:
+                self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
             self.log_manager.add_log_group("frames", kf=True)
             self.log_manager.add_log_group("events")
             self.log_manager.add_log_group("commands")
