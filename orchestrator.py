@@ -370,7 +370,7 @@ class SwarmOrchestrator:
                 self.logger.info("Radio Node did not respond after multiple attempts. Reboot failed.")
                 return
         else:
-            if not self.args.radio:
+            if not self.args.radio or not self.args.droneless:
                 for drone in self.drones:
                     reboot_crazyflie(drone['uri'])
         time.sleep(5)  # Wait for reboot

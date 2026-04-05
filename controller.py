@@ -1222,11 +1222,11 @@ class Controller:
             self.deck_attached_event.set()
 
     def _send_position(self, frame):
-        self.scf.cf.extpos.send_extpos(*frame['tvec'])
+        self.cf.extpos.send_extpos(*frame['tvec'])
         self._log_mocap(frame)
 
     def _send_position_orientation(self, frame):
-        self.scf.cf.extpos.send_extpose(*frame['tvec'], *frame['quat'])
+        self.cf.extpos.send_extpose(*frame['tvec'], *frame['quat'])
         self._log_mocap(frame)
 
     def _log_mocap(self, frame, group_name='frames'):
