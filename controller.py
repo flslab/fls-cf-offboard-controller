@@ -1192,7 +1192,7 @@ class Controller:
         self.cf.param.set_value('locSrv.extPosStdDev', std_dev)
 
     def _set_safe_servo_angles(self):
-        if not self.smooth_controller:
+        if not self.servo or not self.smooth_controller:
             return
         if self.args.servo_type == "H":
             self.smooth_controller.set_group_values("servos", [0, 180], 0.5)
