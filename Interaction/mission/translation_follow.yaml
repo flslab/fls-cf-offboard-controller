@@ -13,7 +13,7 @@ Interaction:
   config:
     delta_v: 0.13
     z: 1
-    friction_coefficient: -0.01
+    friction_coefficient: 0
     base_attitude: -1
     duration: 20
     v_scalar: [10, 10, 3]
