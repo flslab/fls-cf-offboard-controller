@@ -380,6 +380,8 @@ class InteractionsControl:
                 vel[2] = 0
 
             speed = np.linalg.norm(vel)
+
+            logger.info(f"Current speed: {speed}")
             
             if status == 0:  # wait for user interaction
                 if detect_speed_threshold(speed):
@@ -592,7 +594,6 @@ class InteractionsControl:
                 vel[2] = 0.0
 
             speed = np.linalg.norm(vel)
-
             if status == 0:
                 if receiving_peer_push:
                     if peer_grace_start is not None:
