@@ -193,10 +193,10 @@ class Controller:
             self.setup_smooth_controller()
             self.setup_led()
             self.setup_servo()
-            self.setup_logging()
             self.setup_battery_watcher()
             self.setup_tracker()
             self.setup_params()
+        self.setup_logging()
 
         self.handshake()
 
