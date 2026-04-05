@@ -201,7 +201,7 @@ class SwarmOrchestrator:
             f"--illumination --orchestrated --tag {self.tag} ",
             "--ground-test " if self.args.ground else f"--vicon {mocap_args} ",
             f"--drone-id {drone['id']} ",
-            f"--led --led-count {led_count} " if led_count > 0 else " ",
+            f"--led --led-brightness 0.25 --led-count {led_count} " if led_count > 0 else " ",
             f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
             f"--takeoff-altitude {alt} ",
             "--smooth-controller-rate 50 ",
@@ -397,7 +397,7 @@ class SwarmOrchestrator:
             self.pub_socket.send_json({"cmd": "_"})
             time.sleep(2)
             if not self.args.record:
-                #self.reboot_flight_controllers(remote=bool(self.radio_node))
+                self.reboot_flight_controllers(remote=bool(self.radio_node))
 
                 for drone in self.drones:
                     cmd = self._get_drone_cmd(drone)
@@ -447,7 +447,9 @@ class SwarmOrchestrator:
             if self.manifest['mission']['require_handshake']:
                 self.ready_ids = set()
                 self._wait_for_ready()
-                input(">>> All Green. Press ENTER to proceed (Ctrl+C to Abort)...")
+                if not self.args.skip_confirm:
+                    input(">>> All at target. Press ENTER to proceed (Ctrl+C to Abort)...")
+                time.sleep(2)
                 self.logger.info("Broadcasting START...")
                 self.pub_socket.send_json({"cmd": "START"})
 
