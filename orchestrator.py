@@ -319,6 +319,9 @@ class SwarmOrchestrator:
         """
         uris = [d['uri'] for d in self.drones]
 
+        if self.args.radio or self.args.droneless:
+            return
+
         if remote:
             if not self.radio_node:
                 print("[Orchestrator] Cannot perform remote reboot: No 'radio_node' in manifest.")
@@ -370,9 +373,8 @@ class SwarmOrchestrator:
                 self.logger.info("Radio Node did not respond after multiple attempts. Reboot failed.")
                 return
         else:
-            if not self.args.radio or not self.args.droneless:
-                for drone in self.drones:
-                    reboot_crazyflie(drone['uri'])
+            for drone in self.drones:
+                reboot_crazyflie(drone['uri'])
         time.sleep(5)  # Wait for reboot
 
     def run(self):

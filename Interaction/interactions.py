@@ -381,8 +381,6 @@ class InteractionsControl:
 
             speed = np.linalg.norm(vel)
 
-            logger.info(f"Current speed: {speed}")
-            
             if status == 0:  # wait for user interaction
                 if detect_speed_threshold(speed):
                     logger.info(f"Switching to Translation From {status}.")
