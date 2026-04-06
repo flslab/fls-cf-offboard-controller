@@ -32,17 +32,33 @@ def run_receiver(port):
     print(f"[Receiver] Connected from {addr}")
 
     received = 0
+    buf = b''
+    first_arrival = None
+    last_arrival = None
+
     try:
         while received < NUM_PACKETS:
-            data = conn.recv(PACKET_SIZE)
-            if not data:
+            chunk = conn.recv(65536)
+            if not chunk:
                 break
-            received += len(data) // PACKET_SIZE
+            buf += chunk
+            # Timestamp each complete packet boundary
+            while len(buf) >= PACKET_SIZE:
+                buf = buf[PACKET_SIZE:]
+                t = time.perf_counter()
+                if first_arrival is None:
+                    first_arrival = t
+                last_arrival = t
+                received += 1
     finally:
         conn.close()
         server.close()
 
-    print(f"[Receiver] Received {received} packets ({received * PACKET_SIZE} bytes total)")
+    avg_iat = (last_arrival - first_arrival) / (received - 1) * 1e6 if received > 1 else 0.0
+    print(f"\n[Receiver] Results:")
+    print(f"  Packets received             : {received:,}")
+    print(f"  Total reception time         : {last_arrival - first_arrival:.4f} s")
+    print(f"  Avg packet inter-arrival time: {avg_iat:.4f} us")
 
 
 def run_sender(peer_ip, port):
