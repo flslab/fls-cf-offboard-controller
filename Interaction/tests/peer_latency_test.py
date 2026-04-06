@@ -25,13 +25,13 @@ DEFAULT_PORT = 5570
 # Match the JSON payload shape used in interactions.py:
 #   pub_socket.send_json({"type": "push", "drone_id": ...,
 #                         "accumulated_offset": [...], "push_start_time": ...})
-PAYLOAD = {
-    "type": "push",
-    "drone_id": "lb6",
-    "accumulated_offset": [0.0, 0.0, 0.0],
-    "push_start_time": 0.0,
-}
-# PAYLOAD = b'\x00' * 20  # 20-byte fixed payload
+# PAYLOAD = {
+#     "type": "push",
+#     "drone_id": "lb6",
+#     "accumulated_offset": [0.0, 0.0, 0.0],
+#     "push_start_time": 0.0,
+# }
+PAYLOAD = b'\x00' * 20  # 20-byte fixed payload
 
 
 def run_receiver(port, sender_ip):
