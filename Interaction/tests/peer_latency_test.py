@@ -1,95 +1,94 @@
 """
-Peer TCP latency test.
+Peer TCP latency test — uses the same ZMQ PUB/SUB + send_json mechanism as interactions.py
+so results are directly comparable to live interaction latency.
 
 Run on the receiver drone first:
     python3 Interaction/tests/peer_latency_test.py --role receiver
 
 Then on the sender drone (or locally with --droneless):
     python3 Interaction/tests/peer_latency_test.py --role sender --peer-ip <receiver_ip>
-
-With droneless flag (no physical drone required):
-    python3 orchestrator.py --interaction --droneless --skip-confirm
-    (uses peer_latency_test mission file)
 """
 
 import argparse
-import socket
 import time
 
+import zmq
+
+from Interaction.ConnectionHelper import TCPPeerPublisher
+
 NUM_PACKETS = 1_000_000
-PACKET_SIZE = 20  # bytes
 DEFAULT_PORT = 5570
+
+# Match the JSON payload shape used in interactions.py:
+#   pub_socket.send_json({"type": "push", "drone_id": ...,
+#                         "accumulated_offset": [...], "push_start_time": ...})
+PAYLOAD = {
+    "type": "push",
+    "drone_id": "lb6",
+    "accumulated_offset": [0.0, 0.0, 0.0],
+    "push_start_time": 0.0,
+}
 
 
 def run_receiver(port):
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(('', port))
-    server.listen(1)
+    ctx = zmq.Context()
+    sock = ctx.socket(zmq.SUB)
+    sock.setsockopt_string(zmq.SUBSCRIBE, "")
+    sock.bind(f"tcp://*:{port}")
     print(f"[Receiver] Listening on port {port}...")
 
-    conn, addr = server.accept()
-    print(f"[Receiver] Connected from {addr}")
-
-    received = 0
-    buf = b''
-    first_arrival = None
-    last_arrival = None
+    # Block until the first message arrives (sender may need a moment to connect)
+    sock.recv_json()
+    first_arrival = time.perf_counter()
+    received = 1
 
     try:
         while received < NUM_PACKETS:
-            chunk = conn.recv(65536)
-            if not chunk:
-                break
-            buf += chunk
-            # Timestamp each complete packet boundary
-            while len(buf) >= PACKET_SIZE:
-                buf = buf[PACKET_SIZE:]
-                t = time.perf_counter()
-                if first_arrival is None:
-                    first_arrival = t
-                last_arrival = t
-                received += 1
+            sock.recv_json()          # blocking — captures every message
+            last_arrival = time.perf_counter()
+            received += 1
     finally:
-        conn.close()
-        server.close()
+        sock.close()
+        ctx.term()
 
-    avg_iat = (last_arrival - first_arrival) / (received - 1) * 1e6 if received > 1 else 0.0
+    total_time = last_arrival - first_arrival
+    avg_iat = total_time / (received - 1) * 1e6 if received > 1 else 0.0
+
     print(f"\n[Receiver] Results:")
     print(f"  Packets received             : {received:,}")
-    print(f"  Total reception time         : {last_arrival - first_arrival:.4f} s")
+    print(f"  Total reception time         : {total_time:.4f} s")
     print(f"  Avg packet inter-arrival time: {avg_iat:.4f} us")
 
 
-def run_sender(peer_ip, port):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    print(f"[Sender] Connecting to {peer_ip}:{port}...")
-    sock.connect((peer_ip, port))
-    print(f"[Sender] Connected. Sending {NUM_PACKETS:,} packets of {PACKET_SIZE} bytes each...")
+def run_sender(port):
+    pub = TCPPeerPublisher(port)
+    print(f"[Sender] Bound on :{port}. Waiting for receiver to connect...")
+    time.sleep(1)  # give the SUB socket time to connect
 
-    payload = b'\x00' * PACKET_SIZE
+    print(f"[Sender] Sending {NUM_PACKETS:,} packets...")
 
     s = time.perf_counter()
-    for _ in range(NUM_PACKETS):
-        sock.sendall(payload)
+    for i in range(NUM_PACKETS):
+        PAYLOAD["push_start_time"] = i   # vary field so ZMQ does not deduplicate
+        pub.send_json(PAYLOAD)
     e = time.perf_counter() - s
 
-    sock.close()
+    pub.close()
 
     print(f"\n[Sender] Results:")
-    print(f"  Total elapsed time       : {e:.4f} s")
-    print(f"  Average per-packet time  : {e / NUM_PACKETS * 1e6:.4f} us")
-    print(f"  Throughput               : {NUM_PACKETS * PACKET_SIZE / e / 1e6:.2f} MB/s")
+    print(f"  Total elapsed time           : {e:.4f} s")
+    print(f"  Avg per-packet send time     : {e / NUM_PACKETS * 1e6:.4f} us")
+    print(f"  Throughput                   : {NUM_PACKETS / e:.0f} msgs/s")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Peer TCP latency test")
+    parser = argparse.ArgumentParser(description="Peer ZMQ latency test (same transport as interactions.py)")
     parser.add_argument("--role", choices=["sender", "receiver"], required=True,
                         help="Run as sender or receiver")
     parser.add_argument("--peer-ip", type=str, default="127.0.0.1",
-                        help="IP of the receiver (sender only)")
+                        help="IP of the sender (receiver side does not need this)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT,
-                        help=f"TCP port (default: {DEFAULT_PORT})")
+                        help=f"ZMQ port (default: {DEFAULT_PORT})")
     parser.add_argument("--droneless", action="store_true",
                         help="No-op flag for compatibility with orchestrator launch")
     args = parser.parse_args()
@@ -97,4 +96,4 @@ if __name__ == "__main__":
     if args.role == "receiver":
         run_receiver(args.port)
     else:
-        run_sender(args.peer_ip, args.port)
+        run_sender(args.port)
