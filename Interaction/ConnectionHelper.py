@@ -65,9 +65,11 @@ class TCPPeerPublisher:
 class TCPPeerSubscriber:
     """ZMQ SUB socket — drains all pending messages and returns the latest."""
 
-    def __init__(self, peer_ips, port):
+    def __init__(self, peer_ips, port, unlimited_hwm=False):
         self._ctx = zmq.Context()
         self._sock = self._ctx.socket(zmq.SUB)
+        if unlimited_hwm:
+            self._sock.setsockopt(zmq.RCVHWM, 0)
         self._sock.setsockopt_string(zmq.SUBSCRIBE, "")
         for ip in peer_ips:
             self._sock.connect(f"tcp://{ip}:{port}")

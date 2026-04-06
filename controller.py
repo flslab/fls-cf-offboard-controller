@@ -690,7 +690,7 @@ class Controller:
                 from Interaction.ConnectionHelper import TCPPeerPublisher, TCPPeerSubscriber
                 latency_test = self.mission.get('Interaction', {}).get('action') == 'peer_latency_test'
                 interact_pub = TCPPeerPublisher(port, unlimited_hwm=latency_test)
-                interact_sub = TCPPeerSubscriber(peer_ips, port)
+                interact_sub = TCPPeerSubscriber(peer_ips, port, unlimited_hwm=latency_test)
                 logger.info(f"Peer mode: TCP/ZMQ bound on :{port}, peers={peer_ips}")
             else:
                 from Interaction.ConnectionHelper import UDPPublisher, UDPSubscriber
