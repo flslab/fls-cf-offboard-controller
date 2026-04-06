@@ -43,22 +43,32 @@ def run_receiver(port):
     # Block until the first message arrives (sender may need a moment to connect)
     sock.recv_json()
     first_arrival = time.perf_counter()
+    last_arrival = first_arrival
     received = 1
+    timed_out = False
 
     try:
         while received < NUM_PACKETS:
-            sock.recv_json()          # blocking — captures every message
+            if not sock.poll(timeout=10_000):  # 10s in ms
+                timed_out = True
+                break
+            sock.recv_json()
             last_arrival = time.perf_counter()
             received += 1
     finally:
         sock.close()
         ctx.term()
 
+    if timed_out:
+        print(f"\n[Receiver] No packet for 10s — terminated early "
+              f"({received:,}/{NUM_PACKETS:,} received, {NUM_PACKETS - received:,} lost).")
+
     total_time = last_arrival - first_arrival
     avg_iat = total_time / (received - 1) * 1e6 if received > 1 else 0.0
 
     print(f"\n[Receiver] Results:")
-    print(f"  Packets received             : {received:,}")
+    print(f"  Packets received             : {received:,} / {NUM_PACKETS:,}"
+          + (" (INCOMPLETE)" if timed_out else ""))
     print(f"  Total reception time         : {total_time:.4f} s")
     print(f"  Avg packet inter-arrival time: {avg_iat:.4f} us")
 
