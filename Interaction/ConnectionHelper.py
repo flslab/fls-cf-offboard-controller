@@ -47,9 +47,11 @@ class UDPSubscriber:
 class TCPPeerPublisher:
     """ZMQ PUB socket — broadcasts JSON to all peer subscribers."""
 
-    def __init__(self, port):
+    def __init__(self, port, unlimited_hwm=False):
         self._ctx = zmq.Context()
         self._sock = self._ctx.socket(zmq.PUB)
+        if unlimited_hwm:
+            self._sock.setsockopt(zmq.SNDHWM, 0)
         self._sock.bind(f"tcp://*:{port}")
 
     def send_json(self, data):
