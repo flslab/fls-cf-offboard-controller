@@ -10,11 +10,14 @@ Then on the sender drone (or locally with --droneless):
 """
 
 import argparse
+import sys
 import time
+from pathlib import Path
 
 import zmq
 
-from Interaction.ConnectionHelper import TCPPeerPublisher
+# Ensure project root is on sys.path when run directly as a script
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 NUM_PACKETS = 1_000_000
 DEFAULT_PORT = 5570
@@ -61,7 +64,8 @@ def run_receiver(port):
 
 
 def run_sender(port):
-    pub = TCPPeerPublisher(port)
+    from Interaction.ConnectionHelper import TCPPeerPublisher
+    pub = TCPPeerPublisher(port, unlimited_hwm=True)
     print(f"[Sender] Bound on :{port}. Waiting for receiver to connect...")
     time.sleep(1)  # give the SUB socket time to connect
 
