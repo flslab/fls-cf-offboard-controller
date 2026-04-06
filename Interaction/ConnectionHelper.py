@@ -79,6 +79,10 @@ class TCPPeerSubscriber:
                 break
         return latest
 
+    def recv_blocking(self):
+        """Block until one message arrives and return it."""
+        return self._sock.recv_json()
+
     def close(self):
         self._sock.close()
         self._ctx.term()

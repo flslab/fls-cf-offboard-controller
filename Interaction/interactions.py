@@ -57,6 +57,12 @@ class InteractionsControl:
         #     self.run_recap()
         #     return
 
+        action = self.mission.get('Interaction', {}).get('action')
+
+        if action == 'peer_latency_test':
+            self._run_peer_latency_test()
+            return
+
         if self.pub_socket is not None and self.sub_socket is not None:
             self._run_peer_translation()
             return
@@ -65,7 +71,6 @@ class InteractionsControl:
             self._run_network_follow()
             return
 
-        action = self.mission['Interaction']['action']
         if action == 'rotation_test':
             self._run_rotation_limit()
         elif action == 'translation':
@@ -188,6 +193,58 @@ class InteractionsControl:
             logging.error(f"Peer Translation Error: {e}\nTraceback:\n{tb_info}")
         finally:
             self.lo_commander.send_notify_setpoint_stop()
+
+    def _run_peer_latency_test(self) -> None:
+        """Peer TCP latency test — comparable to live interaction transport."""
+        cfg = self.mission['Interaction']['config']
+        num_packets = cfg.get('num_packets', 1_000_000)
+        role = self.mission['drones'][self.drone_id].get('role', 'sender')
+
+        payload = {
+            "type": "push",
+            "drone_id": self.drone_id,
+            "accumulated_offset": [0.0, 0.0, 0.0],
+            "push_start_time": 0.0,
+        }
+
+        try:
+            if role == 'receiver':
+                logger.info(f"[Latency Test] Receiver — waiting for {num_packets:,} packets...")
+                first_arrival = None
+                last_arrival = None
+                received = 0
+                while received < num_packets:
+                    self.sub_socket.recv_blocking()
+                    t = time.perf_counter()
+                    if first_arrival is None:
+                        first_arrival = t
+                    last_arrival = t
+                    received += 1
+
+                total_time = last_arrival - first_arrival
+                avg_iat = total_time / (received - 1) * 1e6 if received > 1 else 0.0
+                logger.info(f"[Latency Test] Receiver Results:")
+                logger.info(f"  Packets received             : {received:,}")
+                logger.info(f"  Total reception time         : {total_time:.4f} s")
+                logger.info(f"  Avg packet inter-arrival time: {avg_iat:.4f} us")
+
+            else:
+                logger.info(f"[Latency Test] Sender — sending {num_packets:,} packets...")
+                time.sleep(1)  # give receiver SUB socket time to connect
+                s = time.perf_counter()
+                for i in range(num_packets):
+                    payload["push_start_time"] = i
+                    self.pub_socket.send_json(payload)
+                e = time.perf_counter() - s
+
+                logger.info(f"[Latency Test] Sender Results:")
+                logger.info(f"  Total elapsed time           : {e:.4f} s")
+                logger.info(f"  Avg per-packet send time     : {e / num_packets * 1e6:.4f} us")
+                logger.info(f"  Throughput                   : {num_packets / e:.0f} msgs/s")
+
+        except Exception as ex:
+            tb_info = traceback.format_exc()
+            logging.error(f"Latency Test Error: {ex}\nTraceback:\n{tb_info}")
 
     def _run_network_follow(self) -> None:
         """Run as a network follower, mirroring the interaction drone's state."""

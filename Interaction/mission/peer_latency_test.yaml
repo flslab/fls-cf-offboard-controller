@@ -13,6 +13,10 @@ name: peer_latency_test
 drones:
   lb6:
     target: [0.0, 0.0, 1.0]
+    role: sender     # change to "receiver" on the other drone
+  lb7:
+    target: [0.0, 0.0, 1.0]
+    role: receiver
 
 Interaction:
   action: peer_latency_test
@@ -20,9 +24,7 @@ Interaction:
   peer_transport: tcp
   config:
     num_packets: 1000000
-    packet_size: 20
     port: 5570
-    duration: 120
 
 boundary_limits:
   x_min: -7.0
