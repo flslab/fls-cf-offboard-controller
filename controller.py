@@ -822,6 +822,21 @@ class Controller:
                             self.args.smooth_controller_rate
                         )
                         IC.run_recap(file_path)
+            elif self.mission.get('Interaction', {}).get('action') == 'peer_latency_test':
+                port = self.manifest['controller'].get('zmq_interact_port', 5560)
+                peer_ips = [d['ip'] for d in self.manifest['drones'] if d['id'] != self.args.drone_id]
+                from Interaction.ConnectionHelper import TCPPeerPublisher, TCPPeerSubscriber
+                interact_pub = TCPPeerPublisher(port)
+                interact_sub = TCPPeerSubscriber(peer_ips, port)
+                logger.info(f"Peer latency test: TCP bound on :{port}, peers={peer_ips}")
+                time.sleep(0.2)
+                IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                                         self.args.smooth_controller_rate, drone_id=self.args.drone_id,
+                                         pub_socket=interact_pub, sub_socket=interact_sub)
+                IC.run()
+                interact_pub.close()
+                interact_sub.close()
+
             else:
                 n = self.mission["Interaction"].get("iteration", 1)
                 logger.info(f"Iteration {n}")
