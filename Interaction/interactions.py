@@ -213,18 +213,28 @@ class InteractionsControl:
                 first_arrival = None
                 last_arrival = None
                 received = 0
+                timed_out = False
                 while received < num_packets:
-                    self.sub_socket.recv_blocking()
+                    msg = self.sub_socket.recv_one_timeout(10.0)
+                    if msg is None:
+                        logger.warning(
+                            f"[Latency Test] No packet for 10s — terminating early "
+                            f"({received:,}/{num_packets:,} received, "
+                            f"{num_packets - received:,} lost)."
+                        )
+                        timed_out = True
+                        break
                     t = time.perf_counter()
                     if first_arrival is None:
                         first_arrival = t
                     last_arrival = t
                     received += 1
 
-                total_time = last_arrival - first_arrival
+                total_time = (last_arrival - first_arrival) if (first_arrival and last_arrival) else 0.0
                 avg_iat = total_time / (received - 1) * 1e6 if received > 1 else 0.0
                 logger.info(f"[Latency Test] Receiver Results:")
-                logger.info(f"  Packets received             : {received:,}")
+                logger.info(f"  Packets received             : {received:,} / {num_packets:,}"
+                            + (" (INCOMPLETE — packet loss)" if timed_out else ""))
                 logger.info(f"  Total reception time         : {total_time:.4f} s")
                 logger.info(f"  Avg packet inter-arrival time: {avg_iat:.4f} us")
 

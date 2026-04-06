@@ -83,6 +83,12 @@ class TCPPeerSubscriber:
         """Block until one message arrives and return it."""
         return self._sock.recv_json()
 
+    def recv_one_timeout(self, timeout_s: float):
+        """Block up to timeout_s for one message. Returns None on timeout."""
+        if self._sock.poll(timeout=int(timeout_s * 1000)):
+            return self._sock.recv_json()
+        return None
+
     def close(self):
         self._sock.close()
         self._ctx.term()
