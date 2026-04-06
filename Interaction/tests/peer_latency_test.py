@@ -88,11 +88,23 @@ def run_sender(port):
     print(f"[Sender] Bound on :{port}. Waiting for receiver to connect...")
     time.sleep(1)  # give the SUB socket time to connect
 
+    is_json = isinstance(PAYLOAD, dict)
+    if is_json:
+        import json
+        payload_size = len(json.dumps(PAYLOAD).encode())
+    else:
+        payload_size = len(PAYLOAD)
+    print(f"[Sender] Payload type: {'JSON' if is_json else 'bytes'}, size: {payload_size} bytes")
     print(f"[Sender] Sending {NUM_PACKETS:,} packets...")
 
     s = time.perf_counter()
-    for _ in range(NUM_PACKETS):
-        sock.send(PAYLOAD)
+    if is_json:
+        for i in range(NUM_PACKETS):
+            PAYLOAD["push_start_time"] = i
+            sock.send_json(PAYLOAD)
+    else:
+        for _ in range(NUM_PACKETS):
+            sock.send(PAYLOAD)
     e = time.perf_counter() - s
 
     sock.close()
