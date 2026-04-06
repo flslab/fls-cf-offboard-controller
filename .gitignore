@@ -182,5 +182,5 @@ logs/
 swarm_manifest.yaml
 
 downloads.json
-
+.claude
 # End of https://www.toptal.com/developers/gitignore/api/python
