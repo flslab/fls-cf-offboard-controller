@@ -33,14 +33,20 @@ PAYLOAD = {
 }
 
 
-def run_receiver(port):
+def run_receiver(port, sender_ip):
     ctx = zmq.Context()
     sock = ctx.socket(zmq.SUB)
+    sock.setsockopt(zmq.RCVHWM, 0)
     sock.setsockopt_string(zmq.SUBSCRIBE, "")
-    sock.bind(f"tcp://*:{port}")
-    print(f"[Receiver] Listening on port {port}...")
+    sock.connect(f"tcp://{sender_ip}:{port}")
+    print(f"[Receiver] Connected to tcp://{sender_ip}:{port}...")
 
     # Block until the first message arrives (sender may need a moment to connect)
+    if not sock.poll(timeout=10_000):
+        print("[Receiver] No packet for 10s — sender never connected.")
+        sock.close()
+        ctx.term()
+        return
     sock.recv_json()
     first_arrival = time.perf_counter()
     last_arrival = first_arrival
@@ -100,7 +106,7 @@ if __name__ == "__main__":
     parser.add_argument("--role", choices=["sender", "receiver"], required=True,
                         help="Run as sender or receiver")
     parser.add_argument("--peer-ip", type=str, default="127.0.0.1",
-                        help="IP of the sender (receiver side does not need this)")
+                        help="IP of the sender (required for receiver role)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT,
                         help=f"ZMQ port (default: {DEFAULT_PORT})")
     parser.add_argument("--droneless", action="store_true",
@@ -108,6 +114,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.role == "receiver":
-        run_receiver(args.port)
+        run_receiver(args.port, args.peer_ip)
     else:
         run_sender(args.port)
