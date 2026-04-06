@@ -25,12 +25,13 @@ DEFAULT_PORT = 5570
 # Match the JSON payload shape used in interactions.py:
 #   pub_socket.send_json({"type": "push", "drone_id": ...,
 #                         "accumulated_offset": [...], "push_start_time": ...})
-PAYLOAD = {
-    "type": "push",
-    "drone_id": "lb6",
-    "accumulated_offset": [0.0, 0.0, 0.0],
-    "push_start_time": 0.0,
-}
+# PAYLOAD = {
+#     "type": "push",
+#     "drone_id": "lb6",
+#     "accumulated_offset": [0.0, 0.0, 0.0],
+#     "push_start_time": 0.0,
+# }
+PAYLOAD = b'\x00' * 20  # 20-byte fixed payload
 
 
 def run_receiver(port, sender_ip):
@@ -47,7 +48,7 @@ def run_receiver(port, sender_ip):
         sock.close()
         ctx.term()
         return
-    sock.recv_json()
+    sock.recv()
     first_arrival = time.perf_counter()
     last_arrival = first_arrival
     received = 1
@@ -58,7 +59,7 @@ def run_receiver(port, sender_ip):
             if not sock.poll(timeout=10_000):  # 10s in ms
                 timed_out = True
                 break
-            sock.recv_json()
+            sock.recv()
             last_arrival = time.perf_counter()
             received += 1
     finally:
@@ -80,20 +81,22 @@ def run_receiver(port, sender_ip):
 
 
 def run_sender(port):
-    from Interaction.ConnectionHelper import TCPPeerPublisher
-    pub = TCPPeerPublisher(port, unlimited_hwm=True)
+    ctx = zmq.Context()
+    sock = ctx.socket(zmq.PUB)
+    sock.setsockopt(zmq.SNDHWM, 0)
+    sock.bind(f"tcp://*:{port}")
     print(f"[Sender] Bound on :{port}. Waiting for receiver to connect...")
     time.sleep(1)  # give the SUB socket time to connect
 
     print(f"[Sender] Sending {NUM_PACKETS:,} packets...")
 
     s = time.perf_counter()
-    for i in range(NUM_PACKETS):
-        PAYLOAD["push_start_time"] = i   # vary field so ZMQ does not deduplicate
-        pub.send_json(PAYLOAD)
+    for _ in range(NUM_PACKETS):
+        sock.send(PAYLOAD)
     e = time.perf_counter() - s
 
-    pub.close()
+    sock.close()
+    ctx.term()
 
     print(f"\n[Sender] Results:")
     print(f"  Total elapsed time           : {e:.4f} s")
