@@ -176,6 +176,8 @@ class SwarmOrchestrator:
         if ref_obj:
             vicon_log = f"{self.common_cfg['work_dir']}/logs/vicon_{self.tag}.json"
             cmd.append(
+                f"cd {self.common_cfg['work_dir']} && "
+                f"source {self.common_cfg['venv_path']}/bin/activate && "
                 f"nohup python3 Interaction/vicon_noise_tracker.py "
                 f"--subject {ref_obj} --duration 10 "
                 f"--out {vicon_log} "
