@@ -11,10 +11,10 @@ name: peer_latency_test
 #   python3 Interaction/tests/peer_latency_test.py --role sender --peer-ip <receiver_ip>
 
 drones:
-  lb6:
+  lb10:
     target: [0.0, 0.0, 1.0]
     role: sender     # change to "receiver" on the other drone
-  lb7:
+  lb11:
     target: [0.0, 0.0, 1.0]
     role: receiver
 
