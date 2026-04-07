@@ -19,6 +19,7 @@ from invoke.exceptions import CommandTimedOut
 # Assumed local modules based on your import list
 from logger import setup_logging
 from restart import reboot_crazyflie
+from switch_network import apply_network_mode
 
 # from Interaction.vicon_noise_tracker import run_tracker
 
@@ -293,6 +294,29 @@ class SwarmOrchestrator:
             self.logger.error(f"Failed to download {description}: {e}")
             return False
 
+    def _apply_network_mode(self):
+        """
+        If the manifest specifies a non-wifi network mode, SSH into every drone
+        to schedule the interface switch, print operator instructions, wait for
+        the operator to reconnect, then update self.manifest / self.drones /
+        self.ctrl_cfg so that all subsequent SSH and ZMQ connections use the
+        correct (adhoc / bluetooth) IPs.
+        """
+        mode = self.manifest.get("network", {}).get("mode", "wifi")
+        if mode == "wifi":
+            return   # nothing to do
+
+        self.logger.info(f"Network mode: {mode} — initiating switch...")
+        updated = apply_network_mode(self.manifest, mode)
+
+        # Propagate updated IPs into live state
+        self.manifest   = updated
+        self.ctrl_cfg   = updated["controller"]
+        self.drones     = updated.get("drones", [])
+        self.camera_cfg = updated.get("camera_node")
+        self.radio_node = updated.get("radio_node")
+        self.logger.info(f"Network switch complete. Controller IP: {self.ctrl_cfg['ip']}")
+
     def shutdown_nodes(self):
         """Sends sudo shutdown command to all drones."""
         for drone in self.drones:
@@ -395,6 +419,9 @@ class SwarmOrchestrator:
         self.running.set()
 
         try:
+            # Switch drones to adhoc/bluetooth if configured, update IPs
+            self._apply_network_mode()
+
             # Process Pending Downloads from previous runs
             self._process_pending_downloads()
 
