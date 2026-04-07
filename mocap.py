@@ -14,7 +14,7 @@ class Mocap(threading.Thread):
         Args:
             mocap_system_type (str): Type of system (vicon, optitrack, etc).
             host_name (str): Hostname or IP of the mocap server.
-            mode (str): 'rigidbody' or 'pointcloud'.
+            mode (str): 'rigidbody', 'pointcloud', 'shape', or 'mixed'.
         """
         threading.Thread.__init__(self)
 
@@ -38,7 +38,7 @@ class Mocap(threading.Thread):
 
     def _get_pointcloud_array(self, mc):
         """Fetches and formats the point cloud array if applicable."""
-        if self.mode in ['pointcloud', 'mixed'] and hasattr(mc, 'pointCloud') and mc.pointCloud is not None:
+        if self.mode in ['pointcloud', 'shape', 'mixed'] and hasattr(mc, 'pointCloud') and mc.pointCloud is not None:
             try:
                 return np.array(mc.pointCloud, copy=False) * 1000.0
             except (ValueError, TypeError):
@@ -176,7 +176,7 @@ class Mocap(threading.Thread):
                     })
     def _process_marker_shapes(self, cloud_arr, targets, offset, frame_count, now):
         """Track each marker individually, compute centroid (tvec) and rotation (quat) via Kabsch."""
-        if self.mode not in ['pointcloud', 'mixed'] or cloud_arr is None or len(cloud_arr) == 0:
+        if self.mode not in ['pointcloud', 'shape', 'mixed'] or cloud_arr is None or len(cloud_arr) == 0:
             return
 
         for shape in targets:
@@ -365,7 +365,7 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser()
     ap.add_argument("-t", default=140, type=int, help="duration")
-    ap.add_argument("--mode", default="rigidbody", choices=["rigidbody", "pointcloud"], help="Tracking mode")
+    ap.add_argument("--mode", default="rigidbody", choices=["rigidbody", "pointcloud", "shape", "mixed"], help="Tracking mode")
 
     # Rigidbody args
     ap.add_argument("--obj-name", type=str, help="Rigid body name")
@@ -392,6 +392,16 @@ if __name__ == "__main__":
             args.point,
             lambda frame: print(f"PT: {[round(p, 3) for p in frame['tvec']]} (Error^2: {frame['dist_sq']:.2f})"),
             name="my_point",
+            max_distance=args.max_dist
+        )
+
+    elif args.mode == "shape":
+        print(f"Subscribing to MarkerShape with initial centroid at: {args.point} (Max Jump: {args.max_dist})")
+        # Single-point shape as placeholder; pass --markers for real usage
+        mw.subscribe_marker_shape(
+            [args.point],
+            lambda frame: print(f"SH: tvec={[round(p, 3) for p in frame['tvec']]} quat={[round(q, 3) for q in frame['quat']]}"),
+            name="my_shape",
             max_distance=args.max_dist
         )
 

@@ -779,6 +779,7 @@ class InteractionsControl:
                             "leader_id": drone_id,
                             "reason": "peer_push_won",
                             "Pos": [round(x, 3) for x in pos],
+                            "latency_ms": round((time.time() - push_start_time) * 1000, 3),
                         })
                         hover_pos = hover_pos_before_push.copy()
                         push_start_time = None
@@ -819,9 +820,16 @@ class InteractionsControl:
                 if not detect_speed_threshold(speed):
                     interaction_heading = np.zeros(3)
                     pub_socket.send_json({"type": "user_disengage", "drone_id": drone_id})
+                    disengage_latency_ms = round((time.time() - push_start_time) * 1000, 2)
                     accumulated_offset = np.zeros(3)
                     if fric_coe > 0:
                         logger.info("Peer mode: switching to coasting.")
+                        self._log_event("User Disengage", {
+                            "leader_id": drone_id,
+                            "reason": "coasting",
+                            "Pos": [round(x, 3) for x in pos],
+                            "latency_ms": disengage_latency_ms,
+                        })
                         status = 2
                     else:
                         logger.info("Peer mode: switching to grace hover.")
@@ -836,6 +844,7 @@ class InteractionsControl:
                             "Pos": [round(x, 3) for x in pos],
                             "Target": [round(x, 3) for x in hover_pos],
                             "Stabilize Time": grace_time_val,
+                            "latency_ms": disengage_latency_ms,
                         })
                     continue
 
@@ -845,6 +854,7 @@ class InteractionsControl:
                     "accumulated_offset": accumulated_offset.tolist(),
                     "push_start_time": push_start_time,
                 })
+                push_latency_ms = round((time.time() - push_start_time) * 1000, 2)
 
                 if base_attitude < 0:
                     self._log_event("User Pushing", {
@@ -853,6 +863,7 @@ class InteractionsControl:
                         "vel": [round(x, 3) for x in vel],
                         "Pos": [round(x, 3) for x in pos],
                         "Target": [round(x, 3) for x in target_pos],
+                        "latency_ms": push_latency_ms,
                     })
                     self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
                 else:
@@ -862,6 +873,7 @@ class InteractionsControl:
                         "speed": round(speed, 3),
                         "vel": [round(x, 3) for x in vel],
                         "Pos": [round(x, 3) for x in pos],
+                        "latency_ms": push_latency_ms,
                     })
                     self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
 
@@ -872,7 +884,7 @@ class InteractionsControl:
                 self._safe_sleep(coast_t)
                 hover_pos = np.array(end_pos, dtype=float)
                 pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
-                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()]})
+                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - push_start_time) * 1000, 2)})
                 status = 0
                 continue
 
@@ -882,7 +894,7 @@ class InteractionsControl:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
                 pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
-                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()]})
+                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - push_start_time) * 1000, 2)})
                 status = 0
 
             self._safe_sleep(dt)
