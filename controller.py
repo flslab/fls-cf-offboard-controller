@@ -827,8 +827,8 @@ class Controller:
                 port = self.manifest['controller'].get('zmq_interact_port', 5560)
                 peer_ips = [d['ip'] for d in self.manifest['drones'] if d['id'] != self.args.drone_id]
                 from Interaction.ConnectionHelper import TCPPeerPublisher, TCPPeerSubscriber
-                interact_pub = TCPPeerPublisher(port)
-                interact_sub = TCPPeerSubscriber(peer_ips, port)
+                interact_pub = TCPPeerPublisher(port, unlimited_hwm=True)
+                interact_sub = TCPPeerSubscriber(peer_ips, port, unlimited_hwm=True)
                 logger.info(f"Peer latency test: TCP bound on :{port}, peers={peer_ips}")
                 time.sleep(0.2)
                 IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
