@@ -179,6 +179,7 @@ class InteractionsControl:
             self.interaction_peer_translation_vel(
                 drone_id=self.drone_id,
                 vel_threshold=translation_setting['delta_v'],
+                pos_threshold=translation_setting['pos_threshold'],
                 z=translation_setting['z'],
                 fric_coe=translation_setting['friction_coefficient'],
                 base_attitude=translation_setting['base_attitude'],
@@ -549,6 +550,7 @@ class InteractionsControl:
             self,
             drone_id,
             vel_threshold=0.01,
+            pos_threshold=0.02,
             z=1,
             fric_coe=-1.0,
             base_attitude=1,
@@ -592,6 +594,9 @@ class InteractionsControl:
 
         def detect_speed_threshold(s):
             return s > vel_threshold
+
+        def detect_user_interaction(s, p, hover):
+            return s > vel_threshold or np.linalg.norm(p - hover) > pos_threshold
 
         def calculate_braking_angles(v_x, v_y, base_att=base_attitude):
             pitch = np.sign(v_x) * base_att
@@ -756,7 +761,7 @@ class InteractionsControl:
                             "Pos": [round(x, 3) for x in pos],
                             "Target": [round(x, 3) for x in hover_pos],
                         })
-                    elif detect_speed_threshold(speed):
+                    elif detect_user_interaction(speed, pos, hover_pos):
                         logger.info("Peer mode: local user push detected.")
                         status = 1
                         push_start_time = time.time()
@@ -774,12 +779,13 @@ class InteractionsControl:
                     if peer_start > push_start_time:
                         leader_id = peer_msg.get('drone_id')
                         logger.info("Peer push is newer — abandoning local push, reverting position.")
+                        send_time=time.time()
                         pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
                         self._log_event("User Disengage", {
                             "leader_id": drone_id,
                             "reason": "peer_push_won",
                             "Pos": [round(x, 3) for x in pos],
-                            "latency_ms": round((time.time() - push_start_time) * 1000, 3),
+                            "latency_ms": round((time.time() - send_time) * 1000, 3),
                         })
                         hover_pos = hover_pos_before_push.copy()
                         push_start_time = None
@@ -803,9 +809,7 @@ class InteractionsControl:
                         hover_pos = peer_hover_start + accumulated
                         if z is not None:
                             hover_pos[2] = z
-                        self.lo_commander.send_notify_setpoint_stop()
-                        self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 0.5, relative=False)
-                        self._safe_sleep(0.5)
+                        self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                         continue
 
                 if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
@@ -819,8 +823,9 @@ class InteractionsControl:
 
                 if not detect_speed_threshold(speed):
                     interaction_heading = np.zeros(3)
+                    send_time = time.time()
                     pub_socket.send_json({"type": "user_disengage", "drone_id": drone_id})
-                    disengage_latency_ms = round((time.time() - push_start_time) * 1000, 2)
+                    disengage_latency_ms = round((time.time() - send_time) * 1000, 2)
                     accumulated_offset = np.zeros(3)
                     if fric_coe > 0:
                         logger.info("Peer mode: switching to coasting.")
@@ -848,13 +853,14 @@ class InteractionsControl:
                         })
                     continue
 
+                send_time = time.time()
                 pub_socket.send_json({
                     "type": "push",
                     "drone_id": drone_id,
                     "accumulated_offset": accumulated_offset.tolist(),
                     "push_start_time": push_start_time,
                 })
-                push_latency_ms = round((time.time() - push_start_time) * 1000, 2)
+                push_latency_ms = round((time.time() - send_time) * 1000, 2)
 
                 if base_attitude < 0:
                     self._log_event("User Pushing", {
@@ -883,6 +889,7 @@ class InteractionsControl:
                 self.hl_commander.go_to(end_pos[0], end_pos[1], end_pos[2], 0, coast_t, relative=False)
                 self._safe_sleep(coast_t)
                 hover_pos = np.array(end_pos, dtype=float)
+                send_time = time.time()
                 pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
                 self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - push_start_time) * 1000, 2)})
                 status = 0
@@ -897,7 +904,8 @@ class InteractionsControl:
                 self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - push_start_time) * 1000, 2)})
                 status = 0
 
-            self._safe_sleep(dt)
+            if not receiving_peer_push:
+                self._safe_sleep(dt)
 
         self.lo_commander.send_notify_setpoint_stop()
 

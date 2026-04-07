@@ -27,6 +27,7 @@ Interaction:
   peer_transport: tcp
   config:
     delta_v: 0.2
+    pos_threshold: 0.02
     z: 1
     friction_coefficient: 0
     base_attitude: -1
