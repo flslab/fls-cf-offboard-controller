@@ -27,9 +27,10 @@ from collections import defaultdict
 from itertools import combinations
 
 # ── paths ─────────────────────────────────────────────────────────────────────
-_HERE    = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR  = os.path.join(_HERE, "..", "logs", "block_interaction")
-OUT_PNG  = os.path.join(_HERE, "trajectories_overlay.png")
+_HERE         = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR       = os.path.join(_HERE, "..", "logs", "block_interaction")
+OUT_PNG_TRAJ  = os.path.join(_HERE, "trajectories_xy.png")
+OUT_PNG_VEL   = os.path.join(_HERE, "velocity_vs_time.png")
 
 FILE_RE  = re.compile(
     r"us(?P<uid>\d+)_(?P<num>\d+)(?P<gesture>poke|push|flick)_translation_"
@@ -174,8 +175,9 @@ def analyse():
         print(f"[ERROR] No trial files found in:\n  {LOG_DIR}")
         return
 
-    gesture_stats  = {}   # gesture -> list of per-trial dicts
-    gesture_tvecs  = defaultdict(list)   # for DTW
+    gesture_stats       = {}                                 # gesture -> list of per-trial dicts
+    gesture_tvecs       = defaultdict(list)                  # for DTW
+    uid_gesture_data    = defaultdict(lambda: defaultdict(list))  # uid -> gesture -> trials
 
     print("=" * 70)
     print("Per-trial kinematics")
@@ -219,6 +221,7 @@ def analyse():
                 "t":          t,
             })
             gesture_tvecs[gesture].append(tvec)
+            uid_gesture_data[uid][gesture].append({"tvec": tvec, "t": t, "speed": speed})
 
             print(f"  [{gesture:5s}] uid={uid} | pk_vel={pk_vel:.4f} m/s"
                   f" | pk_acc={pk_accel:.4f} m/s²"
@@ -276,56 +279,98 @@ def analyse():
               f"{min(avg_poke, avg_push):.4f} rad).")
         print()
 
-    # ── visualisation ─────────────────────────────────────────────────────────
-    COLOURS = {"flick": "#E74C3C", "poke": "#3498DB", "push": "#2ECC71"}
-    STYLES  = {"flick": "-",       "poke": "--",       "push": ":"}
+    # ── visualisation setup ───────────────────────────────────────────────────
+    all_uids  = sorted(uid_gesture_data.keys())
+    gestures  = sorted({g for uid_d in uid_gesture_data.values() for g in uid_d})
+    n_gest    = len(gestures)
 
-    fig, (ax_xy, ax_xz) = plt.subplots(1, 2, figsize=(14, 6))
-    handles = {}
+    # one distinct colour per subject
+    cmap      = plt.cm.tab10
+    uid_color = {uid: cmap(i / max(len(all_uids) - 1, 1))
+                 for i, uid in enumerate(all_uids)}
 
-    for gesture in sorted(gesture_tvecs):
-        colour = COLOURS.get(gesture, "grey")
-        style  = STYLES.get(gesture, "-")
-        for i, tvec in enumerate(gesture_tvecs[gesture]):
-            # origin-align each trial
-            tn = tvec - tvec[0]
-            lbl = gesture if i == 0 else None
-            h, = ax_xy.plot(tn[:, 0], tn[:, 1],
-                            color=colour, ls=style, lw=1.8,
-                            alpha=0.75, label=lbl)
-            ax_xz.plot(tn[:, 0], tn[:, 2],
-                       color=colour, ls=style, lw=1.8, alpha=0.75)
-            # mark start (circle) and end (cross)
-            ax_xy.plot(tn[0, 0],  tn[0, 1],  "o", color=colour, ms=5, alpha=0.9)
-            ax_xy.plot(tn[-1, 0], tn[-1, 1], "x", color=colour, ms=7,
-                       mew=2, alpha=0.9)
-            ax_xz.plot(tn[0, 0],  tn[0, 2],  "o", color=colour, ms=5, alpha=0.9)
-            ax_xz.plot(tn[-1, 0], tn[-1, 2], "x", color=colour, ms=7,
-                       mew=2, alpha=0.9)
-            if i == 0:
-                handles[gesture] = h
+    # ── Figure 1: XY trajectory (3 forms × subject colours) ──────────────────
+    fig1, axes1 = plt.subplots(1, n_gest, figsize=(5 * n_gest, 5),
+                                squeeze=False)
+    axes1 = axes1[0]
 
-    for ax, xl, yl, title in [
-        (ax_xy, "ΔX (m)", "ΔY (m)", "XY — top view"),
-        (ax_xz, "ΔX (m)", "ΔZ (m)", "XZ — side view"),
-    ]:
-        ax.set_xlabel(xl, fontsize=11)
-        ax.set_ylabel(yl, fontsize=11)
-        ax.set_title(title, fontsize=12)
+    for col, gesture in enumerate(gestures):
+        ax = axes1[col]
+        for uid in all_uids:
+            colour = uid_color[uid]
+            trials = uid_gesture_data[uid].get(gesture, [])
+            for i, trial in enumerate(trials):
+                tn  = trial["tvec"] - trial["tvec"][0]   # origin-align
+                lbl = f"Subject {uid}" if i == 0 else None
+                ax.plot(tn[:, 0], tn[:, 1],
+                        color=colour, lw=1.8, alpha=0.75, label=lbl)
+                ax.plot(tn[0, 0],  tn[0, 1],  "o",
+                        color=colour, ms=5, alpha=0.9)
+                ax.plot(tn[-1, 0], tn[-1, 1], "x",
+                        color=colour, ms=7, mew=2, alpha=0.9)
+        ax.set_title(gesture, fontsize=12)
+        ax.set_xlabel("ΔX (m)", fontsize=10)
+        ax.set_ylabel("ΔY (m)", fontsize=10)
         ax.axhline(0, color="k", lw=0.5, ls="--", alpha=0.4)
         ax.axvline(0, color="k", lw=0.5, ls="--", alpha=0.4)
         ax.set_aspect("equal", adjustable="datalim")
         ax.grid(True, alpha=0.3)
 
-    fig.legend(handles=list(handles.values()),
-               labels=list(handles.keys()),
-               loc="upper center", ncol=3, fontsize=12,
-               title="Gesture  (○ start  × end)")
-    fig.suptitle("Gesture Trajectory Overlay — origin-aligned per trial",
-                 fontsize=13, y=1.01)
-    fig.tight_layout()
-    fig.savefig(OUT_PNG, dpi=150, bbox_inches="tight")
-    print(f"[OK] Plot saved → {OUT_PNG}")
+    leg_handles1 = [plt.Line2D([0], [0], color=uid_color[u], lw=2,
+                                label=f"Subject {u}") for u in all_uids]
+    fig1.legend(handles=leg_handles1, loc="upper center",
+                ncol=len(all_uids), fontsize=10,
+                title="Subject  (○ start  × end)")
+    fig1.suptitle("XY Trajectory — origin-aligned per trial",
+                  fontsize=13, y=1.02)
+    fig1.tight_layout()
+    fig1.savefig(OUT_PNG_TRAJ, dpi=150, bbox_inches="tight")
+    print(f"[OK] Trajectory plot saved → {OUT_PNG_TRAJ}")
+
+    # ── Figure 2: velocity vs time (line = mean, band = ±1 std) ──────────────
+    fig2, axes2 = plt.subplots(1, n_gest, figsize=(5 * n_gest, 4),
+                                squeeze=False)
+    axes2 = axes2[0]
+    N_GRID = 300   # common time grid resolution
+
+    for col, gesture in enumerate(gestures):
+        ax = axes2[col]
+        for uid in all_uids:
+            colour = uid_color[uid]
+            trials = uid_gesture_data[uid].get(gesture, [])
+            if not trials:
+                continue
+
+            # interpolate every trial onto a shared time grid
+            t_end  = min(trial["t"][-1] for trial in trials)
+            t_grid = np.linspace(0.0, t_end, N_GRID)
+            mat    = np.array([np.interp(t_grid, trial["t"], trial["speed"])
+                               for trial in trials])   # (n_trials, N_GRID)
+
+            mean_v = mat.mean(axis=0)
+            std_v  = mat.std(axis=0)
+
+            ax.plot(t_grid, mean_v,
+                    color=colour, lw=2.0, label=f"Subject {uid}")
+            ax.fill_between(t_grid,
+                            mean_v - std_v,
+                            mean_v + std_v,
+                            color=colour, alpha=0.20)
+
+        ax.set_title(gesture, fontsize=12)
+        ax.set_xlabel("Time (s)", fontsize=10)
+        ax.set_ylabel("Speed (m/s)", fontsize=10)
+        ax.grid(True, alpha=0.3)
+
+    leg_handles2 = [plt.Line2D([0], [0], color=uid_color[u], lw=2,
+                                label=f"Subject {u}") for u in all_uids]
+    fig2.legend(handles=leg_handles2, loc="upper center",
+                ncol=len(all_uids), fontsize=10,
+                title="Subject  (line = mean, band = ±1 std)")
+    fig2.suptitle("Velocity vs Time", fontsize=13, y=1.02)
+    fig2.tight_layout()
+    fig2.savefig(OUT_PNG_VEL, dpi=150, bbox_inches="tight")
+    print(f"[OK] Velocity plot saved → {OUT_PNG_VEL}")
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ class Mocap(threading.Thread):
         # Shared state
         self.objects_to_track = []  # For RigidBodies: list of (name, callback)
         self.points_to_track = []  # For PointCloud: list of mutable dicts
+        self.shapes_to_track = []  # For MarkerShape: list of mutable dicts
         self.anchor_data = None
 
         # Lock is ONLY for writers (subscribe/unsubscribe), not the reader (run)
@@ -105,6 +106,47 @@ class Mocap(threading.Thread):
                             "time": now
                         })
 
+    @staticmethod
+    def _kabsch_rotation(reference, current):
+        """Compute rotation matrix from reference to current using Kabsch/SVD algorithm.
+        Both arrays are Nx3 and must already be centroid-centered."""
+        H = reference.T @ current
+        U, S, Vt = np.linalg.svd(H)
+        # Correct for reflection (det = -1 means improper rotation)
+        d = np.linalg.det(Vt.T @ U.T)
+        D = np.diag([1.0, 1.0, d])
+        return Vt.T @ D @ U.T
+
+    @staticmethod
+    def _rotation_matrix_to_quat(R):
+        """Convert 3x3 rotation matrix to quaternion [x, y, z, w]."""
+        trace = R[0, 0] + R[1, 1] + R[2, 2]
+        if trace > 0:
+            s = 0.5 / np.sqrt(trace + 1.0)
+            w = 0.25 / s
+            x = (R[2, 1] - R[1, 2]) * s
+            y = (R[0, 2] - R[2, 0]) * s
+            z = (R[1, 0] - R[0, 1]) * s
+        elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+            s = 2.0 * np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
+            w = (R[2, 1] - R[1, 2]) / s
+            x = 0.25 * s
+            y = (R[0, 1] + R[1, 0]) / s
+            z = (R[0, 2] + R[2, 0]) / s
+        elif R[1, 1] > R[2, 2]:
+            s = 2.0 * np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
+            w = (R[0, 2] - R[2, 0]) / s
+            x = (R[0, 1] + R[1, 0]) / s
+            y = 0.25 * s
+            z = (R[1, 2] + R[2, 1]) / s
+        else:
+            s = 2.0 * np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
+            w = (R[1, 0] - R[0, 1]) / s
+            x = (R[0, 2] + R[2, 0]) / s
+            y = (R[1, 2] + R[2, 1]) / s
+            z = 0.25 * s
+        return [float(x), float(y), float(z), float(w)]
+
     def _process_point_clouds(self, cloud_arr, targets, offset, frame_count, now):
         """Applies offset to point clouds and triggers callbacks."""
         if self.mode not in ['pointcloud', 'mixed'] or cloud_arr is None or len(cloud_arr) == 0:
@@ -132,6 +174,51 @@ class Mocap(threading.Thread):
                         "dist_sq": float(min_dist_sq),
                         "time": now
                     })
+    def _process_marker_shapes(self, cloud_arr, targets, offset, frame_count, now):
+        """Track each marker individually, compute centroid (tvec) and rotation (quat) via Kabsch."""
+        if self.mode not in ['pointcloud', 'mixed'] or cloud_arr is None or len(cloud_arr) == 0:
+            return
+
+        for shape in targets:
+            new_positions = []
+            all_found = True
+
+            for i, cur_pos in enumerate(shape['current_positions']):
+                diff = cloud_arr - cur_pos
+                dist_sq = np.einsum('ij,ij->i', diff, diff)
+                min_idx = np.argmin(dist_sq)
+                min_dist_sq = dist_sq[min_idx]
+
+                max_dist_sq = shape['max_dist_sq'] if shape['captured'][i] else shape['max_dist_sq'] * 4
+                if min_dist_sq <= max_dist_sq:
+                    shape['captured'][i] = True
+                    new_positions.append(cloud_arr[min_idx].copy())
+                else:
+                    all_found = False
+                    new_positions.append(cur_pos.copy())
+
+            shape['current_positions'] = new_positions
+
+            if all_found and shape['callback']:
+                positions_mm = np.array(new_positions)          # Nx3, mm
+                centroid_mm = positions_mm.mean(axis=0)
+
+                current_centered = positions_mm - centroid_mm
+                R = self._kabsch_rotation(shape['reference_shape'], current_centered)
+                quat = self._rotation_matrix_to_quat(R)
+
+                corrected_pos = (centroid_mm / 1000.0) - offset
+                raw_m = (positions_mm / 1000.0).tolist()
+
+                shape['callback']({
+                    'frame_id': frame_count,
+                    'tvec': corrected_pos.tolist(),
+                    'quat': quat,
+                    'raw': raw_m,
+                    'noise': offset.tolist(),
+                    'time': now
+                })
+
     def run(self):
         logger.info(f"Connecting to {self.mocap_system_type} at {self.host_name} in {self.mode} mode...")
         try:
@@ -156,12 +243,14 @@ class Mocap(threading.Thread):
                 anchor = self.anchor_data
                 current_targets_rb = list(self.objects_to_track)
                 current_targets_pc = list(self.points_to_track)
+                current_targets_ms = list(self.shapes_to_track)
 
             # The loop logic is now clean and modular
             cloud_arr = self._get_pointcloud_array(mc)
             current_noise_offset = self._calculate_noise_offset(mc, anchor, cloud_arr)
             self._process_rigid_bodies(mc, current_targets_rb, current_noise_offset, frame_count, now)
             self._process_point_clouds(cloud_arr, current_targets_pc, current_noise_offset, frame_count, now)
+            self._process_marker_shapes(cloud_arr, current_targets_ms, current_noise_offset, frame_count, now)
 
             frame_count += 1
 
@@ -228,6 +317,46 @@ class Mocap(threading.Thread):
         with self._write_lock:
             # Remove all points that match the given name
             self.points_to_track = [pt for pt in self.points_to_track if pt.get('name') != name]
+
+    def subscribe_marker_shape(self, marker_points, callback, name=None, max_distance=0.05):
+        """
+        Track a rigid body defined by N markers (typically 4) in the point cloud.
+        Computes centroid position (tvec) and rotation (quat) via the Kabsch algorithm,
+        plus the raw positions of all markers.
+
+        Args:
+            marker_points (list): List of N [x, y, z] initial marker positions (meters).
+            callback (func): Called each frame with:
+                {
+                  'frame_id': int,
+                  'tvec':  [x, y, z],       # centroid, offset-corrected, meters
+                  'quat':  [x, y, z, w],    # rotation relative to initial shape
+                  'raw':   [[x,y,z], ...],  # raw positions of each marker, meters
+                  'noise': [x, y, z],
+                  'time':  float
+                }
+            name (str, optional): Identifier for unsubscribing.
+            max_distance (float): Max per-marker jump between frames (meters).
+        """
+        points_mm = np.array(marker_points, dtype=float) * 1000.0
+        centroid_mm = points_mm.mean(axis=0)
+        reference_shape = points_mm - centroid_mm  # Nx3, centroid-centered
+
+        shape_data = {
+            'name': name,
+            'current_positions': [points_mm[i].copy() for i in range(len(points_mm))],
+            'reference_shape': reference_shape,
+            'max_dist_sq': (max_distance * 1000.0) ** 2,
+            'captured': [False] * len(points_mm),
+            'callback': callback
+        }
+        with self._write_lock:
+            self.shapes_to_track.append(shape_data)
+
+    def unsubscribe_marker_shape(self, name):
+        """Unsubscribe a marker shape by its assigned name."""
+        with self._write_lock:
+            self.shapes_to_track = [s for s in self.shapes_to_track if s.get('name') != name]
 
 
 if __name__ == "__main__":
