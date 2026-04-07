@@ -41,8 +41,11 @@ POSITION_STD_DEV = 0.001
 ORIENTATION_STD_DEV = 0.001
 
 PID_VALUES = {
-    'posCtlPid.xKp': '1.9',  'posCtlPid.xKi': '0.1',  'posCtlPid.xKd': '0.0',
-    'posCtlPid.yKp': '2.1',  'posCtlPid.yKi': '0.1',  'posCtlPid.yKd': '0.0',
+    # 'posCtlPid.xKp': '1.9',  'posCtlPid.xKi': '0.1',  'posCtlPid.xKd': '0.0',
+    # 'posCtlPid.yKp': '2.1',  'posCtlPid.yKi': '0.1',  'posCtlPid.yKd': '0.0',
+
+    'posCtlPid.xKp': '4', 'posCtlPid.xKi': '0.1', 'posCtlPid.xKd': '0.0',
+    'posCtlPid.yKp': '4', 'posCtlPid.yKi': '0.1', 'posCtlPid.yKd': '0.0',
     'posCtlPid.zKp': '1.9',  'posCtlPid.zKi': '2.0',  'posCtlPid.zKd': '0.05',
     'posCtlPid.thrustMin': '12000',
     'posCtlPid.thrustBase': '28000',
@@ -320,5 +323,5 @@ if __name__ == "__main__":
 # python controller_follow.py --vicon --vicon-mode pointcloud --init-pos 1 0 0 -t 30
 #
 # # Follower (tracks leader with +0.5m X offset):
-# python controller_follow.py --vicon --vicon-mode pointcloud --init-pos 0 0 0 \
+# python controller_follow.py --vicon --vicon-mode pointcloud --init-pos 0 0 0.2 \
 #     --leader-id lb1 --leader-pos 1 0 0 --follow-offset 0.5 0 0 -t 30
