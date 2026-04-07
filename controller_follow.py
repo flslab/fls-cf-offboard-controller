@@ -41,11 +41,10 @@ POSITION_STD_DEV = 0.001
 ORIENTATION_STD_DEV = 0.001
 
 PID_VALUES = {
-    # 'posCtlPid.xKp': '1.9',  'posCtlPid.xKi': '0.1',  'posCtlPid.xKd': '0.0',
-    # 'posCtlPid.yKp': '2.1',  'posCtlPid.yKi': '0.1',  'posCtlPid.yKd': '0.0',
-
-    'posCtlPid.xKp': '4', 'posCtlPid.xKi': '0.1', 'posCtlPid.xKd': '0.0',
-    'posCtlPid.yKp': '4', 'posCtlPid.yKi': '0.1', 'posCtlPid.yKd': '0.0',
+    'posCtlPid.xKp': '1.9',  'posCtlPid.xKi': '0.1',  'posCtlPid.xKd': '0.0',
+    'posCtlPid.yKp': '2.1',  'posCtlPid.yKi': '0.1',  'posCtlPid.yKd': '0.0',
+    # 'posCtlPid.xKp': '4', 'posCtlPid.xKi': '0.1', 'posCtlPid.xKd': '0.0',
+    # 'posCtlPid.yKp': '4', 'posCtlPid.yKi': '0.1', 'posCtlPid.yKd': '0.0',
     'posCtlPid.zKp': '1.9',  'posCtlPid.zKi': '2.0',  'posCtlPid.zKd': '0.05',
     'posCtlPid.thrustMin': '12000',
     'posCtlPid.thrustBase': '28000',
