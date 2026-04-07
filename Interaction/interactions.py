@@ -702,7 +702,7 @@ class InteractionsControl:
                                     "Pos": [round(x, 3) for x in pos],
                                 })
                                 if self.set_color:
-                                    self.set_color(0, 255, 0)
+                                    self.set_color([0, 255, 0])
                             last_peer_push_time = time.time()
                             accumulated = np.array(peer_msg['accumulated_offset'])
                             if z is not None:
@@ -750,7 +750,7 @@ class InteractionsControl:
                             "Pos": [round(x, 3) for x in pos],
                         })
                         if self.set_color:
-                            self.set_color(0, 255, 0)
+                            self.set_color([0, 255, 0])
                         accumulated = np.array(peer_msg['accumulated_offset'])
                         if z is not None:
                             accumulated[2] = 0.0
@@ -769,7 +769,7 @@ class InteractionsControl:
                     elif detect_user_interaction(speed, pos, hover_pos):
                         logger.info("Peer mode: local user push detected.")
                         if self.set_color:
-                            self.set_color(0, 255, 0)
+                            self.set_color([0, 255, 0])
                         status = 1
                         push_start_time = time.time()
                         hover_pos_before_push = hover_pos.copy()
@@ -794,6 +794,8 @@ class InteractionsControl:
                             "Pos": [round(x, 3) for x in pos],
                             "latency_ms": round((time.time() - send_time) * 1000, 3),
                         })
+                        if self.set_color:
+                            self.set_color([255, 255, 0])
                         hover_pos = hover_pos_before_push.copy()
                         push_start_time = None
                         hover_pos_before_push = None
@@ -811,7 +813,7 @@ class InteractionsControl:
                             "Pos": [round(x, 3) for x in pos],
                         })
                         if self.set_color:
-                            self.set_color(0, 255, 0)
+                            self.set_color([0, 255, 0])
                         accumulated = np.array(peer_msg['accumulated_offset'])
                         if z is not None:
                             accumulated[2] = 0.0
@@ -844,6 +846,8 @@ class InteractionsControl:
                             "Pos": [round(x, 3) for x in pos],
                             "latency_ms": disengage_latency_ms,
                         })
+                        if self.set_color:
+                            self.set_color([255, 255, 0])
                         status = 2
                     else:
                         logger.info("Peer mode: switching to grace hover.")
@@ -860,6 +864,8 @@ class InteractionsControl:
                             "Stabilize Time": grace_time_val,
                             "latency_ms": disengage_latency_ms,
                         })
+                        if self.set_color:
+                            self.set_color([255, 255, 0])
                     continue
 
                 send_time = time.time()
@@ -901,6 +907,8 @@ class InteractionsControl:
                 send_time = time.time()
                 pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
                 self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - push_start_time) * 1000, 2)})
+                if self.set_color:
+                    self.set_color([227, 253, 255])
                 status = 0
                 continue
 
@@ -911,6 +919,8 @@ class InteractionsControl:
                     self._safe_sleep(dt)
                 pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
                 self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - push_start_time) * 1000, 2)})
+                if self.set_color:
+                    self.set_color([227, 253, 255])
                 status = 0
 
             if not receiving_peer_push:

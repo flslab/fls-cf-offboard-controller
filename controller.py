@@ -700,7 +700,7 @@ class Controller:
             time.sleep(0.2)
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id,
-                                     pub_socket=interact_pub, sub_socket=interact_sub, execute=execution, set_color=self.led.set_colors)
+                                     pub_socket=interact_pub, sub_socket=interact_sub, execute=execution, set_color=self.led.show_single_color)
             IC.run()
             interact_pub.close()
             interact_sub.close()
