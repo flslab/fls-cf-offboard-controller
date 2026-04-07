@@ -157,9 +157,7 @@ class FollowController:
         self.log_manager = InteractionLogger(controller_args=self.args)
         self.log_manager.init_cf_logger(self.cf, cfg.LOG_VARS, self.args.cf_log_period)
         self.log_manager.add_log_group("frames", kf=True)
-        self.log_manager.add_log_group("events")
-        self.log_manager.add_log_group("commands")
-        self.log_manager.add_log_group("configs")
+        self.log_manager.add_log_group("block")
         self.log_manager.start()
         logger.info("Logging activated")
 
@@ -271,6 +269,9 @@ class FollowController:
     def _follow_with_offset(self, frame, offset):
         x, y, z = frame["tvec"]
         xo, yo, zo = offset
+
+        if self.log_manager:
+            self.log_manager.add_log_entry("block", frame)
         self.cf.commander.send_position_setpoint(x + xo, y + yo, z + zo, 0)
 
 
