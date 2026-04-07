@@ -68,10 +68,6 @@ class InteractionsControl:
             self._run_peer_translation()
             return
 
-        if self.sub_socket is not None:
-            self._run_network_follow()
-            return
-
         if action == 'rotation_test':
             self._run_rotation_limit()
         elif action == 'translation':
@@ -180,7 +176,6 @@ class InteractionsControl:
             self.interaction_peer_translation_vel(
                 drone_id=self.drone_id,
                 vel_threshold=translation_setting['delta_v'],
-                pos_threshold=translation_setting['pos_threshold'],
                 z=translation_setting['z'],
                 fric_coe=translation_setting['friction_coefficient'],
                 base_attitude=translation_setting['base_attitude'],
@@ -551,7 +546,6 @@ class InteractionsControl:
             self,
             drone_id,
             vel_threshold=0.01,
-            pos_threshold=0.04,
             z=1,
             fric_coe=-1.0,
             base_attitude=1,
@@ -590,14 +584,21 @@ class InteractionsControl:
 
         grace_time_val = grace_time if isinstance(grace_time, (int, float)) else 2.0
 
-        def drain_sub():
-            return sub_socket.recv_latest() if sub_socket is not None else None
+        def drain_sub(duration):
+            if sub_socket is None:
+                return None
+            else:
+                # monitoring stays active, while still reacting immediately to peer messages
+                start_time = time.time()
+                while time.time() - start_time < duration:
+                    self._safe_sleep(0)
+                    msg = sub_socket.recv_latest()
+                    if msg is not None:
+                        return msg
+                return None
 
         def detect_speed_threshold(s):
             return s > vel_threshold
-
-        def detect_user_interaction(s, p, hover):
-            return s > vel_threshold or np.linalg.norm(p - hover) > pos_threshold
 
         def calculate_braking_angles(v_x, v_y, base_att=base_attitude):
             pitch = np.sign(v_x) * base_att
@@ -649,7 +650,7 @@ class InteractionsControl:
         start_time = time.time()
         while time.time() - start_time < duration:
 
-            peer_msg = drain_sub()
+            peer_msg = drain_sub(dt)
 
             state = self._get_latest_drone_state()
             if not state:
@@ -766,7 +767,7 @@ class InteractionsControl:
                             "Pos": [round(x, 3) for x in pos],
                             "Target": [round(x, 3) for x in hover_pos],
                         })
-                    elif detect_user_interaction(speed, pos, hover_pos):
+                    elif detect_speed_threshold(speed):
                         logger.info("Peer mode: local user push detected.")
                         if self.set_color:
                             self.set_color([0, 255, 0])
@@ -783,7 +784,7 @@ class InteractionsControl:
                 # Peer push is newer → it wins; revert and follow peer
                 if peer_msg and peer_msg.get('type') == 'push':
                     peer_start = peer_msg.get('push_start_time', 0.0)
-                    if peer_start > push_start_time:
+                    if peer_start >= push_start_time:
                         leader_id = peer_msg.get('drone_id')
                         logger.info("Peer push is newer — abandoning local push, reverting position.")
                         send_time=time.time()
@@ -906,7 +907,7 @@ class InteractionsControl:
                 hover_pos = np.array(end_pos, dtype=float)
                 send_time = time.time()
                 pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
-                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - push_start_time) * 1000, 2)})
+                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - send_time) * 1000, 2)})
                 if self.set_color:
                     self.set_color([227, 253, 255])
                 status = 0
@@ -917,14 +918,13 @@ class InteractionsControl:
                 while time.time() < grace_time_val + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
+                send_time = time.time()
                 pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
-                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - push_start_time) * 1000, 2)})
+                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - send_time) * 1000, 2)})
                 if self.set_color:
                     self.set_color([227, 253, 255])
                 status = 0
 
-            if not receiving_peer_push:
-                self._safe_sleep(dt)
 
         self.lo_commander.send_notify_setpoint_stop()
 

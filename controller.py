@@ -1125,32 +1125,21 @@ class Controller:
         time.sleep(0.01)
 
     def _safe_sleep_orchestrated(self, duration):
-        """
-        Sleeps for 'duration' seconds, but interrupts IMMEDIATELY for:
-        1. Low Battery
-        2. ZMQ 'EMERGENCY' message
-        """
         end_time = time.time() + duration
-
-        # We wake up every 1000ms to check the Battery Event flag.
-        # ZMQ messages will wake us up instantly.
         poll_interval_ms = 1000
 
         while True:
-            remaining_seconds = end_time - time.time()
-            if remaining_seconds <= 0:
-                break
-
-            # Check Battery
             if self.battery_critical.is_set():
                 self._prepare_for_emergency_landing()
                 raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
 
-            # Wait for ZMQ Message OR Timeout
-            # take the smaller of: 100ms OR remaining time
+            # If duration is 0, remaining_seconds will be 0 or slightly negative.
+            # use max(0, ...) to ensure poll(0), which is a non-blocking check.
+            remaining_seconds = max(0, end_time - time.time())
             timeout_ms = int(min(poll_interval_ms, remaining_seconds * 1000))
 
-            # This blocks until a message arrives OR timeout_ms passes
+            # This blocks until a message arrives OR timeout_ms passes.
+            # If duration=0, this returns immediately with any pending messages.
             socks = dict(self.poller.poll(timeout_ms))
 
             # Process ZMQ Messages (if any)
@@ -1163,9 +1152,11 @@ class Controller:
                         raise EmergencyStopException("Orchestrator requested Emergency Stop")
                     elif msg.get('cmd') == 'START':
                         return True
-
                 except zmq.Again:
                     pass
+
+            if time.time() >= end_time:
+                break
 
     def _watch_battery(self, timestamp, data, logconf):
         voltage = data['pm.vbat']
