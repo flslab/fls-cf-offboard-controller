@@ -551,7 +551,7 @@ class InteractionsControl:
             self,
             drone_id,
             vel_threshold=0.01,
-            pos_threshold=0.02,
+            pos_threshold=0.04,
             z=1,
             fric_coe=-1.0,
             base_attitude=1,
