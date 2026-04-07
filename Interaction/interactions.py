@@ -32,7 +32,7 @@ def calculate_tilt(roll, pitch, degrees=True):
 class InteractionsControl:
 
     def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True,
-                 leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, *args, **kwargs):
+                 leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, set_color=None, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
@@ -40,6 +40,7 @@ class InteractionsControl:
         self.pub_socket = pub_socket
         self.sub_socket = sub_socket
         self.drone_id = drone_id
+        self.set_color = set_color
         # Network followers use their own 'frames' position, not the leader's mocap group
         self.pos_group_name = 'frames' if (leader_info is None or sub_socket is not None) else f"{leader_info['id']}"
 
@@ -700,6 +701,8 @@ class InteractionsControl:
                                     "push_start_time": peer_push_start_time,
                                     "Pos": [round(x, 3) for x in pos],
                                 })
+                                if self.set_color:
+                                    self.set_color(0, 255, 0)
                             last_peer_push_time = time.time()
                             accumulated = np.array(peer_msg['accumulated_offset'])
                             if z is not None:
@@ -746,6 +749,8 @@ class InteractionsControl:
                             "push_start_time": peer_push_start_time,
                             "Pos": [round(x, 3) for x in pos],
                         })
+                        if self.set_color:
+                            self.set_color(0, 255, 0)
                         accumulated = np.array(peer_msg['accumulated_offset'])
                         if z is not None:
                             accumulated[2] = 0.0
@@ -763,6 +768,8 @@ class InteractionsControl:
                         })
                     elif detect_user_interaction(speed, pos, hover_pos):
                         logger.info("Peer mode: local user push detected.")
+                        if self.set_color:
+                            self.set_color(0, 255, 0)
                         status = 1
                         push_start_time = time.time()
                         hover_pos_before_push = hover_pos.copy()
@@ -803,6 +810,8 @@ class InteractionsControl:
                             "push_start_time": peer_push_start_time,
                             "Pos": [round(x, 3) for x in pos],
                         })
+                        if self.set_color:
+                            self.set_color(0, 255, 0)
                         accumulated = np.array(peer_msg['accumulated_offset'])
                         if z is not None:
                             accumulated[2] = 0.0
