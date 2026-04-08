@@ -387,16 +387,7 @@ class DroneleaderController:
                 logger.info(f"[LEADER] Step {i+1}/{n}: sending target y={ty:.4f} m (before move)")
 
                 # ① Announce target
-                self.tcp.send({"type": "target", "x": sx, "y": ty, "z": sz, "duration": dur})
-
-                # ② Wait for follower's ACK
-                msg = self.tcp.recv()
-                if msg.get("type") != "ack":
-                    logger.warning(f"[LEADER] Unexpected message: {msg}")
-
-                # ③ Send GO and start setpoint loop simultaneously
-                logger.info(f"[LEADER] Sending GO and starting setpoint loop")
-                self.tcp.send({"type": "go"})
+                self.tcp.send({"type": "target", "x": sx, "y": ty, "z": sz})
                 self._send_setpoint_loop(sx, ty, sz, 0, dur + settle)
 
             else:  # msg_order == "after"
@@ -407,16 +398,8 @@ class DroneleaderController:
 
                 # ② Announce target to follower
                 logger.info(f"[LEADER] Sending target y={ty:.4f} m (after move)")
-                self.tcp.send({"type": "target", "x": sx, "y": ty, "z": sz, "duration": dur})
-
-                # ③ Wait for follower's ACK
-                msg = self.tcp.recv()
-                if msg.get("type") != "ack":
-                    logger.warning(f"[LEADER] Unexpected message: {msg}")
-
-                # ④ Send GO (follower starts its step now)
-                logger.info(f"[LEADER] Sending GO")
-                self.tcp.send({"type": "go"})
+                self.tcp.send({"type": "target", "x": sx, "y": ty, "z": sz})
+        self.tcp.send({"type": "end"})
 
         self.cf.commander.send_notify_setpoint_stop()
         logger.info("[LEADER] Mission complete")
@@ -428,40 +411,35 @@ class DroneleaderController:
         Protocol per step:
           1. Receive target from leader.
           2. Compute own absolute target (leader_target + offset).
-          3. Send ACK.
-          4. Wait for GO.
-          5. Start setpoint loop immediately.
-          6. After step_duration + settle_time, wait for next step.
+          4. Wait for next step or "end".
         """
         offset = list(self.args.follow_offset)
-        n = self.args.steps
-        settle = self.args.settle_time
 
-        logger.info(f"[FOLLOWER] Ready, waiting for {n} step commands with offset {offset}")
+        logger.info(f"[FOLLOWER] Ready with offset {offset}")
 
-        for i in range(n):
-            # ① Receive target
-            msg = self.tcp.recv()
-            if msg.get("type") != "target":
+        i = 0
+        tx, ty, tz = self.args.init_position[0], self.args.init_position[1], self.args.takeoff_altitude
+        while True:
+            # ① Receive target or end
+            self.tcp.settimeout(0.01)
+
+            try:
+                msg = self.tcp.recv()
+            except TimeoutError:
+                # This block runs if 0.01s passes without data
+                print("No data received within the timeout period")
+                msg = None
+            if msg is not None and msg.get("type") == "end":
+                break
+
+            if msg is not None and msg.get("type") != "target":
                 logger.warning(f"[FOLLOWER] Expected 'target', got: {msg}")
+                tx = msg["x"] + offset[0]
+                ty = msg["y"] + offset[1]
+                tz = msg["z"] + offset[2]
 
-            tx = msg["x"] + offset[0]
-            ty = msg["y"] + offset[1]
-            tz = msg["z"] + offset[2]
-            dur = msg["duration"]
-
-            logger.info(f"[FOLLOWER] Step {i+1}/{n}: target ({tx:.4f}, {ty:.4f}, {tz:.4f}) m")
-
-            # ② ACK
-            self.tcp.send({"type": "ack"})
-
-            # ③ Wait for GO and start setpoint loop simultaneously
-            msg = self.tcp.recv()
-            if msg.get("type") != "go":
-                logger.warning(f"[FOLLOWER] Expected 'go', got: {msg}")
-
-            logger.info(f"[FOLLOWER] GO received — starting setpoint loop")
-            self._send_setpoint_loop(tx, ty, tz, 0, dur + settle)
+            logger.info(f"[FOLLOWER]: target ({tx:.4f}, {ty:.4f}, {tz:.4f}) m")
+            self.cf.commander.send_position_setpoint(tx, ty, tz, 0)
 
         self.cf.commander.send_notify_setpoint_stop()
         logger.info("[FOLLOWER] Mission complete")
