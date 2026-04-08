@@ -372,7 +372,7 @@ class DroneleaderController:
 
         # Absolute start position (XZ held constant throughout)
         if self.latest_frame:
-            sx, sy, sz = self.latest_frame["tvec"]
+            sx, sy, sz = self.args.init_pos[0], self.args.init_pos[1], self.args.takeoff_altitude
         else:
             sx, sy, sz = self.init_coord
 
