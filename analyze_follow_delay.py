@@ -134,7 +134,7 @@ def style_ax(ax):
 
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
-def plot_interaction(blocks, frames, offset, interaction_range, interaction_name, t0, ypos_window):
+def plot_interaction(blocks, frames, offset, interaction_range, interaction_name):
     """Generate distance and delay plots for one interaction."""
     idx_start, idx_end = interaction_range
     t_int_start = blocks[idx_start]["time"]
@@ -170,9 +170,9 @@ def plot_interaction(blocks, frames, offset, interaction_range, interaction_name
     t_shade_start = t_int_start - t_origin
     t_shade_end = t_int_end - t_origin
 
-    # ── 1. Y position plot (fixed window, x starts at 0) ────────────────
-    ypos_t_start = t0 + ypos_window[0]
-    ypos_t_end = t0 + ypos_window[1]
+    # ── 1. Y position plot (1 s before/after detected interaction) ───────
+    ypos_t_start = t_int_start - 1.0
+    ypos_t_end = t_int_end + 1.0
     ypos_t_origin = ypos_t_start
 
     b_ypos = slice_time(blocks, ypos_t_start, ypos_t_end)
@@ -289,10 +289,6 @@ def main():
     t0 = blocks[0]["time"]
     labels = ["Interaction 1 — Slow Push", "Interaction 2 — Quick Push"]
 
-    # ypos_windows = [(3, 8), (11, 16)]
-    ypos_windows = [(224, 244), (255, 258)]
-
-
     for i, (irange, label) in enumerate(zip(interactions[:2], labels)):
         idx_s, idx_e = irange
         print(f"\n{'='*60}")
@@ -300,7 +296,7 @@ def main():
         print(f"  Block indices: {idx_s}–{idx_e}  ({idx_e - idx_s + 1} samples)")
         print(f"  Time window:   {blocks[idx_s]['time']-t0:.2f}–{blocks[idx_e]['time']-t0:.2f} s")
         print(f"{'='*60}")
-        plot_interaction(blocks, frames, OFFSET, irange, label, t0, ypos_windows[i])
+        plot_interaction(blocks, frames, OFFSET, irange, label)
 
 
 if __name__ == "__main__":

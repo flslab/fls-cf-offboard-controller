@@ -484,7 +484,7 @@ if __name__ == "__main__":
     ap.add_argument("--fps", type=int, default=100,
                     help="Mocap frame rate (used for Kalman filter dt)")
     ap.add_argument("-v", "--verbose", action="store_true", default=False)
-    ap.add_argument("-log", action="store_true", default=False,
+    ap.add_argument("-log", action="store_true", default=True,
                     help="Enable flight logging")
 
     # Mocap
