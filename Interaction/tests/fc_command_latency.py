@@ -62,7 +62,7 @@ def run_benchmark(uri: str, n: int) -> None:
         durations = []
         for i in range(n):
             t0 = time.perf_counter()
-            cf.commander.send_position_setpoint(0.0, 0.0, 0.0, 0.0)
+            cf.commander.send_position_setpoint(0.0, 0.0, 1.0, 0.0)
             t1 = time.perf_counter()
             durations.append((t1 - t0) * 1e6)   # µs
 
