@@ -295,7 +295,7 @@ class DroneleaderController:
         self.flying = True
         duration = alt * 2
         self.commander.takeoff(alt, duration)
-        time.sleep(duration + 1.0)
+        time.sleep(duration + 2.0)
 
     def land(self):
         self.cf.commander.send_notify_setpoint_stop()
