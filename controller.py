@@ -1035,10 +1035,10 @@ class Controller:
         roll_deg = latest_angles[0]
 
         if self.args.servo_type == "H":
-            target = np.array([0.0 - roll_deg, 180.0 + roll_deg], dtype=float)
+            target = np.array([0.0 + roll_deg, 180.0 + roll_deg], dtype=float)
             limits = [(0.0, 180.0), (180.0, 360.0)]
         elif self.args.servo_type == "V":
-            target = np.array([180.0 - roll_deg, 360.0 + roll_deg], dtype=float)
+            target = np.array([180.0 + roll_deg, 360.0 + roll_deg], dtype=float)
             limits = [(90.0, 270.0), (270.0, 450.0)]
         else:
             return
