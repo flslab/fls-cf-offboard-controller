@@ -419,7 +419,7 @@ class DroneleaderController:
         i = 0
         tx, ty, tz = self.args.init_pos[0], self.args.init_pos[1], self.args.takeoff_altitude
 
-        self.tcp.sock.settimeout(0.01)
+        self.tcp._conn.settimeout(0.01)
         while True:
             # ① Receive target or end
 
