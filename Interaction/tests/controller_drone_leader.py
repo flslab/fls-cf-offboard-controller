@@ -7,12 +7,6 @@ The LEADER drone moves forward along Y by `--step-size` mm, `--steps` times.
 Before each step, it sends the absolute target to the FOLLOWER over TCP so both
 drones issue their go_to commands simultaneously.
 
-TCP protocol (newline-delimited JSON):
-  Leader → Follower : {"type": "target", "x": <m>, "y": <m>, "z": <m>, "duration": <s>}
-  Follower → Leader : {"type": "ack"}
-  Leader → Follower : {"type": "go"}
-  -- both call go_to immediately on send/receive of "go" --
-
 Usage — leader (runs TCP server, waits for follower before flying):
     python controller_drone_leader.py --role leader \\
         --vicon --vicon-mode pointcloud --init-pos 1 0 0 \\
@@ -36,7 +30,11 @@ import datetime
 import json
 import logging
 import socket
+import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -534,7 +532,7 @@ if __name__ == "__main__":
 # ── Example launch commands ───────────────────────────────────────────────────
 # Leader (serves on port 5005, waits for follower, then flies 5 ×  mm steps):
 #   python controller_drone_leader.py --role leader \
-#       --vicon --vicon-mode pointcloud --init-pos 1 0 0.2 \
+#       --vicon --vicon-mode pointcloud --init-pos -0.5 0 0.2 \
 #       --takeoff-altitude 1.0 --steps 5 --step-size 50 --step-duration 3.0 \
 #       --tcp-port 5005 --msg-order before
 #
@@ -543,4 +541,4 @@ if __name__ == "__main__":
 #       --vicon --vicon-mode pointcloud --init-pos 0 0 0.2 \
 #       --takeoff-altitude 1.0 --steps 5 \
 #       --follow-offset 0.5 0 0 \
-#       --tcp-host 192.168.1.10 --tcp-port 5005
+#       --tcp-host 192.168.1.177 --tcp-port 5005
