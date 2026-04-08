@@ -44,7 +44,7 @@ def run_benchmark(uri: str, n: int) -> None:
 
 
         # Warm-up: one call before timing to avoid first-call overhead
-        cf.commander.send_position_setpoint(0.0, 0.0, 0.0, 0.0)
+        cf.commander.send_position_setpoint(0.0, 0.0, 1.0, 0.0)
         time.sleep(0.01)
 
         durations = []
