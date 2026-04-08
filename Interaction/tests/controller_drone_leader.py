@@ -332,8 +332,12 @@ class DroneleaderController:
         else:
             self._run_follower()
 
-    def _send_setpoint_loop(self, x: float, y: float, z: float, yaw: float, duration: float):
-        """Send position setpoints at `--setpoint-hz` for `duration` seconds."""
+    def _send_setpoint_loop(self, x: float, y: float, z: float, yaw: float, duration: float,
+                            after_first_cb=None):
+        """Send position setpoints at `--setpoint-hz` for `duration` seconds.
+
+        after_first_cb: optional callable invoked immediately after the first setpoint is sent.
+        """
         dt = 1.0 / self.args.setpoint_hz
         t_end = time.time() + duration
         if self.log_manager:
@@ -342,8 +346,12 @@ class DroneleaderController:
                 "cmd": "position_setpoint",
                 "x": x, "y": y, "z": z, "yaw": yaw,
             })
+        first = True
         while time.time() < t_end:
             self.cf.commander.send_position_setpoint(x, y, z, yaw)
+            if first and after_first_cb is not None:
+                after_first_cb()
+                first = False
             time.sleep(dt)
 
     def _run_leader(self):
@@ -392,14 +400,14 @@ class DroneleaderController:
                 self._send_setpoint_loop(sx, ty, sz, 0, dur + settle)
 
             else:  # msg_order == "after"
-                logger.info(f"[LEADER] Step {i+1}/{n}: starting setpoint loop (before notifying follower)")
+                logger.info(f"[LEADER] Step {i+1}/{n}: starting setpoint loop (notifying follower after first cmd)")
 
-                # ① Leader moves first
-                self._send_setpoint_loop(sx, ty, sz, 0, dur + settle)
+                def _notify(sx=sx, ty=ty, sz=sz):
+                    logger.info(f"[LEADER] Sending target y={ty:.4f} m (after first setpoint)")
+                    self.tcp.send({"type": "target", "x": sx, "y": ty, "z": sz})
 
-                # ② Announce target to follower
-                logger.info(f"[LEADER] Sending target y={ty:.4f} m (after move)")
-                self.tcp.send({"type": "target", "x": sx, "y": ty, "z": sz})
+                # ① Leader sends first setpoint, notifies follower, then continues loop
+                self._send_setpoint_loop(sx, ty, sz, 0, dur + settle, after_first_cb=_notify)
         self.tcp.send({"type": "end"})
 
         self.cf.commander.send_notify_setpoint_stop()
