@@ -14,10 +14,12 @@ For each interaction:
 import json
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use("macosx")
 
 
 # ── Configuration ────────────────────────────────────────────────────────────
-LOG_FILE = "./logs/leader_follower_block_2026-04-07_17-17-58.json"
+LOG_FILE = "../logs/leader_follower_block_2026-04-07_17-17-58.json"
 OFFSET = np.array([0.5, 0.0, 0.0])
 VEL_THRESHOLD = 0.1   # m/s on Y-axis to define interaction windows
 MIN_SEQ_LEN = 10      # ignore sequences shorter than this (noise spikes)
@@ -81,8 +83,9 @@ def compute_delay_y(blocks, frames, offset, t_start, t_end):
     Y position crosses target_y.  Between consecutive frame samples, assume
     linear motion and interpolate the exact crossing time.
 
-    Returns arrays: block_times, delays (seconds).
+    Returns arrays: block_times (relative), delays (seconds).
     """
+    # Build sorted arrays for frames
     f_times = np.array([f["time"] for f in frames])
     f_y = np.array([f["pos"][1] for f in frames])
 
@@ -96,13 +99,18 @@ def compute_delay_y(blocks, frames, offset, t_start, t_end):
 
         target_y = b["pos"][1] + offset[1]
 
+        # Search frames starting from the block's timestamp
+        # (the drone can only react AFTER the block position is observed)
         start_search = np.searchsorted(f_times, t_b)
 
+        found = False
         for j in range(start_search, len(f_times) - 1):
             y0, y1 = f_y[j], f_y[j + 1]
             t0_f, t1_f = f_times[j], f_times[j + 1]
 
+            # Check if target_y is between y0 and y1 (monotonic crossing)
             if (y0 <= target_y <= y1) or (y1 <= target_y <= y0):
+                # Linear interpolation for exact crossing time
                 if abs(y1 - y0) > 1e-9:
                     frac = (target_y - y0) / (y1 - y0)
                     t_cross = t0_f + frac * (t1_f - t0_f)
@@ -110,10 +118,13 @@ def compute_delay_y(blocks, frames, offset, t_start, t_end):
                     t_cross = t0_f
 
                 delay = t_cross - t_b
-                if delay >= 0:
+                if delay >= 0:  # only forward-looking delays make sense
                     block_times.append(t_b)
                     delays.append(delay)
+                    found = True
                     break
+
+        # If the drone never reaches target_y, skip this sample
 
     return np.array(block_times), np.array(delays)
 
@@ -123,16 +134,8 @@ def slice_time(entries, t_start, t_end):
     return [e for e in entries if t_start <= e["time"] <= t_end]
 
 
-def style_ax(ax):
-    """Apply consistent draw_friction.py-style formatting."""
-    ax.grid(True, linestyle='--', alpha=0.7)
-    ax.tick_params(axis='both', labelsize=16)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-
-
 # ── Plotting ─────────────────────────────────────────────────────────────────
-def plot_interaction(blocks, frames, offset, interaction_range, interaction_name, t0, ypos_window):
+def plot_interaction(blocks, frames, offset, interaction_range, interaction_name, t0):
     """Generate distance and delay plots for one interaction."""
     idx_start, idx_end = interaction_range
     t_int_start = blocks[idx_start]["time"]
@@ -149,15 +152,17 @@ def plot_interaction(blocks, frames, offset, interaction_range, interaction_name
         print(f"  No data in window for {interaction_name}, skipping.")
         return
 
-    # ── Common data (time starts at 0 = vis window start) ────────────────
-    t_origin = t_vis_start
-    b_t = np.array([b["time"] - t_origin for b in b_slice])
+    # ── 1. Distance plot ─────────────────────────────────────────────────
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+    fig.suptitle(f"{interaction_name}", fontsize=14, fontweight="bold")
+
+    b_t = np.array([b["time"] - t0 for b in b_slice])
     b_pos = np.array([b["pos"] for b in b_slice])
+    b_vel_y = np.array([b["vel"][1] for b in b_slice])
     target_pos = b_pos + offset
 
-    f_t = np.array([f["time"] - t_origin for f in f_slice])
+    f_t = np.array([f["time"] - t0 for f in f_slice])
     f_pos = np.array([f["pos"] for f in f_slice])
-
 
     # Interpolate drone position at block timestamps for distance calc
     drone_at_block = np.column_stack([
@@ -165,70 +170,49 @@ def plot_interaction(blocks, frames, offset, interaction_range, interaction_name
     ])
     dist = np.linalg.norm(drone_at_block - target_pos, axis=1)
 
-    t_shade_start = t_int_start - t_origin
-    t_shade_end = t_int_end - t_origin
+    # Interaction time window (shaded)
+    t_shade_start = t_int_start - t0
+    t_shade_end = t_int_end - t0
 
-    # ── 1. Y position plot (fixed window, x starts at 0) ────────────────
-    ypos_t_start = t0 + ypos_window[0]
-    ypos_t_end = t0 + ypos_window[1]
-    ypos_t_origin = ypos_t_start
+    # Plot Y positions
+    ax1.plot(b_t, target_pos[:, 1], label="Target (block_Y + offset_Y)",
+             color="#e74c3c", linewidth=1.5)
+    ax1.plot(f_t, f_pos[:, 1], label="Drone Y", color="#2980b9", linewidth=1.5)
+    ax1.axvspan(t_shade_start, t_shade_end, alpha=0.1, color="orange",
+                label="Interaction window")
+    ax1.set_ylabel("Y position (m)")
+    ax1.legend(fontsize=9, loc="upper left")
+    ax1.grid(True, alpha=0.3)
+    ax1.set_title("Y-axis: Target vs Drone position")
 
-    b_ypos = slice_time(blocks, ypos_t_start, ypos_t_end)
-    f_ypos = slice_time(frames, ypos_t_start, ypos_t_end)
+    # Plot 3D distance
+    ax2.plot(b_t, dist * 100, color="#c0392b", linewidth=1.2)
+    ax2.axhline(dist.mean() * 100, color="#2c3e50", linestyle="--", linewidth=1,
+                label=f"Mean = {dist.mean()*100:.1f} cm")
+    ax2.axvspan(t_shade_start, t_shade_end, alpha=0.1, color="orange")
+    ax2.set_ylabel("3D Distance to target (cm)")
+    ax2.legend(fontsize=9)
+    ax2.grid(True, alpha=0.3)
+    ax2.set_title("Distance from drone to (block + offset)")
 
-    b_t_yp = np.array([b["time"] - ypos_t_origin for b in b_ypos])
-    b_pos_yp = np.array([b["pos"] for b in b_ypos])
-    target_pos_yp = b_pos_yp + offset
-
-    f_t_yp = np.array([f["time"] - ypos_t_origin for f in f_ypos])
-    f_pos_yp = np.array([f["pos"] for f in f_ypos])
-
-    # Zero-reference Y to the block position at window start
-    y_origin_yp = b_pos_yp[0][1] if len(b_pos_yp) > 0 else 0
-    target_y_zeroed = (target_pos_yp[:, 1] - y_origin_yp) * 1000
-    drone_y_zeroed = (f_pos_yp[:, 1] - y_origin_yp) * 1000
-
-    fig1, ax1 = plt.subplots(1, 1, figsize=(10, 6))
-
-    ax1.scatter(b_t_yp, target_y_zeroed, alpha=0.5, s=10, label="Commanded Position Y (block Y + offset)")
-    ax1.scatter(f_t_yp, drone_y_zeroed, alpha=0.5, s=10, label="Drone Y")
-    t_shade_start_yp = t_int_start - ypos_t_origin
-    t_shade_end_yp = t_int_end - ypos_t_origin
-    ax1.axvspan(t_shade_start_yp, t_shade_end_yp, alpha=0.08, color="orange")
-    ax1.set_ylim(0, 1200)
-    ax1.set_xlim(b_t_yp[0], b_t_yp[-1])
-    ax1.set_title("Y Position (mm)", loc="left", fontsize=16)
-    ax1.set_xlabel("Time (s)", fontsize=16)
-    ax1.legend(fontsize=16)
-    style_ax(ax1)
-
-    plt.tight_layout()
-    fname1 = LOG_FILE.replace(".json", f"_{interaction_name.lower().replace(' ', '_')}_ypos.png")
-    fig1.savefig(fname1, dpi=300)
-    print(f"  Saved: {fname1}")
-    plt.show()
-
-    # ── 2. Distance to theoretical position ──────────────────────────────
-    fig2, ax2 = plt.subplots(1, 1, figsize=(10, 6))
-
-    ax2.scatter(b_t, dist * 1000, alpha=0.5, s=10, color="#c0392b", label="Euclidean Distance")
-    ax2.axhline(dist.mean() * 1000, color="#2c3e50", linestyle="--", linewidth=1,
-                label=f"Mean = {dist.mean()*1000:.1f} mm")
-    ax2.axvspan(t_shade_start, t_shade_end, alpha=0.08, color="orange")
-    ax2.set_ylim(0, 600)
-    ax2.set_xlim(b_t[0], b_t[-1])
-    ax2.set_title("Distance to Theoretical Position (mm)", loc="left", fontsize=16)
-    ax2.set_xlabel("Time (s)", fontsize=16)
-    ax2.legend(fontsize=16)
-    style_ax(ax2)
+    # Plot block velocity Y
+    ax3.plot(b_t, b_vel_y, color="#27ae60", linewidth=1.2)
+    ax3.axhline(VEL_THRESHOLD, color="gray", linestyle=":", linewidth=1,
+                label=f"Threshold = {VEL_THRESHOLD} m/s")
+    ax3.axvspan(t_shade_start, t_shade_end, alpha=0.1, color="orange")
+    ax3.set_ylabel("Block vel_Y (m/s)")
+    ax3.set_xlabel("Time (s)")
+    ax3.legend(fontsize=9)
+    ax3.grid(True, alpha=0.3)
+    ax3.set_title("Block Y-velocity")
 
     plt.tight_layout()
-    fname2 = LOG_FILE.replace(".json", f"_{interaction_name.lower().replace(' ', '_')}_distance.png")
-    fig2.savefig(fname2, dpi=300)
-    print(f"  Saved: {fname2}")
+    fname = LOG_FILE.replace(".json", f"_{interaction_name.lower().replace(' ', '_')}_distance.png")
+    # plt.savefig(fname, dpi=150)
+    print(f"  Saved: {fname}")
     plt.show()
 
-    # ── 3. Delay plot ────────────────────────────────────────────────────
+    # ── 2. Delay plot ────────────────────────────────────────────────────
     delay_b_times, delays = compute_delay_y(
         blocks, frames, offset, t_int_start, t_int_end
     )
@@ -237,28 +221,39 @@ def plot_interaction(blocks, frames, offset, interaction_range, interaction_name
         print(f"  No delay data for {interaction_name}")
         return
 
-    delay_b_times_rel = delay_b_times - t_origin
+    delay_b_times_rel = delay_b_times - t0
 
-    fig3, ax_d = plt.subplots(1, 1, figsize=(10, 6))
+    fig2, (ax_d1, ax_d2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
+    fig2.suptitle(f"{interaction_name} — Tracking Delay", fontsize=14, fontweight="bold")
 
-    ax_d.scatter(delay_b_times_rel, delays * 1000, alpha=0.5, s=10, label="Per-sample delay")
+    ax_d1.plot(delay_b_times_rel, delays * 1000, "o-", color="#8e44ad",
+               markersize=2, linewidth=1, label="Per-sample delay")
     mean_delay = delays.mean()
     median_delay = np.median(delays)
-    ax_d.axhline(mean_delay * 1000, color="#2c3e50", linestyle="--", linewidth=1,
-                 label=f"Mean = {mean_delay*1000:.1f} ms")
-    ax_d.axhline(median_delay * 1000, color="#e67e22", linestyle=":", linewidth=1,
-                 label=f"Median = {median_delay*1000:.1f} ms")
-    ax_d.set_ylim(0, 600)
-    ax_d.set_xlim(delay_b_times_rel[0], delay_b_times_rel[-1])
-    ax_d.set_title("Following Delay (ms)", loc="left", fontsize=16)
-    ax_d.set_xlabel("Time (s)", fontsize=16)
-    ax_d.legend(fontsize=16)
-    style_ax(ax_d)
+    ax_d1.axhline(mean_delay * 1000, color="#2c3e50", linestyle="--", linewidth=1,
+                  label=f"Mean = {mean_delay*1000:.1f} ms")
+    ax_d1.axhline(median_delay * 1000, color="#e67e22", linestyle=":", linewidth=1,
+                  label=f"Median = {median_delay*1000:.1f} ms")
+    ax_d1.set_ylabel("Delay (ms)")
+    ax_d1.legend(fontsize=9)
+    ax_d1.grid(True, alpha=0.3)
+    ax_d1.set_title("Time for drone to reach each block target Y position")
+
+    # Also show block velocity for context
+    b_in_window = [b for b in blocks if t_int_start <= b["time"] <= t_int_end]
+    bw_t = np.array([b["time"] - t0 for b in b_in_window])
+    bw_vy = np.array([b["vel"][1] for b in b_in_window])
+    ax_d2.plot(bw_t, bw_vy, color="#27ae60", linewidth=1.2, label="Block vel_Y")
+    ax_d2.axhline(VEL_THRESHOLD, color="gray", linestyle=":", linewidth=1)
+    ax_d2.set_ylabel("Block vel_Y (m/s)")
+    ax_d2.set_xlabel("Time (s)")
+    ax_d2.legend(fontsize=9)
+    ax_d2.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    fname3 = LOG_FILE.replace(".json", f"_{interaction_name.lower().replace(' ', '_')}_delay.png")
-    fig3.savefig(fname3, dpi=300)
-    print(f"  Saved: {fname3}")
+    fname2 = LOG_FILE.replace(".json", f"_{interaction_name.lower().replace(' ', '_')}_delay.png")
+    # plt.savefig(fname2, dpi=150)
+    print(f"  Saved: {fname2}")
     plt.show()
 
     # ── Summary ──────────────────────────────────────────────────────────
@@ -287,8 +282,6 @@ def main():
     t0 = blocks[0]["time"]
     labels = ["Interaction 1 — Slow Push", "Interaction 2 — Quick Push"]
 
-    ypos_windows = [(3, 8), (11, 16)]
-
     for i, (irange, label) in enumerate(zip(interactions[:2], labels)):
         idx_s, idx_e = irange
         print(f"\n{'='*60}")
@@ -296,7 +289,7 @@ def main():
         print(f"  Block indices: {idx_s}–{idx_e}  ({idx_e - idx_s + 1} samples)")
         print(f"  Time window:   {blocks[idx_s]['time']-t0:.2f}–{blocks[idx_e]['time']-t0:.2f} s")
         print(f"{'='*60}")
-        plot_interaction(blocks, frames, OFFSET, irange, label, t0, ypos_windows[i])
+        plot_interaction(blocks, frames, OFFSET, irange, label, t0)
 
 
 if __name__ == "__main__":
