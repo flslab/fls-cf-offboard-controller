@@ -35,17 +35,9 @@ def run_benchmark(uri: str, n: int) -> None:
     with SyncCrazyflie(uri, cf=Crazyflie(rw_cache="./cache")) as scf:
         cf = scf.cf
 
-
         # Match controller_follow.py setup_params()
         logger.info("Setting parameters ...")
-        cf.param.set_value("stabilizer.estimator", "2")   # Kalman
         cf.param.set_value("stabilizer.controller", "1")  # PID
-        cf.param.set_value("commander.enHighLevel", "1")
-
-        logger.info("Resetting estimator ...")
-        cf.param.set_value('kalman.resetEstimation', '1')
-        time.sleep(0.1)
-        cf.param.set_value('kalman.resetEstimation', '0')
 
         logger.info("Arming ...")
         cf.platform.send_arming_request(True)
@@ -56,7 +48,7 @@ def run_benchmark(uri: str, n: int) -> None:
 
 
         # Warm-up: one call before timing to avoid first-call overhead
-        cf.commander.send_position_setpoint(0.0, 0.0, 1.0, 0.0)
+        cf.commander.send_position_setpoint(1.0, 1.0, 1.0, 0.0)
         time.sleep(0.01)
 
         durations = []
