@@ -419,7 +419,7 @@ class DroneleaderController:
         i = 0
         tx, ty, tz = self.args.init_pos[0], self.args.init_pos[1], self.args.takeoff_altitude
 
-        self.tcp.settimeout(0.01)
+        self.tcp.sock.settimeout(0.01)
         while True:
             # ① Receive target or end
 
@@ -535,12 +535,12 @@ if __name__ == "__main__":
 # Leader (serves on port 5005, waits for follower, then flies 5 ×  mm steps):
 #   python Interaction/tests/controller_drone_leader.py --role leader \
 #       --vicon --vicon-mode pointcloud --init-pos -1 0 0.2 \
-#       --takeoff-altitude 1.0 --steps 5 --step-size 50 --step-duration 3.0 \
+#       --takeoff-altitude 1.0 --steps 5 --step-size 50 --step-duration 5.0 \
 #       --tcp-port 5005 --msg-order before
-#
+
 # Follower (connects to leader at 192.168.1.10, keeps +0.5 m X offset):
 #   python Interaction/tests/controller_drone_leader.py --role follower \
 #       --vicon --vicon-mode pointcloud --init-pos 0 0 0.2 \
 #       --takeoff-altitude 1.0 --steps 5 \
-#       --follow-offset 0.5 0 0 \
+#       --follow-offset 1 0 0 \
 #       --tcp-host 192.168.1.177 --tcp-port 5005
