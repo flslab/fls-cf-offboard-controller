@@ -17,7 +17,9 @@ import matplotlib.pyplot as plt
 
 
 # ── Configuration ────────────────────────────────────────────────────────────
-LOG_FILE = "./logs/leader_follower_block_2026-04-07_17-17-58.json"
+# LOG_FILE = "./logs/leader_follower_block_2026-04-07_17-17-58.json"
+LOG_FILE = "./logs/leader_follower_block_vel_2026-04-08_12-15-02.json"
+
 OFFSET = np.array([0.5, 0.0, 0.0])
 VEL_THRESHOLD = 0.1   # m/s on Y-axis to define interaction windows
 MIN_SEQ_LEN = 10      # ignore sequences shorter than this (noise spikes)
@@ -287,7 +289,9 @@ def main():
     t0 = blocks[0]["time"]
     labels = ["Interaction 1 — Slow Push", "Interaction 2 — Quick Push"]
 
-    ypos_windows = [(3, 8), (11, 16)]
+    # ypos_windows = [(3, 8), (11, 16)]
+    ypos_windows = [(224, 244), (255, 258)]
+
 
     for i, (irange, label) in enumerate(zip(interactions[:2], labels)):
         idx_s, idx_e = irange

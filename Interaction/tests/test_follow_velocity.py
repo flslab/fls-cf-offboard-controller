@@ -57,7 +57,7 @@ class VelocityFollowController(FollowController):
         4. Send the extrapolated velocity to the follower via
            send_velocity_world_setpoint.  Yaw rate is kept at 0.
         """
-
+        delay = 0.01
         if self.log_manager:
             self.log_manager.add_log_entry("block", frame)
 
@@ -72,9 +72,13 @@ class VelocityFollowController(FollowController):
             v_curr = vel_entries[-1]["vel"]   # [vx, vy, vz] most recent
 
             # Constant-acceleration extrapolation: v_next = 2*v_curr - v_prev
-            vx = 2.0 * v_curr[0] - v_prev[0]
-            vy = 2.0 * v_curr[1] - v_prev[1]
-            vz = 2.0 * v_curr[2] - v_prev[2]
+            ax = (v_curr[0] - v_prev[0]) / 0.01
+            ay = (v_curr[0] - v_prev[0]) / 0.01
+            az = (v_curr[0] - v_prev[0]) / 0.01
+
+            vx = ax * (0.01 + delay) + v_curr[0]
+            vy = ay * (0.01 + delay) + v_curr[0]
+            vz = 0
 
             logger.debug(
                 f"vel_prev={[f'{v:.3f}' for v in v_prev]}  "

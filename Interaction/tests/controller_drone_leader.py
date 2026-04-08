@@ -298,6 +298,7 @@ class DroneleaderController:
         time.sleep(duration + 1.0)
 
     def land(self):
+        self.cf.commander.send_notify_setpoint_stop()
         if not self.flying:
             return
         logger.info("Landing ...")
@@ -416,16 +417,17 @@ class DroneleaderController:
         logger.info(f"[FOLLOWER] Ready with offset {offset}")
 
         i = 0
-        tx, ty, tz = self.args.init_position[0], self.args.init_position[1], self.args.takeoff_altitude
+        tx, ty, tz = self.args.init_pos[0], self.args.init_pos[1], self.args.takeoff_altitude
+
+        self.tcp.settimeout(0.01)
         while True:
             # ① Receive target or end
-            self.tcp.settimeout(0.01)
 
             try:
                 msg = self.tcp.recv()
             except TimeoutError:
                 # This block runs if 0.01s passes without data
-                print("No data received within the timeout period")
+                # print("No data received within the timeout period")
                 msg = None
             if msg is not None and msg.get("type") == "end":
                 break
@@ -531,13 +533,13 @@ if __name__ == "__main__":
 
 # ── Example launch commands ───────────────────────────────────────────────────
 # Leader (serves on port 5005, waits for follower, then flies 5 ×  mm steps):
-#   python controller_drone_leader.py --role leader \
-#       --vicon --vicon-mode pointcloud --init-pos -0.5 0 0.2 \
+#   python Interaction/tests/controller_drone_leader.py --role leader \
+#       --vicon --vicon-mode pointcloud --init-pos -1 0 0.2 \
 #       --takeoff-altitude 1.0 --steps 5 --step-size 50 --step-duration 3.0 \
 #       --tcp-port 5005 --msg-order before
 #
 # Follower (connects to leader at 192.168.1.10, keeps +0.5 m X offset):
-#   python controller_drone_leader.py --role follower \
+#   python Interaction/tests/controller_drone_leader.py --role follower \
 #       --vicon --vicon-mode pointcloud --init-pos 0 0 0.2 \
 #       --takeoff-altitude 1.0 --steps 5 \
 #       --follow-offset 0.5 0 0 \
