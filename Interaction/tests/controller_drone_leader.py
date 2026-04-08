@@ -418,13 +418,10 @@ class DroneleaderController:
 
         logger.info(f"[FOLLOWER] Ready with offset {offset}")
 
-        i = 0
         tx, ty, tz = self.args.init_pos[0], self.args.init_pos[1], self.args.takeoff_altitude
 
-        self.tcp._conn.settimeout(0.01)
         while True:
             # ① Receive target or end
-
             try:
                 msg = self.tcp.recv()
             except TimeoutError:
@@ -435,12 +432,13 @@ class DroneleaderController:
                 break
 
             if msg is not None and msg.get("type") == "target":
-                logger.warning(f"[FOLLOWER] Expected 'target', got: {msg}")
+                # logger.warning(f"[FOLLOWER] Expected 'target', got: {msg}")
                 tx = msg["x"] + offset[0]
                 ty = msg["y"] + offset[1]
                 tz = msg["z"] + offset[2]
+                logger.info(f"[FOLLOWER]: target ({tx:.4f}, {ty:.4f}, {tz:.4f}) m")
 
-            logger.info(f"[FOLLOWER]: target ({tx:.4f}, {ty:.4f}, {tz:.4f}) m")
+            # logger.info(f"[FOLLOWER]: target ({tx:.4f}, {ty:.4f}, {tz:.4f}) m")
             self.cf.commander.send_position_setpoint(tx, ty, tz, 0)
 
         self.cf.commander.send_notify_setpoint_stop()
