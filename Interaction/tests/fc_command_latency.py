@@ -19,6 +19,7 @@ import cflib.crtp
 from cflib.crazyflie import Crazyflie
 from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.utils import uri_helper
+from cflib.utils.reset_estimator import reset_estimator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -34,6 +35,15 @@ def run_benchmark(uri: str, n: int) -> None:
     with SyncCrazyflie(uri, cf=Crazyflie(rw_cache="./cache")) as scf:
         cf = scf.cf
 
+
+        # Match controller_follow.py setup_params()
+        logger.info("Setting parameters ...")
+        cf.param.set_value("stabilizer.estimator", "2")   # Kalman
+        cf.param.set_value("stabilizer.controller", "1")  # PID
+        cf.param.set_value("commander.enHighLevel", "1")
+
+        logger.info("Resetting estimator ...")
+        reset_estimator(cf)   # gives Kalman a valid initial state at (0,0,0)
 
         logger.info("Arming ...")
         cf.platform.send_arming_request(True)
