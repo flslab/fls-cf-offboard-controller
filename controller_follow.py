@@ -156,7 +156,7 @@ class FollowController:
         self.log_manager = InteractionLogger(controller_args=self.args)
         self.log_manager.init_cf_logger(self.cf, cfg.LOG_VARS, self.args.cf_log_period)
         self.log_manager.add_log_group("frames", kf=True)
-        self.log_manager.add_log_group("block")
+        self.log_manager.add_log_group("block", kf=True)
         self.log_manager.start()
         logger.info("Logging activated")
 
