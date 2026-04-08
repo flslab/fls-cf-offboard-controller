@@ -57,28 +57,33 @@ class VelocityFollowController(FollowController):
         4. Send the extrapolated velocity to the follower via
            send_velocity_world_setpoint.  Yaw rate is kept at 0.
         """
+        dt = 1.0 / self.args.fps
         delay = 0.01
+
+        recent_velocities = []
         if self.log_manager:
             self.log_manager.add_log_entry("block", frame)
 
-        # ── retrieve the two most recent velocity estimates ──────────────────
-        block_log = self.log_manager.groups.get("block", []) if self.log_manager else []
+            # Walk backward so we only inspect the newest entries we need.
+            for entry in reversed(self.log_manager.groups.get("block", [])):
+                vel = entry.get("vel") if entry else None
+                if vel is None:
+                    continue
+                recent_velocities.append(vel)
+                if len(recent_velocities) == 2:
+                    break
 
-        # Filter to entries that actually have a velocity estimate
-        vel_entries = [e for e in block_log if e is not None and e.get("vel") is not None]
+        if len(recent_velocities) >= 2:
+            v_curr = recent_velocities[0]   # [vx, vy, vz] most recent
+            v_prev = recent_velocities[1]   # [vx, vy, vz] one step ago
 
-        if len(vel_entries) >= 2:
-            v_prev = vel_entries[-2]["vel"]   # [vx, vy, vz] one step ago
-            v_curr = vel_entries[-1]["vel"]   # [vx, vy, vz] most recent
+            ax = (v_curr[0] - v_prev[0]) / dt
+            ay = (v_curr[1] - v_prev[1]) / dt
+            az = (v_curr[2] - v_prev[2]) / dt
 
-            # Constant-acceleration extrapolation: v_next = 2*v_curr - v_prev
-            ax = (v_curr[0] - v_prev[0]) / 0.01
-            ay = (v_curr[0] - v_prev[0]) / 0.01
-            az = (v_curr[0] - v_prev[0]) / 0.01
-
-            vx = ax * (0.01 + delay) + v_curr[0]
-            vy = ay * (0.01 + delay) + v_curr[0]
-            vz = 0
+            vx = v_curr[0] + ax * (dt + delay)
+            vy = v_curr[1] + ay * (dt + delay)
+            vz = v_curr[2] + az * (dt + delay)
 
             logger.debug(
                 f"vel_prev={[f'{v:.3f}' for v in v_prev]}  "
@@ -86,9 +91,9 @@ class VelocityFollowController(FollowController):
                 f"vel_cmd={[f'{v:.3f}' for v in (vx, vy, vz)]}"
             )
 
-        elif len(vel_entries) == 1:
+        elif len(recent_velocities) == 1:
             # Only one sample — use it directly, no extrapolation
-            vx, vy, vz = vel_entries[-1]["vel"]
+            vx, vy, vz = recent_velocities[0]
         else:
             # No velocity data yet — hold in place
             vx, vy, vz = 0.0, 0.0, 0.0
