@@ -43,7 +43,9 @@ def run_benchmark(uri: str, n: int) -> None:
         cf.param.set_value("commander.enHighLevel", "1")
 
         logger.info("Resetting estimator ...")
-        reset_estimator(cf)   # gives Kalman a valid initial state at (0,0,0)
+        cf.param.set_value('kalman.resetEstimation', '1')
+        time.sleep(0.1)
+        cf.param.set_value('kalman.resetEstimation', '0')
 
         logger.info("Arming ...")
         cf.platform.send_arming_request(True)
