@@ -56,7 +56,7 @@ def run_benchmark(uri: str, n: int) -> None:
             t0 = time.perf_counter()
             cf.commander.send_position_setpoint(0.0, 0.0, 1.0, 0.0)
             t1 = time.perf_counter()
-            durations.append((t1 - t0) * 1e6)   # µs
+            durations.append((t1 - t0) * 1e3)   # ms
 
         # Stop sending setpoints
         cf.commander.send_notify_setpoint_stop()
@@ -68,18 +68,12 @@ def run_benchmark(uri: str, n: int) -> None:
     max_us    = max(durations)
 
     sorted_d  = sorted(durations)
-    p50_us    = sorted_d[int(0.50 * n)]
-    p95_us    = sorted_d[int(0.95 * n)]
-    p99_us    = sorted_d[int(0.99 * n)]
 
     print(f"\n[fc_command_latency] Results ({n} calls)")
-    print(f"  Avg   : {avg_us:>10.2f} µs")
-    print(f"  Min   : {min_us:>10.2f} µs")
-    print(f"  Max   : {max_us:>10.2f} µs")
-    print(f"  p50   : {p50_us:>10.2f} µs")
-    print(f"  p95   : {p95_us:>10.2f} µs")
-    print(f"  p99   : {p99_us:>10.2f} µs")
-    print(f"  Total : {total_us/1e6:>10.4f} s")
+    print(f"  Avg   : {avg_us:>10.2f} ms")
+    print(f"  Min   : {min_us:>10.2f} ms")
+    print(f"  Max   : {max_us:>10.2f} ms")
+    print(f"  Total : {total_us/1e3:>10.4f} ms")
 
 
 if __name__ == "__main__":
