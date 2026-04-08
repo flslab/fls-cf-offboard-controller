@@ -33,8 +33,15 @@ def run_benchmark(uri: str, n: int) -> None:
 
     with SyncCrazyflie(uri, cf=Crazyflie(rw_cache="./cache")) as scf:
         cf = scf.cf
+
+
+        logger.info("Arming ...")
+        cf.platform.send_arming_request(True)
+        time.sleep(1.0)
+
         logger.info("Connected — propellers OFF, starting benchmark")
         logger.info(f"Issuing send_position_setpoint x{n} ...")
+
 
         # Warm-up: one call before timing to avoid first-call overhead
         cf.commander.send_position_setpoint(0.0, 0.0, 0.0, 0.0)
