@@ -427,7 +427,7 @@ class DroneleaderController:
         logger.info(f"[FOLLOWER] Ready with offset {offset}")
 
         tx, ty, tz = self.args.init_pos[0], self.args.init_pos[1], self.args.takeoff_altitude
-
+        self.tcp._conn.settimeout(0.01)
         while True:
             # ① Receive target or end
             try:
