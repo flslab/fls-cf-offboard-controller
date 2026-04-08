@@ -73,7 +73,7 @@ def run_benchmark(uri: str, n: int) -> None:
     print(f"  Avg   : {avg_us:>10.2f} ms")
     print(f"  Min   : {min_us:>10.2f} ms")
     print(f"  Max   : {max_us:>10.2f} ms")
-    print(f"  Total : {total_us/1e3:>10.4f} ms")
+    print(f"  Total : {total_us:>10.4f} ms")
 
 
 if __name__ == "__main__":
