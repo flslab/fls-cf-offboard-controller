@@ -295,7 +295,7 @@ class DroneleaderController:
         self.flying = True
         duration = alt * 2
         self.commander.takeoff(alt, duration)
-        time.sleep(duration + 2.0)
+        time.sleep(duration + 1.0)
 
     def land(self):
         self.cf.commander.send_notify_setpoint_stop()
@@ -364,6 +364,8 @@ class DroneleaderController:
           4. Send GO (follower starts moving after leader finishes this step).
           5. Next step.
         """
+        time.sleep(1.0)
+
         step_m = self.args.step_size / 1000.0   # mm → m
         n = self.args.steps
         dur = self.args.step_duration
