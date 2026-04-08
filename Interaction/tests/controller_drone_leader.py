@@ -432,7 +432,7 @@ class DroneleaderController:
             if msg is not None and msg.get("type") == "end":
                 break
 
-            if msg is not None and msg.get("type") != "target":
+            if msg is not None and msg.get("type") == "target":
                 logger.warning(f"[FOLLOWER] Expected 'target', got: {msg}")
                 tx = msg["x"] + offset[0]
                 ty = msg["y"] + offset[1]
