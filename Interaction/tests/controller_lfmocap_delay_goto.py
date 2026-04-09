@@ -391,6 +391,7 @@ class LFMoCapDelayController:
         alpha_m = self.args.alpha / 1000.0
         n       = self.args.steps
         dur     = self.args.step_duration
+        settle  = self.args.settle_time
         timeout = dur + self.args.arrive_timeout_extra
 
         sx = self.args.init_pos[0]
@@ -439,10 +440,11 @@ class LFMoCapDelayController:
             })
 
             # ④ Sleep until t1 + timeout so each step is fixed-length
-            remaining = (t1 + timeout) - time.time()
+            remaining = (t1 + timeout + settle) - time.time()
             if remaining > 0:
                 time.sleep(remaining)
 
+            # self.cf.high_level_commander.go_to(sx, ty, sz, 0, settle)
 
         # self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "leader"})
@@ -464,7 +466,8 @@ class LFMoCapDelayController:
         dv      = self.args.delta_v
         step_m  = self.args.follower_step / 1000.0
         timeout = dur + self.args.arrive_timeout_extra
-        detect_tmo = dur + 5.0
+        # Detection window: allow up to one full step + settle + extra
+        detect_tmo = dur + settle + 5.0
 
         fx = self.args.init_pos[0]
         fy = self.args.init_pos[1]
@@ -479,7 +482,7 @@ class LFMoCapDelayController:
 
         for i in range(n):
             # ① Hover and wait for leader movement detection → T2
-            t2 = self._hover_and_detect_leader(fx, fy, fz, dv, detect_tmo)
+            t2    = self._hover_and_detect_leader(fx, fy, fz, dv, detect_tmo)
             ts_t2 = datetime.datetime.fromtimestamp(t2).isoformat(timespec="milliseconds")
             self._log_event("leader_detected", {
                 "step": i,
@@ -518,8 +521,14 @@ class LFMoCapDelayController:
                 "TTT_follower_ms": round(ttt_follower * 1000, 1),
             })
 
+            # ⑤ Sleep until t2 + timeout so each step is fixed-length, then advance
+            remaining = (t2 + timeout) - time.time()
+            if remaining > 0:
+                time.sleep(remaining)
             fy = target_fy
+            # self.cf.high_level_commander.go_to(fx, fy, fz, 0, settle)
 
+        self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "follower"})
 
     # ── mocap callbacks ──────────────────────────────────────────────────
@@ -604,13 +613,13 @@ if __name__ == "__main__":
                     help="[leader] Step distance in mm. Use 200 for 20 cm, 500 for 50 cm")
     ap.add_argument("--step-duration", type=float, default=5.0,
                     help="Setpoint loop duration per step in seconds")
-    ap.add_argument("--settle-time", type=float, default=2.0,
+    ap.add_argument("--settle-time", type=float, default=1.0,
                     help="Hover time between steps in seconds")
     ap.add_argument("--setpoint-hz", type=float, default=100.0,
                     help="Rate at which send_position_setpoint is called (Hz)")
     ap.add_argument("--arrive-tol", type=float, default=0.03,
                     help="Arrival detection tolerance in metres (default 3 cm)")
-    ap.add_argument("--arrive-timeout-extra", type=float, default=0.0,
+    ap.add_argument("--arrive-timeout-extra", type=float, default=5.0,
                     help="Seconds added to step-duration for the arrival timeout")
     ap.add_argument("--goto-duration", type=float, default=10.0,
                     help="Duration passed to go_to() in ms (default 10 ms = 0.01 s)")
