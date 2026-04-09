@@ -391,7 +391,6 @@ class LFMoCapDelayController:
         alpha_m = self.args.alpha / 1000.0
         n       = self.args.steps
         dur     = self.args.step_duration
-        settle  = self.args.settle_time
         timeout = dur + self.args.arrive_timeout_extra
 
         sx = self.args.init_pos[0]
@@ -444,7 +443,6 @@ class LFMoCapDelayController:
             if remaining > 0:
                 time.sleep(remaining)
 
-            # self.cf.high_level_commander.go_to(sx, ty, sz, 0, settle)
 
         # self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "leader"})
@@ -467,8 +465,7 @@ class LFMoCapDelayController:
         dv      = self.args.delta_v
         step_m  = self.args.follower_step / 1000.0
         timeout = dur + self.args.arrive_timeout_extra
-        # Detection window: allow up to one full step + settle + extra
-        detect_tmo = dur + settle + 5.0
+        detect_tmo = dur + 5.0
 
         fx = self.args.init_pos[0]
         fy = self.args.init_pos[1]
@@ -527,9 +524,7 @@ class LFMoCapDelayController:
             if remaining > 0:
                 time.sleep(remaining)
             fy = target_fy
-            # self.cf.high_level_commander.go_to(fx, fy, fz, 0, settle)
 
-        self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "follower"})
 
     # ── mocap callbacks ──────────────────────────────────────────────────
@@ -616,11 +611,11 @@ if __name__ == "__main__":
                     help="Setpoint loop duration per step in seconds")
     ap.add_argument("--settle-time", type=float, default=2.0,
                     help="Hover time between steps in seconds")
-    ap.add_argument("--setpoint-hz", type=float, default=50.0,
+    ap.add_argument("--setpoint-hz", type=float, default=100.0,
                     help="Rate at which send_position_setpoint is called (Hz)")
     ap.add_argument("--arrive-tol", type=float, default=0.03,
                     help="Arrival detection tolerance in metres (default 3 cm)")
-    ap.add_argument("--arrive-timeout-extra", type=float, default=5.0,
+    ap.add_argument("--arrive-timeout-extra", type=float, default=0.0,
                     help="Seconds added to step-duration for the arrival timeout")
     ap.add_argument("--goto-duration", type=float, default=10.0,
                     help="Duration passed to go_to() in ms (default 10 ms = 0.01 s)")
