@@ -287,9 +287,8 @@ class LFMoCapDelayController:
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = max(dist * 2, 1.0)
             self._log_event("return_to_home", {"x": xi, "y": yi, "z": z})
-            self._send_setpoint_loop(xi, yi, z, 0, dt + 0.5)
+            self.cf.high_level_commander.go_to(xi, yi, z, 0, dt + 0.5)
 
-        self.cf.commander.send_notify_setpoint_stop()
         dt = z * 6
         self.commander.land(0.12, dt)
         time.sleep(dt + 1)
@@ -303,24 +302,6 @@ class LFMoCapDelayController:
             self._run_leader()
         else:
             self._run_follower()
-
-    # ── setpoint helpers ─────────────────────────────────────────────────
-    def _send_setpoint_loop(self, x: float, y: float, z: float, yaw: float,
-                            duration: float):
-        """Send position setpoints at ``setpoint_hz`` for ``duration`` seconds."""
-        hz  = self.args.setpoint_hz
-        dt  = 1.0 / hz
-        if self.log_manager:
-            self.log_manager.add_log_entry("cmd_positions", {
-                "timestamp": datetime.datetime.now().isoformat(timespec="milliseconds"),
-                "cmd": "position_setpoint",
-                "x": x, "y": y, "z": z, "yaw": yaw,
-                "duration": duration,
-            })
-        t_end = time.time() + duration
-        while time.time() < t_end:
-            self.cf.commander.send_position_setpoint(x, y, z, yaw)
-            time.sleep(dt)
 
     def _send_goto_check_arrival(self, x: float, y: float, z: float,
                                  yaw: float, target_y: float,
@@ -459,9 +440,9 @@ class LFMoCapDelayController:
             })
 
             # ④ Settle at target_y
-            self._send_setpoint_loop(sx, ty, sz, 0, settle)
+            # self._send_setpoint_loop(sx, ty, sz, 0, settle)
 
-        self.cf.commander.send_notify_setpoint_stop()
+        # self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "leader"})
 
     # ── follower mission ─────────────────────────────────────────────────
@@ -539,7 +520,7 @@ class LFMoCapDelayController:
 
             # ⑤ Advance hover position and settle
             fy = target_fy
-            self._send_setpoint_loop(fx, fy, fz, 0, settle)
+            # self._send_setpoint_loop(fx, fy, fz, 0, settle)
 
         self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "follower"})
