@@ -467,7 +467,7 @@ class LFMoCapDelayController:
         step_m  = self.args.follower_step / 1000.0
         timeout = dur + self.args.arrive_timeout_extra
         # Detection window: allow up to one full step + settle + extra
-        detect_tmo = dur + settle + 5.0
+        detect_tmo = dur + 5.0
 
         fx = self.args.init_pos[0]
         fy = self.args.init_pos[1]
