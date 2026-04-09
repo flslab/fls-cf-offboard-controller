@@ -440,7 +440,8 @@ class LFMoCapDelayController:
             })
 
             # ④ Settle at target_y
-            # self._send_setpoint_loop(sx, ty, sz, 0, settle)
+
+            # self.cf.high_level_commander.go_to(sx, ty, sz, 0, settle)
 
         # self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "leader"})
@@ -520,7 +521,7 @@ class LFMoCapDelayController:
 
             # ⑤ Advance hover position and settle
             fy = target_fy
-            # self._send_setpoint_loop(fx, fy, fz, 0, settle)
+            # self.cf.high_level_commander.go_to(fx, fy, fz, 0, settle)
 
         self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "follower"})
