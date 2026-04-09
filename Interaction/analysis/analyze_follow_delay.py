@@ -12,19 +12,21 @@ For each interaction:
 """
 
 import json
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 
+from Interaction.analysis.analyze_lf_delay import compute_phase_lag
 
 # ── Configuration ────────────────────────────────────────────────────────────
-# LOG_FILE = "./logs/leader_follower_block_2026-04-07_17-17-58.json"
-LOG_FILE = "./logs/leader_follower_block_vel_2026-04-08_12-15-02.json"
+LOG_FILE = os.path.join(os.path.dirname(__file__), "../..", "logs", "leader_follower_block_2026-04-07_17-17-58.json")
 
 OFFSET = np.array([0.5, 0.0, 0.0])
 VEL_THRESHOLD = 0.1   # m/s on Y-axis to define interaction windows
 MIN_SEQ_LEN = 10      # ignore sequences shorter than this (noise spikes)
-PAD_BEFORE = 0.5       # seconds of context before interaction starts
-PAD_AFTER = 2.0        # seconds after interaction ends (to see drone catch up)
+PAD_BEFORE = 0.2       # seconds of context before interaction starts
+PAD_AFTER = 0.2      # seconds after interaction ends (to see drone catch up)
 
 
 # ── Load & parse ─────────────────────────────────────────────────────────────
@@ -124,6 +126,11 @@ def slice_time(entries, t_start, t_end):
     """Filter entries to those within [t_start, t_end]."""
     return [e for e in entries if t_start <= e["time"] <= t_end]
 
+def top_lag_candidates(corr, lags, top_k=5):
+    """Return the top_k lag candidates sorted by descending correlation."""
+    top_idx = np.argsort(corr)[-top_k:][::-1]
+    return [(lags[i], corr[i]) for i in top_idx]
+
 
 def style_ax(ax):
     """Apply consistent draw_friction.py-style formatting."""
@@ -135,7 +142,7 @@ def style_ax(ax):
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 def plot_interaction(blocks, frames, offset, interaction_range, interaction_name):
-    """Generate distance and delay plots for one interaction."""
+    """Generate Y-position, distance, delay, and cross-correlation plots."""
     idx_start, idx_end = interaction_range
     t_int_start = blocks[idx_start]["time"]
     t_int_end = blocks[idx_end]["time"]
@@ -263,6 +270,33 @@ def plot_interaction(blocks, frames, offset, interaction_range, interaction_name
     print(f"  Saved: {fname3}")
     plt.show()
 
+    # ── 4. Cross-correlation plot ───────────────────────────────────────
+    xcorr_start = t_int_start
+    xcorr_end = t_int_end
+    lag_s, corr, lags = compute_phase_lag(
+        blocks, frames, xcorr_start, xcorr_end
+    )
+    top_candidates = top_lag_candidates(corr, lags, top_k=5)
+
+    fig4, ax4 = plt.subplots(1, 1, figsize=(10, 6))
+    ax4.plot(lags * 1000, corr, linewidth=1.2, color="#2980b9",
+             label="Cross-correlation")
+    ax4.axvline(lag_s * 1000, color="#c0392b", linestyle="--", linewidth=1.5,
+                label=f"Peak lag = {lag_s*1000:.0f} ms")
+    ax4.axvline(0, color="#7f8c8d", linestyle=":", linewidth=1)
+    ax4.set_xlim(-1000, 1000)
+    ax4.set_title("Follower Y Phase Lag (cross-correlation)", loc="left", fontsize=16)
+    ax4.set_xlabel("Lag (ms)", fontsize=16)
+    ax4.set_ylabel("Normalized correlation", fontsize=14)
+    ax4.legend(fontsize=16)
+    style_ax(ax4)
+
+    plt.tight_layout()
+    fname4 = LOG_FILE.replace(".json", f"_{interaction_name.lower().replace(' ', '_')}_xcorr.png")
+    fig4.savefig(fname4, dpi=300)
+    print(f"  Saved: {fname4}")
+    plt.show()
+
     # ── Summary ──────────────────────────────────────────────────────────
     print(f"\n  {interaction_name} Summary:")
     print(f"    Duration:     {t_int_end - t_int_start:.2f} s")
@@ -272,6 +306,10 @@ def plot_interaction(blocks, frames, offset, interaction_range, interaction_name
     print(f"    Min delay:    {delays.min()*1000:.1f} ms")
     print(f"    Max delay:    {delays.max()*1000:.1f} ms")
     print(f"    Std delay:    {delays.std()*1000:.1f} ms")
+    print(f"    Phase lag:    {lag_s*1000:.0f} ms")
+    print("    Top 5 lag candidates:")
+    for cand_lag_s, cand_corr in top_candidates:
+        print(f"      lag={cand_lag_s*1000:7.3f} ms, corr={cand_corr:.6f}")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

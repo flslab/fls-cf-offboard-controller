@@ -28,7 +28,7 @@ from itertools import combinations
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 _HERE         = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR       = os.path.join(_HERE, "..", "logs", "block_interaction")
+LOG_DIR       = os.path.join(_HERE, "../..", "logs", "block_interaction")
 OUT_PNG_TRAJ  = os.path.join(_HERE, "trajectories_xy.png")
 OUT_PNG_VEL   = os.path.join(_HERE, "velocity_vs_time.png")
 

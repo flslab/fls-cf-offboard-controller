@@ -24,8 +24,8 @@ import csv
 import numpy as np
 from collections import Counter
 
-LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs", "User_Studies")
-OUTPUT_CSV = os.path.join(os.path.dirname(__file__), "..", "logs", "User_Studies", "interaction_metrics.csv")
+LOG_DIR = os.path.join(os.path.dirname(__file__), "../..", "logs", "User_Studies")
+OUTPUT_CSV = os.path.join(os.path.dirname(__file__), "../..", "logs", "User_Studies", "interaction_metrics.csv")
 
 # ─── noise thresholds ────────────────────────────────────────────────────────
 MIN_DURATION_S = 0.15   # interactions shorter than this are noise
