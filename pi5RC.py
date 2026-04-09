@@ -53,6 +53,12 @@ class pi5RC:
         """Set pulse width in microseconds (e.g., 1500 for center)"""
         if not self.enableFlag:
             self.enable(True)
+            self.onTime_us = None
+
+        if hasattr(self, 'onTime_us') and self.onTime_us is not None:
+            if abs(self.onTime_us - onTime_us) < 3:
+                return
+
         self.onTime_us = onTime_us
         self.file_duty.seek(0)
         self.file_duty.write(str(onTime_us * 1000))  # Convert µs to ns

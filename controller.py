@@ -1030,6 +1030,9 @@ class Controller:
     def update_servos(self):
         latest_angles = self._get_latest_angles()
 
+        if latest_angles is None:
+            return
+
         logger.info(f"angles: {latest_angles}")
 
         roll_deg = latest_angles[0]
@@ -1244,10 +1247,20 @@ class Controller:
     def _get_latest_mocap_frame(self):
         return self.log_manager.groups['frames'][-1]
 
-    def _get_latest_angles(self):
-        latest_roll = self.log_manager.cf_log_data["stateEstimate.roll"]["data"][-1]
-        latest_pitch = self.log_manager.cf_log_data["stateEstimate.pitch"]["data"][-1]
-        latest_yaw = self.log_manager.cf_log_data["stateEstimate.yaw"]["data"][-1]
+    def _get_latest_angles(self, window_size=5):
+        def get_smoothed_angle(log_key):
+            data = self.log_manager.cf_log_data[log_key]["data"]
+            if not data:
+                return None
+            recent = data[-window_size:]
+            return sum(recent) / len(recent)
+
+        latest_roll = get_smoothed_angle("stateEstimate.roll")
+        latest_pitch = get_smoothed_angle("stateEstimate.pitch")
+        latest_yaw = get_smoothed_angle("stateEstimate.yaw")
+
+        if latest_roll is None or latest_pitch is None or latest_yaw is None:
+            return None
 
         # [roll, pitch, yaw] in degrees
         latest_angles = [latest_roll, latest_pitch, latest_yaw]
