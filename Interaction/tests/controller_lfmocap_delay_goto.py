@@ -461,7 +461,6 @@ class LFMoCapDelayController:
         """
         n       = self.args.steps
         dur     = self.args.step_duration
-        settle  = self.args.settle_time
         dv      = self.args.delta_v
         step_m  = self.args.follower_step / 1000.0
         timeout = dur + self.args.arrive_timeout_extra
@@ -480,7 +479,7 @@ class LFMoCapDelayController:
 
         for i in range(n):
             # ① Hover and wait for leader movement detection → T2
-            t2    = self._hover_and_detect_leader(fx, fy, fz, dv, detect_tmo)
+            t2 = self._hover_and_detect_leader(fx, fy, fz, dv, detect_tmo)
             ts_t2 = datetime.datetime.fromtimestamp(t2).isoformat(timespec="milliseconds")
             self._log_event("leader_detected", {
                 "step": i,
@@ -519,10 +518,6 @@ class LFMoCapDelayController:
                 "TTT_follower_ms": round(ttt_follower * 1000, 1),
             })
 
-            # ⑤ Sleep until t2 + timeout so each step is fixed-length, then advance
-            remaining = (t2 + timeout) - time.time()
-            if remaining > 0:
-                time.sleep(remaining)
             fy = target_fy
 
         self._log_event("mission_complete", {"role": "follower"})
