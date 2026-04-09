@@ -299,6 +299,7 @@ class LFMoCapDelayController:
     # ── mission dispatcher ───────────────────────────────────────────────
     def run_mission(self):
         if self.args.role == "leader":
+            time.sleep(3)
             self._run_leader()
         else:
             self._run_follower()
