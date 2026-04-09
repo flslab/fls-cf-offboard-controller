@@ -491,8 +491,6 @@ class LFMoCapDelayController:
             })
 
             # ② Compute follower target from current Vicon position
-            if self.latest_frame is not None:
-                fy = self.latest_frame["tvec"][1]
             target_fy = fy + step_m
 
             # ③ Setpoint loop to target with interleaved arrival detection → T11
