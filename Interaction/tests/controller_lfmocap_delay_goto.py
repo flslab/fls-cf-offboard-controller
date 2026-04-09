@@ -347,7 +347,7 @@ class LFMoCapDelayController:
                 "duration":  duration,
             })
 
-        self.commander.go_to(x, y, z, yaw, 0.01)
+        self.commander.go_to(x, y, z, yaw, 0.1)
 
         t_end = time.time() + duration
         while time.time() < t_end:

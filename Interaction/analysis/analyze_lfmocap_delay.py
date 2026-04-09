@@ -278,39 +278,73 @@ def plot_velocity_t1_t10(label: str, rows: list, leader_log: list, tag: str, sav
     # plt.show()
 
 
-def plot_velocity_full(label: str, rows: list, leader_log: list, tag: str, save_dir: str):
-    times, ys = extract_y_series(leader_log, "frames")
-    if len(times) < 2:
+def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: list, tag: str, save_dir: str):
+    l_times, l_ys = extract_y_series(leader_log, "frames")
+    f_times, f_ys = extract_y_series(follower_log, "frames")
+    if len(l_times) < 2:
         print(f"Not enough leader frame data for {label}.")
         return
-    vel = np.gradient(ys, times)
+
+    l_vel = np.gradient(l_ys, l_times)
 
     t_start = min(r["T1"]  for r in rows) - 2.0
     t_end   = max(r["T10"] for r in rows) + 2.0
     t0      = t_start
 
-    fig, ax = plt.subplots(1, 1, figsize=(20, 6))
-    mask = (times >= t_start) & (times <= t_end)
-    ax.plot(times[mask] - t0, vel[mask], color="#2980b9", linewidth=1.2, label="Leader Y velocity")
+    has_follower = len(f_times) >= 2
+    nrows = 2 if has_follower else 1
+    fig, axes = plt.subplots(nrows, 1, figsize=(20, 6 * nrows), sharex=True)
+    if nrows == 1:
+        axes = [axes]
+
+    ax_l = axes[0]
+    l_mask = (l_times >= t_start) & (l_times <= t_end)
+    ax_l.plot(l_times[l_mask] - t0, l_vel[l_mask], color="#2980b9", linewidth=1.2, label="Leader Y velocity")
 
     t1_labeled = t10_labeled = False
     for r in rows:
-        t1_lbl  = "T1 (step start)"   if not t1_labeled  else "_nolegend_"
+        t1_lbl  = "T1 (step start)"    if not t1_labeled  else "_nolegend_"
         t10_lbl = "T10 (step arrived)" if not t10_labeled else "_nolegend_"
-        ax.axvline(r["T1"]  - t0, color="magenta", linestyle="--", linewidth=2.0, alpha=0.8, label=t1_lbl)
-        ax.axvline(r["T10"] - t0, color="darkorange", linestyle="--",  linewidth=2.0, alpha=0.8, label=t10_lbl)
-        ax.text(r["T1"] - t0, 0.05, f" {r['step']}", fontsize=8, color="#e74c3c", va="bottom")
+        ax_l.axvline(r["T1"]  - t0, color="magenta",    linestyle="--", linewidth=2.0, alpha=0.8, label=t1_lbl)
+        ax_l.axvline(r["T10"] - t0, color="darkorange",  linestyle="--", linewidth=2.0, alpha=0.8, label=t10_lbl)
+        ax_l.text(r["T1"] - t0, 0.05, f" {r['step']}", fontsize=8, color="#e74c3c", va="bottom")
         t1_labeled = t10_labeled = True
 
-    ax.set_xlabel("Time (s)", fontsize=16)
-    ax.set_title(f"Leader Y velocity (m/s)  —  full log  —  {label}", loc="left", fontsize=16)
-    ax.tick_params(axis="both", labelsize=16)
-    ax.grid(True, linestyle="--", alpha=0.7)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.set_ylim(0, 2)
-    ax.set_xlim(t_start-t0, t_end-t0)
-    ax.legend(fontsize=14)
+    ax_l.set_title(f"Leader Y velocity (m/s)  —  full log  —  {label}", loc="left", fontsize=16)
+    ax_l.tick_params(axis="both", labelsize=16)
+    ax_l.grid(True, linestyle="--", alpha=0.7)
+    ax_l.spines["top"].set_visible(False)
+    ax_l.spines["right"].set_visible(False)
+    ax_l.set_ylim(0, 2)
+    ax_l.set_xlim(t_start - t0, t_end - t0)
+    ax_l.legend(fontsize=14)
+
+    if has_follower:
+        f_vel  = np.gradient(f_ys, f_times)
+        ax_f   = axes[1]
+        f_mask = (f_times >= t_start) & (f_times <= t_end)
+        ax_f.plot(f_times[f_mask] - t0, f_vel[f_mask], color="#27ae60", linewidth=1.2, label="Follower Y velocity")
+
+        t2_labeled = t11_labeled = False
+        for r in rows:
+            t2_lbl  = "T2 (detected)"      if not t2_labeled  else "_nolegend_"
+            t11_lbl = "T11 (step arrived)" if not t11_labeled else "_nolegend_"
+            ax_f.axvline(r["T2"]  - t0, color="magenta",   linestyle="--", linewidth=2.0, alpha=0.8, label=t2_lbl)
+            ax_f.axvline(r["T11"] - t0, color="darkorange", linestyle="--", linewidth=2.0, alpha=0.8, label=t11_lbl)
+            ax_f.text(r["T2"] - t0, 0.05, f" {r['step']}", fontsize=8, color="#27ae60", va="bottom")
+            t2_labeled = t11_labeled = True
+
+        ax_f.set_xlabel("Time (s)", fontsize=16)
+        ax_f.set_title(f"Follower Y velocity (m/s)  —  full log  —  {label}", loc="left", fontsize=16)
+        ax_f.tick_params(axis="both", labelsize=16)
+        ax_f.grid(True, linestyle="--", alpha=0.7)
+        ax_f.spines["top"].set_visible(False)
+        ax_f.spines["right"].set_visible(False)
+        ax_f.set_ylim(0, 2)
+        ax_f.legend(fontsize=14)
+    else:
+        axes[0].set_xlabel("Time (s)", fontsize=16)
+
     plt.tight_layout()
 
     out = os.path.join(save_dir, f"lfmocap_velocity_full_{tag}.png")
@@ -338,7 +372,7 @@ def main(log_dir: str):
         plot_ttt(label, rows, tag, log_dir)
         plot_ttd_totaldelay(label, rows, tag, log_dir)
         plot_velocity_t1_t10(label, rows, leader_log, tag, log_dir)
-        plot_velocity_full(label, rows, leader_log, tag, log_dir)
+        plot_velocity_full(label, rows, leader_log, follower_log, tag, log_dir)
 
 
 if __name__ == "__main__":
