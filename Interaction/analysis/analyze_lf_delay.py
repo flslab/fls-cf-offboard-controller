@@ -25,6 +25,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+
 # ── Log paths ─────────────────────────────────────────────────────────────────
 LOG_DIR = Path("../../logs/LFmsgBAFC")
 
@@ -105,43 +106,47 @@ def slice_time(entries, t_start, t_end):
     return [e for e in entries if t_start <= e["time"] <= t_end]
 
 
-def compute_integral_delay(leader_frames, follower_frames, t_start, t_end, dt=0.001):
+def compute_integral_delay(blocks, frames, offset, t_start, t_end, dt=0.001, return_plot_data=False):
     """
-    Calculate time delay using the Area / Integral method on step responses.
+    Calculate time delay using the Area / Integral method.
     Normalizes the step amplitude and integrates the difference.
     """
     t_grid = np.arange(t_start, t_end, dt)
 
-    # 1. Extract position data
-    l_times = np.array([f["time"] for f in leader_frames])
-    l_y = np.array([f["pos"][1] for f in leader_frames])
+    b_times = np.array([b["time"] for b in blocks])
+    # Add the offset to the block Y position to get the true commanded target
+    b_y = np.array([b["pos"][1] + offset[1] for b in blocks])
 
-    f_times = np.array([f["time"] for f in follower_frames])
-    f_y = np.array([f["pos"][1] for f in follower_frames])
+    f_times = np.array([f["time"] for f in frames])
+    f_y = np.array([f["pos"][1] for f in frames])
 
-    # 2. Interpolate onto common grid
-    l_grid = np.interp(t_grid, l_times, l_y)
+    # Interpolate onto common grid
+    b_grid = np.interp(t_grid, b_times, b_y)
     f_grid = np.interp(t_grid, f_times, f_y)
 
-    # 3. Find initial and final steady-state values from the leader
-    # Averaging over a 200ms window at the start and end for noise robustness
+    # Find initial and final steady-state values from the block command
     idx_window = int(0.2 / dt)
-    y_init = np.mean(l_grid[:idx_window])
-    y_final = np.mean(l_grid[-idx_window:])
+    y_init = np.mean(b_grid[:idx_window])
+    y_final = np.mean(b_grid[-idx_window:])
     amplitude = y_final - y_init
 
-    # Avoid division by zero if there's no actual movement
     if abs(amplitude) < 1e-4:
+        if return_plot_data:
+            return 0.0, t_grid, b_grid, f_grid
         return 0.0
 
-    # 4. Normalize both signals to go from 0 to 1
-    l_norm = (l_grid - y_init) / amplitude
+    # Normalize both signals to go from 0 to 1
+    b_norm = (b_grid - y_init) / amplitude
     f_norm = (f_grid - y_init) / amplitude
 
-    # 5. Integrate the difference (Area between curves)
-    delay_s = np.trapz(l_norm - f_norm, dx=dt)
+    # Integrate the difference (Area between curves)
+    delay_s = -np.trapz(b_norm - f_norm, dx=dt)
 
+    if return_plot_data:
+        return delay_s, t_grid, b_norm, f_norm
     return delay_s
+
+
 
 def compute_phase_lag(leader_frames, follower_frames, t_start, t_end,
                       dt=0.0001, max_lag=1.0):
@@ -188,6 +193,48 @@ def compute_phase_lag(leader_frames, follower_frames, t_start, t_end,
     lag_s = lags[int(np.argmax(np.where(mask, corr, -np.inf)))]
 
     return lag_s, corr, lags
+
+
+def compute_delay_y(leader_frames, follower_frames, offset, t_start, t_end):
+    """
+    For each leader sample in [t_start, t_end], compute the time delay for
+    the follower to reach the target Y position (leader_Y + offset_Y).
+
+    Returns arrays: leader_times, delays (seconds).
+    """
+    f_times = np.array([f["time"] for f in follower_frames])
+    f_y = np.array([f["pos"][1] for f in follower_frames])
+
+    leader_times = []
+    delays = []
+
+    for fr in leader_frames:
+        t_l = fr["time"]
+        if t_l < t_start or t_l > t_end:
+            continue
+
+        target_y = fr["pos"][1] + offset[1]
+
+        start_search = np.searchsorted(f_times, t_l)
+
+        for j in range(start_search, len(f_times) - 1):
+            y0, y1 = f_y[j], f_y[j + 1]
+            t0_f, t1_f = f_times[j], f_times[j + 1]
+
+            if (y0 <= target_y <= y1) or (y1 <= target_y <= y0):
+                if abs(y1 - y0) > 1e-9:
+                    frac = (target_y - y0) / (y1 - y0)
+                    t_cross = t0_f + frac * (t1_f - t0_f)
+                else:
+                    t_cross = t0_f
+
+                delay = t_cross - t_l
+                if delay >= 0:
+                    leader_times.append(t_l)
+                    delays.append(delay)
+                    break
+
+    return np.array(leader_times), np.array(delays)
 
 
 def top_lag_candidates(corr, lags, top_k=5):
@@ -290,7 +337,39 @@ def plot_interaction(leader_frames, follower_frames, t1, t10,
     print(f"  Saved: {p2}")
     plt.show()
 
-    # ── 3. Cross-correlation ──────────────────────────────────────────────
+    # ── 3. Per-sample following delay ────────────────────────────────────
+    delay_l_times, delays = compute_delay_y(
+        leader_frames, follower_frames, FOLLOWER_OFFSET, t1, t10
+    )
+
+    if len(delays) > 0:
+        delay_l_times_rel = delay_l_times - t_origin
+
+        fig3d, ax3d = plt.subplots(figsize=(10, 6))
+        ax3d.scatter(delay_l_times_rel, delays * 1000, alpha=0.5, s=10,
+                     label="Per-sample delay")
+        mean_delay = delays.mean()
+        median_delay = np.median(delays)
+        ax3d.axhline(mean_delay * 1000, color="#2c3e50", linestyle="--", linewidth=1,
+                     label=f"Mean = {mean_delay*1000:.1f} ms")
+        ax3d.axhline(median_delay * 1000, color="#e67e22", linestyle=":", linewidth=1,
+                     label=f"Median = {median_delay*1000:.1f} ms")
+        ax3d.set_ylim(0, 600)
+        ax3d.set_xlim(delay_l_times_rel[0], delay_l_times_rel[-1])
+        ax3d.set_title(f"[{condition_label}] Following Delay (ms)", loc="left", fontsize=16)
+        ax3d.set_xlabel("Time (s)", fontsize=16)
+        ax3d.legend(fontsize=16)
+        style_ax(ax3d)
+        plt.tight_layout()
+        p3d = f"{out_prefix}_delay_scatter.png"
+        fig3d.savefig(p3d, dpi=300)
+        print(f"  Saved: {p3d}")
+        plt.show()
+    else:
+        print(f"  [{condition_label}] No per-sample delay data computed.")
+        mean_delay = median_delay = 0.0
+
+    # ── 4. Cross-correlation ──────────────────────────────────────────────
     # Window: 0.5 s before T1 to 2 s after, so the step transient dominates
     # and the flat hover on either side doesn't wash out the lag.
     xcorr_start = t1 - 0.5
@@ -324,7 +403,7 @@ def plot_interaction(leader_frames, follower_frames, t1, t10,
     int_start = t1
     int_end = t10+0.2
     integral_delay_s = compute_integral_delay(
-        leader_frames, follower_frames, int_start, int_end
+        leader_frames, follower_frames, [1, 0, 0], int_start, int_end
     )
     # ── Summary ───────────────────────────────────────────────────────────
     print(f"\n  [{condition_label}] Summary:")
@@ -332,11 +411,47 @@ def plot_interaction(leader_frames, follower_frames, t1, t10,
     print(f"    T10 (leader arrived) : {t10:.3f}  (t+{t_shade_end:.2f} s in plot)")
     print(f"    Leader travel time   : {(t10 - t1) * 1000:.0f} ms")
     print(f"    Phase lag (xcorr)    : {lag_s * 1000:.0f} ms")
-    print(f"    Area Delay (integral): {integral_delay_s * 1000:.0f} ms")  # <--- Added line
+    print(f"    Area Delay (integral): {integral_delay_s * 1000:.0f} ms")
+    if len(delays) > 0:
+        print(f"    Mean delay (sample)  : {mean_delay*1000:.1f} ms")
+        print(f"    Median delay (sample): {median_delay*1000:.1f} ms")
+        print(f"    Min/Max delay        : {delays.min()*1000:.1f} / {delays.max()*1000:.1f} ms")
+        print(f"    Std delay            : {delays.std()*1000:.1f} ms")
     print("    Top 5 lag candidates:")
     for cand_lag_s, cand_corr in top_candidates:
         print(f"      lag={cand_lag_s * 1000:7.3f} ms, corr={cand_corr:.6f}")
 
+    int_start = t1 - 0.2
+    int_end = t10 + 0.2
+
+    integral_delay_s, t_grid, l_norm, f_norm = compute_integral_delay(
+        leader_frames, follower_frames, [1, 0, 0], int_start, int_end, return_plot_data=True
+    )
+
+    # Generate the visual plot for the area
+    fig4, ax4 = plt.subplots(figsize=(10, 6))
+    plot_t = t_grid - t_origin
+
+    ax4.plot(plot_t, l_norm, label="Leader (Normalized)", color="#2980b9", linewidth=2)
+    ax4.plot(plot_t, f_norm, label="Follower (Normalized)", color="#e67e22", linewidth=2)
+
+    # Shade the area between the curves
+    ax4.fill_between(plot_t, l_norm, f_norm, where=(l_norm >= f_norm),
+                     color="#f1c40f", alpha=0.3, label=f"Area = {integral_delay_s * 1000:.0f} ms")
+    ax4.fill_between(plot_t, l_norm, f_norm, where=(l_norm < f_norm),
+                     color="#e74c3c", alpha=0.3)  # Highlights any follower overshoot
+
+    ax4.set_title(f"[{condition_label}] Integral Time Delay (Normalized Area)", loc="left", fontsize=16)
+    ax4.set_xlabel("Time (s)", fontsize=16)
+    ax4.set_ylabel("Normalized Position", fontsize=16)
+    ax4.legend(fontsize=14)
+    style_ax(ax4)
+
+    plt.tight_layout()
+    p4 = f"{out_prefix}_integral.png"
+    fig4.savefig(p4, dpi=300)
+    print(f"  Saved: {p4}")
+    plt.show()
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     conditions = [

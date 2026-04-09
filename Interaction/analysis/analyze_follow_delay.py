@@ -17,7 +17,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from Interaction.analysis.analyze_lf_delay import compute_phase_lag
+from Interaction.analysis.analyze_lf_delay import compute_phase_lag, compute_integral_delay
 
 # ── Configuration ────────────────────────────────────────────────────────────
 LOG_FILE = os.path.join(os.path.dirname(__file__), "../..", "logs", "leader_follower_block_2026-04-07_17-17-58.json")
@@ -138,7 +138,6 @@ def style_ax(ax):
     ax.tick_params(axis='both', labelsize=16)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 def plot_interaction(blocks, frames, offset, interaction_range, interaction_name):
@@ -295,6 +294,39 @@ def plot_interaction(blocks, frames, offset, interaction_range, interaction_name
     fname4 = LOG_FILE.replace(".json", f"_{interaction_name.lower().replace(' ', '_')}_xcorr.png")
     fig4.savefig(fname4, dpi=300)
     print(f"  Saved: {fname4}")
+    plt.show()
+
+    # ── 5. Area / Integral Delay plot ────────────────────────────────────
+    # Start 0.5s before the push begins to get a clean baseline, and end
+    # 1.5s after the push finishes to ensure the drone has fully settled.
+    int_start = t_int_start-0.2
+    int_end = t_int_end+0.3
+
+    integral_delay_s, t_grid, b_norm, f_norm = compute_integral_delay(
+        blocks, frames, offset, int_start, int_end, return_plot_data=True
+    )
+
+    fig5, ax5 = plt.subplots(1, 1, figsize=(10, 6))
+    plot_t = t_grid - t_origin
+
+    ax5.plot(plot_t, b_norm, label="Commanded (Normalized)", color="#2980b9", linewidth=2)
+    ax5.plot(plot_t, f_norm, label="Follower (Normalized)", color="#e67e22", linewidth=2)
+
+    ax5.fill_between(plot_t, b_norm, f_norm, where=(b_norm >= f_norm),
+                     color="#f1c40f", alpha=0.3, label=f"Area = {integral_delay_s * 1000:.0f} ms")
+    ax5.fill_between(plot_t, b_norm, f_norm, where=(b_norm < f_norm),
+                     color="#e74c3c", alpha=0.3)
+
+    ax5.set_title("Integral Time Delay (Normalized Area)", loc="left", fontsize=16)
+    ax5.set_xlabel("Time (s)", fontsize=16)
+    ax5.set_ylabel("Normalized Position", fontsize=16)
+    ax5.legend(fontsize=16)
+    style_ax(ax5)
+
+    plt.tight_layout()
+    fname5 = LOG_FILE.replace(".json", f"_{interaction_name.lower().replace(' ', '_')}_integral.png")
+    fig5.savefig(fname5, dpi=300)
+    print(f"  Saved: {fname5}")
     plt.show()
 
     # ── Summary ──────────────────────────────────────────────────────────
