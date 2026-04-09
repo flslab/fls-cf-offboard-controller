@@ -307,7 +307,7 @@ class LFMoCapDelayController:
                                  yaw: float, target_y: float,
                                  duration: float) -> float:
         """
-        Issue a go_to command (0.01 s duration) then poll Vicon for arrival.
+        Issue a go_to command (``--goto-duration`` ms) then poll Vicon for arrival.
 
         Polls own Vicon Y position until within ``arrive_tol`` of ``target_y``
         or ``duration`` seconds have elapsed.
@@ -328,7 +328,7 @@ class LFMoCapDelayController:
                 "duration":  duration,
             })
 
-        self.commander.go_to(x, y, z, yaw, 0.02)
+        self.commander.go_to(x, y, z, yaw, self.args.goto_duration / 1000.0)
 
         t_end = time.time() + duration
         while time.time() < t_end:
@@ -353,7 +353,7 @@ class LFMoCapDelayController:
         """
         Hold position with go_to while polling KF-estimated leader Y-velocity.
 
-        Issues go_to(0.01 s) once to lock the hover position, then polls
+        Issues go_to(``--goto-duration`` ms) once to lock the hover position, then polls
         until ``|vel_y| > dv`` or ``timeout`` expires.
 
         Returns the Unix timestamp when ``|vel_y| > dv``, or
@@ -362,7 +362,7 @@ class LFMoCapDelayController:
         poll_dt = 1.0 / self.args.setpoint_hz
         t_start = time.time()
 
-        self.commander.go_to(hover_x, hover_y, hover_z, 0, 0.01)
+        self.commander.go_to(hover_x, hover_y, hover_z, 0, self.args.goto_duration / 1000.0)
 
         while time.time() - t_start < timeout:
             with self._kf_lock:
@@ -439,7 +439,10 @@ class LFMoCapDelayController:
                 "TTT_leader_ms": round(ttt_leader * 1000, 1),
             })
 
-            # ④ Settle at target_y
+            # ④ Sleep until t1 + timeout so each step is fixed-length
+            remaining = (t1 + timeout) - time.time()
+            if remaining > 0:
+                time.sleep(remaining)
 
             # self.cf.high_level_commander.go_to(sx, ty, sz, 0, settle)
 
@@ -519,7 +522,10 @@ class LFMoCapDelayController:
                 "TTT_follower_ms": round(ttt_follower * 1000, 1),
             })
 
-            # ⑤ Advance hover position and settle
+            # ⑤ Sleep until t2 + timeout so each step is fixed-length, then advance
+            remaining = (t2 + timeout) - time.time()
+            if remaining > 0:
+                time.sleep(remaining)
             fy = target_fy
             # self.cf.high_level_commander.go_to(fx, fy, fz, 0, settle)
 
@@ -616,6 +622,8 @@ if __name__ == "__main__":
                     help="Arrival detection tolerance in metres (default 3 cm)")
     ap.add_argument("--arrive-timeout-extra", type=float, default=5.0,
                     help="Seconds added to step-duration for the arrival timeout")
+    ap.add_argument("--goto-duration", type=float, default=10.0,
+                    help="Duration passed to go_to() in ms (default 10 ms = 0.01 s)")
 
     # Follower-specific
     ap.add_argument("--follower-step", type=float, default=200.0,
@@ -629,7 +637,12 @@ if __name__ == "__main__":
 
     # Build default tag if not overridden
     if args.tag is None:
-        args.tag = f"LFMoCapDelay_{args.role}_{_ts}"
+        if args.role == "leader":
+            step_cm = int(args.alpha / 10)
+            args.tag = f"LFMoCapDelay_leader_alpha{step_cm}cm_goto{int(args.goto_duration)}ms_{_ts}"
+        else:
+            fstep_cm = int(args.follower_step / 10)
+            args.tag = f"LFMoCapDelay_follower_fstep{fstep_cm}cm_goto{int(args.goto_duration)}ms_{_ts}"
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
