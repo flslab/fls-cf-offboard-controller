@@ -619,7 +619,7 @@ if __name__ == "__main__":
                     help="Rate at which send_position_setpoint is called (Hz)")
     ap.add_argument("--arrive-tol", type=float, default=0.03,
                     help="Arrival detection tolerance in metres (default 3 cm)")
-    ap.add_argument("--arrive-timeout-extra", type=float, default=5.0,
+    ap.add_argument("--arrive-timeout-extra", type=float, default=0.0,
                     help="Seconds added to step-duration for the arrival timeout")
     ap.add_argument("--goto-duration", type=float, default=10.0,
                     help="Duration passed to go_to() in ms (default 10 ms = 0.01 s)")
