@@ -1,19 +1,25 @@
 import logging
-import time
+import argparse
 import cflib.crtp
 from cflib.utils.power_switch import PowerSwitch
 
 logging.basicConfig(level=logging.ERROR)
 
-# URI = 'radio://0/80/2M/E7E7E7E712'  # or 'radio://0/80/2M'
-URI = 'radio://0/100/2M/E7E7E7E701'
-# URI = 'radio://0/80/2M/E7E7E7E701'  # or 'radio://0/80/2M'
 
-
-def reboot_crazyflie(uri):
+def reboot_crazyflie(uris):
     cflib.crtp.init_drivers(enable_serial_driver=True)
-    PowerSwitch(uri).stm_power_cycle()
+    for uri in uris:
+        print(f"Rebooting: {uri}")
+        try:
+            PowerSwitch(uri).stm_power_cycle()
+        except Exception as e:
+            print(f"Failed to reboot {uri}: {e}")
 
 
 if __name__ == '__main__':
-    reboot_crazyflie(URI)
+    parser = argparse.ArgumentParser(description="Reboot one or more Crazyflies.")
+    parser.add_argument('uris', metavar='URI', type=str, nargs='+',
+                        help='One or more URIs to reboot')
+    args = parser.parse_args()
+    
+    reboot_crazyflie(args.uris)
