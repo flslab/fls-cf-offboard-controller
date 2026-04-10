@@ -1248,16 +1248,10 @@ class Controller:
         return self.log_manager.groups['frames'][-1]
 
     def _get_latest_angles(self, window_size=5):
-        def get_smoothed_angle(log_key):
-            data = self.log_manager.cf_log_data[log_key]["data"]
-            if not data:
-                return None
-            recent = data[-window_size:]
-            return sum(recent) / len(recent)
 
-        latest_roll = get_smoothed_angle("stateEstimate.roll")
-        latest_pitch = get_smoothed_angle("stateEstimate.pitch")
-        latest_yaw = get_smoothed_angle("stateEstimate.yaw")
+        latest_roll = self.log_manager.cf_log_data["stateEstimate.roll"]["data"]
+        latest_pitch = self.log_manager.cf_log_data["stateEstimate.pitch"]["data"]
+        latest_yaw = self.log_manager.cf_log_data["stateEstimate.yaw"]["data"]
 
         if latest_roll is None or latest_pitch is None or latest_yaw is None:
             return None
