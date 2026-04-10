@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 
 matplotlib.use("macosx")
 
-LOG_DIR = os.path.join(os.path.dirname(__file__), "../..", "logs", "LFMoCapDelay_goto", "sync")
+LOG_DIR = os.path.join(os.path.dirname(__file__), "../..", "logs", "LFMoCapDelay_goto", "hybrid")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DELTA_V = 0.1          # m/s — KF threshold used during the experiment
