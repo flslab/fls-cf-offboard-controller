@@ -448,7 +448,7 @@ class LFMoCapHybridController:
                 vel_y = self.latest_leader_vel_y
                 vel_z = self.latest_leader_vel_z
             total_vel = (vel_x ** 2 + vel_y ** 2 + vel_z ** 2) ** 0.5
-            if total_vel > dv:
+            if vel_y > dv:
                 if in_low_level:
                     self.cf.commander.send_notify_setpoint_stop()
                 return time.time()
