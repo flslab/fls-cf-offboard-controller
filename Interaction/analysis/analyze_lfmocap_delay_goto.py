@@ -33,7 +33,7 @@ DELTA_V = 0.1          # m/s — KF threshold used during the experiment
 # ── Log discovery ─────────────────────────────────────────────────────────────
 def find_log_pairs(log_dir: str) -> list[tuple[str, str, str]]:
     """
-    Scan log_dir for LFMoCapDelay_leader_{alpha}_{duration}ms*.json files.
+    Scan log_dir for LFMoCapDelay_leader_{aldo tpha}_{duration}ms*.json files.
     For each found leader file, find the matching follower file with the same
     (alpha, duration) pair.
     Returns list of (label, leader_path, follower_path) sorted by (alpha, duration).
@@ -156,6 +156,16 @@ def extract_y_series(log: list[dict], group: str = "frames"):
     return times, ys
 
 
+def extract_vel_y_series(log: list[dict], group: str = "frames"):
+    entries = extract_group(log, group)
+    if not entries:
+        return np.array([]), np.array([])
+    valid = [e for e in entries if "time" in e and "vel" in e]
+    times = np.array([e["time"]   for e in valid])
+    vels  = np.array([e["vel"][1] for e in valid])
+    return times, vels
+
+
 # ── CSV report ────────────────────────────────────────────────────────────────
 def save_csv(rows: list[dict], out_path: str):
     if not rows:
@@ -251,11 +261,10 @@ def plot_ttd_totaldelay(label: str, rows: list, tag: str, save_dir: str):
 
 
 def plot_velocity_t1_t10(label: str, rows: list, leader_log: list, tag: str, save_dir: str):
-    times, ys = extract_y_series(leader_log, "frames")
+    times, vel = extract_vel_y_series(leader_log, "frames")
     if len(times) < 2:
         print(f"Not enough leader frame data for {label}.")
         return
-    vel = np.gradient(ys, times)
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
     for r in rows:
@@ -282,13 +291,11 @@ def plot_velocity_t1_t10(label: str, rows: list, leader_log: list, tag: str, sav
 
 
 def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: list, tag: str, save_dir: str):
-    l_times, l_ys = extract_y_series(leader_log, "frames")
-    f_times, f_ys = extract_y_series(follower_log, "frames")
+    l_times, l_vel = extract_vel_y_series(leader_log, "frames")
+    f_times, f_vel = extract_vel_y_series(follower_log, "frames")
     if len(l_times) < 2:
         print(f"Not enough leader frame data for {label}.")
         return
-
-    l_vel = np.gradient(l_ys, l_times)
 
     t_start = min(r["T1"]  for r in rows) - 2.0
     t_end   = max(r["T10"] for r in rows) + 2.0
@@ -313,6 +320,9 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
         ax_l.text(r["T1"] - t0, 0.05, f" {r['step']}", fontsize=8, color="#e74c3c", va="bottom")
         t1_labeled = t10_labeled = True
 
+    delta_v = rows[0].get("delta_v", DELTA_V) if rows else DELTA_V
+    ax_l.axhline(delta_v, color="red", linestyle=":", linewidth=1.5, label=f"delta_v = {delta_v} m/s")
+
     ax_l.set_title(f"Leader Y velocity (m/s)  —  full log  —  {label}", loc="left", fontsize=16)
     ax_l.tick_params(axis="both", labelsize=16)
     ax_l.grid(True, linestyle="--", alpha=0.7)
@@ -323,7 +333,6 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
     ax_l.legend(fontsize=14)
 
     if has_follower:
-        f_vel  = np.gradient(f_ys, f_times)
         ax_f   = axes[1]
         f_mask = (f_times >= t_start) & (f_times <= t_end)
         ax_f.plot(f_times[f_mask] - t0, f_vel[f_mask], color="#27ae60", linewidth=1.2, label="Follower Y velocity")
@@ -336,6 +345,8 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
             ax_f.axvline(r["T11"] - t0, color="darkorange", linestyle="--", linewidth=2.0, alpha=0.8, label=t11_lbl)
             ax_f.text(r["T2"] - t0, 0.05, f" {r['step']}", fontsize=8, color="#27ae60", va="bottom")
             t2_labeled = t11_labeled = True
+
+        ax_f.axhline(delta_v, color="red", linestyle=":", linewidth=1.5, label=f"delta_v = {delta_v} m/s")
 
         ax_f.set_xlabel("Time (s)", fontsize=16)
         ax_f.set_title(f"Follower Y velocity (m/s)  —  full log  —  {label}", loc="left", fontsize=16)

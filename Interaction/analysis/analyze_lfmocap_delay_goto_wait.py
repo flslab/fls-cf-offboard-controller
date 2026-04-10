@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 
 matplotlib.use("macosx")
 
-LOG_DIR = os.path.join(os.path.dirname(__file__), "../..", "logs", "LFMoCapDelay")
+LOG_DIR = os.path.join(os.path.dirname(__file__), "../..", "logs", "LFMoCapDelay_goto", "wait")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DELTA_V = 0.1          # m/s — KF threshold used during the experiment
@@ -33,25 +33,28 @@ DELTA_V = 0.1          # m/s — KF threshold used during the experiment
 # ── Log discovery ─────────────────────────────────────────────────────────────
 def find_log_pairs(log_dir: str) -> list[tuple[str, str, str]]:
     """
-    Scan log_dir for LFMoCapDelay_leader_<N>_*.json files.
-    For each found leader file, find the matching follower file.
-    Returns list of (label, leader_path, follower_path) sorted by step size.
+    Scan log_dir for LFMoCapDelay_leader_{aldo tpha}_{duration}ms*.json files.
+    For each found leader file, find the matching follower file with the same
+    (alpha, duration) pair.
+    Returns list of (label, leader_path, follower_path) sorted by (alpha, duration).
     """
     pattern = os.path.join(log_dir, "LFMoCapDelay_leader_*.json")
     leader_files = sorted(glob.glob(pattern))
     pairs = []
     for lf in leader_files:
-        m = re.search(r"LFMoCapDelay_leader_(\d+)_", os.path.basename(lf))
+        m = re.search(r"LFMoCapDelay_leader_(\d+)_(\d+)ms_wait", os.path.basename(lf))
         if not m:
             continue
-        step_n = m.group(1)
-        ff_pattern = os.path.join(log_dir, f"LFMoCapDelay_follower_{step_n}_*.json")
+        alpha, duration = m.group(1), m.group(2)
+        ff_pattern = os.path.join(log_dir, f"LFMoCapDelay_follower_{alpha}_{duration}ms*.json")
         ff_matches = glob.glob(ff_pattern)
         if not ff_matches:
-            print(f"  Warning: no follower log found for step={step_n}, skipping.")
+            print(f"  Warning: no follower log found for alpha={alpha} duration={duration}ms, skipping.")
             continue
-        pairs.append((f"{step_n} cm", lf, ff_matches[0]))
-    pairs.sort(key=lambda x: int(x[0].split()[0]))
+        label = f"alpha={alpha} duration={duration}ms"
+        pairs.append((label, lf, ff_matches[0]))
+    pairs.sort(key=lambda x: (int(re.search(r"alpha=(\d+)", x[0]).group(1)),
+                               int(re.search(r"duration=(\d+)", x[0]).group(1))))
     return pairs
 
 
@@ -70,6 +73,22 @@ def _events_by_name(log: list[dict], event_name: str) -> list[dict]:
         e["data"] for e in log
         if e.get("type") == "events" and e.get("data", {}).get("event") == event_name
     ]
+
+
+def get_clock_offset(follower_log: list[dict]) -> float:
+    """
+    Return follower-clock − leader-clock offset (seconds) from the clock_sync event.
+    A positive offset means the follower clock is ahead; subtract it from all
+    follower timestamps to bring them onto the leader's time axis.
+    Returns 0.0 if no sync event is found.
+    """
+    events = _events_by_name(follower_log, "clock_sync")
+    if not events:
+        return 0.0
+    e = events[0]
+    if "t_recv" in e and "t_send" in e:
+        return e["t_recv"] - e["t_send"]
+    return e.get("offset_s", 0.0)
 
 
 def _leader_timing_from_events(leader_log: list[dict]) -> dict:
@@ -160,6 +179,17 @@ def extract_vel_y_series(log: list[dict], group: str = "frames"):
     valid = [e for e in entries if "time" in e and "vel" in e]
     times = np.array([e["time"]   for e in valid])
     vels  = np.array([e["vel"][1] for e in valid])
+    return times, vels
+
+
+def extract_leader_kf_vel_from_follower(follower_log: list[dict]):
+    """Extract leader KF-estimated Y velocity from the follower's leader_frames log."""
+    entries = extract_group(follower_log, "leader_frames")
+    if not entries:
+        return np.array([]), np.array([])
+    valid = [e for e in entries if "time" in e and "kf_vel_y" in e]
+    times = np.array([e["time"]     for e in valid])
+    vels  = np.array([e["kf_vel_y"] for e in valid])
     return times, vels
 
 
@@ -287,22 +317,31 @@ def plot_velocity_t1_t10(label: str, rows: list, leader_log: list, tag: str, sav
     # plt.show()
 
 
-def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: list, tag: str, save_dir: str):
+def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: list,
+                       tag: str, save_dir: str, clock_offset: float = 0.0):
     l_times, l_vel = extract_vel_y_series(leader_log, "frames")
     f_times, f_vel = extract_vel_y_series(follower_log, "frames")
+    lf_times, lf_vels = extract_leader_kf_vel_from_follower(follower_log)
     if len(l_times) < 2:
         print(f"Not enough leader frame data for {label}.")
         return
+
+    # Bring follower frame times onto the leader's clock
+    f_times  = f_times  - clock_offset
+    lf_times = lf_times - clock_offset
 
     t_start = min(r["T1"]  for r in rows) - 2.0
     t_end   = max(r["T10"] for r in rows) + 2.0
     t0      = t_start
 
     has_follower = len(f_times) >= 2
-    nrows = 2 if has_follower else 1
+    has_leader_kf = len(lf_times) >= 2
+    nrows = (1 + int(has_follower) + int(has_leader_kf))
     fig, axes = plt.subplots(nrows, 1, figsize=(20, 6 * nrows), sharex=True)
     if nrows == 1:
         axes = [axes]
+
+    delta_v = rows[0].get("delta_v", DELTA_V) if rows else DELTA_V
 
     ax_l = axes[0]
     l_mask = (l_times >= t_start) & (l_times <= t_end)
@@ -317,7 +356,6 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
         ax_l.text(r["T1"] - t0, 0.05, f" {r['step']}", fontsize=8, color="#e74c3c", va="bottom")
         t1_labeled = t10_labeled = True
 
-    delta_v = rows[0].get("delta_v", DELTA_V) if rows else DELTA_V
     ax_l.axhline(delta_v, color="red", linestyle=":", linewidth=1.5, label=f"delta_v = {delta_v} m/s")
 
     ax_l.set_title(f"Leader Y velocity (m/s)  —  full log  —  {label}", loc="left", fontsize=16)
@@ -329,8 +367,10 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
     ax_l.set_xlim(t_start - t0, t_end - t0)
     ax_l.legend(fontsize=14)
 
+    ax_idx = 1
+
     if has_follower:
-        ax_f   = axes[1]
+        ax_f   = axes[ax_idx]; ax_idx += 1
         f_mask = (f_times >= t_start) & (f_times <= t_end)
         ax_f.plot(f_times[f_mask] - t0, f_vel[f_mask], color="#27ae60", linewidth=1.2, label="Follower Y velocity")
 
@@ -345,7 +385,6 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
 
         ax_f.axhline(delta_v, color="red", linestyle=":", linewidth=1.5, label=f"delta_v = {delta_v} m/s")
 
-        ax_f.set_xlabel("Time (s)", fontsize=16)
         ax_f.set_title(f"Follower Y velocity (m/s)  —  full log  —  {label}", loc="left", fontsize=16)
         ax_f.tick_params(axis="both", labelsize=16)
         ax_f.grid(True, linestyle="--", alpha=0.7)
@@ -353,7 +392,34 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
         ax_f.spines["right"].set_visible(False)
         ax_f.set_ylim(0, 2)
         ax_f.legend(fontsize=14)
+
+    if has_leader_kf:
+        ax_lf = axes[ax_idx]
+        lf_mask = (lf_times >= t_start) & (lf_times <= t_end)
+        ax_lf.plot(lf_times[lf_mask] - t0, lf_vels[lf_mask], color="#8e44ad", linewidth=1.2,
+                   label="Leader Y vel (KF, follower log)")
+
+        t2_labeled = False
+        for r in rows:
+            t2_lbl = "T2 (detected)" if not t2_labeled else "_nolegend_"
+            ax_lf.axvline(r["T2"] - t0, color="magenta", linestyle="--", linewidth=2.0, alpha=0.8, label=t2_lbl)
+            ax_lf.text(r["T2"] - t0, 0.005, f" {r['step']}", fontsize=8, color="#8e44ad", va="bottom")
+            t2_labeled = True
+
+        ax_lf.axhline(delta_v, color="red", linestyle=":", linewidth=1.5, label=f"delta_v = {delta_v} m/s")
+
+        ax_lf.set_xlabel("Time (s)", fontsize=16)
+        ax_lf.set_title(f"Leader Y velocity as seen by follower (KF)  —  full log  —  {label}", loc="left", fontsize=16)
+        ax_lf.tick_params(axis="both", labelsize=16)
+        ax_lf.grid(True, linestyle="--", alpha=0.7)
+        ax_lf.spines["top"].set_visible(False)
+        ax_lf.spines["right"].set_visible(False)
+        ax_lf.set_ylim(-0.05, 2)
+        ax_lf.legend(fontsize=14)
     else:
+        axes[-1].set_xlabel("Time (s)", fontsize=16)
+
+    if not has_follower and not has_leader_kf:
         axes[0].set_xlabel("Time (s)", fontsize=16)
 
     plt.tight_layout()
@@ -377,13 +443,25 @@ def main(log_dir: str):
         leader_log   = load_log(leader_path)
         follower_log = load_log(follower_path)
         rows = build_timing_table(leader_log, follower_log)
-        tag  = label.replace(" ", "")   # e.g. "20cm", "50cm"
+        tag  = label.replace(" ", "_").replace("=", "")   # e.g. "alpha100_duration200ms"
+
+        # ── Clock-offset correction ──────────────────────────────────────
+        offset = get_clock_offset(follower_log)
+        if offset:
+            print(f"  Clock offset (follower − leader): {offset * 1000:+.2f} ms — correcting follower timestamps")
+            for r in rows:
+                r["T2"]              -= offset
+                r["T11"]             -= offset
+                r["TimeToDetect_ms"]  = round((r["T2"]  - r["T1"])  * 1000, 1)
+                r["TotalDelay_ms"]    = round((r["T11"] - r["T10"]) * 1000, 1)
+                r["TTT_follower_ms"]  = round((r["T11"] - r["T2"])  * 1000, 1)
 
         save_csv(rows, os.path.join(log_dir, f"lfmocap_delay_results_{tag}.csv"))
         plot_ttt(label, rows, tag, log_dir)
         plot_ttd_totaldelay(label, rows, tag, log_dir)
         plot_velocity_t1_t10(label, rows, leader_log, tag, log_dir)
-        plot_velocity_full(label, rows, leader_log, follower_log, tag, log_dir)
+        plot_velocity_full(label, rows, leader_log, follower_log, tag, log_dir,
+                           clock_offset=offset)
 
 
 if __name__ == "__main__":
