@@ -1249,9 +1249,9 @@ class Controller:
 
     def _get_latest_angles(self, window_size=5):
 
-        latest_roll = self.log_manager.cf_log_data["stateEstimate.roll"]["data"]
-        latest_pitch = self.log_manager.cf_log_data["stateEstimate.pitch"]["data"]
-        latest_yaw = self.log_manager.cf_log_data["stateEstimate.yaw"]["data"]
+        latest_roll = self.log_manager.cf_log_data["stateEstimate.roll"]["data"][-1]
+        latest_pitch = self.log_manager.cf_log_data["stateEstimate.pitch"]["data"][-1]
+        latest_yaw = self.log_manager.cf_log_data["stateEstimate.yaw"]["data"][-1]
 
         if latest_roll is None or latest_pitch is None or latest_yaw is None:
             return None
