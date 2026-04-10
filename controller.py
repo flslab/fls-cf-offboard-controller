@@ -1254,6 +1254,8 @@ class Controller:
                 return None
             recent = data[-window_size:]
             return sum(recent) / len(recent)
+        
+        self.logger.info(f"latest roll: {get_smoothed_angle('stateEstimate.roll')}")
 
         latest_roll = get_smoothed_angle("stateEstimate.roll")
         latest_pitch = get_smoothed_angle("stateEstimate.pitch")
