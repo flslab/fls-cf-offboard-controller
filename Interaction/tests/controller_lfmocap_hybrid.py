@@ -114,16 +114,18 @@ class LFMoCapHybridController:
         # Own Vicon frame
         self.latest_frame = None
 
-        # Leader Vicon position + KF-estimated Y velocity (follower only)
+        # Leader Vicon position + KF-estimated velocities (follower only)
         self.latest_leader_frame = None
+        self.latest_leader_vel_x = 0.0
         self.latest_leader_vel_y = 0.0
+        self.latest_leader_vel_z = 0.0
+        self._leader_kf_x        = None
         self._leader_kf_y        = None
+        self._leader_kf_z        = None
         self._kf_lock            = threading.Lock()
 
         # Hybrid follower state (protected by _state_lock)
         self._state_lock         = threading.Lock()
-        self._stepping           = False   # True while a ΔV step is executing
-        self._drift_running      = False   # signals the drift thread to keep going
         self._follower_target_y  = 0.0    # current commanded follower Y
         self._leader_drift_ref_y = None   # leader Y at last drift reset
 
@@ -161,7 +163,6 @@ class LFMoCapHybridController:
         self.run_mission()
 
     def stop(self):
-        self._drift_running = False
         self.land()
         if self.mocap:
             self.mocap.stop()
@@ -188,11 +189,14 @@ class LFMoCapHybridController:
             self.mocap.subscribe_point(self.args.init_pos, on_pose, name="self")
 
             if self.args.role == "follower":
-                self._leader_kf_y = VelocityKalmanFilter(
+                kf_kwargs = dict(
                     dt=1.0 / self.args.fps,
                     process_noise=1.0,
                     measurement_noise=0.001 ** 2,
                 )
+                self._leader_kf_x = VelocityKalmanFilter(**kf_kwargs)
+                self._leader_kf_y = VelocityKalmanFilter(**kf_kwargs)
+                self._leader_kf_z = VelocityKalmanFilter(**kf_kwargs)
                 logger.info(f"Subscribing leader point near: {self.args.leader_pos}")
                 self.mocap.subscribe_point(
                     self.args.leader_pos, self._on_leader_frame, name="leader"
@@ -388,21 +392,74 @@ class LFMoCapHybridController:
                                   hover_z: float, dv: float,
                                   timeout: float) -> float:
         """
-        Hold position while polling KF leader Y-velocity.
+        Hold position while polling KF leader Y-velocity, with inline ΔD
+        drift correction (no separate thread).
+
+        Each iteration sends send_position_setpoint to hold the hover position.
+        When accumulated leader displacement ≥ ΔD, calls
+        send_notify_setpoint_stop() → go_to() for the correction, then resumes
+        send_position_setpoint on the next iteration.
+
+        Calls send_notify_setpoint_stop() before returning so the caller can
+        safely switch to go_to.
         Returns Unix timestamp when |vel_y| > dv, or time.time() on timeout.
         """
+        dd      = self.args.delta_d / 1000.0
         poll_dt = 1.0 / self.args.setpoint_hz
         t_start = time.time()
 
-        self.commander.go_to(hover_x, hover_y, hover_z, 0, self.args.goto_duration / 1000.0)
+        # Initialise drift reference from the latest leader frame
+        with self._kf_lock:
+            leader_frame = self.latest_leader_frame
+        if leader_frame is not None:
+            with self._state_lock:
+                self._leader_drift_ref_y = leader_frame["tvec"][1]
+
+        in_low_level = False  # True after send_position_setpoint, False after go_to
 
         while time.time() - t_start < timeout:
+            # ── ΔD drift check ─────────────────────────────────────────────
             with self._kf_lock:
+                leader_frame = self.latest_leader_frame
+            if leader_frame is not None:
+                leader_y = leader_frame["tvec"][1]
+                with self._state_lock:
+                    ref_y      = self._leader_drift_ref_y
+                    follower_y = self._follower_target_y
+
+                displacement = leader_y - ref_y
+                if abs(displacement) >= dd:
+                    new_target_fy = follower_y + displacement
+                    self.cf.commander.send_position_setpoint(hover_x, new_target_fy, hover_z, 0)
+                    in_low_level = True
+                    hover_y = new_target_fy
+                    with self._state_lock:
+                        self._follower_target_y  = new_target_fy
+                        self._leader_drift_ref_y = leader_y
+                    self._log_event("drift_correction", {
+                        "displacement_mm": round(displacement * 1000, 2),
+                        "new_target_fy":   round(new_target_fy, 4),
+                        "leader_y":        round(leader_y, 4),
+                    })
+
+            # ── ΔV detection ───────────────────────────────────────────────
+            with self._kf_lock:
+                vel_x = self.latest_leader_vel_x
                 vel_y = self.latest_leader_vel_y
-            if abs(vel_y) > dv:
+                vel_z = self.latest_leader_vel_z
+            total_vel = (vel_x ** 2 + vel_y ** 2 + vel_z ** 2) ** 0.5
+            if total_vel > dv:
+                if in_low_level:
+                    self.cf.commander.send_notify_setpoint_stop()
                 return time.time()
+
+            # ── hold position with low-level setpoint ──────────────────────
+            self.cf.commander.send_position_setpoint(hover_x, hover_y, hover_z, 0)
+            in_low_level = True
             time.sleep(poll_dt)
 
+        if in_low_level:
+            self.cf.commander.send_notify_setpoint_stop()
         logger.warning(
             f"[FOLLOWER] ΔV timeout (ΔV={dv} m/s, timeout={timeout:.1f} s)"
         )
@@ -462,98 +519,20 @@ class LFMoCapHybridController:
 
         self._log_event("mission_complete", {"role": "leader"})
 
-    # ── follower: drift loop (ΔD) ────────────────────────────────────────
-    def _drift_loop(self, fx: float, fz: float):
-        """
-        Background thread — ΔD position tracking.
-
-        Runs continuously alongside the main follower loop.
-        Compares the leader's live Y position against ``_leader_drift_ref_y``.
-        When |displacement| ≥ ΔD:
-          • issues a go_to to mirror the displacement exactly
-          • updates ``_follower_target_y`` and ``_leader_drift_ref_y``
-          • logs a ``drift_correction`` event
-
-        Paused (spin-waits) while ``_stepping`` is True so that ΔV steps are
-        not interrupted.  After a step, the main thread resets ``_leader_drift_ref_y``
-        so accumulated drift during the step does not cause a spurious correction.
-        """
-        dd      = self.args.delta_d / 1000.0       # ΔD threshold in metres
-        poll_dt = 1.0 / self.args.setpoint_hz
-
-        # Wait for first leader frame
-        logger.info("[DRIFT] Waiting for first leader frame ...")
-        while self._drift_running:
-            with self._kf_lock:
-                frame = self.latest_leader_frame
-            if frame is not None:
-                break
-            time.sleep(0.05)
-
-        with self._state_lock:
-            self._leader_drift_ref_y = self.latest_leader_frame["tvec"][1]
-        logger.info(f"[DRIFT] Reference Y set: {self._leader_drift_ref_y:.4f} m")
-
-        while self._drift_running:
-            # Pause during a ΔV step
-            with self._state_lock:
-                stepping = self._stepping
-            if stepping:
-                time.sleep(poll_dt)
-                continue
-
-            # Read latest leader position
-            with self._kf_lock:
-                frame = self.latest_leader_frame
-            if frame is None:
-                time.sleep(poll_dt)
-                continue
-            leader_y = frame["tvec"][1]
-
-            with self._state_lock:
-                ref_y        = self._leader_drift_ref_y
-                follower_y   = self._follower_target_y
-
-            displacement = leader_y - ref_y   # signed, metres
-
-            if abs(displacement) < dd:
-                time.sleep(poll_dt)
-                continue
-
-            # Mirror the displacement
-            new_target_fy = follower_y + displacement
-            self.commander.go_to(fx, new_target_fy, fz, 0, self.args.goto_duration / 1000.0)
-
-            with self._state_lock:
-                self._follower_target_y  = new_target_fy
-                self._leader_drift_ref_y = leader_y
-
-            self._log_event("drift_correction", {
-                "displacement_mm": round(displacement * 1000, 2),
-                "new_target_fy":   round(new_target_fy, 4),
-                "leader_y":        round(leader_y, 4),
-            })
-            logger.debug(
-                f"[DRIFT] {displacement * 1000:+.1f} mm → follower_y={new_target_fy:.4f} m"
-            )
-
-            time.sleep(poll_dt)
-
     # ── follower mission ─────────────────────────────────────────────────
     def _run_follower(self):
         """
         Hybrid follower mission.
 
-        Starts the ΔD drift loop in a background thread, then runs the
-        ΔV step-detection loop in the foreground.
+        ΔV + ΔD are handled together inside _hover_and_detect_leader (no
+        separate drift thread).
 
-        ΔV loop (per step):
-          ① Allow drift corrections (_stepping = False), hover, wait for ΔV.
-          ② Freeze drift (_stepping = True).
-          ③ Execute fixed step to (follower_y + follower_step).
-          ④ Log T2, T11, TTT_follower.
-          ⑤ Reset drift reference to current leader Y, resume drift loop.
-          ⑥ Wait for step period to elapse.
+        Per step:
+          ① Hover and wait for ΔV, applying ΔD drift corrections inline.
+          ② Execute fixed step to (follower_y + follower_step).
+          ③ Log T2, T11, TTT_follower.
+          ④ Reset drift reference to current leader Y.
+          ⑤ Wait for step period to elapse.
         """
         n          = self.args.steps
         dur        = self.args.step_duration
@@ -568,7 +547,6 @@ class LFMoCapHybridController:
 
         with self._state_lock:
             self._follower_target_y = fy
-            self._stepping          = False
 
         self._log_event("mission_start", {
             "role":             "follower",
@@ -578,33 +556,30 @@ class LFMoCapHybridController:
             "delta_d_mm":       self.args.delta_d,
         })
 
-        # Start drift tracking thread
-        self._drift_running = True
-        drift_thread = threading.Thread(
-            target=self._drift_loop, args=(fx, fz), daemon=True, name="drift-loop"
-        )
-        drift_thread.start()
-
         for i in range(n):
-            # ① Allow drift corrections while waiting for ΔV
+            # ① Hover + ΔD drift corrections until ΔV detected
             with self._state_lock:
-                self._stepping      = False
-                hover_y             = self._follower_target_y
+                hover_y = self._follower_target_y
 
             t2    = self._hover_and_detect_leader(fx, hover_y, fz, dv, detect_tmo)
             ts_t2 = datetime.datetime.fromtimestamp(t2).isoformat(timespec="milliseconds")
+            with self._kf_lock:
+                _vx = self.latest_leader_vel_x
+                _vy = self.latest_leader_vel_y
+                _vz = self.latest_leader_vel_z
+            _total_vel = (_vx ** 2 + _vy ** 2 + _vz ** 2) ** 0.5
             self._log_event("leader_detected", {
                 "step": i, "mode": "delta_v",
                 "T2": t2, "T2_iso": ts_t2,
-                "kf_vel_y_at_detection": round(self.latest_leader_vel_y, 4),
+                "kf_vel_x_at_detection":   round(_vx, 4),
+                "kf_vel_y_at_detection":   round(_vy, 4),
+                "kf_vel_z_at_detection":   round(_vz, 4),
+                "kf_total_vel_at_detection": round(_total_vel, 4),
             })
 
-            # ② Freeze drift during step
+            # ② Move by fixed step distance from current follower position
             with self._state_lock:
-                self._stepping  = True
-                follower_y_now  = self._follower_target_y
-
-            # ③ Move by fixed step distance from current follower position
+                follower_y_now = self._follower_target_y
             target_fy = follower_y_now + step_m
             t11       = self._send_goto_check_arrival(
                 fx, target_fy, fz, 0, target_y=target_fy, duration=timeout
@@ -612,7 +587,7 @@ class LFMoCapHybridController:
             ts_t11       = datetime.datetime.fromtimestamp(t11).isoformat(timespec="milliseconds")
             ttt_follower = t11 - t2
 
-            # ④ Log timing
+            # ③ Log timing
             if self.log_manager:
                 self.log_manager.add_log_entry("timing", {
                     "role":             "follower",
@@ -632,9 +607,7 @@ class LFMoCapHybridController:
                 "TTT_follower_ms": round(ttt_follower * 1000, 1),
             })
 
-            # ⑤ Reset drift reference to current leader position so the drift
-            #   loop does not re-apply displacement that already happened during
-            #   this step.
+            # ④ Reset drift reference so the next hover phase starts clean
             with self._kf_lock:
                 leader_frame_now = self.latest_leader_frame
             new_ref = leader_frame_now["tvec"][1] if leader_frame_now else None
@@ -644,14 +617,10 @@ class LFMoCapHybridController:
                 if new_ref is not None:
                     self._leader_drift_ref_y = new_ref
 
-            # ⑥ Wait out the step period, then allow drift again
+            # ⑤ Wait out the step period
             remaining = (t2 + timeout) - time.time()
             if remaining > 0:
                 time.sleep(remaining)
-
-        # Mission complete — stop drift thread
-        self._drift_running = False
-        drift_thread.join(timeout=2.0)
 
         self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "follower"})
@@ -672,17 +641,23 @@ class LFMoCapHybridController:
     def _on_leader_frame(self, frame):
         """
         Leader position callback (follower only).
-        Updates KF velocity estimate and logs leader_frames (same as delay controller).
+        Updates KF velocity estimates for all three axes and logs leader_frames.
         """
         self.latest_leader_frame = frame
-        pos_y = frame["tvec"][1]
+        pos_x, pos_y, pos_z = frame["tvec"]
         with self._kf_lock:
+            vel_x = self._leader_kf_x.update(pos_x)
             vel_y = self._leader_kf_y.update(pos_y)
+            vel_z = self._leader_kf_z.update(pos_z)
+            self.latest_leader_vel_x = vel_x
             self.latest_leader_vel_y = vel_y
+            self.latest_leader_vel_z = vel_z
         if self.log_manager:
             self.log_manager.add_log_entry("leader_frames", {
                 **frame,
+                "kf_vel_x": vel_x,
                 "kf_vel_y": vel_y,
+                "kf_vel_z": vel_z,
             })
 
 

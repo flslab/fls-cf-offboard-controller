@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 
 matplotlib.use("macosx")
 
-LOG_DIR = os.path.join(os.path.dirname(__file__), "../..", "logs", "LFMoCapDelay_goto", "wait")
+LOG_DIR = os.path.join(os.path.dirname(__file__), "../..", "logs", "LFMoCapDelay_goto", "sync")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DELTA_V = 0.1          # m/s — KF threshold used during the experiment
@@ -42,7 +42,7 @@ def find_log_pairs(log_dir: str) -> list[tuple[str, str, str]]:
     leader_files = sorted(glob.glob(pattern))
     pairs = []
     for lf in leader_files:
-        m = re.search(r"LFMoCapDelay_leader_(\d+)_(\d+)ms_wait", os.path.basename(lf))
+        m = re.search(r"LFMoCapDelay_leader_(\d+)_(\d+)ms", os.path.basename(lf))
         if not m:
             continue
         alpha, duration = m.group(1), m.group(2)
@@ -89,6 +89,42 @@ def get_clock_offset(follower_log: list[dict]) -> float:
     if "t_recv" in e and "t_send" in e:
         return e["t_recv"] - e["t_send"]
     return e.get("offset_s", 0.0)
+
+
+# Timestamp fields that appear in follower log entries and need clock correction.
+# t_send / t_recv in the clock_sync event are intentionally excluded — they are
+# the reference points used to compute the offset.
+_FOLLOWER_TS_KEYS = {"time", "T2", "T11", "T2_iso"}
+
+
+def apply_clock_offset(follower_log: list[dict], offset: float) -> None:
+    """
+    Correct every Unix-timestamp field in ``follower_log`` in-place by
+    subtracting ``offset`` (follower − leader clock skew in seconds).
+
+    Walks all entries and adjusts ``_FOLLOWER_TS_KEYS`` wherever they appear
+    in the data dict.  ISO string timestamps (``*_iso`` keys) are recomputed
+    from the corrected numeric value so they stay consistent.
+    The ``clock_sync`` event is skipped — its fields are the reference.
+    """
+    if not offset:
+        return
+    for entry in follower_log:
+        data = entry.get("data")
+        if not isinstance(data, dict):
+            continue
+        if data.get("event") == "clock_sync":
+            continue
+        for key in ("time", "T2", "T11"):
+            if key in data and isinstance(data[key], (int, float)):
+                data[key] -= offset
+                # Keep any paired ISO string in sync
+                iso_key = f"{key}_iso" if key != "time" else None
+                if iso_key and iso_key in data:
+                    import datetime as _dt
+                    data[iso_key] = _dt.datetime.fromtimestamp(
+                        data[key]
+                    ).isoformat(timespec="milliseconds")
 
 
 def _leader_timing_from_events(leader_log: list[dict]) -> dict:
@@ -318,17 +354,13 @@ def plot_velocity_t1_t10(label: str, rows: list, leader_log: list, tag: str, sav
 
 
 def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: list,
-                       tag: str, save_dir: str, clock_offset: float = 0.0):
+                       tag: str, save_dir: str):
     l_times, l_vel = extract_vel_y_series(leader_log, "frames")
     f_times, f_vel = extract_vel_y_series(follower_log, "frames")
     lf_times, lf_vels = extract_leader_kf_vel_from_follower(follower_log)
     if len(l_times) < 2:
         print(f"Not enough leader frame data for {label}.")
         return
-
-    # Bring follower frame times onto the leader's clock
-    f_times  = f_times  - clock_offset
-    lf_times = lf_times - clock_offset
 
     t_start = min(r["T1"]  for r in rows) - 2.0
     t_end   = max(r["T10"] for r in rows) + 2.0
@@ -430,6 +462,74 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
     # plt.show()
 
 
+def plot_position_full(label: str, rows: list, leader_log: list, follower_log: list,
+                       tag: str, save_dir: str):
+    l_times, l_ys = extract_y_series(leader_log, "frames")
+    f_times, f_ys = extract_y_series(follower_log, "frames")
+    if len(l_times) < 2:
+        print(f"Not enough leader frame data for {label}.")
+        return
+
+    t_start = min(r["T1"]  for r in rows) - 2.0
+    t_end   = max(r["T10"] for r in rows) + 2.0
+    t0      = t_start
+
+    # Zero-reference: subtract each drone's Y at t_start
+    l_mask = (l_times >= t_start) & (l_times <= t_end)
+    l_y0   = l_ys[l_mask][0] if l_mask.any() else 0.0
+    l_ys_plot = l_ys[l_mask] - l_y0
+
+    has_follower = len(f_times) >= 2
+    if has_follower:
+        f_mask    = (f_times >= t_start) & (f_times <= t_end)
+        f_y0      = f_ys[f_mask][0] if f_mask.any() else 0.0
+        f_ys_plot = f_ys[f_mask] - f_y0
+
+    fig, ax = plt.subplots(1, 1, figsize=(20, 6))
+
+    ax.plot(l_times[l_mask] - t0, l_ys_plot,
+            color="#2980b9", linewidth=1.2, label="Leader Y position")
+    if has_follower:
+        ax.plot(f_times[f_mask] - t0, f_ys_plot,
+                color="#27ae60", linewidth=1.2, label="Follower Y position")
+
+    t1_labeled = t10_labeled = t2_labeled = t11_labeled = False
+    for r in rows:
+        t1_lbl  = "T1 (step start)"    if not t1_labeled  else "_nolegend_"
+        t10_lbl = "T10 (step arrived)" if not t10_labeled else "_nolegend_"
+        ax.axvline(r["T1"]  - t0, color="magenta",   linestyle="--", linewidth=1.5, alpha=0.8, label=t1_lbl)
+        ax.axvline(r["T10"] - t0, color="darkorange", linestyle="--", linewidth=1.5, alpha=0.8, label=t10_lbl)
+        ax.text(r["T1"] - t0, 0.0, f" {r['step']}", fontsize=8, color="#e74c3c", va="bottom")
+        t1_labeled = t10_labeled = True
+
+        if "T2" in r and "T11" in r:
+            t2_lbl  = "T2 (detected)"      if not t2_labeled  else "_nolegend_"
+            t11_lbl = "T11 (step arrived)" if not t11_labeled else "_nolegend_"
+            ax.axvline(r["T2"]  - t0, color="cyan",      linestyle=":", linewidth=1.5, alpha=0.8, label=t2_lbl)
+            ax.axvline(r["T11"] - t0, color="limegreen", linestyle=":", linewidth=1.5, alpha=0.8, label=t11_lbl)
+            t2_labeled = t11_labeled = True
+
+    f_peak = f_ys_plot.max() if (has_follower and f_mask.any()) else 0
+    y_max  = max(l_ys_plot.max() if l_mask.any() else 0, f_peak) * 1.15
+
+    ax.set_xlabel("Time (s)", fontsize=16)
+    ax.set_ylabel("Y position (m)", fontsize=16)
+    ax.set_title(f"Y position (m)  —  full log  —  {label}", loc="left", fontsize=16)
+    ax.tick_params(axis="both", labelsize=16)
+    ax.set_xlim(t_start - t0, t_end - t0)
+    ax.set_ylim(0, y_max)
+    ax.grid(True, linestyle="--", alpha=0.7)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.legend(fontsize=14)
+    plt.tight_layout()
+
+    out = os.path.join(save_dir, f"lfmocap_position_full_{tag}.png")
+    fig.savefig(out, dpi=300)
+    print(f"Plot saved  → {out}")
+    # plt.show()
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main(log_dir: str):
     pairs = find_log_pairs(log_dir)
@@ -442,26 +542,24 @@ def main(log_dir: str):
         print(f"{'':8}  follower: {os.path.basename(follower_path)}")
         leader_log   = load_log(leader_path)
         follower_log = load_log(follower_path)
-        rows = build_timing_table(leader_log, follower_log)
         tag  = label.replace(" ", "_").replace("=", "")   # e.g. "alpha100_duration200ms"
 
         # ── Clock-offset correction ──────────────────────────────────────
+        # Apply before any parsing so every downstream function (timing table,
+        # frame extraction, event parsing) automatically sees corrected times.
         offset = get_clock_offset(follower_log)
         if offset:
-            print(f"  Clock offset (follower − leader): {offset * 1000:+.2f} ms — correcting follower timestamps")
-            for r in rows:
-                r["T2"]              -= offset
-                r["T11"]             -= offset
-                r["TimeToDetect_ms"]  = round((r["T2"]  - r["T1"])  * 1000, 1)
-                r["TotalDelay_ms"]    = round((r["T11"] - r["T10"]) * 1000, 1)
-                r["TTT_follower_ms"]  = round((r["T11"] - r["T2"])  * 1000, 1)
+            print(f"  Clock offset (follower − leader): {offset * 1000:+.2f} ms — correcting all follower timestamps")
+            apply_clock_offset(follower_log, offset)
+
+        rows = build_timing_table(leader_log, follower_log)
 
         save_csv(rows, os.path.join(log_dir, f"lfmocap_delay_results_{tag}.csv"))
         plot_ttt(label, rows, tag, log_dir)
         plot_ttd_totaldelay(label, rows, tag, log_dir)
+        plot_position_full(label, rows, leader_log, follower_log, tag, log_dir)
         plot_velocity_t1_t10(label, rows, leader_log, tag, log_dir)
-        plot_velocity_full(label, rows, leader_log, follower_log, tag, log_dir,
-                           clock_offset=offset)
+        plot_velocity_full(label, rows, leader_log, follower_log, tag, log_dir)
 
 
 if __name__ == "__main__":
