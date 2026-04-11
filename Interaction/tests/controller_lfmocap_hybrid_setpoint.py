@@ -85,6 +85,9 @@ PID_VALUES = {
     'pid_rate.omzFiltCut': '160',
 }
 
+# Keys whose values are proportional gains (Kp) — used for goto-boost feature
+_KP_KEYS = [k for k in PID_VALUES if k.endswith('Kp') or k.endswith('kp')]
+
 
 # ── Controller ────────────────────────────────────────────────────────────────
 class LFMoCapHybridSetpointController:
@@ -394,6 +397,11 @@ class LFMoCapHybridSetpointController:
             self.cf.commander.send_zdistance_setpoint(roll, pitch, yawrate, z)
             time.sleep(dt)
 
+    def _set_kp_multiplier(self, multiplier: float):
+        """Scale all Kp PID gains by *multiplier* relative to their base values."""
+        for key in _KP_KEYS:
+            self.cf.param.set_value(key, str(float(PID_VALUES[key]) * multiplier))
+
     def _send_setpoint_loop_with_arrival(self, x: float, y: float, z: float,
                                          yaw: float, target_y: float,
                                          duration: float) -> float:
@@ -417,6 +425,11 @@ class LFMoCapHybridSetpointController:
                 "duration":  duration,
             })
 
+        m = self.args.kp_multiplier
+        if m > 1:
+            self._set_kp_multiplier(m)
+            logger.info(f"[{self.args.role}] Kp boosted ×{m} for setpoint loop")
+
         self._fast_accel_before_setpoint(z)
 
         t_end = time.time() + duration
@@ -426,6 +439,10 @@ class LFMoCapHybridSetpointController:
                 if abs(self.latest_frame["tvec"][1] - target_y) <= tol:
                     t_arrival = time.time()
             time.sleep(dt)
+
+        if m > 1:
+            self._set_kp_multiplier(1.0)
+            logger.info(f"[{self.args.role}] Kp restored to base values")
 
         if t_arrival is None:
             logger.warning(
@@ -740,9 +757,12 @@ if __name__ == "__main__":
     ap.add_argument("--max-vel", type=float, default=2,
                     help="max speed along x and y axes in m/s "
                          "(sets posCtlPid.xVelMax and yVelMax)")
+    ap.add_argument("--kp-multiplier", type=float, default=1.0,
+                    help="Multiply all Kp PID gains by this factor during the setpoint loop, "
+                         "then restore. Values <= 1 disable the boost (default 1.0).")
 
     # Fast acceleration kick before setpoint loop
-    ap.add_argument("--fast-accel-duration", type=float, default=100.0,
+    ap.add_argument("--fast-accel-duration", type=float, default=0.0,
                     help="Duration (ms) to send send_zdistance_setpoint before each "
                          "step's setpoint loop to give an initial acceleration kick.  "
                          "0 = disabled (default).")
