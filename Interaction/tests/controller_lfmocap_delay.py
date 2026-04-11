@@ -4,8 +4,10 @@ controller_lfmocap_delay.py
 LFMoCapDelay experiment — measures leader-follower detection and motion delay
 using Vicon as the only communication channel between drones.
 
-No user interaction.  No TCP between drones.
+No user interaction.
 Both drones log independently; timing is compared offline.
+A one-shot TCP clock-sync is performed before the mission so that the offline
+analyser can correct the inter-machine clock offset.
 
 Leader:
   Moves along the Y axis ``--steps`` times, each step by ``--alpha`` mm.
@@ -50,7 +52,9 @@ Repeat with --alpha 500 for the 50 cm variant.
 
 import argparse
 import datetime
+import json
 import logging
+import socket
 import sys
 import threading
 import time
@@ -296,12 +300,80 @@ class LFMoCapDelayController:
         self.commander.stop()
         self.flying = False
 
+    # ── clock sync ───────────────────────────────────────────────────────
+    def _sync_clocks(self):
+        """
+        One-shot TCP clock synchronisation before the mission.
+
+        Leader: binds a TCP server, waits for the follower to connect, then
+                sends {"t_send": <time.time()>} and logs the send timestamp.
+        Follower: connects to the leader, receives the packet, and logs both
+                  t_send (from the packet) and t_recv (local time.time()).
+
+        The logged offset = t_recv − t_send can be used offline to correct the
+        inter-machine clock skew: subtract offset from every follower timestamp.
+        """
+        if self.args.no_tcp_sync:
+            logger.info("Clock sync disabled (--no-tcp-sync)")
+            return
+
+        port = self.args.tcp_port
+
+        if self.args.role == "leader":
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+                srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                srv.bind(("", port))
+                srv.listen(1)
+                srv.settimeout(30.0)
+                logger.info(f"[LEADER] Awaiting follower clock-sync on port {port} ...")
+                try:
+                    conn, addr = srv.accept()
+                except socket.timeout:
+                    logger.warning("[LEADER] Clock-sync timed out — continuing without sync")
+                    return
+                with conn:
+                    t_send = time.time()
+                    conn.sendall(json.dumps({"t_send": t_send}).encode())
+            self._log_event("clock_sync", {"t_send": t_send})
+            logger.info(f"[LEADER] Clock-sync sent: t_send={t_send:.6f}")
+
+        else:
+            ip = self.args.leader_ip
+            logger.info(f"[FOLLOWER] Connecting to {ip}:{port} for clock-sync ...")
+            deadline = time.time() + 30.0
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                while time.time() < deadline:
+                    try:
+                        s.connect((ip, port))
+                        break
+                    except (ConnectionRefusedError, OSError):
+                        time.sleep(0.3)
+                data = b""
+                while True:
+                    chunk = s.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+            t_recv  = time.time()
+            payload = json.loads(data.decode())
+            t_send  = payload["t_send"]
+            offset  = t_recv - t_send
+            self._log_event("clock_sync", {
+                "t_send":   t_send,
+                "t_recv":   t_recv,
+                "offset_s": round(offset, 6),
+            })
+            logger.info(f"[FOLLOWER] Clock-sync done: offset={offset:+.6f} s "
+                        f"(follower − leader)")
+
     # ── mission dispatcher ───────────────────────────────────────────────
     def run_mission(self):
         if self.args.role == "leader":
             time.sleep(3)
+            self._sync_clocks()
             self._run_leader()
         else:
+            self._sync_clocks()
             self._run_follower()
 
     # ── setpoint helpers ─────────────────────────────────────────────────
@@ -638,6 +710,14 @@ if __name__ == "__main__":
                     help="[follower] KF Y-velocity threshold ΔV in m/s to detect leader movement")
     ap.add_argument("--leader-pos", type=float, nargs=3, default=[0.0, 0.0, 0.0],
                     help="[follower] Initial position hint for the leader's Vicon marker [x y z]")
+
+    # Clock sync
+    ap.add_argument("--tcp-port", type=int, default=9000,
+                    help="TCP port used for leader→follower clock sync (default 9000)")
+    ap.add_argument("--leader-ip", type=str, default="localhost",
+                    help="[follower] IP of the leader machine for clock sync")
+    ap.add_argument("--no-tcp-sync", action="store_true", default=False,
+                    help="Skip TCP clock synchronisation")
 
     args = ap.parse_args()
 
