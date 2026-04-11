@@ -240,10 +240,10 @@ class LFMoCapHybridController:
         for param, value in PID_VALUES.items():
             self.cf.param.set_value(param, value)
 
-        if self.args.max_vel_xy is not None:
-            self.cf.param.set_value('posCtlPid.xVelMax', str(self.args.max_vel_xy))
-            self.cf.param.set_value('posCtlPid.yVelMax', str(self.args.max_vel_xy))
-            logger.info(f"Max XY velocity set: {self.args.max_vel_xy} m/s")
+        if self.args.max_vel is not None:
+            self.cf.param.set_value('posCtlPid.xVelMax', str(self.args.max_vel))
+            self.cf.param.set_value('posCtlPid.yVelMax', str(self.args.max_vel))
+            logger.info(f"Max XY velocity set: {self.args.max_vel} m/s")
 
         if self.args.vicon:
             reset_estimator(self.cf)
