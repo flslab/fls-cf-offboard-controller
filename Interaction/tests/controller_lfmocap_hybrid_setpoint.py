@@ -749,7 +749,7 @@ if __name__ == "__main__":
     ap.add_argument("--fast-accel-pitch", type=float, default=0.0,
                     help="Pitch angle (degrees) for the fast-accel zdistance setpoint "
                          "(positive = forward/+Y). Default 0.")
-    ap.add_argument("--fast-accel-roll", type=float, default=-30.0,
+    ap.add_argument("--fast-accel-roll", type=float, default=-50.0,
                     help="Roll angle (degrees) for the fast-accel zdistance setpoint. "
                          "Default 0.")
     ap.add_argument("--fast-accel-yawrate", type=float, default=0.0,

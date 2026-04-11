@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 
 matplotlib.use("macosx")
 
-LOG_DIR = os.path.join(os.path.dirname(__file__), "../..", "logs", "LFMoCapDelay_goto", "max_vel")
+LOG_DIR = os.path.join(os.path.dirname(__file__), "../..", "logs", "LFMoCapDelay", "acc")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DELTA_V = 0.1          # m/s — KF threshold used during the experiment
@@ -38,15 +38,17 @@ def find_log_pairs(log_dir: str) -> list[tuple[str, str, str]]:
     (alpha, duration) pair.
     Returns list of (label, leader_path, follower_path) sorted by (alpha, duration).
     """
-    pattern = os.path.join(log_dir, "LFMoCapDelay_leader_*.json")
+    pattern = os.path.join(log_dir, "LFMoCapHybridSP_leader_*.json")
     leader_files = sorted(glob.glob(pattern))
     pairs = []
     for lf in leader_files:
-        m = re.search(r"LFMoCapDelay_leader_(\d+)_(\d+)ms", os.path.basename(lf))
+        m = re.search(r"LFMoCapHybridSP_leader_", os.path.basename(lf))
         if not m:
             continue
+
+        alpha, duration = 50, 0
         alpha, duration = m.group(1), m.group(2)
-        ff_pattern = os.path.join(log_dir, f"LFMoCapDelay_follower_{alpha}_{duration}ms*.json")
+        ff_pattern = os.path.join(log_dir, f"LFMoCapHybridSP_follower_*.json")
         ff_matches = glob.glob(ff_pattern)
         if not ff_matches:
             print(f"  Warning: no follower log found for alpha={alpha} duration={duration}ms, skipping.")
