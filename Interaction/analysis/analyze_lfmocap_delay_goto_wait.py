@@ -47,7 +47,7 @@ def find_log_pairs(log_dir: str) -> list[tuple[str, str, str]]:
             continue
 
         alpha, duration = 50, 0
-        alpha, duration = m.group(1), m.group(2)
+        # alpha, duration = m.group(1), m.group(2)
         ff_pattern = os.path.join(log_dir, f"LFMoCapHybridSP_follower_*.json")
         ff_matches = glob.glob(ff_pattern)
         if not ff_matches:

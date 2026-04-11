@@ -84,6 +84,9 @@ PID_VALUES = {
     'pid_rate.omzFiltCut': '160',
 }
 
+# Keys whose values are proportional gains (Kp) — used for goto-boost feature
+_KP_KEYS = [k for k in PID_VALUES if k.endswith('Kp') or k.endswith('kp')]
+
 
 # ── Controller ────────────────────────────────────────────────────────────────
 class LFMoCapHybridController:
@@ -386,6 +389,11 @@ class LFMoCapHybridController:
 
         self.cf.commander.send_notify_setpoint_stop()
 
+    def _set_kp_multiplier(self, multiplier: float):
+        """Scale all Kp PID gains by *multiplier* relative to their base values."""
+        for key in _KP_KEYS:
+            self.cf.param.set_value(key, str(float(PID_VALUES[key]) * multiplier))
+
     def _send_goto_check_arrival(self, x: float, y: float, z: float,
                                  yaw: float, target_y: float,
                                  duration: float) -> float:
@@ -405,21 +413,35 @@ class LFMoCapHybridController:
                 "target_y": target_y, "duration": duration,
             })
 
+        m = self.args.kp_multiplier
+        if m > 1:
+            self._set_kp_multiplier(m)
+            logger.info(f"[{self.args.role}] Kp boosted ×{m} for go_to")
+
         self._fast_accel_before_goto(z)
         self.commander.go_to(x, y, z, yaw, self.args.goto_duration / 1000.0)
 
+        t_arrival = None
         t_end = time.time() + duration
         while time.time() < t_end:
             if self.latest_frame is not None:
                 if abs(self.latest_frame["tvec"][1] - target_y) <= tol:
-                    return time.time()
+                    t_arrival = time.time()
+                    break
             time.sleep(poll_dt)
 
-        logger.warning(
-            f"[{self.args.role}] Arrival at Y≈{target_y:.4f} not detected "
-            f"within {duration:.1f} s (tol={tol} m) — using loop-end time"
-        )
-        return time.time()
+        if m > 1:
+            self._set_kp_multiplier(1.0)
+            logger.info(f"[{self.args.role}] Kp restored to base values")
+
+        if t_arrival is None:
+            logger.warning(
+                f"[{self.args.role}] Arrival at Y≈{target_y:.4f} not detected "
+                f"within {duration:.1f} s (tol={tol} m) — using loop-end time"
+            )
+            t_arrival = time.time()
+
+        return t_arrival
 
     def _hover_and_detect_leader(self, hover_x: float, hover_y: float,
                                   hover_z: float, dv: float,
@@ -735,6 +757,9 @@ if __name__ == "__main__":
 
     ap.add_argument("--max-vel", type=float, default=1,
                     help="max speed along x and y axes in m/s (sets posCtlPid.xVelMax and yVelMax)")
+    ap.add_argument("--kp-multiplier", type=float, default=1.0,
+                    help="Multiply all Kp PID gains by this factor during go_to, then restore. "
+                         "Values <= 1 disable the boost (default 1.0).")
 
     # Fast acceleration kick before go_to
     ap.add_argument("--fast-accel-duration", type=float, default=0.0,
