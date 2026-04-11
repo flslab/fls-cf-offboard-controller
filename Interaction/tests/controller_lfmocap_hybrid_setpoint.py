@@ -1,33 +1,34 @@
 """
-controller_lfmocap_hybrid.py
+controller_lfmocap_hybrid_setpoint.py
 
-Hybrid leader-follower controller that combines two detection modes:
+Hybrid leader-follower controller — identical logic to
+controller_lfmocap_hybrid.py but uses send_position_setpoint loops instead of
+go_to for every step move.  This avoids the high-level commander's internal
+velocity profile and lets the low-level PID respond immediately.
 
-  ΔV mode  (velocity)  — existing behaviour
-    The follower's Kalman Filter estimates the leader's Y-velocity.
-    When |vel_y| > ΔV, the follower executes a fixed-distance step
-    (``--follower-step`` mm) and logs T2 / T11 as before.
+ΔV mode  (velocity)  — existing behaviour
+  The follower's Kalman Filter estimates the leader's Y-velocity.
+  When |vel_y| > ΔV, the follower executes a fixed-distance step
+  (``--follower-step`` mm) and logs T2 / T11.
 
-  ΔD mode  (position)  — new
-    A background thread continuously compares the leader's live Y position
-    against a reference that is updated after every correction.
-    When the accumulated displacement exceeds ΔD (``--delta-d`` mm), the
-    follower mirrors that exact displacement with a go_to command, providing:
-      • Drift compensation  — slow unintentional drift is matched in real time.
-      • Slow-push following — deliberate slow pushes are tracked at mm
-                              granularity without waiting for ΔV to fire.
+ΔD mode  (position)  — existing behaviour
+  A background-free drift loop continuously compares the leader's live Y
+  position against a reference updated after every correction.
+  When the accumulated displacement exceeds ΔD (``--delta-d`` mm), the
+  follower mirrors that exact displacement with a position setpoint.
 
-The two modes run concurrently.  During a ΔV step the drift loop is
-suspended and the drift reference is reset once the step lands.
+Fast-acceleration kick (optional)
+  Before each step's setpoint loop, ``send_zdistance_setpoint`` is issued
+  for ``--fast-accel-duration`` ms at the configured roll/pitch/yawrate to
+  build initial momentum.  No send_notify_setpoint_stop is sent between the
+  kick and the position setpoint loop (both are low-level).
 
-Timing variables logged (ΔV steps only — ΔD corrections are logged separately)
-────────────────────────────────────────────────────────────────────────────────
-  T1   — leader issues setpoint for step i
+Timing variables logged (ΔV steps only)
+────────────────────────────────────────
+  T1   — leader issues setpoint loop for step i
   T10  — leader first reaches target_y ± arrive_tol
   T2   — follower KF velocity exceeds ΔV
   T11  — follower first reaches its step target ± arrive_tol
-
-  drift_correction events carry: displacement_mm, new_target_fy, leader_y
 """
 
 import argparse
@@ -86,12 +87,13 @@ PID_VALUES = {
 
 
 # ── Controller ────────────────────────────────────────────────────────────────
-class LFMoCapHybridController:
+class LFMoCapHybridSetpointController:
     """
-    Hybrid LF controller.
+    Hybrid LF controller using send_position_setpoint loops for all step moves.
 
-    Leader side: identical to LFMoCapDelayController — moves in fixed Y steps.
-    Follower side: two concurrent detection modes (ΔV step + ΔD drift).
+    Leader side: moves in fixed Y steps via setpoint loop.
+    Follower side: two concurrent detection modes (ΔV step + ΔD drift),
+                   both executed with position setpoints.
     """
 
     def __init__(self, args):
@@ -207,11 +209,11 @@ class LFMoCapHybridController:
         logger.info("Setting up logging ...")
         self.log_manager = InteractionLogger(controller_args=self.args)
         self.log_manager.init_cf_logger(self.cf, cfg.LOG_VARS, self.args.cf_log_period)
-        self.log_manager.add_log_group("frames", kf=True)    # own position + KF vel
-        self.log_manager.add_log_group("leader_frames")      # leader raw + KF vel_y (follower)
-        self.log_manager.add_log_group("cmd_positions")      # setpoint commands issued
-        self.log_manager.add_log_group("timing")             # per-step T1/T2/T10/T11
-        self.log_manager.add_log_group("events")             # milestone + drift events
+        self.log_manager.add_log_group("frames", kf=True)
+        self.log_manager.add_log_group("leader_frames")
+        self.log_manager.add_log_group("cmd_positions")
+        self.log_manager.add_log_group("timing")
+        self.log_manager.add_log_group("events")
         self.log_manager.start()
         logger.info("Logging activated")
 
@@ -271,6 +273,7 @@ class LFMoCapHybridController:
         time.sleep(duration + 1.0)
 
     def land(self):
+        # Stop any active low-level setpoints before switching to high-level land
         self.cf.commander.send_notify_setpoint_stop()
         if not self.flying:
             return
@@ -283,8 +286,9 @@ class LFMoCapHybridController:
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = max(dist * 2, 1.0)
             self._log_event("return_to_home", {"x": xi, "y": yi, "z": z})
-            self.cf.high_level_commander.go_to(xi, yi, z, 0, dt + 0.5)
+            self._send_setpoint_loop(xi, yi, z, 0, dt + 0.5)
 
+        self.cf.commander.send_notify_setpoint_stop()
         dt = z * 6
         self.commander.land(0.12, dt)
         time.sleep(dt + 1)
@@ -293,11 +297,6 @@ class LFMoCapHybridController:
 
     # ── clock sync ───────────────────────────────────────────────────────
     def _sync_clocks(self):
-        """
-        One-shot TCP clock synchronisation (same as controller_lfmocap_delay_goto).
-        Leader sends t_send; follower logs t_send + t_recv so the analyser can
-        correct the inter-machine clock offset offline.
-        """
         if self.args.no_tcp_sync:
             logger.info("Clock sync disabled (--no-tcp-sync)")
             return
@@ -358,11 +357,22 @@ class LFMoCapHybridController:
             self._run_follower()
 
     # ── shared helpers ───────────────────────────────────────────────────
-    def _fast_accel_before_goto(self, z: float):
+    def _send_setpoint_loop(self, x: float, y: float, z: float,
+                            yaw: float, duration: float):
+        """Send position setpoints at setpoint_hz for ``duration`` seconds."""
+        dt    = 1.0 / self.args.setpoint_hz
+        t_end = time.time() + duration
+        while time.time() < t_end:
+            self.cf.commander.send_position_setpoint(x, y, z, yaw)
+            time.sleep(dt)
+
+    def _fast_accel_before_setpoint(self, z: float):
         """
         Send send_zdistance_setpoint for --fast-accel-duration ms to give the
-        drone an initial acceleration kick, then call send_notify_setpoint_stop
-        so the caller can safely switch to go_to.
+        drone an initial acceleration kick before a position-setpoint step.
+
+        No send_notify_setpoint_stop is issued afterwards — we remain in
+        low-level mode and the caller continues with send_position_setpoint.
 
         No-op when --fast-accel-duration is 0 (default).
         """
@@ -370,11 +380,11 @@ class LFMoCapHybridController:
         if duration_s <= 0:
             return
 
-        roll     = self.args.fast_accel_roll
-        pitch    = self.args.fast_accel_pitch
-        yawrate  = self.args.fast_accel_yawrate
-        poll_dt  = 1.0 / self.args.setpoint_hz
-        t_end    = time.time() + duration_s
+        roll    = self.args.fast_accel_roll
+        pitch   = self.args.fast_accel_pitch
+        yawrate = self.args.fast_accel_yawrate
+        dt      = 1.0 / self.args.setpoint_hz
+        t_end   = time.time() + duration_s
 
         logger.info(
             f"[{self.args.role}] Fast-accel: roll={roll} pitch={pitch} "
@@ -382,85 +392,83 @@ class LFMoCapHybridController:
         )
         while time.time() < t_end:
             self.cf.commander.send_zdistance_setpoint(roll, pitch, yawrate, z)
-            time.sleep(poll_dt)
+            time.sleep(dt)
 
-        self.cf.commander.send_notify_setpoint_stop()
-
-    def _send_goto_check_arrival(self, x: float, y: float, z: float,
-                                 yaw: float, target_y: float,
-                                 duration: float) -> float:
+    def _send_setpoint_loop_with_arrival(self, x: float, y: float, z: float,
+                                         yaw: float, target_y: float,
+                                         duration: float) -> float:
         """
-        Optionally apply a fast-acceleration kick, then issue a go_to and poll
-        Vicon until arrival at target_y or timeout.
+        Optionally apply a fast-acceleration kick, then send position setpoints
+        at setpoint_hz for ``duration`` seconds while polling for arrival at
+        target_y ± arrive_tol.
+
         Returns the Unix timestamp of first arrival (or loop-end on timeout).
         """
-        tol     = self.args.arrive_tol
-        poll_dt = 1.0 / self.args.setpoint_hz
+        tol  = self.args.arrive_tol
+        dt   = 1.0 / self.args.setpoint_hz
+        t_arrival = None
 
         if self.log_manager:
             self.log_manager.add_log_entry("cmd_positions", {
                 "timestamp": datetime.datetime.now().isoformat(timespec="milliseconds"),
-                "cmd": "go_to",
+                "cmd":       "position_setpoint",
                 "x": x, "y": y, "z": z, "yaw": yaw,
-                "target_y": target_y, "duration": duration,
+                "target_y":  target_y,
+                "duration":  duration,
             })
 
-        self._fast_accel_before_goto(z)
-        self.commander.go_to(x, y, z, yaw, self.args.goto_duration / 1000.0)
+        self._fast_accel_before_setpoint(z)
 
         t_end = time.time() + duration
         while time.time() < t_end:
-            if self.latest_frame is not None:
+            self.cf.commander.send_position_setpoint(x, y, z, yaw)
+            if t_arrival is None and self.latest_frame is not None:
                 if abs(self.latest_frame["tvec"][1] - target_y) <= tol:
-                    return time.time()
-            time.sleep(poll_dt)
+                    t_arrival = time.time()
+            time.sleep(dt)
 
-        logger.warning(
-            f"[{self.args.role}] Arrival at Y≈{target_y:.4f} not detected "
-            f"within {duration:.1f} s (tol={tol} m) — using loop-end time"
-        )
-        return time.time()
+        if t_arrival is None:
+            logger.warning(
+                f"[{self.args.role}] Arrival at Y≈{target_y:.4f} not detected "
+                f"within {duration:.1f} s (tol={tol} m) — using loop-end time"
+            )
+            t_arrival = time.time()
+
+        return t_arrival
 
     def _hover_and_detect_leader(self, hover_x: float, hover_y: float,
                                   hover_z: float, dv: float,
                                   timeout: float) -> float:
         """
-        Hold position while polling KF leader Y-velocity, with inline ΔD
-        drift correction (no separate thread).
+        Hold position with send_position_setpoint while polling KF leader
+        Y-velocity, with inline ΔD drift correction.
 
-        Each iteration sends send_position_setpoint to hold the hover position.
-        When accumulated leader displacement ≥ ΔD, calls
-        send_notify_setpoint_stop() → go_to() for the correction, then resumes
-        send_position_setpoint on the next iteration.
-
-        Calls send_notify_setpoint_stop() before returning so the caller can
-        safely switch to go_to.
-        Returns Unix timestamp when |vel_y| > dv, or time.time() on timeout.
+        Drift corrections also use send_position_setpoint — no commander
+        transition required.  Returns Unix timestamp when |vel_y| > dv,
+        or time.time() on timeout.
         """
         dd      = self.args.delta_d / 1000.0
         poll_dt = 1.0 / self.args.setpoint_hz
         t_start = time.time()
 
-        # Initialise drift reference from the latest leader frame
         leader_frame = self.latest_leader_frame
         if leader_frame is not None:
             self._leader_drift_ref_y = leader_frame["tvec"][1]
-
-        in_low_level = False  # True after send_position_setpoint, False after go_to
 
         while time.time() - t_start < timeout:
             # ── ΔD drift check ─────────────────────────────────────────────
             leader_frame = self.latest_leader_frame
             if leader_frame is not None:
-                leader_y   = leader_frame["tvec"][1]
-                ref_y      = self._leader_drift_ref_y
-                follower_y = self._follower_target_y
-
+                leader_y     = leader_frame["tvec"][1]
+                ref_y        = self._leader_drift_ref_y
+                follower_y   = self._follower_target_y
                 displacement = leader_y - ref_y
+
                 if abs(displacement) >= dd:
                     new_target_fy = follower_y + displacement
-                    self.cf.commander.send_position_setpoint(hover_x, new_target_fy, hover_z, 0)
-                    in_low_level = True
+                    self.cf.commander.send_position_setpoint(
+                        hover_x, new_target_fy, hover_z, 0
+                    )
                     hover_y = new_target_fy
                     self._follower_target_y  = new_target_fy
                     self._leader_drift_ref_y = leader_y
@@ -469,23 +477,18 @@ class LFMoCapHybridController:
                         "new_target_fy":   round(new_target_fy, 4),
                         "leader_y":        round(leader_y, 4),
                     })
+                    time.sleep(poll_dt)
+                    continue
 
             # ── ΔV detection ───────────────────────────────────────────────
-            vel_x = self.latest_leader_vel_x
             vel_y = self.latest_leader_vel_y
-            vel_z = self.latest_leader_vel_z
             if vel_y > dv:
-                if in_low_level:
-                    self.cf.commander.send_notify_setpoint_stop()
                 return time.time()
 
-            # ── hold position with low-level setpoint ──────────────────────
+            # ── hold position ──────────────────────────────────────────────
             self.cf.commander.send_position_setpoint(hover_x, hover_y, hover_z, 0)
-            in_low_level = True
             time.sleep(poll_dt)
 
-        if in_low_level:
-            self.cf.commander.send_notify_setpoint_stop()
         logger.warning(
             f"[FOLLOWER] ΔV timeout (ΔV={dv} m/s, timeout={timeout:.1f} s)"
         )
@@ -494,8 +497,8 @@ class LFMoCapHybridController:
     # ── leader mission ───────────────────────────────────────────────────
     def _run_leader(self):
         """
-        Move along Y axis ``steps`` times by ``alpha`` mm each step.
-        Identical to controller_lfmocap_delay_goto.
+        Move along Y axis ``steps`` times by ``alpha`` mm each step using
+        send_position_setpoint loops.
         """
         alpha_m = self.args.alpha / 1000.0
         n       = self.args.steps
@@ -522,7 +525,9 @@ class LFMoCapHybridController:
                 "T1": t1, "T1_iso": ts_t1,
             })
 
-            t10 = self._send_goto_check_arrival(sx, ty, sz, 0, target_y=ty, duration=timeout)
+            t10 = self._send_setpoint_loop_with_arrival(
+                sx, ty, sz, 0, target_y=ty, duration=timeout
+            )
             ts_t10     = datetime.datetime.fromtimestamp(t10).isoformat(timespec="milliseconds")
             ttt_leader = t10 - t1
 
@@ -539,26 +544,27 @@ class LFMoCapHybridController:
                 "TTT_leader_ms": round(ttt_leader * 1000, 1),
             })
 
+            # Settle at target while continuing to send position setpoints
             remaining = (t1 + timeout + settle) - time.time()
             if remaining > 0:
-                time.sleep(remaining)
+                self._send_setpoint_loop(sx, ty, sz, 0, remaining)
 
+        self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "leader"})
 
     # ── follower mission ─────────────────────────────────────────────────
     def _run_follower(self):
         """
-        Hybrid follower mission.
+        Hybrid follower mission using send_position_setpoint throughout.
 
-        ΔV + ΔD are handled together inside _hover_and_detect_leader (no
-        separate drift thread).
+        ΔV + ΔD are handled inside _hover_and_detect_leader.
 
         Per step:
           ① Hover and wait for ΔV, applying ΔD drift corrections inline.
-          ② Execute fixed step to (follower_y + follower_step).
+          ② Execute fixed step to (follower_y + follower_step) via setpoint loop.
           ③ Log T2, T11, TTT_follower.
           ④ Reset drift reference to current leader Y.
-          ⑤ Wait for step period to elapse.
+          ⑤ Hold target position for remainder of step period.
         """
         n          = self.args.steps
         dur        = self.args.step_duration
@@ -593,16 +599,16 @@ class LFMoCapHybridController:
             self._log_event("leader_detected", {
                 "step": i, "mode": "delta_v",
                 "T2": t2, "T2_iso": ts_t2,
-                "kf_vel_x_at_detection":   round(_vx, 4),
-                "kf_vel_y_at_detection":   round(_vy, 4),
-                "kf_vel_z_at_detection":   round(_vz, 4),
+                "kf_vel_x_at_detection":     round(_vx, 4),
+                "kf_vel_y_at_detection":     round(_vy, 4),
+                "kf_vel_z_at_detection":     round(_vz, 4),
                 "kf_total_vel_at_detection": round(_total_vel, 4),
             })
 
-            # ② Move by fixed step distance from current follower position
+            # ② Move by fixed step distance via setpoint loop
             follower_y_now = self._follower_target_y
             target_fy      = follower_y_now + step_m
-            t11       = self._send_goto_check_arrival(
+            t11 = self._send_setpoint_loop_with_arrival(
                 fx, target_fy, fz, 0, target_y=target_fy, duration=timeout
             )
             ts_t11       = datetime.datetime.fromtimestamp(t11).isoformat(timespec="milliseconds")
@@ -628,17 +634,17 @@ class LFMoCapHybridController:
                 "TTT_follower_ms": round(ttt_follower * 1000, 1),
             })
 
-            # ④ Reset drift reference so the next hover phase starts clean
+            # ④ Reset drift reference
             leader_frame_now = self.latest_leader_frame
             new_ref          = leader_frame_now["tvec"][1] if leader_frame_now else None
             self._follower_target_y = target_fy
             if new_ref is not None:
                 self._leader_drift_ref_y = new_ref
 
-            # ⑤ Wait out the step period
+            # ⑤ Hold target position for remainder of step period
             remaining = (t2 + timeout) - time.time()
             if remaining > 0:
-                time.sleep(remaining)
+                self._send_setpoint_loop(fx, target_fy, fz, 0, remaining)
 
         self.cf.commander.send_notify_setpoint_stop()
         self._log_event("mission_complete", {"role": "follower"})
@@ -657,10 +663,6 @@ class LFMoCapHybridController:
             self.log_manager.add_log_entry("frames", frame)
 
     def _on_leader_frame(self, frame):
-        """
-        Leader position callback (follower only).
-        Updates KF velocity estimates for all three axes and logs leader_frames.
-        """
         self.latest_leader_frame = frame
         pos_x, pos_y, pos_z     = frame["tvec"]
         vel_x = self._leader_kf_x.update(pos_x)
@@ -683,7 +685,8 @@ if __name__ == "__main__":
     _ts = f"{datetime.datetime.now():%Y-%m-%d_%H-%M-%S}"
 
     ap = argparse.ArgumentParser(
-        description="LFMoCapHybrid — ΔV step + ΔD drift leader-follower controller"
+        description="LFMoCapHybridSetpoint — ΔV step + ΔD drift controller "
+                    "using send_position_setpoint loops (no go_to)"
     )
 
     # Role
@@ -712,16 +715,17 @@ if __name__ == "__main__":
     ap.add_argument("--steps", type=int, default=5)
     ap.add_argument("--alpha", type=float, default=200.0,
                     help="[leader] Step distance in mm")
-    ap.add_argument("--step-duration", type=float, default=5.0)
-    ap.add_argument("--settle-time", type=float, default=1.0)
-    ap.add_argument("--setpoint-hz", type=float, default=100.0)
+    ap.add_argument("--step-duration", type=float, default=2.0,
+                    help="Setpoint loop duration per step in seconds")
+    ap.add_argument("--settle-time", type=float, default=1.0,
+                    help="[leader] Additional hold time after arrival before next step (s)")
+    ap.add_argument("--setpoint-hz", type=float, default=100.0,
+                    help="Rate at which send_position_setpoint is called (Hz)")
     ap.add_argument("--arrive-tol", type=float, default=0.03)
     ap.add_argument("--arrive-timeout-extra", type=float, default=0.0)
-    ap.add_argument("--goto-duration", type=float, default=10.0,
-                    help="Duration passed to go_to() in ms (default 10 ms)")
 
     # ΔV (velocity step) — follower
-    ap.add_argument("--follower-step", type=float, default=200.0,
+    ap.add_argument("--follower-step", type=float, default=500.0,
                     help="[follower] Fixed step distance for ΔV mode in mm (default 200)")
     ap.add_argument("--delta-v", type=float, default=0.1,
                     help="[follower] KF Y-velocity threshold ΔV in m/s (default 0.1)")
@@ -729,24 +733,28 @@ if __name__ == "__main__":
                     help="[follower] Initial position hint for leader Vicon marker")
 
     # ΔD (position drift) — follower
-    ap.add_argument("--delta-d", type=float, default=5.0,
+    ap.add_argument("--delta-d", type=float, default=10.0,
                     help="[follower] Position dead-band ΔD in mm for drift tracking "
-                         "(default 5 mm).  Smaller = finer granularity but noisier.")
+                         "(default 5 mm)")
 
-    ap.add_argument("--max-vel", type=float, default=1,
-                    help="max speed along x and y axes in m/s (sets posCtlPid.xVelMax and yVelMax)")
+    ap.add_argument("--max-vel", type=float, default=2,
+                    help="max speed along x and y axes in m/s "
+                         "(sets posCtlPid.xVelMax and yVelMax)")
 
-    # Fast acceleration kick before go_to
-    ap.add_argument("--fast-accel-duration", type=float, default=0.0,
-                    help="Duration (ms) to send send_zdistance_setpoint before each go_to "
-                         "to give an initial acceleration kick.  0 = disabled (default).")
+    # Fast acceleration kick before setpoint loop
+    ap.add_argument("--fast-accel-duration", type=float, default=100.0,
+                    help="Duration (ms) to send send_zdistance_setpoint before each "
+                         "step's setpoint loop to give an initial acceleration kick.  "
+                         "0 = disabled (default).")
     ap.add_argument("--fast-accel-pitch", type=float, default=0.0,
                     help="Pitch angle (degrees) for the fast-accel zdistance setpoint "
                          "(positive = forward/+Y). Default 0.")
-    ap.add_argument("--fast-accel-roll", type=float, default=0.0,
-                    help="Roll angle (degrees) for the fast-accel zdistance setpoint. Default 0.")
+    ap.add_argument("--fast-accel-roll", type=float, default=30.0,
+                    help="Roll angle (degrees) for the fast-accel zdistance setpoint. "
+                         "Default 0.")
     ap.add_argument("--fast-accel-yawrate", type=float, default=0.0,
-                    help="Yaw rate (deg/s) for the fast-accel zdistance setpoint. Default 0.")
+                    help="Yaw rate (deg/s) for the fast-accel zdistance setpoint. "
+                         "Default 0.")
 
     # Clock sync
     ap.add_argument("--tcp-port", type=int, default=9000)
@@ -758,32 +766,35 @@ if __name__ == "__main__":
     if args.tag is None:
         if args.role == "leader":
             step_cm = int(args.alpha / 10)
-            args.tag = f"LFMoCapHybrid_leader_{step_cm}_{int(args.goto_duration)}ms_{_ts}"
+            args.tag = f"LFMoCapHybridSP_leader_{step_cm}_{_ts}"
         else:
             fstep_cm = int(args.follower_step / 10)
             args.tag = (
-                f"LFMoCapHybrid_follower_{fstep_cm}_{int(args.goto_duration)}ms"
+                f"LFMoCapHybridSP_follower_{fstep_cm}"
                 f"_dv{args.delta_v}_dd{int(args.delta_d)}mm_{_ts}"
             )
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    with LFMoCapHybridController(args) as c:
+    with LFMoCapHybridSetpointController(args) as c:
         c.start()
 
 # ── Example launch commands ───────────────────────────────────────────────────
 # Leader (20 cm steps):
-#   python Interaction/tests/controller_lfmocap_hybrid.py --role leader \
+#   python Interaction/tests/controller_lfmocap_hybrid_setpoint.py --role leader \
 #       --vicon --vicon-mode pointcloud --init-pos -1 0 0 \
 #       --takeoff-altitude 1.0 --steps 5 --alpha 200 \
 #       --step-duration 5.0 --settle-time 2.0
 #
 # Follower (ΔV=0.1 m/s, ΔD=3 mm dead-band):
-#   python Interaction/tests/controller_lfmocap_hybrid.py --role follower \
+#   python Interaction/tests/controller_lfmocap_hybrid_setpoint.py --role follower \
 #       --vicon --vicon-mode pointcloud --init-pos 0 0 0 \
 #       --leader-pos -1 0 0 \
 #       --takeoff-altitude 1.0 --steps 5 \
 #       --step-duration 5.0 \
 #       --delta-v 0.1 --delta-d 3 \
 #       --leader-ip 192.168.1.10
+#
+# With fast-accel kick (80 ms, 5° pitch):
+#   add --fast-accel-duration 80 --fast-accel-pitch 5
