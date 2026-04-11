@@ -239,6 +239,12 @@ class LFMoCapHybridController:
         self.cf.param.set_value("hlCommander.vland", "0.1")
         for param, value in PID_VALUES.items():
             self.cf.param.set_value(param, value)
+
+        if self.args.max_vel_xy is not None:
+            self.cf.param.set_value('posCtlPid.xVelMax', str(self.args.max_vel_xy))
+            self.cf.param.set_value('posCtlPid.yVelMax', str(self.args.max_vel_xy))
+            logger.info(f"Max XY velocity set: {self.args.max_vel_xy} m/s")
+
         if self.args.vicon:
             reset_estimator(self.cf)
 
@@ -696,6 +702,9 @@ if __name__ == "__main__":
     ap.add_argument("--delta-d", type=float, default=5.0,
                     help="[follower] Position dead-band ΔD in mm for drift tracking "
                          "(default 5 mm).  Smaller = finer granularity but noisier.")
+
+    ap.add_argument("--max-vel", type=float, default=1,
+                    help="max speed along x and y axes in m/s (sets posCtlPid.xVelMax and yVelMax)")
 
     # Clock sync
     ap.add_argument("--tcp-port", type=int, default=9000)

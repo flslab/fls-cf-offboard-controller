@@ -49,7 +49,7 @@ from Interaction.analysis.analyze_lfmocap_delay_goto_wait import (
     DELTA_V,
 )
 
-LOG_DIR = os.path.join(_repo_root, "logs", "LFMoCapDelay_goto", "sync")
+LOG_DIR = os.path.join(_repo_root, "logs", "LFMoCapDelay", 'sync')
 
 FPS = 30
 
