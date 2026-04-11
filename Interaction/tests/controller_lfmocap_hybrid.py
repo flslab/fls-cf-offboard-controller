@@ -529,7 +529,7 @@ class LFMoCapHybridController:
         dv         = self.args.delta_v
         step_m     = self.args.follower_step / 1000.0
         timeout    = dur + self.args.arrive_timeout_extra
-        detect_tmo = dur + 5.0
+        detect_tmo = dur + 100.0
 
         fx = self.args.init_pos[0]
         fy = self.args.init_pos[1]
