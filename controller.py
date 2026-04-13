@@ -987,6 +987,8 @@ class Controller:
             return
 
         for _ in range(iterations):
+            self.smooth_controller.set_group_values("pointers", pointers[0], duration=0.0)
+
             for i in range(1, num_steps):
                 duration = delta_t
 
@@ -1013,7 +1015,10 @@ class Controller:
         formula_str = led_setting["formula"]
         led_buffer = []
         current_time = time.time() - self.animation_start_time
-        x, y, z = self._get_latest_mocap_frame()["tvec"]
+        if self.mocap:
+            x, y, z = self._get_latest_mocap_frame()["tvec"]
+        else:
+            x, y, z = 0, 0, 0
         context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math, "x": x, "y": y, "z": z}
         print(formula_str)
         for j, p in enumerate(pointers):
