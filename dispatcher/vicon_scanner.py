@@ -62,28 +62,30 @@ class ViconScanner:
             client.set_axis_mapping(Direction.Forward, Direction.Left, Direction.Up)
             logger.info("Vicon connected. Collecting frames ...")
 
-            all_observations = self._collect_frames(client, n_frames, n_drones)
+            all_observations, max_markers = self._collect_frames(client, n_frames, n_drones)
         finally:
             if client.is_connected():
                 client.disconnect()
                 logger.info("Disconnected from Vicon.")
 
-        return self._cluster(all_observations, n_drones)
+        return self._cluster(all_observations, n_drones, max_markers)
 
-    def _collect_frames(self, client, n_frames: int, n_drones: int) -> np.ndarray:
+    def _collect_frames(self, client, n_frames: int, n_drones: int) -> tuple[np.ndarray, int]:
         """Collect all unlabeled marker positions across n_frames.
 
         Retries up to 3 times if a frame has fewer markers than n_drones.
-        Returns Nx3 array of raw observations in meters.
+        Returns Nx3 array of raw observations in meters and the max markers seen in a frame.
         """
         all_points = []
         frames_collected = 0
         max_retries = 3
 
+        max_markers = 0
         for attempt in range(1, max_retries + 1):
             all_points = []
             frames_collected = 0
             insufficient_count = 0
+            max_markers = 0
 
             while frames_collected < n_frames:
                 if not client.get_frame():
@@ -99,6 +101,7 @@ class ViconScanner:
                     )
                     continue
 
+                max_markers = max(max_markers, marker_count)
                 for i in range(marker_count):
                     pos = client.get_unlabeled_marker_global_translation(i)
                     if pos is not None:
@@ -126,10 +129,10 @@ class ViconScanner:
                 "Check that all drones are powered and visible to Vicon."
             )
 
-        return np.array(all_points)
+        return np.array(all_points), max_markers
 
-    def _cluster(self, observations: np.ndarray, n_drones: int) -> list:
-        """K-means cluster raw observations into n_drones centroids."""
+    def _cluster(self, observations: np.ndarray, n_drones: int, max_markers: int) -> list:
+        """K-means cluster raw observations. Clusters into max_markers to isolate outliers."""
         try:
             from sklearn.cluster import KMeans
         except ImportError as exc:
@@ -138,10 +141,11 @@ class ViconScanner:
                 "Install it with: pip install scikit-learn"
             ) from exc
 
-        km = KMeans(n_clusters=n_drones, n_init=10, random_state=0)
+        n_clusters = max(n_drones, max_markers)
+        km = KMeans(n_clusters=n_clusters, n_init=10, random_state=0)
         km.fit(observations)
-        centroids = km.cluster_centers_  # shape (n_drones, 3)
-        logger.info(f"Clustered {len(observations)} observations into {n_drones} centroids.")
+        centroids = km.cluster_centers_  # shape (n_clusters, 3)
+        logger.info(f"Clustered {len(observations)} observations into {n_clusters} centroids.")
         return [np.array(c) for c in centroids]
 
 
@@ -233,15 +237,24 @@ def sort_and_match(vicon_points: list, manifest_drones: list) -> list:
             used_d.add(d_idx)
             
     assignment = []
+    outliers = []
     for v_idx in range(len(vicon_points)):
+        vp = vicon_points[v_idx]
+        vp_list = vp.tolist() if isinstance(vp, np.ndarray) else list(vp)
         if v_idx in matches:
             d_idx = matches[v_idx]
             drone = manifest_drones[d_idx]
-            vp = vicon_points[v_idx]
             assignment.append({
                 "id": drone["id"],
-                "vicon_pos": vp.tolist() if isinstance(vp, np.ndarray) else list(vp),
+                "vicon_pos": vp_list,
                 "manifest_pos": list(drone["init_pos"]),
             })
+        else:
+            outliers.append(vp_list)
+            
+    if outliers:
+        logger.warning(f"Detected {len(outliers)} outlier markers (ignored from assignments):")
+        for idx, o in enumerate(outliers):
+            print(f"[Dispatcher] Outlier Marker {idx+1} Position: [{o[0]:.3f}, {o[1]:.3f}, {o[2]:.3f}]")
 
     return assignment

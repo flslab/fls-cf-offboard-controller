@@ -4,6 +4,16 @@ from .ui import show_ui
 
 logger = logging.getLogger(__name__)
 
+import multiprocessing as mp
+
+def _run_ui_process(assignments, mission_data, queue):
+    from .ui import show_ui
+    import signal
+    # Ignore SIGINT in the child to let the parent handle KeyboardInterrupt safely
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    final_assgn = show_ui(assignments, mission_data)
+    queue.put(final_assgn)
+
 def run_dispatch(manifest_drones, mission_data, vicon_host="192.168.1.39", mock=False):
     """
     Scans Vicon (or mocks), matches sorted points to sorted manifest positions,
@@ -29,10 +39,26 @@ def run_dispatch(manifest_drones, mission_data, vicon_host="192.168.1.39", mock=
     # Generate initial sorted assignments
     assignments = sort_and_match(vicon_points, manifest_drones)
     
-    # Run UI
+    # Run UI in an isolated process to protect Orchestrator signal handlers and ensure closure
     logger.info("Opening Dispatcher UI for confirmation...")
-    final_assignments = show_ui(assignments, mission_data)
+    ctx = mp.get_context('spawn')
+    queue = ctx.Queue()
+    p = ctx.Process(target=_run_ui_process, args=(assignments, mission_data, queue))
+    p.start()
     
+    try:
+        # Wait until UI completes or user interrupts
+        p.join()
+    except KeyboardInterrupt:
+        p.terminate()
+        p.join()
+        raise  # Re-raise to trigger orchestrator.py emergency handlers
+    
+    if not queue.empty():
+        final_assignments = queue.get()
+    else:
+        final_assignments = None
+
     if not final_assignments:
         logger.warning("Dispatcher UI aborted or skipped. No Vicon coordinates will be updated.")
         return manifest_drones
