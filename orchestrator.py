@@ -472,7 +472,7 @@ class SwarmOrchestrator:
                 self._wait_for_ready()
                 if not self.args.skip_confirm:
                     input(">>> All at target. Press ENTER to proceed (Ctrl+C to Abort)...")
-                time.sleep(2)
+                time.sleep(5)
                 self.logger.info("Broadcasting START...")
                 self.pub_socket.send_json({"cmd": "START"})
 
