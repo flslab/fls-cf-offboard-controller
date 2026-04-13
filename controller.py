@@ -988,7 +988,9 @@ class Controller:
 
         for _ in range(iterations):
             self.smooth_controller.set_group_values("pointers", pointers[0], duration=0)
-            self._safe_sleep(0.1)
+            sleep_duration = self.animation_start_time + elapsed_time + 0.1 - time.time()
+            elapsed_time += 0.1
+            self._safe_sleep(sleep_duration)
 
             for i in range(1, num_steps):
                 duration = delta_t
