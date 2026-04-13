@@ -1,0 +1,52 @@
+import logging
+from .vicon_scanner import ViconScanner, mock_scan, sort_and_match, ViconConnectionError, InsufficientMarkersError
+from .ui import show_ui
+
+logger = logging.getLogger(__name__)
+
+def run_dispatch(manifest_drones, mission_data, vicon_host="192.168.1.39", mock=False):
+    """
+    Scans Vicon (or mocks), matches sorted points to sorted manifest positions,
+    shows the UI for confirmation/editing, and returns the updated drone manifest array 
+    where 'init_pos' equals their physical Vicon coordinate.
+    """
+    n_drones = len(manifest_drones)
+    
+    if mock:
+        logger.info(f"Using mock scanner for {n_drones} drones.")
+        vicon_points = mock_scan(manifest_drones)
+    else:
+        logger.info(f"Connecting to Vicon scanner at {vicon_host} required {n_drones} markers...")
+        scanner = ViconScanner(vicon_host)
+        try:
+            # We use 5 frames so that it averages and confirms stability
+            vicon_points = scanner.scan(n_frames=5, n_drones=n_drones)
+        except (ViconConnectionError, InsufficientMarkersError) as e:
+            logger.error(str(e))
+            logger.error("Falling back to MOCK scanner due to Vicon failure.")
+            vicon_points = mock_scan(manifest_drones)
+
+    # Generate initial sorted assignments
+    assignments = sort_and_match(vicon_points, manifest_drones)
+    
+    # Run UI
+    logger.info("Opening Dispatcher UI for confirmation...")
+    final_assignments = show_ui(assignments, mission_data)
+    
+    if not final_assignments:
+        logger.warning("Dispatcher UI aborted or skipped. No Vicon coordinates will be updated.")
+        return manifest_drones
+    
+    # Update manifest drones with their confirmed real coordinates
+    # We will build a dictionary to preserve the exact properties of the original drones
+    drones_by_id = {d['id']: d for d in manifest_drones}
+    updated_drones = []
+    
+    for a in final_assignments:
+        d_id = a['id']
+        drone = drones_by_id[d_id]
+        # Replace init_pos with real matched coordinate
+        drone['init_pos'] = a['vicon_pos']
+        updated_drones.append(drone)
+        
+    return updated_drones
