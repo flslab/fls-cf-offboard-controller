@@ -1,6 +1,6 @@
 name: translation
 drones:
-  lb6:
+  lb11:
     target: [-0.4889, -0.4515, 1]
     interaction: single
 
