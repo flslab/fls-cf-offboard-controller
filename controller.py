@@ -907,7 +907,7 @@ class Controller:
 
         if len(angles):
             if self.args.morphing:
-                self.smooth_controller.add_update_callback(self.update_servos)
+                self.smooth_controller.add_update_callback(lambda: self.update_servos(base_angle=angles[0]))
             else:
                 self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
 
@@ -1036,7 +1036,7 @@ class Controller:
 
         self.led.set_colors(led_buffer)
 
-    def update_servos(self):
+    def update_servos(self, base_angle):
         latest_angles = self._get_latest_angles()
 
         if latest_angles is None:
@@ -1047,10 +1047,10 @@ class Controller:
         roll_deg = latest_angles[0]
 
         if self.args.servo_type == "H":
-            target = np.array([0.0 + roll_deg, 180.0 + roll_deg], dtype=float)
+            target = np.array([base_angle[0] + roll_deg, base_angle[1] + roll_deg], dtype=float)
             limits = [(0.0, 180.0), (180.0, 360.0)]
         elif self.args.servo_type == "V":
-            target = np.array([178.0 + roll_deg, 359.0 + roll_deg], dtype=float)
+            target = np.array([base_angle[0] + roll_deg, base_angle[1] + roll_deg], dtype=float)
             limits = [(90.0, 270.0), (270.0, 450.0)]
         else:
             return
