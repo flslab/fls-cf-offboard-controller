@@ -428,6 +428,13 @@ class SwarmOrchestrator:
             self.pub_socket.send_json({"cmd": "_"})
             time.sleep(2)
             if not self.args.record:
+                if not self.args.skip_dispatcher:
+                    from dispatcher import run_dispatch
+                    is_mock = self.args.ground or self.args.droneless
+                    self.logger.info("Starting Dispatcher logic to match Vicon coordinates...")
+                    self.drones = run_dispatch(self.drones, self.mission, mock=is_mock)
+                    self.manifest['drones'] = self.drones
+
                 self.reboot_flight_controllers(remote=bool(self.radio_node))
 
                 for drone in self.drones:
@@ -453,21 +460,6 @@ class SwarmOrchestrator:
             if self.loadcell_thread:
                 self.loadcell_thread.start()
 
-            # if self.args.interaction:
-            #     ref_obj = self.common_cfg.get('reference_object')
-            #     if ref_obj:
-            #         log_path = os.path.join('./logs', f'vicon_{self.tag}.json')
-            #         self.logger.info(f"Starting Vicon noise tracker for '{ref_obj}' → {log_path}")
-            #         self.vicon_tracker_thread = threading.Thread(
-            #             target=run_tracker,
-            #             args=(ref_obj, log_path, self.running),
-            #             daemon=True,
-            #             name="vicon_noise_tracker",
-            #         )
-            #         self.vicon_tracker_thread.start()
-            #     else:
-            #         self.logger.warning("No 'reference_object' in swarm_manifest common — skipping Vicon noise tracker.")
-
             self._wait_for_ready()
 
             if not self.args.skip_confirm:
@@ -480,7 +472,7 @@ class SwarmOrchestrator:
                 self._wait_for_ready()
                 if not self.args.skip_confirm:
                     input(">>> All at target. Press ENTER to proceed (Ctrl+C to Abort)...")
-                time.sleep(2)
+                time.sleep(5)
                 self.logger.info("Broadcasting START...")
                 self.pub_socket.send_json({"cmd": "START"})
 
@@ -629,6 +621,7 @@ if __name__ == "__main__":
     parser.add_argument("--radio", action="store_true", help="run mission with CrazyRadio")
     parser.add_argument("--loadcell", action="store_true", help="run with loadcell")
     parser.add_argument("--skip-confirm", action="store_true", help="run without pressing enter")
+    parser.add_argument("--skip-dispatcher", action="store_true", help="skip the dispatcher logic and UI")
     parser.add_argument("--http-port", type=int, default=None, help="override manifest http_port")
     parser.add_argument("--zmq-cmd-port", type=int, default=None, help="override manifest zmq_cmd_port")
     parser.add_argument("--zmq-ack-port", type=int, default=None, help="override manifest zmq_ack_port")
