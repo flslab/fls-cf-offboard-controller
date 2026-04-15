@@ -1042,7 +1042,7 @@ class Controller:
         if latest_angles is None:
             return
 
-        logger.info(f"angles: {latest_angles}")
+        logger.info(f"angles: {base_angle}")
 
         roll_deg = latest_angles[0]
 
@@ -1058,9 +1058,6 @@ class Controller:
         # Keep values inside the configured servo range.
         for i, (lo, hi) in enumerate(limits):
             target[i] = float(np.clip(target[i], lo, hi))
-
-        logger.info(f"list: {target.tolist()}")
-        logger.info(f"duration: {1.0 / max(1, self.args.smooth_controller_rate)}")
 
         self.smooth_controller.set_group_values(
             "servos",
