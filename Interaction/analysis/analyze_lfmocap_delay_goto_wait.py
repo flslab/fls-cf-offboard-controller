@@ -397,7 +397,7 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
     ax_l.grid(True, linestyle="--", alpha=0.7)
     ax_l.spines["top"].set_visible(False)
     ax_l.spines["right"].set_visible(False)
-    ax_l.set_ylim(0, 2)
+    ax_l.set_ylim(-0.5, 2)
     ax_l.set_xlim(t_start - t0, t_end - t0)
     ax_l.legend(fontsize=14)
 
@@ -424,7 +424,7 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
         ax_f.grid(True, linestyle="--", alpha=0.7)
         ax_f.spines["top"].set_visible(False)
         ax_f.spines["right"].set_visible(False)
-        ax_f.set_ylim(0, 2)
+        ax_f.set_ylim(-0.5, 2)
         ax_f.legend(fontsize=14)
 
     if has_leader_kf:
@@ -448,7 +448,7 @@ def plot_velocity_full(label: str, rows: list, leader_log: list, follower_log: l
         ax_lf.grid(True, linestyle="--", alpha=0.7)
         ax_lf.spines["top"].set_visible(False)
         ax_lf.spines["right"].set_visible(False)
-        ax_lf.set_ylim(-0.05, 2)
+        ax_lf.set_ylim(-0.5, 2)
         ax_lf.legend(fontsize=14)
     else:
         axes[-1].set_xlabel("Time (s)", fontsize=16)

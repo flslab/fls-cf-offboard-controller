@@ -15,56 +15,56 @@ drones:
       rate: 50
       formula: "[230, 115, 21] if i - 50 > (49 - (t * 25)) else [0, 0, 0]"
 
-#  lb2:
-#    target: [ -0.16, -0.01, 1.32, 0.0 ]
-#    waypoints: []
-#    delta_t: 60
-#    iterations: 1
-#    params:
-#      linear: true
-#      relative: false
-#    follow:
-#      id: lb4
-#      offset: [ -0.16, 0.13, 0.24 ]
-#    servos: [ [155, 387] ]
-#    led:
-#      mode: "expression"
-#      rate: 50
-#      formula: "[230, 115, 21] if i > (49 - (t * 25)) else [0, 0, 0]"
-#
-#  lb3:
-#    target: [ 0.16, 0.0, 0.69, 0.0 ]
-#    waypoints: []
-#    delta_t: 60
-#    iterations: 1
-#    params:
-#      linear: true
-#      relative: false
-#    follow:
-#      id: lb4
-#      offset: [ 0.16, 0.14, -0.39 ]
-#    servos: [ [ 210, 330 ] ]
-#    led:
-#      mode: "expression"
-#      rate: 50
-#      formula: "[230, 115, 21] if i - 150 > (49 - (t * 25)) else [0, 0, 0]"
-#
-#  lb5:
-#    target: [ -0.01, 0.135, 0.92, 0.0 ]
-#    waypoints: []
-#    delta_t: 60
-#    iterations: 1
-#    params:
-#      linear: true
-#      relative: false
-#    follow:
-#      id: lb4
-#      offset: [ -0.01, 0.275, -0.16 ]
-#    servos: [ [ 87, 209 ] ]
-#    led:
-#      mode: "expression"
-#      rate: 50
-#      formula: "[230, 115, 21] if i - 100 > (49 - (t * 25)) else [0, 0, 0]"
+  lb2:
+     target: [ -0.16, -0.01, 1.32, 0.0 ]
+     waypoints: []
+     delta_t: 60
+     iterations: 1
+     params:
+       linear: true
+       relative: false
+     follow:
+       id: lb4
+       offset: [ -0.16, 0.13, 0.24 ]
+     servos: [ [155, 387] ]
+     led:
+       mode: "expression"
+       rate: 50
+       formula: "[230, 115, 21] if i > (49 - (t * 25)) else [0, 0, 0]"
+
+  lb3:
+     target: [ 0.16, 0.0, 0.69, 0.0 ]
+     waypoints: []
+     delta_t: 60
+     iterations: 1
+     params:
+       linear: true
+       relative: false
+     follow:
+       id: lb4
+       offset: [ 0.16, 0.14, -0.39 ]
+     servos: [ [ 210, 330 ] ]
+     led:
+       mode: "expression"
+       rate: 50
+       formula: "[230, 115, 21] if i - 150 > (49 - (t * 25)) else [0, 0, 0]"
+
+  lb5:
+     target: [ -0.01, 0.135, 0.92, 0.0 ]
+     waypoints: []
+     delta_t: 60
+     iterations: 1
+     params:
+       linear: true
+       relative: false
+     follow:
+       id: lb4
+       offset: [ -0.01, 0.275, -0.16 ]
+     servos: [ [ 87, 209 ] ]
+     led:
+       mode: "expression"
+       rate: 50
+       formula: "[230, 115, 21] if i - 100 > (49 - (t * 25)) else [0, 0, 0]"
 
 Interaction:
   action: translation
