@@ -5,6 +5,7 @@ drones:
     waypoints: []
     delta_t: 60
     iterations: 1
+    interaction: peer
     params:
       linear: true
       relative: false
@@ -15,6 +16,7 @@ drones:
     waypoints: []
     delta_t: 60
     iterations: 1
+    interaction: peer
     params:
       linear: true
       relative: false
@@ -25,6 +27,7 @@ drones:
     waypoints: []
     delta_t: 60
     iterations: 1
+    interaction: peer
     params:
       linear: true
       relative: false
@@ -35,6 +38,7 @@ drones:
     waypoints: []
     delta_t: 60
     iterations: 1
+    interaction: peer
     params:
       linear: true
       relative: false
@@ -45,6 +49,7 @@ drones:
     waypoints: []
     delta_t: 60
     iterations: 1
+    interaction: peer
     params:
       linear: true
       relative: false
@@ -55,6 +60,7 @@ drones:
     waypoints: []
     delta_t: 60
     iterations: 1
+    interaction: peer
     params:
       linear: true
       relative: false
@@ -65,6 +71,7 @@ drones:
     waypoints: []
     delta_t: 60
     iterations: 1
+    interaction: peer
     params:
       linear: true
       relative: false
@@ -73,7 +80,6 @@ drones:
 
 Interaction:
   action: translation
-  peer: true
   peer_transport: tcp
   config:
     delta_v: 0.2

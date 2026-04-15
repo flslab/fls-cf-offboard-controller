@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 import traceback
 
@@ -8,6 +9,7 @@ import zmq
 
 from Interaction.CommandWrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
+from Interaction.collision_avoidance.simulation import apf_velocity
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +66,14 @@ class InteractionsControl:
             self._run_peer_latency_test()
             return
 
+        # When both sockets are present the behaviour depends on whether avoidance
+        # is configured.  With avoidance: UI-LB runs translation + APF broadcast.
+        # Without: symmetric peer translation (all drones equal).
         if self.pub_socket is not None and self.sub_socket is not None:
-            self._run_peer_translation()
+            if self.mission.get('avoidance'):
+                self.run_translation_broadcast()
+            else:
+                self._run_peer_translation()
             return
 
         if action == 'rotation_test':
@@ -152,6 +160,8 @@ class InteractionsControl:
         """Run the velocity-based translation interaction."""
         try:
             translation_setting = self.mission['Interaction']['config']
+            mass_lb      = translation_setting.get('mass_lightbender', 1.0)
+            mass_virtual = translation_setting.get('mass_virtual', 1.0)
             self.interaction_translation_vel(
                 vel_threshold=translation_setting['delta_v'],
                 z=translation_setting['z'],
@@ -162,6 +172,7 @@ class InteractionsControl:
                 grace_time=translation_setting['grace_time'],
                 alpha_vel=translation_setting.get('alpha_vel', 1),
                 pub_socket=self.pub_socket,
+                mass_ratio=mass_lb / mass_virtual,
             )
         except Exception as e:
             tb_info = traceback.format_exc()
@@ -188,6 +199,137 @@ class InteractionsControl:
         except Exception as e:
             tb_info = traceback.format_exc()
             logging.error(f"Peer Translation Error: {e}\nTraceback:\n{tb_info}")
+        finally:
+            self.lo_commander.send_notify_setpoint_stop()
+
+    def run_translation_broadcast(self) -> None:
+        """UI-LB mode: run translation interaction while broadcasting APF avoidance
+        commands to all passive I-LBs.
+
+        The translation loop runs in a background thread (the user-facing interaction).
+        The main thread runs the APF loop at the avoidance control rate:
+          1. Drain sub_socket for the latest position report from each I-LB.
+          2. Fetch own position from log_manager (UI-LB position).
+          3. Call apf_velocity() for every I-LB — no PID, no simulation step.
+          4. Integrate v_cmd * dt to get the desired absolute position.
+          5. Broadcast {"type": "avoid_cmd", "commands": {lb_id: [x,y,z], ...}}
+             via pub_socket so each I-LB can apply the setpoint directly.
+
+        Stops when the translation thread finishes (interaction duration elapsed).
+        """
+        avoidance_cfg = self.mission.get('avoidance', {})
+        eta      = avoidance_cfg.get('eta',       0.5)
+        zeta     = avoidance_cfg.get('zeta',      0.0)
+        d_detect = avoidance_cfg.get('d_detect',  0.47)
+        v_max    = avoidance_cfg.get('v_max',     2.0)
+        rate     = avoidance_cfg.get('ctrl_rate', self.ctrl_rate if self.ctrl_rate > 0 else 50)
+        dt       = 1.0 / rate
+
+        # Goal positions for each passive I-LB (their static hover targets)
+        drone_mission = self.mission.get('drones', {})
+        lb_goals = {
+            lb_id: np.array(cfg['target'][:3])
+            for lb_id, cfg in drone_mission.items()
+            if cfg.get('interaction') == 'avoid'
+        }
+        # Last known positions start at goal (I-LBs are initially at target)
+        lb_positions = {lb_id: goal.copy() for lb_id, goal in lb_goals.items()}
+        pos_lock = threading.Lock()
+
+        translation_thread = threading.Thread(target=self._run_translation, daemon=True)
+        translation_thread.start()
+
+        try:
+            while translation_thread.is_alive():
+                # 1. Receive latest position reports from passive I-LBs
+                if self.sub_socket is not None:
+                    msg = self.sub_socket.recv_latest()
+                    if msg is not None and msg.get('type') == 'position':
+                        lb_id = msg.get('drone_id')
+                        pos   = msg.get('pos')
+                        if lb_id in lb_positions and pos is not None:
+                            with pos_lock:
+                                lb_positions[lb_id] = np.array(pos)
+
+                # 2. Own (UI-LB) position
+                try:
+                    ui_pos = self._get_latest_pos()
+                except Exception:
+                    time.sleep(dt)
+                    continue
+
+                # 3-4. APF velocity → position offset for each I-LB
+                cmds = {}
+                with pos_lock:
+                    for lb_id, lb_pos in lb_positions.items():
+                        v_cmd = apf_velocity(lb_pos, lb_goals[lb_id], ui_pos,
+                                             eta, zeta, d_detect, v_max)
+                        offset = v_cmd * dt
+                        cmds[lb_id] = offset.tolist()
+                        # Advance local position estimate for next APF step
+                        lb_positions[lb_id] = lb_pos + offset
+
+                # 5. Broadcast to all passive I-LBs
+                if self.pub_socket is not None and cmds:
+                    self.pub_socket.send_json({'type': 'avoid_cmd', 'commands': cmds})
+
+                time.sleep(dt)
+        except Exception as e:
+            tb_info = traceback.format_exc()
+            logging.error(f"Avoidance Broadcast Error: {e}\nTraceback:\n{tb_info}")
+        finally:
+            translation_thread.join(timeout=2.0)
+
+    def run_passive_avoidance(self) -> None:
+        """Passive I-LB mode: publish own position to UI-LB and execute APF commands.
+
+        Receiving is non-blocking (recv_latest drains the ZMQ/UDP buffer and
+        returns the newest message, or None if nothing arrived).
+
+        Message protocol:
+          publish  → {"type": "position",  "drone_id": <id>,  "pos": [x, y, z]}
+          receive  ← {"type": "avoid_cmd", "commands": {<id>: [dx, dy, dz], ...}}
+
+        Each command is a position *offset* (delta) that is added to the current
+        desired hover position, not an absolute setpoint.
+        """
+        avoidance_cfg = self.mission.get('avoidance', {})
+        rate     = avoidance_cfg.get('ctrl_rate', self.ctrl_rate if self.ctrl_rate > 0 else 50)
+        dt       = 1.0 / rate
+        duration = self.mission.get('drones', {}).get(self.drone_id, {}).get('delta_t', 60)
+
+        drone_cfg = self.mission['drones'][self.drone_id]
+        hover_pos = np.array(drone_cfg['target'][:3], dtype=float)
+
+        start_t = time.time()
+        try:
+            while time.time() - start_t < duration:
+                # Publish own position so the UI-LB can run APF for this drone
+                try:
+                    my_pos = self._get_latest_pos()
+                    if self.pub_socket is not None:
+                        self.pub_socket.send_json({
+                            'type':     'position',
+                            'drone_id': self.drone_id,
+                            'pos':      my_pos.tolist(),
+                        })
+                except Exception:
+                    pass
+
+                # Apply latest avoidance offset if one has arrived (non-blocking)
+                if self.sub_socket is not None:
+                    msg = self.sub_socket.recv_latest()
+                    if msg is not None and msg.get('type') == 'avoid_cmd':
+                        cmds = msg.get('commands', {})
+                        if self.drone_id in cmds:
+                            hover_pos += np.array(cmds[self.drone_id], dtype=float)
+
+                self.lo_commander.send_position_setpoint(
+                    hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                time.sleep(dt)
+        except Exception as e:
+            tb_info = traceback.format_exc()
+            logging.error(f"Passive Avoidance Error: {e}\nTraceback:\n{tb_info}")
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
@@ -347,6 +489,7 @@ class InteractionsControl:
             v_scalar=None,
             alpha_vel=1,
             pub_socket=None,
+            mass_ratio=1.0,
     ):
         if v_scalar is None:
             v_scalar = np.array([10, 10, 2])
@@ -373,7 +516,8 @@ class InteractionsControl:
 
         self.log_manager.add_log_entry(group_name="configs",
                                        entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt,
-                                              "Orientation CMD": base_attitude, 'Stabilize Time': stabilize_time},
+                                              "Orientation CMD": base_attitude, 'Stabilize Time': stabilize_time,
+                                              'mass_ratio': mass_ratio},
                                        name='Translation Config')
 
         status = 0
@@ -465,7 +609,7 @@ class InteractionsControl:
                     # prev_interact_vel = vel
                     interact_vel = vel
 
-                target_pos = pos + interact_vel * dt * v_scalar
+                target_pos = pos + interact_vel * mass_ratio * dt * v_scalar
 
                 # self.check_interaction_boundary(target_pos)
 

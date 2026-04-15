@@ -626,16 +626,13 @@ class Controller:
         low_level_setpoint = mission_setting.get('low_level_setpoint', [])
         rotation_test = mission_setting.get('rotation_test', [])
         follow = mission_setting.get('follow', False)
-        network_follow = mission_setting.get('network_follow', False)
         params = mission_setting.get('params', {'linear': False, 'relative': False})
         angles = mission_setting.get('servos', [])
         pointers = mission_setting.get('pointers', [])
         delta_t = mission_setting['delta_t']
-        iterations = mission_setting['iterations']
         led_color = mission_setting.get('color')
         led_setting = mission_setting.get('led', {})
-        interaction = mission_setting.get('interaction', False)
-        peer_mode = self.mission.get('Interaction', {}).get('peer', False)
+        interaction_mode = mission_setting.get('interaction', None)
         execution = False if self.args.droneless else True
 
         if position_offset:
@@ -682,7 +679,7 @@ class Controller:
         elif led_color is not None:
             self.led.show_single_color(led_color)
 
-        if peer_mode:
+        if interaction_mode == 'peer':
             port = self.manifest['controller'].get('zmq_interact_port', 5560)
             peer_ips = [d['ip'] for d in self.manifest['drones'] if d['id'] != self.args.drone_id]
             peer_transport = self.mission.get('Interaction', {}).get('peer_transport', 'udp').lower()
@@ -705,26 +702,26 @@ class Controller:
             interact_pub.close()
             interact_sub.close()
 
-        elif follow and not network_follow:
-            # leader_id = follow['id']
-            # leader_drone = self._get_drone_by_id(leader_id)
-            # if leader_drone:
-            #     logger.info(f"following {leader_id}")
-            #
-            #     if self.args.vicon_mode == "rigidbody":
-            #         leader_obj_name = leader_drone['obj_name']
-            #         self.mocap.subscribe_object(leader_obj_name,
-            #                                     lambda frame: self._follow_with_offset(frame, follow['offset']))
-            #         self._safe_sleep(delta_t)
-            #         self.mocap.unsubscribe_object(leader_obj_name)
-            #     elif self.args.vicon_mode == "pointcloud":
-            #         leader_target_pos = self.mission['drones'][leader_id]['target'][:3]
-            #         self.mocap.subscribe_point(leader_target_pos,
-            #                                    lambda frame: self._follow_with_offset(frame, follow['offset']),
-            #                                    name=leader_id)
-            #         self._safe_sleep(delta_t)
-            #         self.mocap.unsubscribe_point(leader_id)
-            #     self.cf.commander.send_notify_setpoint_stop()
+        elif follow:
+            leader_id = follow['id']
+            leader_drone = self._get_drone_by_id(leader_id)
+            if leader_drone:
+                logger.info(f"following {leader_id}")
+            
+                if self.args.vicon_mode == "rigidbody":
+                    leader_obj_name = leader_drone['obj_name']
+                    self.mocap.subscribe_object(leader_obj_name,
+                                                lambda frame: self._follow_with_offset(frame, follow['offset']))
+                    self._safe_sleep(delta_t)
+                    self.mocap.unsubscribe_object(leader_obj_name)
+                elif self.args.vicon_mode == "pointcloud":
+                    leader_target_pos = self.mission['drones'][leader_id]['target'][:3]
+                    self.mocap.subscribe_point(leader_target_pos,
+                                               lambda frame: self._follow_with_offset(frame, follow['offset']),
+                                               name=leader_id)
+                    self._safe_sleep(delta_t)
+                    self.mocap.unsubscribe_point(leader_id)
+                self.cf.commander.send_notify_setpoint_stop()
             leader_id = follow['id']
             leader_drone = self._get_drone_by_id(leader_id)
 
@@ -746,38 +743,81 @@ class Controller:
             self.mocap.unsubscribe_point(leader_id)
             self.cf.commander.send_notify_setpoint_stop()
 
-        elif network_follow:
-            interaction_drone_ip = self._get_interaction_drone_ip()
-            zmq_interact_port = self.manifest['controller'].get('zmq_interact_port', 5560)
-            ctx = zmq.Context()
-            interact_sub = ctx.socket(zmq.SUB)
-            interact_sub.connect(f"tcp://{interaction_drone_ip}:{zmq_interact_port}")
-            interact_sub.setsockopt_string(zmq.SUBSCRIBE, "")
-            logger.info(f"Network follow: subscribed to {interaction_drone_ip}:{zmq_interact_port}")
-            IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                     self.args.smooth_controller_rate, leader_info=follow,
-                                     sub_socket=interact_sub, execute=execution)
-            IC.run()
-            interact_sub.close()
+        elif interaction_mode == 'single':
+            # Find drones that are passive (no 'interaction' and no 'follow' in their
+            # mission config) — these become the I-LBs that receive commands from this drone.
+            drone_mission = self.mission.get('drones', {})
+            passive_ips = [
+                d['ip'] for d in self.manifest['drones']
+                if d['id'] != self.args.drone_id
+                and drone_mission.get(d['id'], {}).get('interaction', None) == 'avoid'
+            ]
 
-        elif interaction:
-            has_followers = any(
-                self.mission.get('drones', {}).get(d['id'], {}).get('network_follow', False)
-                for d in self.manifest['drones']
-            )
             interact_pub = None
-            if has_followers:
-                zmq_interact_port = self.manifest['controller'].get('zmq_interact_port', 5560)
-                ctx = zmq.Context()
-                interact_pub = ctx.socket(zmq.PUB)
-                interact_pub.bind(f"tcp://*:{zmq_interact_port}")
-                time.sleep(0.5)  # allow subscribers to connect before first broadcast
-                logger.info(f"Interaction broadcast on port {zmq_interact_port}")
+            interact_sub = None
+            if passive_ips:
+                port = self.manifest['controller'].get('zmq_interact_port', 5560)
+                peer_transport = self.mission.get('Interaction', {}).get('peer_transport', 'tcp').lower()
+                if peer_transport == 'tcp':
+                    from Interaction.ConnectionHelper import TCPPeerPublisher, TCPPeerSubscriber
+                    interact_pub = TCPPeerPublisher(port)
+                    interact_sub = TCPPeerSubscriber(passive_ips, port)
+                    logger.info(f"Interaction single: TCP on :{port}, I-LBs={passive_ips}")
+                else:
+                    from Interaction.ConnectionHelper import UDPPublisher, UDPSubscriber
+                    interact_pub = UDPPublisher(passive_ips, port)
+                    interact_sub = UDPSubscriber(port)
+                    logger.info(f"Interaction single: UDP on :{port}, I-LBs={passive_ips}")
+                time.sleep(0.5)  # allow I-LB subscribers to connect before first publish
+
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                     self.args.smooth_controller_rate, pub_socket=interact_pub, execute=execution)
+                                     self.args.smooth_controller_rate,
+                                     pub_socket=interact_pub, sub_socket=interact_sub,
+                                     execute=execution)
             IC.run()
             if interact_pub is not None:
                 interact_pub.close()
+            if interact_sub is not None:
+                interact_sub.close()
+
+        elif interaction_mode == 'avoid':
+            # Passive I-LB: connect back to the UI-LB (interaction: single drone),
+            # publish own position, and execute APF commands sent by the UI-LB.
+            drone_mission = self.mission.get('drones', {})
+            ui_lb_drone = next(
+                (d for d in self.manifest['drones']
+                 if drone_mission.get(d['id'], {}).get('interaction') == 'single'),
+                None
+            )
+            interact_pub = None
+            interact_sub = None
+            if ui_lb_drone is not None:
+                ui_lb_ip = ui_lb_drone['ip']
+                port = self.manifest['controller'].get('zmq_interact_port', 5560)
+                peer_transport = self.mission.get('Interaction', {}).get('peer_transport', 'tcp').lower()
+                if peer_transport == 'tcp':
+                    from Interaction.ConnectionHelper import TCPPeerPublisher, TCPPeerSubscriber
+                    interact_pub = TCPPeerPublisher(port)
+                    interact_sub = TCPPeerSubscriber([ui_lb_ip], port)
+                    logger.info(f"Passive avoid: TCP on :{port}, UI-LB={ui_lb_ip}")
+                else:
+                    from Interaction.ConnectionHelper import UDPPublisher, UDPSubscriber
+                    interact_pub = UDPPublisher([ui_lb_ip], port)
+                    interact_sub = UDPSubscriber(port)
+                    logger.info(f"Passive avoid: UDP on :{port}, UI-LB={ui_lb_ip}")
+                time.sleep(0.5)
+
+            IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
+                                     self.args.smooth_controller_rate,
+                                     drone_id=self.args.drone_id,
+                                     pub_socket=interact_pub, sub_socket=interact_sub,
+                                     execute=execution)
+            IC.run_passive_avoidance()
+            if interact_pub is not None:
+                interact_pub.close()
+            if interact_sub is not None:
+                interact_sub.close()
+
         self.animation_stop_time = time.time()
 
         if not len(pointers) and led_setting.get('mode') == 'expression':

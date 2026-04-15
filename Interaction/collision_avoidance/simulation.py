@@ -49,8 +49,8 @@ from pid_controller import CascadedPIDController
 DT = 0.0025  # simulation time-step (s)
 V_MAX = 2  # maximum APF-commanded speed (m/s)
 UI_SPEED = 0.25  # speed at which UI-LB travels along waypoints (m/s)
-ETA = 0.03  # repulsive gain η
-ZETA = 2.3  # attractive gain ζ
+ETA = 0.5  # repulsive gain η
+ZETA = 0  # attractive gain ζ
 D_DETECT = 0.47  # detection / repulsion radius d_detect (m)
 
 # I-LB dynamics — cascaded PID
@@ -103,10 +103,7 @@ INTERACTION_VEL = [
     [-0.099, 0.138, 0.0]
 ]
 
-INTERACTION_VEL = np.array(INTERACTION_VEL)
-INTERACTION_VEL[:, 1] = INTERACTION_VEL[:, 1] * 2
-INTERACTION_VEL = INTERACTION_VEL.tolist()
-INTERACTION_VEL_HZ = INTERACTION_VEL_HZ/2
+INTERACTION_VEL_HZ = INTERACTION_VEL_HZ / 2  # halve sample rate → 2× Y distance at same velocity, 2× duration
 
 
 # ── YAML parsing ──────────────────────────────────────────────────────────────
@@ -419,9 +416,11 @@ def run_simulation(
                 ilb_pos[closest_id], ilb_goal[closest_id], ui_pos,
                 eta, zeta, d_detect, v_max,
             )
-
-        last_vel_cmd = v_cmd
-        if use_pos_cmd:
+        
+        if np.linalg.norm(last_vel_cmd) < 1e-9 and np.linalg.norm(v_cmd) < 1e-9:
+            controller.reset()
+            delta_p = np.zeros(3)
+        elif use_pos_cmd:
             # Position target: one step ahead in the direction v_cmd points,
             # scaled so the outer P loop reproduces v_cmd at the current position.
             p_cmd = ilb_pos[closest_id] + v_cmd / pos_kp
@@ -430,6 +429,7 @@ def run_simulation(
         else:
             delta_p = controller.step_velocity(v_cmd, dt)
 
+        last_vel_cmd = v_cmd
         for lb_id in ilb_ids:
             ilb_pos[lb_id] = ilb_pos[lb_id] + delta_p
             history[lb_id].append(ilb_pos[lb_id].copy())
@@ -445,7 +445,7 @@ def run_simulation(
         max_extra = int(30.0 / dt)  # safety cap: 30 s
         for _ in range(max_extra):
             # Check if all I-LBs are outside d_detect
-            all_clear = all(np.linalg.norm(ilb_pos[k] - ui_pos) > d_detect
+            all_clear = all(np.linalg.norm(ilb_pos[k] - ui_pos) > (d_detect - 1e-6)
                             for k in ilb_ids)
             if all_clear and stop_after_clear:
                 break
@@ -689,6 +689,7 @@ def make_animation(
         cumulative_collisions: list = None,
         view_height: float = 1.0,
         snapshot_frame: int = None,
+        render_steps: int = None,
 ):
     """
     2×2 quad-view animation (white background):
@@ -712,7 +713,8 @@ def make_animation(
     ilb_ids = [k for k in sorted(drones.keys()) if k != ui_lb_id]
     lb_ids = sorted(drones.keys())
     n_steps = len(history[ui_lb_id])
-    render_indices = build_render_indices(n_steps, dt, render_fps)
+    render_cap = min(n_steps, render_steps) if render_steps is not None else n_steps
+    render_indices = build_render_indices(render_cap, dt, render_fps)
     if cumulative_collisions is None:
         cumulative_collisions = [0] * n_steps
 
@@ -1148,7 +1150,7 @@ def main(**overrides):
         ),
     )
     ap.add_argument(
-        "--use-pos-cmd", action="store_true", default=False,
+        "--use-pos-cmd", action="store_true", default=True,
         help=(
             "Issue position setpoints to the controller instead of velocity "
             "setpoints.  The position target each step is derived from the "
@@ -1200,7 +1202,7 @@ def main(**overrides):
     # ── UI-LB trajectory ──────────────────────────────────────────────────────
     assigned_start = drones[args.ui_lb].copy()
     start = assigned_start.copy()
-    start[1] -= 0.5
+    start[1] -= 0.3
     print(
         f"UI-LB simulated start offset: assigned={assigned_start}  "
         f"simulated_start={start}"
@@ -1302,6 +1304,7 @@ def main(**overrides):
             cumulative_collisions=cumulative_collisions,
             view_height=args.view_height,
             snapshot_frame=args.frame,
+            render_steps=len(ui_traj),
         )
     else:
         print("\nSkipping render (--no-render); simulation results only.")
@@ -1341,24 +1344,23 @@ _MISSION_DIR = os.path.join(os.path.dirname(__file__), "..", "mission")
 
 # Each entry: (mission_yaml, ui_lb_id, use_ui_vel)
 BATCH_RUNS = [
-    # ("S.yaml", "lb6", False, 0.47),
-    # ("S.yaml", "lb6", True, 0.47),
-    # ("S.yaml", "lb6", False, 0.55),
-    # ("S.yaml", "lb6", True, 0.55),
-    # ("S.yaml", "lb6", False, 0.60),
-    # ("S.yaml", "lb6", True, 0.60),
-    # ("S.yaml", "lb6", False, 0.4),
-    # ("S.yaml", "lb6", True, 0.4),
-
-    ("ACM.yaml", "lb1", False, 0.47),
     ("ACM.yaml", "lb1", True, 0.47),
-    ("ACM.yaml", "lb1", False, 0.55),
-    ("ACM.yaml", "lb1", True, 0.55),
+    ("ACM.yaml", "lb1", False, 0.47),
+    ("S.yaml", "lb6", False, 0.47),
+    ("S.yaml", "lb6", True, 0.47),
     ("ACM.yaml", "lb1", False, 0.60),
     ("ACM.yaml", "lb1", True, 0.60),
     ("ACM.yaml", "lb1", False, 0.4),
     ("ACM.yaml", "lb1", True, 0.4),
+    ("S.yaml", "lb6", False, 0.47),
+    ("S.yaml", "lb6", True, 0.47),
+    ("S.yaml", "lb6", False, 0.60),
+    ("S.yaml", "lb6", True, 0.60),
+    ("S.yaml", "lb6", False, 0.4),
+    ("S.yaml", "lb6", True, 0.4),
 ]
+
+BATCH_ZETA = [0.0, 0.1]
 
 # ── Grid search ───────────────────────────────────────────────────────────────
 
@@ -1375,7 +1377,7 @@ BALANCE_D           = 0.3   # distance at which |v_rep| should equal |v_att|
 BALANCE_GOAL_DIST   = 0.5   # reference I-LB-to-goal distance for the formula (m)
 
 # eta sweep: 0.10 → 1.00, step 0.05 (19 values)
-GRID_ETA = np.linspace(0, 0.5, 100)
+GRID_ETA = np.linspace(0, 1, 200)
 # For each eta, derive zeta so |v_rep| = |v_att| at d = BALANCE_D:
 #   ζ = η · (1/d − 1/d_detect) / (d² · r_goal)
 #     = η · (d_detect − d) / (d³ · d_detect · r_goal)
@@ -1384,7 +1386,8 @@ def _zeta_from_balance(eta: float) -> float:
     den = (BALANCE_D ** 3) * GRID_D_DETECT * BALANCE_GOAL_DIST
     return num / den
 
-GRID_ZETA = [_zeta_from_balance(eta) for eta in GRID_ETA]
+# GRID_ZETA = [_zeta_from_balance(eta) for eta in GRID_ETA]
+GRID_ZETA = [0 for eta in GRID_ETA]
 
 
 def run_grid_search():
@@ -1551,29 +1554,35 @@ def _read_last_csv_row(csv_path: str) -> dict:
 
 
 if __name__ == "__main__":
-    run_grid_search()
+    # run_grid_search()
 
-    # if len(sys.argv) > 1:
-    #     main()
-    # else:
-    #     # Batch mode — iterate over BATCH_RUNS
-    #     for idx, (mission_file, ui_lb, use_ui_vel, d_detect) in enumerate(BATCH_RUNS, 1):
-    #         mission_path = os.path.join(_MISSION_DIR, mission_file)
-    #         mode_tag = "UI_vel" if use_ui_vel else "APF"
-    #         out_name = (
-    #             f"{os.path.splitext(mission_file)[0]}_{ui_lb}_{mode_tag}"
-    #             f"_ddetect_{d_detect:.2f}.mp4"
-    #         )
-    #         print(
-    #             f"\n[Batch {idx}/{len(BATCH_RUNS)}] "
-    #             f"{mission_file} / {ui_lb} / {mode_tag} / d_detect={d_detect:.2f}"
-    #         )
-    #         main(
-    #             mission=mission_path,
-    #             ui_lb=ui_lb,
-    #             use_ui_vel=use_ui_vel,
-    #             d_detect=d_detect,
-    #             output=out_name,
-    #         )
-    #     print(f"\n{'='*70}")
-    #     print(f"Batch complete: {len(BATCH_RUNS)} run(s)")
+    if len(sys.argv) > 1:
+        main()
+    else:
+        # Batch mode — iterate over BATCH_RUNS × BATCH_ZETA
+        total = len(BATCH_RUNS) * len(BATCH_ZETA)
+        idx = 0
+        for mission_file, ui_lb, use_ui_vel, d_detect in BATCH_RUNS:
+            mission_path = os.path.join(_MISSION_DIR, mission_file)
+            mode_tag = "UI_vel" if use_ui_vel else "APF"
+            for zeta in BATCH_ZETA:
+                idx += 1
+                out_name = (
+                    f"{os.path.splitext(mission_file)[0]}_{ui_lb}_{mode_tag}"
+                    f"_ddetect_{d_detect:.2f}_zeta_{zeta:.2f}.mp4"
+                )
+                print(
+                    f"\n[Batch {idx}/{total}] "
+                    f"{mission_file} / {ui_lb} / {mode_tag} "
+                    f"/ d_detect={d_detect:.2f} / zeta={zeta:.2f}"
+                )
+                main(
+                    mission=mission_path,
+                    ui_lb=ui_lb,
+                    use_ui_vel=use_ui_vel,
+                    d_detect=d_detect,
+                    zeta=zeta,
+                    output=out_name,
+                )
+        print(f"\n{'='*70}")
+        print(f"Batch complete: {total} run(s)")
