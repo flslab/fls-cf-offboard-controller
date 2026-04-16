@@ -15,7 +15,7 @@ class SmoothController:
         self.worker_thread = threading.Thread(target=self._update_loop, daemon=True)
         self.worker_thread.start()
 
-    def register_group(self, name, initial_values, callback, ranges=None):
+    def register_group(self, name, initial_values, callback, ranges=None, offsets=None):
         """
         Registers a group of variables.
         name: Unique identifier for the group.
@@ -27,6 +27,9 @@ class SmoothController:
             # Deep copy values to ensure thread safety
             values = list(initial_values)
             n = len(values)
+            if offsets is None:
+                offsets = [0.0] * n
+
             self.groups[name] = {
                 'values': values,  # Current interpolated values
                 'targets': list(values),  # Final target values
@@ -34,7 +37,8 @@ class SmoothController:
                 'start_times': [0.0] * n,
                 'durations': [0.0] * n,
                 'callback': callback,
-                'ranges': ranges
+                'ranges': ranges,
+                'offsets': offsets
             }
 
     def set_group_values(self, name, target_values, duration=0.0):
@@ -55,7 +59,7 @@ class SmoothController:
                 if i < len(group['values']):
                     # Start from wherever we are currently
                     group['starts'][i] = group['values'][i]
-                    group['targets'][i] = target
+                    group['targets'][i] = target + group['offsets'][i]
                     group['start_times'][i] = now
                     group['durations'][i] = duration
 

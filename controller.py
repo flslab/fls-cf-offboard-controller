@@ -310,7 +310,8 @@ class Controller:
             name="servos",
             initial_values=initial_values,
             callback=self.servo.set_all,
-            ranges=ranges
+            ranges=ranges,
+            offsets=self.args.servo_offsets
         )
         self._set_safe_servo_angles()
         logger.info("servos activated")
@@ -1343,6 +1344,7 @@ if __name__ == '__main__':
     ap.add_argument("--servo", help="Use servo", action="store_true", default=False)
     ap.add_argument("--servo-type", type=str, choices=["H", "V"], default="H", help="type of light bender servo setting")
     ap.add_argument("--servo-count", type=int, default=2, help="number of the servos")
+    ap.add_argument("--servo-offsets", type=float, nargs="*", default=[0, 0], help="calibration offsets of the servos")
     ap.add_argument("--smooth-controller-rate", type=int, default=30, help="rate of smooth controller update loop")
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)

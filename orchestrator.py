@@ -190,6 +190,7 @@ class SwarmOrchestrator:
     def _get_drone_cmd_illumination(self, drone):
         alt = self.mission['drones'][drone['id']]['target'][2]
         servo_count = drone.get('servo_count', 2)
+        servo_offsets = drone.get('servo_offsets', [0.0] * servo_count)
         led_count = drone.get('led_count', 50)
         if hasattr(drone, "obj_name"):
             mocap_args = f"--obj-name {drone['obj_name']} --vicon-mode rigidbody --vicon-full-pose "
@@ -206,6 +207,7 @@ class SwarmOrchestrator:
             f"--drone-id {drone['id']} ",
             f"--led --led-brightness 0.25 --led-count {led_count} " if led_count > 0 else " ",
             f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
+            f"--servo-offsets {' '.join(str(o) for o in servo_offsets)} " if servo_count > 0 else " ",
             f"--takeoff-altitude {alt} ",
             "--smooth-controller-rate 50 ",
             "--log ",
