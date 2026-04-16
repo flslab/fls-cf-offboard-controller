@@ -90,7 +90,7 @@ def extract_window(entries, t_start: float, t_end: float):
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
-def main(logfile, label=None):
+def main(logfile, label=None, show_plot=False):
     # ── load ─────────────────────────────────────────────────────────────────
     print(f"Loading  {logfile} …")
     entries = load_log(logfile)
@@ -139,7 +139,7 @@ def main(logfile, label=None):
     a_arr = np.gradient(vy_arr, t_arr)
 
     # F / a  [kg] — effective inertia; NaN where |a| is too small to be reliable
-    _ACC_MIN = 0.05   # m/s²  — threshold below which ratio is suppressed
+    _ACC_MIN = 0.1   # m/s²  — threshold below which ratio is suppressed
     fa_ratio = np.where(np.abs(a_arr) >= _ACC_MIN, f_arr / a_arr, np.nan)
 
     # ── Stats ─────────────────────────────────────────────────────────────────
@@ -223,8 +223,10 @@ def main(logfile, label=None):
     log_p     = Path(logfile)
     suffix    = f"_{label}" if label else ""
     out_ts    = str(log_p.parent / (log_p.stem + suffix + "_force_time.png"))
-    fig1.savefig(out_ts, dpi=150)
-    print(f"Time-series plot saved → {out_ts}")
+
+    if not show_plot:
+        fig1.savefig(out_ts, dpi=150)
+        print(f"Time-series plot saved → {out_ts}")
 
     # ── Figure 2: force vs acceleration ──────────────────────────────────────
     fig2, ax_fa = plt.subplots(figsize=(7, 6))
@@ -250,17 +252,21 @@ def main(logfile, label=None):
 
     fig2.tight_layout()
     out_fa = str(log_p.parent / (log_p.stem + suffix + "_force_vs_acc.png"))
-    fig2.savefig(out_fa, dpi=150)
-    print(f"Force-vs-accel plot saved → {out_fa}")
 
-    plt.show()
+    if show_plot:
+        plt.show()
+    else:
+        fig2.savefig(out_fa, dpi=150)
+        print(f"Force-vs-accel plot saved → {out_fa}")
 
 
 if __name__ == "__main__":
     _project_root = Path(__file__).resolve().parents[2]
-    main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-54-28.json'), label="300g")
-    main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-55-55.json'), label="170g")
+    # main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-54-28.json'), label="300g", show_plot=False)
+    # main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-55-55.json'), label="170g", show_plot=False)
 
+
+    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-17-31.json'), label="300g", show_plot=True)
 
 # ── Example ───────────────────────────────────────────────────────────────────
 # Run from project root:
