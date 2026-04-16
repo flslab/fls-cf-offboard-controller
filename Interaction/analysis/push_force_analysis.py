@@ -139,7 +139,8 @@ def main(logfile, label=None, show_plot=False):
     a_arr = np.gradient(vy_arr, t_arr)
 
     # F / a  [kg] — effective inertia; NaN where |a| is too small to be reliable
-    _ACC_MIN = 0.08  # m/s²  — threshold below which ratio is suppressed
+    _ACC_MIN = 0.1  # m/s²  — threshold below which ratio is suppressed
+    # fa_ratio = np.where(a_arr >= _ACC_MIN, f_arr / a_arr, np.nan)
     fa_ratio = np.where(np.abs(a_arr) >= _ACC_MIN, f_arr / a_arr, np.nan)
 
     # ── Stats ─────────────────────────────────────────────────────────────────
@@ -265,9 +266,14 @@ if __name__ == "__main__":
     # main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-54-28.json'), label="300g", show_plot=False)
     # main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-55-55.json'), label="170g", show_plot=False)
 
+    #
+    # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-38-30.json'), label="170g", show_plot=False)
+    #
+    # # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-09-01.json'), label="170g", show_plot=False)
+    # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-03-24.json'), label="300g", show_plot=False)
 
-    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-38-30.json'), label="170g", show_plot=False)
-    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-03-24.json'), label="300g", show_plot=False)
+
+    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-18-32.json'), label="170g", show_plot=False)
 
 # ── Example ───────────────────────────────────────────────────────────────────
 # Run from project root:
