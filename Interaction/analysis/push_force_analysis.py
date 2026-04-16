@@ -257,7 +257,7 @@ def main(logfile):
 
 if __name__ == "__main__":
     _project_root = Path(__file__).resolve().parents[2]
-    # logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-33-21.json')  # 300g
+    logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-48-50.json')  # 300g
     #
     logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-32-21.json') # 170g
     main(logfile)
