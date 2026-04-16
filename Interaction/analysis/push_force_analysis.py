@@ -133,17 +133,17 @@ def main(logfile, label=None, show_plot=False):
     vy_arr = np.array(vys)
 
     # Force: F_y = m · g · tan(roll)  [N]
-    f_arr = M_LB * G * np.tan(np.radians(-r_arr))
+    f_arr = M_LB * G * np.tan(np.radians(r_arr))
 
     # Acceleration: a_y = d(vy)/dt  [m/s²]  — central differences via np.gradient
     a_arr = np.gradient(vy_arr, t_arr)
 
     # F / a  [kg] — effective inertia; NaN where |a| is too small to be reliable
     _ACC_MIN = 0.1  # m/s²  — threshold below which ratio is suppressed
-    # fa_ratio = np.where(a_arr >= _ACC_MIN, f_arr / a_arr, np.nan)
+    fa_ratio = np.where(a_arr >= _ACC_MIN, f_arr / a_arr, np.nan)
     # fa_ratio = np.where(np.abs(a_arr) >= _ACC_MIN, f_arr / a_arr, np.nan)
 
-    fa_ratio = np.where(f_arr >= 0, f_arr / a_arr, np.nan)
+    # fa_ratio = np.where(f_arr >= 0 and a_arr , f_arr / a_arr, np.nan)
     # ── Stats ─────────────────────────────────────────────────────────────────
     print(f"\n  a_y statistics (m/s²):")
     print(f"    min : {a_arr.min():+.4f}")
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-03-24.json'), label="300g", show_plot=False)
     #
     # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-18-32.json'), label="170g", show_plot=False)
-    # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-21-55.json'), label="300", show_plot=False)
+    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-26-49.json'), label="300", show_plot=False)
 
 # ── Example ───────────────────────────────────────────────────────────────────
 # Run from project root:
