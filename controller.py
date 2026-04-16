@@ -954,7 +954,7 @@ class Controller:
         x, y, z, yaw, _ = target
 
         dt = 3
-        current_coord = self._get_latest_mocap_frame()["tvec"]
+        current_coord = self._get_latest_mocap_frame()["tvec"] if self.mocap else self.init_coord
         if current_coord:
             xi, yi, zi = current_coord
             dist = ((xi - x) ** 2 + (yi - y) ** 2 + (zi - z) ** 2) ** 0.5
