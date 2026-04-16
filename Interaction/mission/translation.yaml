@@ -16,7 +16,7 @@ Interaction:
     grace_time: 2
     alpha_vel: 1               # velocity blending factor (0=state estimator only, 1=mocap only)
     mass_lightbender: 0.17      # physical mass of the LightBender drone (kg)
-    mass_virtual: 0.3          # mass of the virtual object being pushed (kg); >1 = heavier feel, shorter motion
+    mass_virtual: 0.17          # mass of the virtual object being pushed (kg); >1 = heavier feel, shorter motion
 
 boundary_limits:
   x_min: -7.0
