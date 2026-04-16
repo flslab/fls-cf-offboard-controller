@@ -270,8 +270,8 @@ if __name__ == "__main__":
     # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-20-48.json'), label="300g", show_plot=False)
 
 
-    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-32-56.json'), label="170g", show_plot=False)
-    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-34-57.json'), label="300g", show_plot=False)
+    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-38-30.json'), label="170g", show_plot=False)
+    # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-34-57.json'), label="300g", show_plot=False)
 
 # ── Example ───────────────────────────────────────────────────────────────────
 # Run from project root:
