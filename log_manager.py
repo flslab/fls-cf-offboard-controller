@@ -26,13 +26,16 @@ class IlluminationLogger(LogManager):
 
         self.save_logs(kwargs['log_dir'], kwargs['tag'], kwargs['animation_start_time'], kwargs['animation_stop_time'])
 
-    def save_logs(self, log_dir, tag, start_time, end_time):
+    def save_logs(self, log_dir, tag, start_times, end_times):
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
 
+        s, e = (start_times[0], end_times[-1]) if len(end_times) > 0 else (0, 0)
         output_data = {
-            "start_time": start_time,
-            "stop_time": end_time,
+            "start_time": s,
+            "stop_time": e,
+            "start_times": start_times,
+            "stop_times": end_times,
         }
 
         for group, entries in self.groups.items():

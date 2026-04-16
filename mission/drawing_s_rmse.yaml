@@ -1,0 +1,86 @@
+name: s_std
+drones:
+  lb2:
+    target: [ -0.16, -0.01, 1.32, 0.0 ]  # top
+    waypoints: [ [-0.16, -0.01, 1.32, 0.0, 0.0], [-0.16, -0.01, 1.32, 0.0, 20.0] ]
+#    position_offset: [0.0, 0.05, 0.0]
+    delta_t: 15
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [155, 387], [155, 387] ]
+    color: [230, 115, 21]
+#    led:
+#      mode: "expression"
+#      rate: 50
+#      formula: "[230, 115, 21] if i > (49 - (t * 25)) else [0, 0, 0]"
+  lb3:
+    target: [ 0.16, -0.018, 0.695, 0.0 ] # bottom
+    waypoints: [ [0.16, -0.018, 0.695, 0.0, 0.0], [0.16, -0.018, 0.695, 0.0, 20.0]]
+    delta_t: 15
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [ 210, 330 ], [ 210, 330 ] ]
+    color: [230, 115, 21]
+#    led:
+#      mode: "expression"
+#      rate: 50
+#      formula: "[230, 115, 21] if i - 150 > (49 - (t * 25)) else [0, 0, 0]"
+  lb4:
+    target: [ 0.0, -0.14, 1.08, 0.0 ]  # left
+    waypoints: [ [ 0.0, -0.14, 1.08, 0.0, 0.0], [ 0.0, -0.14, 1.08, 0.0, 20.0]]
+    delta_t: 15
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [29, 264], [29, 264] ]
+    color: [230, 115, 21]
+#    led:
+#      mode: "expression"
+#      rate: 50
+#      formula: "[230, 115, 21] if i - 50 > (49 - (t * 25)) else [0, 0, 0]"
+  lb5:
+    target: [ -0.01, 0.135, 0.92, 0.0 ] # right
+    waypoints: [ [-0.01, 0.135, 0.92, 0.0, 0.0], [-0.01, 0.135, 0.92, 0.0, 20.0]]
+#    position_offset: [0.0, 0.05, 0.0]
+    delta_t: 15
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [ [ 87, 209 ], [ 87, 209 ] ]
+    color: [230, 115, 21]
+#    led:
+#      mode: "expression"
+#      rate: 50
+#      formula: "[230, 115, 21] if i - 100 > (49 - (t * 25)) else [0, 0, 0]"
+
+
+#  - id: "lb2"
+#    ip: lightbendercf02
+#    user: fls
+#    init_pos: [ -0.5, 0.0, 0.2 ]
+#    type: b
+#    uri: radio://0/100/2M/E7E7E7E702
+#  - id: "lb3"
+#    ip: lightbendercf03
+#    user: fls
+#    init_pos: [ 0.5, 0.0, 0.2 ]
+#    type: b
+#    uri: radio://0/100/2M/E7E7E7E703
+#  - id: "lb4"
+#    ip: lightbendercf04
+#    user: fls
+#    init_pos: [ 0.0, -0.5, 0.2 ]
+#    type: a
+#    uri: radio://0/100/2M/E7E7E7E704
+#  - id: "lb5"
+#    ip: lightbendercf05
+#    user: fls
+#    init_pos: [ 0.0, 0.5, 0.2 ]
+#    type: a
+#    uri: radio://0/100/2M/E7E7E7E705
