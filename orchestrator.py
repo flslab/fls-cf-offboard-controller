@@ -190,6 +190,7 @@ class SwarmOrchestrator:
     def _get_drone_cmd_illumination(self, drone):
         alt = self.mission['drones'][drone['id']]['target'][2]
         servo_count = drone.get('servo_count', 2)
+        servo_offsets = drone.get('servo_offsets', [0.0] * servo_count)
         led_count = drone.get('led_count', 50)
         if hasattr(drone, "obj_name"):
             mocap_args = f"--obj-name {drone['obj_name']} --vicon-mode rigidbody --vicon-full-pose "
@@ -206,6 +207,7 @@ class SwarmOrchestrator:
             f"--drone-id {drone['id']} ",
             f"--led --led-brightness 0.25 --led-count {led_count} " if led_count > 0 else " ",
             f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
+            f"--servo-offsets {' '.join(str(o) for o in servo_offsets)} " if servo_count > 0 else " ",
             f"--takeoff-altitude {alt} ",
             "--smooth-controller-rate 50 ",
             "--log ",
@@ -355,48 +357,23 @@ class SwarmOrchestrator:
 
             print(f"[Orchestrator] Sending REMOTE REBOOT request to Radio Node ({len(uris)} drones)...")
             
-            # Connect existing sockets to radio node since it now binds to receive/send messages
-            self.pub_socket.connect(f"tcp://{self.radio_node['ip']}:{self.ctrl_cfg['zmq_cmd_port']}")
-            self.pull_socket.connect(f"tcp://{self.radio_node['ip']}:{self.ctrl_cfg['zmq_ack_port']}")
-
-            msg = {
-                "cmd": "REBOOT",
-                "uris": uris
-            }
-
-            # --- Retry Logic ---
-            retries = 3
-            timeout_ms = 3000
-            ack_received = False
-
-            # Use a poller to listen for the specific ACK
-            poller = zmq.Poller()
-            poller.register(self.pull_socket, zmq.POLLIN)
-
-            for attempt in range(1, retries + 1):
-                self.logger.info(f"Attempt {attempt}/{retries}: Sending REBOOT command...")
-                self.pub_socket.send_json(msg)
-
-                # Wait for ACK
-                events = dict(poller.poll(timeout_ms))
-                if self.pull_socket in events:
-                    try:
-                        reply = self.pull_socket.recv_json(flags=zmq.NOBLOCK)
-                        # Check if this is the ACK we want
-                        if reply.get('id') == 'RADIO' and reply.get('status') == 'REBOOT_STARTED':
-                            self.logger.info("Radio Node confirmed receipt. Reboot sequence initiated.")
-                            ack_received = True
-                            break
-                        else:
-                            self.logger.info(f"(Ignored message while waiting for ACK: {reply})")
-                    except zmq.Again:
-                        pass
-
-                if not ack_received:
-                    self.logger.info("Timeout waiting for Radio Node confirmation.")
-
-            if not ack_received:
-                self.logger.info("Radio Node did not respond after multiple attempts. Reboot failed.")
+            env = self.common_cfg['venv_path']
+            work_dir = self.common_cfg['work_dir']
+            uris_str = " ".join(uris)
+            
+            user = self.radio_node.get('user', 'fls')
+            ip = self.radio_node['ip']
+            
+            cmd = f"source {env}/bin/activate && cd {work_dir} && python3 restart.py {uris_str}"
+            self.logger.info(f"Executing: ssh {user}@{ip} \"{cmd}\"")
+            
+            try:
+                conn = Connection(host=ip, user=user, connect_timeout=5)
+                # Run the restart command via SSH
+                conn.run(cmd, pty=False)
+                self.logger.info("Remote reboot issued successfully.")
+            except Exception as e:
+                self.logger.error(f"Failed to issue remote reboot: {e}")
                 return
         else:
             for drone in self.drones:
