@@ -90,7 +90,7 @@ def extract_window(entries, t_start: float, t_end: float):
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
-def main(logfile):
+def main(logfile, label=None):
     # ── load ─────────────────────────────────────────────────────────────────
     print(f"Loading  {logfile} …")
     entries = load_log(logfile)
@@ -221,7 +221,8 @@ def main(logfile):
 
     fig1.tight_layout()
     log_p     = Path(logfile)
-    out_ts    = str(log_p.parent / (log_p.stem + "_force_time.png"))
+    suffix    = f"_{label}" if label else ""
+    out_ts    = str(log_p.parent / (log_p.stem + suffix + "_force_time.png"))
     fig1.savefig(out_ts, dpi=150)
     print(f"Time-series plot saved → {out_ts}")
 
@@ -248,7 +249,7 @@ def main(logfile):
     ax_fa.grid(True, alpha=0.35)
 
     fig2.tight_layout()
-    out_fa = str(log_p.parent / (log_p.stem + "_force_vs_acc.png"))
+    out_fa = str(log_p.parent / (log_p.stem + suffix + "_force_vs_acc.png"))
     fig2.savefig(out_fa, dpi=150)
     print(f"Force-vs-accel plot saved → {out_fa}")
 
@@ -257,10 +258,8 @@ def main(logfile):
 
 if __name__ == "__main__":
     _project_root = Path(__file__).resolve().parents[2]
-    logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-54-28.json')  # 300g
-    #
-    # logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-32-21.json') # 170g
-    main(logfile)
+    main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-54-28.json'), label="300g")
+    main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-55-55.json'), label="170g")
 
 
 # ── Example ───────────────────────────────────────────────────────────────────
