@@ -458,7 +458,8 @@ class SwarmOrchestrator:
                     self._wait_for_ready()
                     if not self.args.skip_confirm:
                         input(f">>> Mission {i+1}/{len(self.missions)}: All at target. Press ENTER to proceed (Ctrl+C to Abort)...")
-                    time.sleep(5)
+                    if i == 0:
+                        time.sleep(5)
                     self.logger.info(f"Broadcasting START for Mission {i+1}...")
                     self.pub_socket.send_json({"cmd": "START"})
 
