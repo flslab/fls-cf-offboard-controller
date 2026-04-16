@@ -30,9 +30,10 @@ class IlluminationLogger(LogManager):
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
 
+        s, e = (start_times[0], end_times[-1]) if len(end_times) > 0 else (0, 0)
         output_data = {
-            "start_time": start_times[0],
-            "stop_time": end_times[-1],
+            "start_time": s,
+            "stop_time": e,
             "start_times": start_times,
             "stop_times": end_times,
         }

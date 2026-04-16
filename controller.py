@@ -570,7 +570,7 @@ class Controller:
             self.fly_trajectory(self.args.trajectory)
         elif self.args.orchestrated:
             if self.args.illumination:
-                self.orchestrated_mission()
+                self.run_multiple_orchestrated_missions()
             elif self.args.interaction:
                 self.interation_switch()
 
@@ -919,7 +919,7 @@ class Controller:
             self.cf.commander.send_notify_setpoint_stop()
 
     def run_multiple_orchestrated_missions(self):
-        for i in range(self.missions):
+        for i in range(len(self.missions)):
             self.orchestrated_mission(i)
             
 
