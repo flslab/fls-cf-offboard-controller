@@ -124,7 +124,7 @@ def main(logfile):
     # F_y = m · g · tan(roll - baseline)   [N]
     # Plot −F_y so that pushing in −Y gives a positive value
     forces = [
-        -M_LB * G * math.tan(math.radians(r) - baseline_rad)
+        M_LB * G * math.tan(math.radians(r) - baseline_rad)
         for r in rolls
     ]
 
@@ -208,7 +208,9 @@ def main(logfile):
 
 if __name__ == "__main__":
     _project_root = Path(__file__).resolve().parents[2]
-    logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_16-46-57.json')
+    logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-11-12.json')
+
+    logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-16-09.json')
     main(logfile)
 
 
