@@ -565,6 +565,8 @@ class InteractionsControl:
         self._log_event('Waiting For User Interaction')
 
         interaction_heading = np.zeros(3)
+        v_virtual    = np.zeros(3)   # virtual-object velocity, integrated from F/m_virtual
+        prev_interact_vel = np.zeros(3)  # previous tick's interact_vel, for differentiation
         start_time = time.time()
         while time.time() - start_time < duration:
 
@@ -596,6 +598,8 @@ class InteractionsControl:
                     # self._log_event('Translation')
                     status = 1
                     interaction_heading = vel
+                    v_virtual = np.zeros(3)
+                    prev_interact_vel = vel.copy()  # seed with current vel to avoid spike
                     continue
                 else:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -610,12 +614,18 @@ class InteractionsControl:
                     # prev_interact_vel = vel
                     interact_vel = vel
 
-                target_pos = pos + interact_vel * mass_ratio * dt * v_scalar
+                # a_lb = Δvel/dt  (differentiate mocap velocity → acceleration)
+                # F = m_lb * a_lb,  a_virtual = F / m_virtual = a_lb * mass_ratio
+                v_virtual += (interact_vel - prev_interact_vel) * mass_ratio
+                prev_interact_vel = interact_vel.copy()
+                target_pos = pos + v_virtual * dt * v_scalar
 
                 # self.check_interaction_boundary(target_pos)
 
                 if not detect_speed_threshold(speed):
                     interaction_heading = np.zeros(3)
+                    v_virtual = np.zeros(3)
+                    prev_interact_vel = np.zeros(3)
                     if fric_coe > 0:
                         logger.info(f"Switching to Coasting From {status}.")
                         # self._log_event('Coasting')

@@ -264,16 +264,10 @@ def main(logfile, label=None, show_plot=False):
 
 if __name__ == "__main__":
     _project_root = Path(__file__).resolve().parents[2]
-    # main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-54-28.json'), label="300g", show_plot=False)
-    # main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-55-55.json'), label="170g", show_plot=False)
 
-    #
-    # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-38-30.json'), label="170g", show_plot=False)
-    #
-    # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-09-01.json'), label="170g", show_plot=False)
-    # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-03-24.json'), label="300g", show_plot=False)
-    #
-    # main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-18-32.json'), label="170g", show_plot=False)
+    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-34-52.json'), label="170g", show_plot=False)
+
+    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-32-07.json'), label="170g", show_plot=False)
     main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-26-49.json'), label="300", show_plot=False)
 
 # ── Example ───────────────────────────────────────────────────────────────────
