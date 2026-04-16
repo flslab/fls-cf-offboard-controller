@@ -31,7 +31,6 @@ Usage
 """
 
 import json
-import math
 import os
 import sys
 from pathlib import Path
@@ -40,7 +39,7 @@ from pathlib import Path
 M_LB  = 0.170      # LightBender mass  [kg]
 G     = 9.81       # gravitational acceleration  [m/s²]
 
-DEFAULT_BASELINE_ROLL = -3.7721259593963623  # hover roll  [degrees]
+DEFAULT_BASELINE_ROLL = 0 # hover roll  [degrees]
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -67,24 +66,27 @@ def find_event_time(entries, name: str) -> float | None:
     return None
 
 
-def extract_roll_in_window(entries, t_start: float, t_end: float):
+def extract_window(entries, t_start: float, t_end: float):
     """
-    Return (times, rolls) for all VEL_ORI state entries whose timestamp falls
-    in [t_start, t_end].
+    Return (times, rolls, vy_list) for all VEL_ORI state entries whose
+    timestamp falls in [t_start, t_end].
     """
     times = []
     rolls = []
+    vys   = []
     for e in entries:
         if e.get("type") != "state" or e.get("group") != "VEL_ORI":
             continue
         t    = e["data"]["time"]
         roll = e["data"].get("stateEstimate.roll")
-        if roll is None:
+        vy   = e["data"].get("stateEstimate.vy")
+        if roll is None or vy is None:
             continue
         if t_start <= t <= t_end:
             times.append(t)
             rolls.append(roll)
-    return times, rolls
+            vys.append(vy)
+    return times, rolls, vys
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -107,28 +109,14 @@ def main(logfile):
     print(f"  First disengage : t = {t_disengage:.3f}  (absolute)")
     print(f"  Window duration : {t_disengage - t_push:.3f} s")
 
-    # ── extract roll ──────────────────────────────────────────────────────────
-    times_abs, rolls = extract_roll_in_window(entries, t_push, t_disengage)
+    # ── extract roll + vy ────────────────────────────────────────────────────
+    times_abs, rolls, vys = extract_window(entries, t_push, t_disengage)
 
     if not times_abs:
         sys.exit("ERROR: no VEL_ORI state entries found in the push window")
 
-    print(f"  Roll samples in window: {len(rolls)}")
+    print(f"  Samples in window: {len(rolls)}")
 
-    # Relative time (0 = first push)
-    t0   = times_abs[0]
-    times = [t - t0 for t in times_abs]
-
-    baseline_rad = math.radians(0)
-
-    # F_y = m · g · tan(roll - baseline)   [N]
-    # Plot −F_y so that pushing in −Y gives a positive value
-    forces = [
-        M_LB * G * math.tan(math.radians(r) - baseline_rad)
-        for r in rolls
-    ]
-
-    # ── plot ──────────────────────────────────────────────────────────────────
     try:
         import numpy as np
         import matplotlib
@@ -138,79 +126,105 @@ def main(logfile):
     except ImportError:
         sys.exit("matplotlib / numpy not installed — run: pip install matplotlib numpy")
 
-    fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
-    fig.suptitle(
-        f"Interaction push analysis\n"
-        f"{os.path.basename(logfile)}",
+    # Relative time (0 = first push)
+    t0    = times_abs[0]
+    t_arr = np.array([t - t0 for t in times_abs])
+    r_arr = np.array(rolls)
+    vy_arr = np.array(vys)
+
+    # Force: F_y = m · g · tan(roll)  [N]
+    f_arr = M_LB * G * np.tan(np.radians(r_arr))
+
+    # Acceleration: a_y = d(vy)/dt  [m/s²]  — central differences via np.gradient
+    a_arr = np.gradient(vy_arr, t_arr)
+
+    # ── Figure 1: time-series (3 panels) ─────────────────────────────────────
+    fig1, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
+    fig1.suptitle(
+        f"Interaction push analysis — time series\n{os.path.basename(logfile)}",
         fontsize=11,
     )
 
-    # ── top panel: roll ───────────────────────────────────────────────────────
+    # Panel 1: roll
     ax_r = axes[0]
-    ax_r.plot(times, rolls, color="steelblue", linewidth=1.2, label="roll (deg)")
-    ax_r.axhline(0, color="gray", linestyle="--",
-                 linewidth=0.9, label=f"baseline = {0:.4f}°")
+    ax_r.plot(t_arr, r_arr, color="steelblue", linewidth=1.2, label="roll (°)")
+    ax_r.axhline(0, color="gray", linestyle="--", linewidth=0.9, label="0°")
     ax_r.set_ylabel("Roll (°)")
-    ax_r.set_title("Measured roll — push window")
     ax_r.legend(fontsize=8)
     ax_r.grid(True, alpha=0.35)
 
-    # ── bottom panel: force ───────────────────────────────────────────────────
+    # Panel 2: force
     ax_f = axes[1]
-    ax_f.plot(times, forces, color="crimson", linewidth=1.4,
-              label=r"$-F_y = m_{lb}\,g\,\tan(\Delta\phi)$  [N]")
-    ax_f.axhline(0, color="black", linewidth=0.7, linestyle="-")
-
-    t_arr = np.array(times)
-    f_arr = np.array(forces)
-
-    # Shade positive region (user pushing in −Y)
-    ax_f.fill_between(t_arr, f_arr, 0,
-                      where=f_arr > 0,
-                      alpha=0.18, color="crimson", label="positive push (−Y)")
-    ax_f.fill_between(t_arr, f_arr, 0,
-                      where=f_arr < 0,
-                      alpha=0.18, color="royalblue", label="push (+Y)")
-
+    ax_f.plot(t_arr, f_arr, color="crimson", linewidth=1.4,
+              label=r"$F_y = m_{lb}\,g\,\tan(\phi)$  [N]")
+    ax_f.axhline(0, color="black", linewidth=0.7)
+    ax_f.fill_between(t_arr, f_arr, 0, where=f_arr > 0,
+                      alpha=0.18, color="crimson", label="+F (−Y push)")
+    ax_f.fill_between(t_arr, f_arr, 0, where=f_arr < 0,
+                      alpha=0.18, color="royalblue", label="−F (+Y push)")
     peak_idx = int(np.argmax(np.abs(f_arr)))
-    peak_f   = f_arr[peak_idx]
-    peak_t   = t_arr[peak_idx]
-    y_range  = f_arr.max() - f_arr.min() if f_arr.max() != f_arr.min() else 1.0
-    text_y   = peak_f + 0.15 * y_range * (1 if peak_f >= 0 else -1)
-    ax_f.annotate(
-        f"peak: {peak_f:+.3f} N",
-        xy=(peak_t, peak_f),
-        xytext=(peak_t + 0.05, text_y),
-        arrowprops=dict(arrowstyle="->", color="black", lw=0.8),
-        fontsize=8,
-    )
-
-    ax_f.set_xlabel("Time since first push (s)")
-    ax_f.set_ylabel("Force along −Y  (N)")
-    ax_f.set_title(
-        f"Force along −Y  (m = {M_LB*1000:.0f} g, g = {G} m/s²,  "
-        f"baseline roll = {0:.4f}°)"
-    )
+    peak_f, peak_t = f_arr[peak_idx], t_arr[peak_idx]
+    f_range  = float(f_arr.max() - f_arr.min()) or 1.0
+    text_y   = peak_f + 0.15 * f_range * (1 if peak_f >= 0 else -1)
+    ax_f.annotate(f"peak: {peak_f:+.3f} N",
+                  xy=(peak_t, peak_f), xytext=(peak_t + 0.05, text_y),
+                  arrowprops=dict(arrowstyle="->", color="black", lw=0.8), fontsize=8)
+    ax_f.set_ylabel("Force along Y  (N)")
     ax_f.legend(fontsize=8, loc="lower right")
     ax_f.grid(True, alpha=0.35)
     ax_f.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.3f"))
 
-    plt.tight_layout()
+    # Panel 3: acceleration
+    ax_a = axes[2]
+    ax_a.plot(t_arr, a_arr, color="darkorange", linewidth=1.2,
+              label=r"$a_y = \Delta v_y / \Delta t$  [m/s²]")
+    ax_a.axhline(0, color="black", linewidth=0.7)
+    ax_a.set_xlabel("Time since first push (s)")
+    ax_a.set_ylabel("Acceleration Y  (m/s²)")
+    ax_a.legend(fontsize=8)
+    ax_a.grid(True, alpha=0.35)
 
-    log_p    = Path(logfile)
-    out_path = str(log_p.parent / (log_p.stem + "_force.png"))
+    fig1.tight_layout()
+    log_p     = Path(logfile)
+    out_ts    = str(log_p.parent / (log_p.stem + "_force_time.png"))
+    fig1.savefig(out_ts, dpi=150)
+    print(f"Time-series plot saved → {out_ts}")
 
-    fig.savefig(out_path, dpi=150)
-    print(f"Plot saved → {out_path}")
+    # ── Figure 2: force vs acceleration ──────────────────────────────────────
+    fig2, ax_fa = plt.subplots(figsize=(7, 6))
+    fig2.suptitle(
+        f"Force vs. Acceleration (Y axis)\n{os.path.basename(logfile)}",
+        fontsize=11,
+    )
+
+    sc = ax_fa.scatter(a_arr, f_arr, c=t_arr, cmap="plasma",
+                       s=30, zorder=3, label="samples")
+    cbar = fig2.colorbar(sc, ax=ax_fa)
+    cbar.set_label("Time since push (s)")
+
+    # Connect dots in time order so the trajectory is visible
+    ax_fa.plot(a_arr, f_arr, color="gray", linewidth=0.7, alpha=0.5, zorder=2)
+
+    ax_fa.axhline(0, color="black", linewidth=0.6, linestyle="--")
+    ax_fa.axvline(0, color="black", linewidth=0.6, linestyle="--")
+    ax_fa.set_xlabel(r"$a_y = \Delta v_y / \Delta t$  (m/s²)")
+    ax_fa.set_ylabel(r"$F_y = m_{lb}\,g\,\tan(\phi)$  (N)")
+    ax_fa.set_title("Each dot = one telemetry sample, colour = elapsed time")
+    ax_fa.grid(True, alpha=0.35)
+
+    fig2.tight_layout()
+    out_fa = str(log_p.parent / (log_p.stem + "_force_vs_acc.png"))
+    fig2.savefig(out_fa, dpi=150)
+    print(f"Force-vs-accel plot saved → {out_fa}")
 
     plt.show()
 
 
 if __name__ == "__main__":
     _project_root = Path(__file__).resolve().parents[2]
-    logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-11-12.json')
+    logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-20-50.json')
 
-    logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-16-09.json')
+    # logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-16-09.json')
     main(logfile)
 
 
