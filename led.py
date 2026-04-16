@@ -34,7 +34,7 @@ class LED:
 
     def draw_frame(self):
         for i, color in enumerate(self.leds):
-            self.pixels[i] = int(color)
+            self.pixels[i] = [int(c) for c in color]
         self.pixels.show()
 
     def turn_on(self):
