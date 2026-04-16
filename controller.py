@@ -5,7 +5,7 @@ import json
 import threading
 from typing import Callable
 import math
-
+import random
 import yaml
 import logging
 import numpy as np
@@ -671,7 +671,8 @@ class Controller:
             self.smooth_controller.register_group(
                 name="pointers",
                 initial_values=pointers[0],
-                callback=lambda vals: self.update_led(vals, led_setting)
+                callback=lambda vals: self.update_led(vals, led_setting),
+                always_callback=True
             )
         elif led_setting.get('mode') == 'expression':
             def update_led_cb():
@@ -965,10 +966,10 @@ class Controller:
             self.smooth_controller.register_group(
                 name="pointers",
                 initial_values=pointers[0],
-                callback=lambda vals: self.update_led(vals, led_setting)
+                callback=lambda vals: self.update_led(vals, led_setting),
+                always_callback=True
             )
             logger.info(f"Registered pointers with initial value: {pointers[0]}")
-            self.update_led(pointers[0], led_setting)
         elif led_setting.get('mode') == 'expression':
             def update_led_cb():
                 self.update_led(pointers, led_setting)
@@ -1064,7 +1065,7 @@ class Controller:
             x, y, z = self._get_latest_mocap_frame()["tvec"]
         else:
             x, y, z = 0, 0, 0
-        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math, "x": x, "y": y, "z": z}
+        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math, "x": x, "y": y, "z": z, "random": random}
 
         for j, p in enumerate(pointers):
             context[f"p{j}"] = p
