@@ -24,7 +24,7 @@ class IlluminationLogger(LogManager):
         if self.cf_var_logger is not None:
             self.cf_var_logger.stop()
 
-        self.save_logs(kwargs['log_dir'], kwargs['tag'], kwargs['animation_start_times'], kwargs['animation_stop_times'])
+        self.save_logs(kwargs['log_dir'], kwargs['tag'], kwargs['animation_start_time'], kwargs['animation_stop_time'])
 
     def save_logs(self, log_dir, tag, start_times, end_times):
         if not os.path.exists(log_dir):
