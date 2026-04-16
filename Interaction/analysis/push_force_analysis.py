@@ -266,7 +266,7 @@ if __name__ == "__main__":
     # main(str(_project_root / 'logs' / 'mass_emulation' / 'lb11_translation_2026-04-15_17-55-55.json'), label="170g", show_plot=False)
 
 
-    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-17-31.json'), label="300g", show_plot=True)
+    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_18-19-10.json'), label="300g", show_plot=True)
 
 # ── Example ───────────────────────────────────────────────────────────────────
 # Run from project root:
