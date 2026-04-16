@@ -5,7 +5,7 @@ import json
 import threading
 from typing import Callable
 import math
-
+import random
 import yaml
 import logging
 import numpy as np
@@ -1064,7 +1064,7 @@ class Controller:
             x, y, z = self._get_latest_mocap_frame()["tvec"]
         else:
             x, y, z = 0, 0, 0
-        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math, "x": x, "y": y, "z": z}
+        context = {"t": current_time, "i": 0, "N": self.args.led_count, "math": math, "x": x, "y": y, "z": z, "random": random}
 
         for j, p in enumerate(pointers):
             context[f"p{j}"] = p
