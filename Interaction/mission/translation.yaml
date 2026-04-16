@@ -8,7 +8,7 @@ drones:
 Interaction:
   action: translation
   config:
-    delta_v: 0.01
+    delta_v: 0.05
     z: 1.1
     friction_coefficient: 0
     base_attitude: -1
