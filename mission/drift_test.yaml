@@ -1,0 +1,13 @@
+name: drift_test_with_anchor
+anchor: [0.004, -0.466, 0.207]
+drones:
+  lb7:
+    target: [0.0, 0.0, 1.0, 0.0, 0.0]
+    waypoints: [[0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 30.0]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[0.0, 180.0], [0.0, 180.0]]
+    color: [40, 30, 200]

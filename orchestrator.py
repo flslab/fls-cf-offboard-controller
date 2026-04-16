@@ -47,7 +47,8 @@ class SwarmOrchestrator:
         self.camera_cfg = self.manifest.get('camera_node')
         self.radio_node = self.manifest.get('radio_node')
         self.common_cfg = self.manifest['common']
-        self.mission = self._load_mission()
+        self.missions = self._load_missions()
+        self.mission = self.missions[0] if self.missions else None
 
         # Runtime State
         self.tag = None
@@ -74,9 +75,16 @@ class SwarmOrchestrator:
         with open(MANIFEST_FILE) as f:
             return yaml.safe_load(f)
 
-    def _load_mission(self):
-        with open(os.path.join(self.ctrl_cfg['mission_path'], self.ctrl_cfg['mission_file'])) as f:
-            return yaml.safe_load(f)
+    def _load_missions(self):
+        missions = []
+        files = self.ctrl_cfg.get('mission_files', [])
+        if not files and 'mission_file' in self.ctrl_cfg:
+            files = [self.ctrl_cfg['mission_file']]
+        
+        for file in files:
+            with open(os.path.join(self.ctrl_cfg['mission_path'], file)) as f:
+                missions.append(yaml.safe_load(f))
+        return missions
 
     def _load_previous_downloads(self):
         try:
@@ -445,13 +453,14 @@ class SwarmOrchestrator:
             self.pub_socket.send_json({"cmd": "START"})
 
             if self.manifest['mission']['require_handshake']:
-                self.ready_ids = set()
-                self._wait_for_ready()
-                if not self.args.skip_confirm:
-                    input(">>> All at target. Press ENTER to proceed (Ctrl+C to Abort)...")
-                time.sleep(5)
-                self.logger.info("Broadcasting START...")
-                self.pub_socket.send_json({"cmd": "START"})
+                for i, mission in enumerate(self.missions):
+                    self.ready_ids = set()
+                    self._wait_for_ready()
+                    if not self.args.skip_confirm:
+                        input(f">>> Mission {i+1}/{len(self.missions)}: All at target. Press ENTER to proceed (Ctrl+C to Abort)...")
+                    time.sleep(5)
+                    self.logger.info(f"Broadcasting START for Mission {i+1}...")
+                    self.pub_socket.send_json({"cmd": "START"})
 
             self._monitor_flight()
 

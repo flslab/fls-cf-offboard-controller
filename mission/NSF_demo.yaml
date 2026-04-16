@@ -1,0 +1,100 @@
+name: nsf
+drones:
+  lb1:
+    target: [0.0, -0.267, 1.07, 0.0, 0.0]
+    waypoints: [[0.0, -0.267, 1.07, 0.0, 0.0], [0.0, -0.267, 1.07, 0.0, 14.9583]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[92.0, 274.0], [92.0, 274.0]]
+    pointers: [[3.0, 26.0], [3.0, 26.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255,255,255]) if i < p1 else ([0, 0, 0])"
+  lb2:
+    target: [0.1824, -0.1563, 0.9284, 0.0, 0.0]
+    waypoints: [[0.1824, -0.1563, 0.9284, 0.0, 0.0], [0.1824, -0.1563, 0.9284, 0.0, 14.9583]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[236.0, 270.0], [236.0, 270.0]]
+    pointers: [[0.0, 47.0], [0.0, 47.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255,255,255]) if i < p1 else ([0, 0, 0])"
+  lb3:
+    target: [-0.229, -0.0516, 1.0885, 0.0, 0.0]
+    waypoints: [[-0.229, -0.0516, 1.0885, 0.0, 0.0], [-0.229, -0.0516, 1.0885, 0.0, 14.9583]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[92.0, 360.0], [92.0, 360.0]]
+    pointers: [[11.0, 41.26], [11.0, 41.26]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255,255,255]) if i < p1 else ([0, 0, 0])"
+  lb4:
+    target: [0.3996, 0.0431, 0.9823, 0.0, 0.0]
+    waypoints: [[0.3996, 0.0431, 0.9823, 0.0, 0.0], [0.3996, 0.0431, 0.9823, 0.0, 14.9583]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[88.0, 188.0], [88.0, 188.0]]
+    pointers: [[15.95, 37.0], [15.95, 37.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255,255,255]) if i < p1 else ([0, 0, 0])"
+  lb9:
+    target: [0.0, 0.3118, 0.9947, 0.0, 0.0]
+    waypoints: [[0.0, 0.3118, 0.9947, 0.0, 0.0], [0.0, 0.3118, 0.9947, 0.0, 14.9583]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[179.0, 360.0], [179.0, 360.0]]
+    pointers: [[2.0, 16.0], [2.0, 16.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255,255,255]) if i < p1 else ([0, 0, 0])"
+  lb5:
+    target: [-0.0098, 0.0424, 0.9133, 0.0, 0.0]
+    waypoints: [[-0.0098, 0.0424, 0.9133, 0.0, 0.0], [-0.0098, 0.0424, 0.9133, 0.0, 14.9583]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[4.0, 180], [4.0, 180]]
+    pointers: [[25.0, 40.0], [25.0, 40.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255,255,255]) if i < p1 else ([0, 0, 0])"
+  lb7:
+    target: [0.189, 0.1557, 1.0615, 0.0, 0.0]
+    waypoints: [[0.189, 0.1557, 1.0615, 0.0, 0.0], [0.189, 0.1557, 1.0615, 0.0, 14.9583]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[94.0, 354], [94.0, 354]]
+    pointers: [[3.0, 40.0], [3.0, 40.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255,255,255]) if i < p1 else ([0, 0, 0])"
