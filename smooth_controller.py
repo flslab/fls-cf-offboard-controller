@@ -143,10 +143,10 @@ class SmoothController:
 
                     # If any value in the group changed, trigger the group callback
                     if changed or always_callback:
-                        # try:
-                        group['callback'](list(current_vals))
-                        # except Exception as e:
-                        # print(f"Error in callback for group {name}: {e}")
+                        try:
+                            group['callback'](list(current_vals))
+                        except Exception as e:
+                            print(f"Error in callback for group {name}: {e}")
 
             # Rate limiting
             elapsed_work = time.time() - loop_start
