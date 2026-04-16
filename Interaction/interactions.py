@@ -622,16 +622,14 @@ class InteractionsControl:
 
             elif status == 1:  # pushed by user
                 # interact_vel = (vel / speed) * min((speed - 0.01), 0)
+                if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
+                    logger.info("Ignoring interaction: Direction change > 90 degrees.")
+                    interact_vel = np.array([0.0, 0.0, 0.0])
+                    speed = 0
+                else:
+                    # prev_interact_vel = vel
+                    interact_vel = vel
 
-                # if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
-                #     logger.info("Ignoring interaction: Direction change > 90 degrees.")
-                #     interact_vel = np.array([0.0, 0.0, 0.0])
-                #     speed = 0
-                # else:
-                #     # prev_interact_vel = vel
-                #     interact_vel = vel
-
-                interact_vel = vel
 
                 # a_lb = Δvel/dt  (differentiate mocap velocity → acceleration)
                 # F = m_lb * a_lb,  a_virtual = F / m_virtual = a_lb * mass_ratio
