@@ -42,6 +42,15 @@ class SmoothController:
                 'always_callback': always_callback
             }
 
+    def remove_group(self, name):
+        """
+        Removes a previously registered group.
+        name: Unique identifier for the group.
+        """
+        with self.lock:
+            if name in self.groups:
+                del self.groups[name]
+
     def set_group_values(self, name, target_values, duration=0.0):
         """
         Updates the target values for a group.
@@ -134,10 +143,10 @@ class SmoothController:
 
                     # If any value in the group changed, trigger the group callback
                     if changed or always_callback:
-                        try:
-                            group['callback'](list(current_vals))
-                        except Exception as e:
-                            print(f"Error in callback for group {name}: {e}")
+                        # try:
+                        group['callback'](list(current_vals))
+                        # except Exception as e:
+                        # print(f"Error in callback for group {name}: {e}")
 
             # Rate limiting
             elapsed_work = time.time() - loop_start
