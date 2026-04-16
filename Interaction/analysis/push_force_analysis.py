@@ -133,13 +133,29 @@ def main(logfile):
     vy_arr = np.array(vys)
 
     # Force: F_y = m · g · tan(roll)  [N]
-    f_arr = M_LB * G * np.tan(np.radians(r_arr))
+    f_arr = M_LB * G * np.tan(np.radians(-r_arr))
 
     # Acceleration: a_y = d(vy)/dt  [m/s²]  — central differences via np.gradient
     a_arr = np.gradient(vy_arr, t_arr)
 
-    # ── Figure 1: time-series (3 panels) ─────────────────────────────────────
-    fig1, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
+    # F / a  [kg] — effective inertia; NaN where |a| is too small to be reliable
+    _ACC_MIN = 0.05   # m/s²  — threshold below which ratio is suppressed
+    fa_ratio = np.where(np.abs(a_arr) >= _ACC_MIN, f_arr / a_arr, np.nan)
+
+    # ── Stats ─────────────────────────────────────────────────────────────────
+    print(f"\n  a_y statistics (m/s²):")
+    print(f"    min : {a_arr.min():+.4f}")
+    print(f"    max : {a_arr.max():+.4f}")
+    print(f"    mean: {a_arr.mean():+.4f}")
+    valid = fa_ratio[~np.isnan(fa_ratio)]
+    if valid.size:
+        print(f"\n  F/a statistics (kg, |a|≥{_ACC_MIN} m/s²):")
+        print(f"    min : {valid.min():+.4f}")
+        print(f"    max : {valid.max():+.4f}")
+        print(f"    mean: {valid.mean():+.4f}")
+
+    # ── Figure 1: time-series (4 panels) ─────────────────────────────────────
+    fig1, axes = plt.subplots(4, 1, figsize=(11, 11), sharex=True)
     fig1.suptitle(
         f"Interaction push analysis — time series\n{os.path.basename(logfile)}",
         fontsize=11,
@@ -179,10 +195,29 @@ def main(logfile):
     ax_a.plot(t_arr, a_arr, color="darkorange", linewidth=1.2,
               label=r"$a_y = \Delta v_y / \Delta t$  [m/s²]")
     ax_a.axhline(0, color="black", linewidth=0.7)
-    ax_a.set_xlabel("Time since first push (s)")
     ax_a.set_ylabel("Acceleration Y  (m/s²)")
+    ax_a.annotate(f"min: {a_arr.min():+.3f}  max: {a_arr.max():+.3f} m/s²",
+                  xy=(0.02, 0.05), xycoords="axes fraction", fontsize=8,
+                  color="darkorange")
     ax_a.legend(fontsize=8)
     ax_a.grid(True, alpha=0.35)
+
+    # Panel 4: F / a  (effective inertia)
+    ax_fa_t = axes[3]
+    ax_fa_t.plot(t_arr, fa_ratio, color="purple", linewidth=1.2,
+                 label=r"$F_y / a_y$  [kg]")
+    ax_fa_t.axhline(0, color="black", linewidth=0.7)
+    ax_fa_t.axhline(M_LB, color="gray", linewidth=0.9, linestyle="--",
+                    label=f"drone mass = {M_LB*1000:.0f} g")
+    if valid.size:
+        ax_fa_t.annotate(
+            f"mean: {valid.mean():+.3f} kg   min: {valid.min():+.3f}   max: {valid.max():+.3f}",
+            xy=(0.02, 0.05), xycoords="axes fraction", fontsize=8, color="purple")
+    ax_fa_t.set_xlabel("Time since first push (s)")
+    ax_fa_t.set_ylabel("F / a  (kg)")
+    ax_fa_t.set_title(f"Effective inertia  (NaN where |a| < {_ACC_MIN} m/s²)")
+    ax_fa_t.legend(fontsize=8)
+    ax_fa_t.grid(True, alpha=0.35)
 
     fig1.tight_layout()
     log_p     = Path(logfile)
@@ -222,9 +257,9 @@ def main(logfile):
 
 if __name__ == "__main__":
     _project_root = Path(__file__).resolve().parents[2]
-    logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-20-50.json')
-
-    # logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-16-09.json')
+    # logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-33-21.json')  # 300g
+    #
+    logfile = str(_project_root / 'logs' / 'lb11_translation_2026-04-15_17-32-21.json') # 170g
     main(logfile)
 
 
