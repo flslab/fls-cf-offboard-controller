@@ -539,11 +539,27 @@ class InteractionsControl:
                 return True
             return False
 
-        def calculate_braking_angles(v_x, v_y, base_att=base_attitude):
-            pitch = np.sign(v_x) * base_att
-            roll = -np.sign(v_y) * base_att
-            pitch = max(min(pitch, 20), -20)
-            roll = max(min(roll, 20), -20)
+        _G = 9.81  # m/s²
+
+        def calculate_braking_angles(dv_x, dv_y):
+            """Compute pitch/roll so the drone generates a reaction force that
+            matches the force the user exerted this control tick.
+
+            Known thrust ≈ m_lb * g (hover).  The horizontal component needed
+            to oppose F_user on the virtual mass is:
+
+              F_user  = m_lb * dv_lb / dt          (measured momentum change)
+              angle   = arctan(F_user / (m_virtual * g))
+                      = arctan(dv_lb * mass_ratio / (g * dt))
+
+            Sign convention (Crazyflie):
+              +pitch tilts nose up  → force in +X
+              +roll  tilts left     → force in −Y
+            """
+            pitch = np.degrees(np.arctan2( dv_x * mass_ratio, _G * dt))
+            roll  = np.degrees(np.arctan2(-dv_y * mass_ratio, _G * dt))
+            pitch = max(min(pitch, 20.0), -20.0)
+            roll  = max(min(roll,  20.0), -20.0)
             return pitch, roll
 
         while True:
@@ -616,7 +632,8 @@ class InteractionsControl:
 
                 # a_lb = Δvel/dt  (differentiate mocap velocity → acceleration)
                 # F = m_lb * a_lb,  a_virtual = F / m_virtual = a_lb * mass_ratio
-                v_virtual += (interact_vel - prev_interact_vel) * mass_ratio
+                dv_lb = interact_vel - prev_interact_vel
+                v_virtual += dv_lb * mass_ratio
                 prev_interact_vel = interact_vel.copy()
                 target_pos = pos + v_virtual * dt * v_scalar
 
@@ -668,7 +685,7 @@ class InteractionsControl:
                         "Pos": [round(x, 3) for x in pos],
                     }
                     self._log_event("User Pushing", log_data)
-                    target_pitch, target_roll = calculate_braking_angles(*interact_vel[:2])
+                    target_pitch, target_roll = base_attitude * calculate_braking_angles(*dv_lb[:2])
                     self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
 
             elif status == 2:  # coasting
@@ -1044,7 +1061,7 @@ class InteractionsControl:
                     })
                     self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
                 else:
-                    target_pitch, target_roll = calculate_braking_angles(*interact_vel[:2])
+                    target_pitch, target_roll = base_attitude * calculate_braking_angles(*interact_vel[:2])
                     self._log_event("User Pushing", {
                         "leader_id": drone_id,
                         "speed": round(speed, 3),
@@ -1171,7 +1188,7 @@ class InteractionsControl:
                 if base_attitude < 0:
                     self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
                 else:
-                    target_pitch, target_roll = calculate_braking_angles(*remote_vel[:2])
+                    target_pitch, target_roll = base_attitude * calculate_braking_angles(*remote_vel[:2])
                     self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
 
             elif remote_status == 2 and not coasting_triggered:

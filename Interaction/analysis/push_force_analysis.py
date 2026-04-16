@@ -68,25 +68,61 @@ def find_event_time(entries, name: str) -> float | None:
 
 def extract_window(entries, t_start: float, t_end: float):
     """
-    Return (times, rolls, vy_list) for all VEL_ORI state entries whose
-    timestamp falls in [t_start, t_end].
+    Return (times, rolls, vy_list) where:
+      - times / vys come from 'frames' entries (vel[1] = Y velocity).
+      - rolls come from 'state' / VEL_ORI entries, linearly interpolated
+        onto each frame timestamp (constant-rate assumption between samples).
     """
-    times = []
-    rolls = []
-    vys   = []
+    # ── roll series from VEL_ORI state entries ────────────────────────────────
+    roll_times: list[float] = []
+    roll_vals:  list[float] = []
     for e in entries:
         if e.get("type") != "state" or e.get("group") != "VEL_ORI":
             continue
         t    = e["data"]["time"]
         roll = e["data"].get("stateEstimate.roll")
-        vy   = e["data"].get("stateEstimate.vy")
-        if roll is None or vy is None:
+        if roll is None:
             continue
         if t_start <= t <= t_end:
-            times.append(t)
-            rolls.append(roll)
-            vys.append(vy)
-    return times, rolls, vys
+            roll_times.append(t)
+            roll_vals.append(roll)
+
+    # ── vy series from frames entries ─────────────────────────────────────────
+    frame_times: list[float] = []
+    vys:         list[float] = []
+    for e in entries:
+        if e.get("type") != "frames":
+            continue
+        t   = e["data"]["time"]
+        vel = e["data"].get("vel")
+        if vel is None or len(vel) < 2:
+            continue
+        if t_start <= t <= t_end:
+            frame_times.append(t)
+            vys.append(vel[1])
+
+    if not roll_times or not frame_times:
+        return [], [], []
+
+    # ── interpolate roll onto frame timestamps (linear / fixed rate) ──────────
+    def lerp_roll(t: float) -> float:
+        if t <= roll_times[0]:
+            return roll_vals[0]
+        if t >= roll_times[-1]:
+            return roll_vals[-1]
+        lo, hi = 0, len(roll_times) - 1
+        while lo + 1 < hi:
+            mid = (lo + hi) // 2
+            if roll_times[mid] <= t:
+                lo = mid
+            else:
+                hi = mid
+        t0, t1 = roll_times[lo], roll_times[hi]
+        alpha = (t - t0) / (t1 - t0) if t1 != t0 else 0.0
+        return roll_vals[lo] + alpha * (roll_vals[hi] - roll_vals[lo])
+
+    rolls = [lerp_roll(t) for t in frame_times]
+    return frame_times, rolls, vys
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -113,7 +149,7 @@ def main(logfile, label=None, show_plot=False):
     times_abs, rolls, vys = extract_window(entries, t_push, t_disengage)
 
     if not times_abs:
-        sys.exit("ERROR: no VEL_ORI state entries found in the push window")
+        sys.exit("ERROR: no frames / VEL_ORI entries found in the push window")
 
     print(f"  Samples in window: {len(rolls)}")
 
@@ -123,8 +159,9 @@ def main(logfile, label=None, show_plot=False):
         matplotlib.use("macosx")
         import matplotlib.pyplot as plt
         import matplotlib.ticker as ticker
+        from scipy import signal as sp_signal
     except ImportError:
-        sys.exit("matplotlib / numpy not installed — run: pip install matplotlib numpy")
+        sys.exit("matplotlib / numpy / scipy not installed — run: pip install matplotlib numpy scipy")
 
     # Relative time (0 = first push)
     t0    = times_abs[0]
@@ -140,10 +177,36 @@ def main(logfile, label=None, show_plot=False):
 
     # F / a  [kg] — effective inertia; NaN where |a| is too small to be reliable
     _ACC_MIN = 0.1  # m/s²  — threshold below which ratio is suppressed
-    fa_ratio = np.where(a_arr >= _ACC_MIN, f_arr / a_arr, np.nan)
-    # fa_ratio = np.where(np.abs(a_arr) >= _ACC_MIN, f_arr / a_arr, np.nan)
+    fa_ratio = np.where(np.abs(a_arr) >= _ACC_MIN, f_arr / a_arr, np.nan)
 
-    # fa_ratio = np.where(f_arr >= 0 and a_arr , f_arr / a_arr, np.nan)
+    # ── Low-pass filter (zero-phase Butterworth) ──────────────────────────────
+    _CUTOFF_HZ = 2.0   # steady-state cutoff  [Hz]
+    _FILT_ORDER = 4
+    _fs = 1.0 / float(np.mean(np.diff(t_arr)))   # estimated sample rate  [Hz]
+    _nyq = _fs / 2.0
+    if _CUTOFF_HZ >= _nyq:
+        # cutoff above Nyquist — skip filtering (shouldn't happen normally)
+        f_filt = f_arr.copy()
+        a_filt = a_arr.copy()
+    else:
+        b_lp, a_lp = sp_signal.butter(_FILT_ORDER, _CUTOFF_HZ / _nyq, btype="low")
+        f_filt = sp_signal.filtfilt(b_lp, a_lp, f_arr)
+        a_filt = sp_signal.filtfilt(b_lp, a_lp, a_arr)
+
+    # ── OLS regression: Fy = m_eff · ay + bias  (positive quadrant only) ──────
+    pos_mask = (a_filt > 0) & (f_filt > 0)
+    a_pos = a_filt[pos_mask]
+    f_pos = f_filt[pos_mask]
+    if a_pos.size < 2:
+        m_eff, ols_bias, r_sq = float("nan"), float("nan"), float("nan")
+    else:
+        A_mat = np.column_stack([a_pos, np.ones_like(a_pos)])
+        (m_eff, ols_bias), *_ = np.linalg.lstsq(A_mat, f_pos, rcond=None)
+        f_pred = m_eff * a_pos + ols_bias
+        ss_res = float(np.sum((f_pos - f_pred) ** 2))
+        ss_tot = float(np.sum((f_pos - f_pos.mean()) ** 2))
+        r_sq   = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+
     # ── Stats ─────────────────────────────────────────────────────────────────
     print(f"\n  a_y statistics (m/s²):")
     print(f"    min : {a_arr.min():+.4f}")
@@ -155,11 +218,15 @@ def main(logfile, label=None, show_plot=False):
         print(f"    min : {valid.min():+.4f}")
         print(f"    max : {valid.max():+.4f}")
         print(f"    mean: {valid.mean():+.4f}")
+    print(f"\n  OLS regression  Fy = m_eff·ay + bias  (filtered, {_CUTOFF_HZ} Hz LP):")
+    print(f"    m_eff (effective mass) : {m_eff:+.4f} kg")
+    print(f"    bias (intercept)       : {ols_bias:+.4f} N")
+    print(f"    R²                     : {r_sq:.4f}")
 
     # ── Figure 1: time-series (4 panels) ─────────────────────────────────────
     fig1, axes = plt.subplots(4, 1, figsize=(11, 11), sharex=True)
     fig1.suptitle(
-        f"Interaction push analysis — time series\n{os.path.basename(logfile)}",
+        f"Interaction push analysis — time series\n{label} g",
         fontsize=11,
     )
 
@@ -168,10 +235,6 @@ def main(logfile, label=None, show_plot=False):
     ax_r.plot(t_arr, r_arr, color="steelblue", linewidth=1.2, label="roll (°)")
     ax_r.axhline(0, color="gray", linestyle="--", linewidth=0.9, label="0°")
     ax_r.set_ylabel("Roll (°)")
-    ax_r.legend(fontsize=8)
-    ax_r.grid(True, alpha=0.35)
-
-    # Panel 2: force
     ax_f = axes[1]
     ax_f.plot(t_arr, f_arr, color="crimson", linewidth=1.4,
               label=r"$F_y = m_{lb}\,g\,\tan(\phi)$  [N]")
@@ -230,26 +293,46 @@ def main(logfile, label=None, show_plot=False):
         fig1.savefig(out_ts, dpi=150)
         print(f"Time-series plot saved → {out_ts}")
 
-    # ── Figure 2: force vs acceleration ──────────────────────────────────────
-    fig2, ax_fa = plt.subplots(figsize=(7, 6))
+    # ── Figure 2: force vs acceleration  (positive quadrant, filtered + OLS) ──
+    fig2, ax_fa = plt.subplots(figsize=(8, 6))
     fig2.suptitle(
-        f"Force vs. Acceleration (Y axis)\n{os.path.basename(logfile)}",
+        f"Force vs. Acceleration (Y axis, ay > 0 & Fy > 0)\n{label} g",
         fontsize=11,
     )
 
-    sc = ax_fa.scatter(a_arr, f_arr, c=t_arr, cmap="plasma",
-                       s=30, zorder=3, label="samples")
+    # Raw telemetry — positive quadrant only, faint scatter coloured by time
+    raw_mask = (a_arr > 0) & (f_arr > 0)
+    t_raw_pos = t_arr[raw_mask]
+    sc = ax_fa.scatter(a_arr[raw_mask], f_arr[raw_mask], c=t_raw_pos,
+                       cmap="plasma", s=18, alpha=0.35, zorder=2,
+                       label="raw samples (ay>0, Fy>0)")
     cbar = fig2.colorbar(sc, ax=ax_fa)
     cbar.set_label("Time since push (s)")
 
-    # Connect dots in time order so the trajectory is visible
-    ax_fa.plot(a_arr, f_arr, color="gray", linewidth=0.7, alpha=0.5, zorder=2)
+    # Filtered steady-state trajectory — positive quadrant only
+    ax_fa.scatter(a_pos, f_pos, color="steelblue", s=22, alpha=0.7, zorder=3,
+                  label=f"filtered ({_CUTOFF_HZ} Hz LP, order {_FILT_ORDER})")
+    ax_fa.plot(a_pos, f_pos, color="steelblue", linewidth=1.2,
+               alpha=0.5, zorder=3)
 
-    ax_fa.axhline(0, color="black", linewidth=0.6, linestyle="--")
-    ax_fa.axvline(0, color="black", linewidth=0.6, linestyle="--")
-    ax_fa.set_xlabel(r"$a_y = \Delta v_y / \Delta t$  (m/s²)")
+    # OLS regression line spanning the positive a_y range
+    if not np.isnan(m_eff) and a_pos.size >= 2:
+        _a_span = np.linspace(0.0, float(a_pos.max()), 200)
+        _f_span = m_eff * _a_span + ols_bias
+        ax_fa.plot(_a_span, _f_span, color="crimson", linewidth=2.0,
+                   linestyle="--", zorder=4,
+                   label=(rf"OLS: $F_y = {m_eff:+.3f}\,a_y {ols_bias:+.3f}$"
+                          f"\n$R^2={r_sq:.3f}$"))
+
+    ax_fa.set_xlim(0, 3.5)
+    ax_fa.set_ylim(0, 0.5)
+    ax_fa.set_xlabel(r"$a_y$  (m/s²)")
     ax_fa.set_ylabel(r"$F_y = m_{lb}\,g\,\tan(\phi)$  (N)")
-    ax_fa.set_title("Each dot = one telemetry sample, colour = elapsed time")
+    ax_fa.set_title(
+        f"Effective mass: {m_eff:+.3f} kg   bias: {ols_bias:+.3f} N   "
+        f"$R^2$={r_sq:.3f}"
+    )
+    ax_fa.legend(fontsize=8, loc="best")
     ax_fa.grid(True, alpha=0.35)
 
     fig2.tight_layout()
@@ -265,7 +348,9 @@ def main(logfile, label=None, show_plot=False):
 if __name__ == "__main__":
     _project_root = Path(__file__).resolve().parents[2]
 
+    main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-57-39.json'), label="170", show_plot=False)
     main(str(_project_root / 'logs' / 'lb11_translation_2026-04-15_19-54-39.json'), label="300", show_plot=False)
+
 
 # ── Example ───────────────────────────────────────────────────────────────────
 # Run from project root:
