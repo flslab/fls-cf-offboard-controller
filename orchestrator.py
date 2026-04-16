@@ -164,10 +164,10 @@ class SwarmOrchestrator:
             f"--led --led-count {led_count} " if led_count > 0 and not self.args.radio else " ",
             f"--servo --servo-type {drone.get('type', 'H')} --servo-count {servo_count} " if servo_count > 0 and not self.args.radio else " ",
             f"--takeoff-altitude {alt} "
-            "--smooth-controller-rate 50 "
+            "--smooth-controller-rate 100 "
             "--log "
             f"{droneless_arg} "
-            # "--cf-log-period 10 "
+            "--cf-log-period 10 "
             # "--skip-takeoff --skip-landing "
             f"> drone_{drone['id']}.log 2>&1 < /dev/null &",
         ]
