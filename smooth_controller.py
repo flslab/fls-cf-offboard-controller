@@ -15,7 +15,7 @@ class SmoothController:
         self.worker_thread = threading.Thread(target=self._update_loop, daemon=True)
         self.worker_thread.start()
 
-    def register_group(self, name, initial_values, callback, ranges=None, offsets=None):
+    def register_group(self, name, initial_values, callback, ranges=None, offsets=None, always_callback=False):
         """
         Registers a group of variables.
         name: Unique identifier for the group.
@@ -38,7 +38,8 @@ class SmoothController:
                 'durations': [0.0] * n,
                 'callback': callback,
                 'ranges': ranges,
-                'offsets': offsets
+                'offsets': offsets,
+                'always_callback': always_callback
             }
 
     def set_group_values(self, name, target_values, duration=0.0):
@@ -104,6 +105,7 @@ class SmoothController:
                     targets = group['targets']
                     starts = group['starts']
                     ranges = group['ranges']
+                    always_callback = group['always_callback']
 
                     for i in range(len(current_vals)):
                         # If we haven't reached target, calculate new value
@@ -131,7 +133,7 @@ class SmoothController:
                                 changed = True
 
                     # If any value in the group changed, trigger the group callback
-                    if changed:
+                    if changed or always_callback:
                         try:
                             group['callback'](list(current_vals))
                         except Exception as e:
