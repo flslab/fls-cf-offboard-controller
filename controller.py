@@ -122,6 +122,7 @@ class Controller:
         self.commander = None
         self.manifest = None
         self.mission = None
+        self.missions = []
         self.min_voltage = self.cfg.MIN_LIHV_VOLT * 2
 
         self.mocap = None
@@ -138,8 +139,8 @@ class Controller:
         self.battery_critical = Event()
         self.mission_start_time = 0
         self.mission_duration = 0
-        self.animation_start_time = 0
-        self.animation_stop_time = 0
+        self.animation_start_times = []
+        self.animation_stop_times = []
         self.smooth_controller = None
 
         self.flying = False
@@ -229,8 +230,8 @@ class Controller:
             self.log_manager.stop(
                 log_dir=self.args.log_dir,
                 tag=self.args.tag,
-                animation_start_time=self.animation_start_time,
-                animation_stop_time=self.animation_stop_time
+                animation_start_time=self.animation_start_times,
+                animation_stop_time=self.animation_stop_times
             )
 
         if self.tracker:
@@ -262,21 +263,26 @@ class Controller:
 
         ip = self.manifest['controller']['ip']
         port = self.manifest['controller']['http_port']
-        filename = self.manifest['controller']['mission_file']
-        url = f"http://{ip}:{port}/{filename}"
+        files = self.manifest['controller'].get('mission_files', [])
+        if not files and 'mission_file' in self.manifest['controller']:
+            files = [self.manifest['controller']['mission_file']]
 
-        logger.info(f"  > Requesting: {url}")
+        self.missions = []
+        for filename in files:
+            url = f"http://{ip}:{port}/{filename}"
+            logger.info(f"  > Requesting: {url}")
 
-        try:
-            with urllib.request.urlopen(url) as response:
-                data = response.read().decode('utf-8')
-                self.mission = yaml.safe_load(data)
+            try:
+                with urllib.request.urlopen(url) as response:
+                    data = response.read().decode('utf-8')
+                    self.missions.append(yaml.safe_load(data))
+                logger.info(f"  > Download successful: {filename}")
 
-            logger.info(f"  > Download successful: {filename}")
-
-        except urllib.error.URLError as e:
-            logger.error(f"  > HTTP Error: {e}")
-            raise
+            except urllib.error.URLError as e:
+                logger.error(f"  > HTTP Error: {e}")
+                raise
+                
+        self.mission = self.missions[0]
 
     def check_deck(self):
         if not self.args.check_deck:
@@ -665,7 +671,7 @@ class Controller:
         if self.manifest['mission']['require_handshake']:
             self.handshake()
 
-        self.animation_start_time = time.time()
+        self.animation_start_times.append(time.time())
 
         if len(pointers):
             self.smooth_controller.register_group(
@@ -820,7 +826,7 @@ class Controller:
             if interact_sub is not None:
                 interact_sub.close()
 
-        self.animation_stop_time = time.time()
+        self.animation_stop_times.append(time.time())
 
         if not len(pointers) and led_setting.get('mode') == 'expression':
             self.smooth_controller.remove_update_callback(update_led_cb)
@@ -912,8 +918,14 @@ class Controller:
         finally:
             self.cf.commander.send_notify_setpoint_stop()
 
-    def orchestrated_mission(self):
-        mission_setting = self.mission['drones'][self.args.drone_id]
+    def run_multiple_orchestrated_missions(self):
+        for i in range(self.missions):
+            self.orchestrated_mission(i)
+            
+
+    def orchestrated_mission(self, mission_index):
+        mission = self.missions[mission_index]
+        mission_setting = mission['drones'][self.args.drone_id]
         target = mission_setting['target']
         waypoints = mission_setting.get('waypoints', [])
         position_offset = mission_setting.get('position_offset', None)
@@ -942,9 +954,10 @@ class Controller:
         x, y, z, yaw, _ = target
 
         dt = 3
-        if self.init_coord:
-            xi, yi, _ = self.init_coord
-            dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
+        current_coord = self._get_latest_mocap_frame()["tvec"]
+        if current_coord:
+            xi, yi, zi = current_coord
+            dist = ((xi - x) ** 2 + (yi - y) ** 2 + (zi - z) ** 2) ** 0.5
             dt = 6 * dist
 
         if len(angles):
@@ -960,19 +973,19 @@ class Controller:
         if self.manifest['mission']['require_handshake']:
             self.handshake()
 
-        self.animation_start_time = time.time()
+        self.animation_start_times.append(time.time())
 
         if len(pointers):
             self.smooth_controller.register_group(
                 name="pointers",
                 initial_values=pointers[0],
-                callback=lambda vals: self.update_led(vals, led_setting),
+                callback=lambda vals: self.update_led(vals, led_setting, mission_index),
                 always_callback=True
             )
             logger.info(f"Registered pointers with initial value: {pointers[0]}")
         elif led_setting.get('mode') == 'expression':
             def update_led_cb():
-                self.update_led(pointers, led_setting)
+                self.update_led(pointers, led_setting, mission_index)
             self.smooth_controller.add_update_callback(update_led_cb)
         elif led_color is not None:
             self.led.show_single_color(led_color)
@@ -989,7 +1002,7 @@ class Controller:
                     self._safe_sleep(delta_t)
                     self.mocap.unsubscribe_object(leader_obj_name)
                 elif self.args.vicon_mode == "pointcloud":
-                    leader_target_pos = self.mission['drones'][leader_id]['target'][:3]
+                    leader_target_pos = self.missions[mission_index]['drones'][leader_id]['target'][:3]
                     self.mocap.subscribe_point(leader_target_pos,
                                                lambda frame: self._follow_with_offset(frame, follow['offset']),
                                                name=leader_id)
@@ -1012,16 +1025,16 @@ class Controller:
             if len(waypoints[0]) == 4:
                 for w in waypoints:
                     w.append(delta_t)
-            self.run_control_loop(waypoints, angles, pointers, params, delta_t, iterations)
+            self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations)
 
-        self.animation_stop_time = time.time()
+        self.animation_stop_times.append(time.time())
 
         if not len(pointers) and led_setting.get('mode') == 'expression':
             self.smooth_controller.remove_update_callback(update_led_cb)
 
         self.led.clear()
 
-    def run_control_loop(self, waypoints, angles, pointers, params, delta_t, iterations=1):
+    def run_control_loop(self, mission_index, waypoints, angles, pointers, params, delta_t, iterations):
         elapsed_time = 0.0
         num_steps = max(len(waypoints), len(angles), len(pointers))
         if num_steps == 1:
@@ -1031,7 +1044,7 @@ class Controller:
         for _ in range(iterations):
             if iterations > 1:
                 self.smooth_controller.set_group_values("pointers", pointers[0], duration=0)
-                sleep_duration = self.animation_start_time + elapsed_time + 0.1 - time.time()
+                sleep_duration = self.animation_start_times[mission_index] + elapsed_time + 0.1 - time.time()
                 elapsed_time += 0.1
                 self._safe_sleep(sleep_duration)
 
@@ -1047,7 +1060,7 @@ class Controller:
                 if i < len(pointers):
                     self.smooth_controller.set_group_values("pointers", pointers[i], duration=duration)
 
-                target_time = self.animation_start_time + elapsed_time + duration
+                target_time = self.animation_start_times[mission_index] + elapsed_time + duration
                 sleep_duration = target_time - time.time()
                 elapsed_time += duration
                 # If we are ahead of schedule, sleep the difference
@@ -1057,10 +1070,10 @@ class Controller:
                     # If sleep_duration is negative, we are lagging behind!
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
 
-    def update_led(self, pointers, led_setting):
+    def update_led(self, pointers, led_setting, mission_index=0):
         formula_str = led_setting["formula"]
         led_buffer = []
-        current_time = time.time() - self.animation_start_time
+        current_time = time.time() - self.animation_start_times[mission_index]
         if self.mocap:
             x, y, z = self._get_latest_mocap_frame()["tvec"]
         else:
