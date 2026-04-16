@@ -240,7 +240,7 @@ def main(logfile, show_plot=False):
     fa_ratio = np.where(a_mag >= _ACC_MIN, f_arr / a_mag, np.nan)
 
     # ── Low-pass filter on components (zero-phase Butterworth) ───────────────
-    _CUTOFF_HZ  = 20.0
+    _CUTOFF_HZ  = 5.0
     _FILT_ORDER = 4
     _fs  = 1.0 / float(np.mean(np.diff(t_arr)))
     _nyq = _fs / 2.0
