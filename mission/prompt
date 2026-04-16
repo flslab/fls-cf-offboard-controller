@@ -1,7 +1,0 @@
-I want to build a Blender plugin that enables animating a swarm of my custom designed drone with light elements.
-
-light element description: the light element consists of two rods connected at their end points to a rotation axes. the rotation axis is horizontal along the x axis, and the rods are perpendicular to the rotation axis. the rods can rotate like clock hands. two angles define the rotation of the rods relative to the right side of the horizontal line perpendicular at the rotation axis in the clockwise direction. for example 3 o'clock is 0 degrees, 6 o'clock is 90 degrees, 9 o'clock is 180 degrees, etc. There are two types of such light elemetns, in type A rod_1 rotates from 0 to 180, and rod_2 rotates from 180 to 360. In type B, rod_1 rotates from 90 to 270, and rod_2 rotates from 270 to 450.
-
-The rods have leds lights on them. rod_1 has 26 leds arranged on a strip extending from the endpoint to the rotation center, the 26th led is aligned with the rotation center. rob_2 has 24 leds extending from center to its end point.
-
-The Blender plugin enables the user to import these light elements into the scene and then they can animate the position, yaw (rotation about the z-axis), and angles of the servos. Then the plugin exports the flight path waypoints as in [[x,y,z,yaw]] and servo angles as in [[rod_1,rod_2], ...] given a frame rate which determines the time interval between the waypoints. The leds are also controllable using evaluating python expressions as a function of time, i, and N.
