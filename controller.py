@@ -772,7 +772,7 @@ class Controller:
                                                name=follow['id'])
 
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                     self.args.smooth_controller_rate, leader_info=follow, execute=execution)
+                                     self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow, execute=execution)
             IC.run()
             self.mocap.unsubscribe_point(leader_id)
             self.cf.commander.send_notify_setpoint_stop()
@@ -805,7 +805,7 @@ class Controller:
                 time.sleep(0.5)  # allow I-LB subscribers to connect before first publish
 
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                     self.args.smooth_controller_rate,
+                                     self.args.smooth_controller_rate, drone_id=self.args.drone_id,
                                      pub_socket=interact_pub, sub_socket=interact_sub,
                                      execute=execution)
             IC.run()
@@ -894,7 +894,7 @@ class Controller:
                         IC = InteractionsControl(
                             self.cf, self._safe_sleep,
                             self.log_manager, self.mission,
-                            self.args.smooth_controller_rate
+                            self.args.smooth_controller_rate, drone_id=self.args.drone_id,
                         )
                         IC.run_recap(file_path)
             elif self.mission.get('Interaction', {}).get('action') == 'peer_latency_test':
@@ -936,7 +936,7 @@ class Controller:
                                                        name=follow['id'])
 
                     IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                             self.args.smooth_controller_rate, leader_info=follow)
+                                             self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow)
                     IC.run()
 
         except Exception as e:
