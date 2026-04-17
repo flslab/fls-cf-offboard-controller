@@ -48,7 +48,7 @@ Interaction:
   action: translation
   config:
     delta_v: 0.1
-    z: None
+    z: null
     friction_coefficient: 0
     base_attitude: -1
     duration: 60
