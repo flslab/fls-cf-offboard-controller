@@ -209,6 +209,10 @@ class SwarmOrchestrator:
         else:
             p = drone['init_pos']
             mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
+            
+        viewpoint_arg = f"--viewpoint {drone['viewpoint'][0]} {drone['viewpoint'][1]} {drone['viewpoint'][2]} " if 'viewpoint' in drone else ""
+        anchor_arg = f"--anchor {drone['anchor'][0]} {drone['anchor'][1]} {drone['anchor'][2]} " if 'anchor' in drone else ""
+        
         cmd = [
             f"cd {self.common_cfg['work_dir']} && ",
             f"source {self.common_cfg['venv_path']}/bin/activate && ",
@@ -216,6 +220,8 @@ class SwarmOrchestrator:
             f"nohup python3 {DRONE_SCRIPT} ",
             f"--illumination --orchestrated --tag {self.tag} ",
             "--ground-test " if self.args.ground else f"--vicon {mocap_args} ",
+            f"{viewpoint_arg}",
+            f"{anchor_arg}",
             f"--drone-id {drone['id']} ",
             f"--led --led-brightness 0.25 --led-count {led_count} " if led_count > 0 else " ",
             f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
@@ -236,6 +242,10 @@ class SwarmOrchestrator:
         else:
             p = drone['init_pos']
             mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
+            
+        viewpoint_arg = f"--viewpoint {drone['viewpoint'][0]} {drone['viewpoint'][1]} {drone['viewpoint'][2]} " if 'viewpoint' in drone else ""
+        anchor_arg = f"--anchor {drone['anchor'][0]} {drone['anchor'][1]} {drone['anchor'][2]} " if 'anchor' in drone else ""
+        
         cmd = [
             f"cd {self.common_cfg['work_dir']} && ",
             f"source {self.common_cfg['venv_path']}/bin/activate && ",
@@ -243,6 +253,8 @@ class SwarmOrchestrator:
             f"nohup python3 {DRONE_SCRIPT} ",
             f"--illumination --morphing --orchestrated --tag {self.tag} ",
             "--ground-test " if self.args.ground else f"--vicon {mocap_args} ",
+            f"{viewpoint_arg}",
+            f"{anchor_arg}",
             f"--drone-id {drone['id']} ",
             f"--led --led-count {led_count} " if led_count > 0 else " ",
             f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",

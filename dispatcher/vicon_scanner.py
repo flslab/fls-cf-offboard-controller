@@ -210,7 +210,7 @@ def sort_and_match(vicon_points: list, manifest_drones: list) -> list:
         manifest_drones: List of drone config dicts from swarm_manifest.yaml.
 
     Returns:
-        List of dicts: [{id, vicon_pos, manifest_pos}, ...] matched by minimum Euclidean distance.
+        Tuple of (assignment, outliers) where assignment is a list of dicts: [{id, vicon_pos, manifest_pos}, ...] matched by minimum Euclidean distance.
     """
     import numpy as np
     
@@ -257,4 +257,4 @@ def sort_and_match(vicon_points: list, manifest_drones: list) -> list:
         for idx, o in enumerate(outliers):
             print(f"[Dispatcher] Outlier Marker {idx+1} Position: [{o[0]:.3f}, {o[1]:.3f}, {o[2]:.3f}]")
 
-    return assignment
+    return assignment, outliers

@@ -5,23 +5,73 @@ import logging
 logger = logging.getLogger(__name__)
 
 class DispatcherUI(tk.Tk):
-    def __init__(self, assignments, mission):
+    def __init__(self, assignments, outliers, mission):
         super().__init__()
         self.title("Swarm Dispatcher")
-        self.geometry("800x800")
+        self.geometry("1100x800")
         self.configure(bg="#1E1E1E")
         self.confirmed = False
         
         self.assignments = assignments
+        self.outliers = outliers or []
         self.mission = mission
+        
+        self.viewpoint_var = tk.IntVar(value=-1)
+        self.anchor_var = tk.IntVar(value=-1)
         
         # Header label
         header = tk.Label(self, text="Automated Swarm Dispatcher\nClick a drone, then another to swap ID assignments.",
                           bg="#1E1E1E", fg="#FFFFFF", font=("Arial", 14, "bold"))
         header.pack(pady=10)
 
-        self.canvas = tk.Canvas(self, bg="#1E1E1E", highlightthickness=0)
-        self.canvas.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        main_frame = tk.Frame(self, bg="#1E1E1E")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.canvas = tk.Canvas(main_frame, bg="#1E1E1E", highlightthickness=0)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(20, 10), pady=10)
+
+        if self.outliers:
+            sidebar = tk.Frame(main_frame, bg="#2A2A2A", width=300)
+            sidebar.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 20), pady=10)
+            
+            lbl_outliers = tk.Label(sidebar, text="Unassigned Markers\n(Viewpoint / Anchor)", 
+                                    bg="#2A2A2A", fg="#FFFFFF", font=("Arial", 12, "bold"))
+            lbl_outliers.pack(pady=(10, 5))
+
+            hdr_frame = tk.Frame(sidebar, bg="#2A2A2A")
+            hdr_frame.pack(fill=tk.X, padx=5, pady=5)
+            tk.Label(hdr_frame, text="Coordinates", bg="#2A2A2A", fg="#AAAAAA", width=15).pack(side=tk.LEFT)
+            tk.Label(hdr_frame, text="View ", bg="#2A2A2A", fg="#AAAAAA", width=5).pack(side=tk.LEFT)
+            tk.Label(hdr_frame, text="Anchor", bg="#2A2A2A", fg="#AAAAAA", width=5).pack(side=tk.LEFT)
+
+            def on_vp_select():
+                v = self.viewpoint_var.get()
+                if v != -1 and self.anchor_var.get() == v:
+                    self.anchor_var.set(-1)
+
+            def on_an_select():
+                a = self.anchor_var.get()
+                if a != -1 and self.viewpoint_var.get() == a:
+                    self.viewpoint_var.set(-1)
+
+            for i, p in enumerate(self.outliers):
+                row_frame = tk.Frame(sidebar, bg="#2A2A2A")
+                row_frame.pack(fill=tk.X, padx=5, pady=2)
+                
+                coords = f"[{p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f}]"
+                tk.Label(row_frame, text=coords, bg="#2A2A2A", fg="#FFFFFF", width=15).pack(side=tk.LEFT)
+                
+                # using a label context instead of radio string so it aligns with header columns
+                vp_radio = tk.Radiobutton(row_frame, variable=self.viewpoint_var, value=i, bg="#2A2A2A", activebackground="#2A2A2A", command=on_vp_select)
+                vp_radio.pack(side=tk.LEFT, padx=(5, 10))
+
+                an_radio = tk.Radiobutton(row_frame, variable=self.anchor_var, value=i, bg="#2A2A2A", activebackground="#2A2A2A", command=on_an_select)
+                an_radio.pack(side=tk.LEFT, padx=(5, 10))
+                
+            clear_btn = tk.Button(sidebar, text="Clear Selections", 
+                                  command=lambda: (self.viewpoint_var.set(-1), self.anchor_var.set(-1)),
+                                  bg="#555555", fg="white")
+            clear_btn.pack(pady=10)
         
         # Bottom frame for controls
         self.control_frame = tk.Frame(self, bg="#1E1E1E")
@@ -42,6 +92,14 @@ class DispatcherUI(tk.Tk):
 
     def confirm(self):
         self.confirmed = True
+        self.extra_params = {}
+        if self.outliers:
+            v_idx = self.viewpoint_var.get()
+            a_idx = self.anchor_var.get()
+            if v_idx != -1:
+                self.extra_params['viewpoint'] = self.outliers[v_idx]
+            if a_idx != -1:
+                self.extra_params['anchor'] = self.outliers[a_idx]
         self.quit()
         self.destroy()
 
@@ -151,16 +209,16 @@ class DispatcherUI(tk.Tk):
                 self.selected_idx = None
                 self.draw_map()
 
-def show_ui(assignments, mission):
+def show_ui(assignments, outliers, mission):
     """
     Renders the Dispatcher UI and waits for user confirmation.
-    Returns the edited assignments if confirmed, None otherwise.
+    Returns (edited assignments, extra_params) if confirmed, (None, None) otherwise.
     """
-    app = DispatcherUI(assignments, mission)
+    app = DispatcherUI(assignments, outliers, mission)
     # Make sure window takes focus
     app.lift()
     app.attributes('-topmost', True)
     app.after_idle(app.attributes, '-topmost', False)
     
     app.mainloop()
-    return app.assignments if app.confirmed else None
+    return (app.assignments, app.extra_params) if app.confirmed else (None, None)

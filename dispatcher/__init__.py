@@ -6,13 +6,13 @@ logger = logging.getLogger(__name__)
 
 import multiprocessing as mp
 
-def _run_ui_process(assignments, mission_data, queue):
+def _run_ui_process(assignments, outliers, mission_data, queue):
     from .ui import show_ui
     import signal
     # Ignore SIGINT in the child to let the parent handle KeyboardInterrupt safely
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    final_assgn = show_ui(assignments, mission_data)
-    queue.put(final_assgn)
+    final_assgn, extra_params = show_ui(assignments, outliers, mission_data)
+    queue.put((final_assgn, extra_params))
 
 def run_dispatch(manifest_drones, mission_data, vicon_host="192.168.1.39", mock=False):
     """
@@ -37,13 +37,13 @@ def run_dispatch(manifest_drones, mission_data, vicon_host="192.168.1.39", mock=
             vicon_points = mock_scan(manifest_drones)
 
     # Generate initial sorted assignments
-    assignments = sort_and_match(vicon_points, manifest_drones)
+    assignments, outliers = sort_and_match(vicon_points, manifest_drones)
     
     # Run UI in an isolated process to protect Orchestrator signal handlers and ensure closure
     logger.info("Opening Dispatcher UI for confirmation...")
     ctx = mp.get_context('spawn')
     queue = ctx.Queue()
-    p = ctx.Process(target=_run_ui_process, args=(assignments, mission_data, queue))
+    p = ctx.Process(target=_run_ui_process, args=(assignments, outliers, mission_data, queue))
     p.start()
     
     try:
@@ -55,9 +55,9 @@ def run_dispatch(manifest_drones, mission_data, vicon_host="192.168.1.39", mock=
         raise  # Re-raise to trigger orchestrator.py emergency handlers
     
     if not queue.empty():
-        final_assignments = queue.get()
+        final_assignments, extra_params = queue.get()
     else:
-        final_assignments = None
+        final_assignments, extra_params = None, None
 
     if not final_assignments:
         logger.warning("Dispatcher UI aborted or skipped. No Vicon coordinates will be updated.")
@@ -73,6 +73,13 @@ def run_dispatch(manifest_drones, mission_data, vicon_host="192.168.1.39", mock=
         drone = drones_by_id[d_id]
         # Replace init_pos with real matched coordinate
         drone['init_pos'] = a['vicon_pos']
+        if extra_params:
+            if extra_params.get('viewpoint'):
+                vp = extra_params['viewpoint']
+                offset_x, offset_y, offset_z = -0.025, 0.0, 0.005
+                drone['viewpoint'] = [vp[0] + offset_x, vp[1] + offset_y, vp[2] + offset_z]
+            if extra_params.get('anchor'):
+                drone['anchor'] = extra_params['anchor']
         updated_drones.append(drone)
         
     return updated_drones
