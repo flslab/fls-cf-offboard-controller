@@ -576,6 +576,8 @@ class InteractionsControl:
                     time.sleep(0.001)
 
         if z is not None:
+            if z < 0:
+                z = last_pos[2]
             hover_pos = [last_pos[0], last_pos[1], z]
         else:
             hover_pos = [last_pos[0], last_pos[1], last_pos[2]]
