@@ -806,7 +806,7 @@ class Controller:
 
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id,
-                                     pub_socket=interact_pub, sub_socket=interact_sub,
+                                     pub_socket=interact_pub, sub_socket=interact_sub, set_color=self.led.show_single_color,
                                      execute=execution)
             IC.run()
             if interact_pub is not None:
