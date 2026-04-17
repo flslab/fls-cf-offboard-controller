@@ -638,11 +638,18 @@ class Controller:
 
         light_module_offset = self.args.light_module_offset
             
-        return [
+        vp_offset = [
             self.args.viewpoint[0] - camera[0] - light_module_offset[0],
             self.args.viewpoint[1] - camera[1] - light_module_offset[1],
             self.args.viewpoint[2] - camera[2] - light_module_offset[2]
         ]
+
+        logger.info(f"Camera: {camera}")
+        logger.info(f"Viewpoint: {self.args.viewpoint}")
+        logger.info(f"Light module offset: {light_module_offset}")
+        logger.info(f"Viewpoint offset: {vp_offset}")
+
+        return vp_offset
 
     def orchestrated_mission_interaction(self):
         mission_setting = self.mission['drones'][self.args.drone_id]
