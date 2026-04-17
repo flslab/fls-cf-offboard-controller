@@ -219,6 +219,11 @@ def show_ui(assignments, outliers, mission):
     app.lift()
     app.attributes('-topmost', True)
     app.after_idle(app.attributes, '-topmost', False)
+    app.focus_force()
+    
+    import os
+    # Bring the specific python process to the front on macOS
+    os.system(f"osascript -e 'tell application \"System Events\" to set frontmost of the first process whose unix id is {os.getpid()} to true'")
     
     app.mainloop()
     return (app.assignments, app.extra_params) if app.confirmed else (None, None)
