@@ -174,7 +174,7 @@ class InteractionsControl:
                 alpha_vel=translation_setting.get('alpha_vel', 1),
                 pub_socket=self.pub_socket,
                 mass_ratio=mass_lb / mass_virtual,
-                init_hover=self._get_drone_by_id(self.drone_id)['target'][:3],
+                init_hover=self.mission['drones'][self.drone_id]['target'][:3]
             )
         except Exception as e:
             tb_info = traceback.format_exc()
