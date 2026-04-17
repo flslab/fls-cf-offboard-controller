@@ -10,6 +10,7 @@ import http.server
 import socketserver
 import sys
 import signal
+import shutil
 import logging
 from datetime import datetime
 from functools import partial
@@ -81,8 +82,11 @@ class SwarmOrchestrator:
         if not files and 'mission_file' in self.ctrl_cfg:
             files = [self.ctrl_cfg['mission_file']]
         
+        self.mission_filepaths = []
         for file in files:
-            with open(os.path.join(self.ctrl_cfg['mission_path'], file)) as f:
+            path = os.path.join(self.ctrl_cfg['mission_path'], file)
+            self.mission_filepaths.append(path)
+            with open(path) as f:
                 missions.append(yaml.safe_load(f))
         return missions
 
@@ -574,6 +578,21 @@ class SwarmOrchestrator:
 
         # Retry Pending Downloads (Logs)
         self._process_pending_downloads()
+
+        # Copy mission files to logs
+        if hasattr(self, 'mission_filepaths') and self.tag:
+            self.logger.info("Copying mission files to logs...")
+            os.makedirs("./logs", exist_ok=True)
+            for path in self.mission_filepaths:
+                try:
+                    basename = os.path.basename(path)
+                    name_part, ext = os.path.splitext(basename)
+                    new_filename = f"{name_part}_{self.tag}{ext}"
+                    dest_path = os.path.join("./logs", new_filename)
+                    shutil.copy(path, dest_path)
+                    self.logger.info(f"Copied {basename} to {dest_path}")
+                except Exception as e:
+                    self.logger.error(f"Failed to copy mission file {path}: {e}")
 
         # Save unfinished state
         if self.pending_downloads:
