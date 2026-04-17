@@ -174,6 +174,7 @@ class InteractionsControl:
                 alpha_vel=translation_setting.get('alpha_vel', 1),
                 pub_socket=self.pub_socket,
                 mass_ratio=mass_lb / mass_virtual,
+                init_hover=self._get_drone_by_id(self.drone_id)['target'][:3],
             )
         except Exception as e:
             tb_info = traceback.format_exc()
@@ -491,6 +492,7 @@ class InteractionsControl:
             alpha_vel=1,
             pub_socket=None,
             mass_ratio=1.0,
+            init_hover=None
     ):
         if v_scalar is None:
             v_scalar = np.array([10, 10, 2])
@@ -562,12 +564,16 @@ class InteractionsControl:
             roll  = max(min(roll,  20.0), -20.0)
             return pitch, roll
 
-        while True:
-            try:
-                last_pos = self._get_latest_pos()
-                break
-            except Exception as e:
-                time.sleep(0.001)
+
+        if init_hover:
+            last_pos = init_hover
+        else:
+            while True:
+                try:
+                    last_pos = self._get_latest_pos()
+                    break
+                except Exception as e:
+                    time.sleep(0.001)
 
         if z is not None:
             hover_pos = [last_pos[0], last_pos[1], z]
