@@ -1,0 +1,7 @@
+PyYAML
+pyzmq
+fabric
+cflib
+numpy
+scikit-learn
+pyvicon-datastream-sdk

@@ -10,6 +10,7 @@ import http.server
 import socketserver
 import sys
 import signal
+import shutil
 import logging
 from datetime import datetime
 from functools import partial
@@ -81,8 +82,11 @@ class SwarmOrchestrator:
         if not files and 'mission_file' in self.ctrl_cfg:
             files = [self.ctrl_cfg['mission_file']]
         
+        self.mission_filepaths = []
         for file in files:
-            with open(os.path.join(self.ctrl_cfg['mission_path'], file)) as f:
+            path = os.path.join(self.ctrl_cfg['mission_path'], file)
+            self.mission_filepaths.append(path)
+            with open(path) as f:
                 missions.append(yaml.safe_load(f))
         return missions
 
@@ -205,6 +209,10 @@ class SwarmOrchestrator:
         else:
             p = drone['init_pos']
             mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
+            
+        viewpoint_arg = f"--viewpoint {drone['viewpoint'][0]} {drone['viewpoint'][1]} {drone['viewpoint'][2]} " if 'viewpoint' in drone else ""
+        anchor_arg = f"--anchor {drone['anchor'][0]} {drone['anchor'][1]} {drone['anchor'][2]} " if 'anchor' in drone else ""
+        
         cmd = [
             f"cd {self.common_cfg['work_dir']} && ",
             f"source {self.common_cfg['venv_path']}/bin/activate && ",
@@ -212,6 +220,8 @@ class SwarmOrchestrator:
             f"nohup python3 {DRONE_SCRIPT} ",
             f"--illumination --orchestrated --tag {self.tag} ",
             "--ground-test " if self.args.ground else f"--vicon {mocap_args} ",
+            f"{viewpoint_arg}",
+            f"{anchor_arg}",
             f"--drone-id {drone['id']} ",
             f"--led --led-brightness 0.25 --led-count {led_count} " if led_count > 0 else " ",
             f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
@@ -232,6 +242,10 @@ class SwarmOrchestrator:
         else:
             p = drone['init_pos']
             mocap_args = f"--init-pos {p[0]} {p[1]} {p[2]} --vicon-mode pointcloud "
+            
+        viewpoint_arg = f"--viewpoint {drone['viewpoint'][0]} {drone['viewpoint'][1]} {drone['viewpoint'][2]} " if 'viewpoint' in drone else ""
+        anchor_arg = f"--anchor {drone['anchor'][0]} {drone['anchor'][1]} {drone['anchor'][2]} " if 'anchor' in drone else ""
+        
         cmd = [
             f"cd {self.common_cfg['work_dir']} && ",
             f"source {self.common_cfg['venv_path']}/bin/activate && ",
@@ -239,6 +253,8 @@ class SwarmOrchestrator:
             f"nohup python3 {DRONE_SCRIPT} ",
             f"--illumination --morphing --orchestrated --tag {self.tag} ",
             "--ground-test " if self.args.ground else f"--vicon {mocap_args} ",
+            f"{viewpoint_arg}",
+            f"{anchor_arg}",
             f"--drone-id {drone['id']} ",
             f"--led --led-count {led_count} " if led_count > 0 else " ",
             f"--servo --servo-type {drone['type']} --servo-count {servo_count} " if servo_count > 0 else " ",
@@ -574,6 +590,21 @@ class SwarmOrchestrator:
 
         # Retry Pending Downloads (Logs)
         self._process_pending_downloads()
+
+        # Copy mission files to logs
+        if hasattr(self, 'mission_filepaths') and self.tag:
+            self.logger.info("Copying mission files to logs...")
+            os.makedirs("./logs", exist_ok=True)
+            for path in self.mission_filepaths:
+                try:
+                    basename = os.path.basename(path)
+                    name_part, ext = os.path.splitext(basename)
+                    new_filename = f"{name_part}_{self.tag}{ext}"
+                    dest_path = os.path.join("./logs", new_filename)
+                    shutil.copy(path, dest_path)
+                    self.logger.info(f"Copied {basename} to {dest_path}")
+                except Exception as e:
+                    self.logger.error(f"Failed to copy mission file {path}: {e}")
 
         # Save unfinished state
         if self.pending_downloads:

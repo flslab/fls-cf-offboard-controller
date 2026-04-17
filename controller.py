@@ -354,6 +354,9 @@ class Controller:
         self.mocap.start()
 
         anchor = self.mission.get("anchor", None)
+        if getattr(self.args, 'anchor', None) is not None:
+            anchor = self.args.anchor
+
         if anchor:
             logger.info(f"Tracking Anchor: {anchor}")
             self.mocap.set_anchor_point(anchor)
@@ -624,6 +627,29 @@ class Controller:
         for p in trajectory:
             self.commander.go_to(*p, 0, 1 / fps)
             self._safe_sleep(1 / fps)
+
+    def _compute_viewpoint_offset(self, mission):
+        if not getattr(self.args, 'viewpoint', None):
+            return [0.0, 0.0, 0.0]
+            
+        camera = mission.get('camera', None)
+        if not camera:
+            return [0.0, 0.0, 0.0]
+
+        light_module_offset = self.args.light_module_offset
+            
+        vp_offset = [
+            self.args.viewpoint[0] - camera[0] - light_module_offset[0],
+            self.args.viewpoint[1] - camera[1] - light_module_offset[1],
+            self.args.viewpoint[2] - camera[2] - light_module_offset[2]
+        ]
+
+        logger.info(f"Camera: {camera}")
+        logger.info(f"Viewpoint: {self.args.viewpoint}")
+        logger.info(f"Light module offset: {light_module_offset}")
+        logger.info(f"Viewpoint offset: {vp_offset}")
+
+        return vp_offset
 
     def orchestrated_mission_interaction(self):
         mission_setting = self.mission['drones'][self.args.drone_id]
@@ -940,12 +966,18 @@ class Controller:
         led_color = mission_setting.get('color')
         led_setting = mission_setting.get('led', {})
 
-        if position_offset:
+        vp_offset = self._compute_viewpoint_offset(mission)
+        base_offset = position_offset if position_offset else [0.0, 0.0, 0.0]
+        total_offset = [base_offset[0] + vp_offset[0],
+                        base_offset[1] + vp_offset[1],
+                        base_offset[2] + vp_offset[2]]
+
+        if any(abs(v) > 1e-6 for v in total_offset):
             for i in range(3):
-                target[i] += position_offset[i]
+                target[i] += total_offset[i]
             for j in range(len(waypoints)):
                 for i in range(3):
-                    waypoints[j][i] += position_offset[i]
+                    waypoints[j][i] += total_offset[i]
 
         if len(target) == 3:
             target.append(0.0)
@@ -1390,7 +1422,9 @@ if __name__ == '__main__':
     ap.add_argument("--skip-landing", action="store_true", help="run mission without landing")
     ap.add_argument("--radio", type=str, help="specify the CrazyRadio URI (e.g., 'radio://0/6/1M/E7E7E7E704')")
     ap.add_argument("--droneless", action="store_true", help="run mission without connecting to fc")
-
+    ap.add_argument("--viewpoint", type=float, nargs=3, help="actual camera viewpoint coordinates x y z", default=None)
+    ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
+    ap.add_argument("--light-module-offset", type=float, nargs=3, help="light module offset from marker coordinates x y z", default=[0.075, 0.0, -0.040])
 
     args = ap.parse_args()
 
