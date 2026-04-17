@@ -1,4 +1,5 @@
 name: nsf_flyin
+camera: [2.25, 0.0, 0.94]
 drones:
   lb1:
     target: [0.0, -0.322, 0.98, 0.0, 0.0]
