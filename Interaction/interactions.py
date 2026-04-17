@@ -618,6 +618,8 @@ class InteractionsControl:
                 if detect_speed_threshold(speed):
                     logger.info(f"Switching to Translation From {status}.")
                     # self._log_event('Translation')
+                    if self.set_color:
+                        self.set_color([0, 255, 0])
                     status = 1
                     interaction_heading = vel
                     v_virtual = np.zeros(3)
@@ -653,6 +655,8 @@ class InteractionsControl:
                     if fric_coe > 0:
                         logger.info(f"Switching to Coasting From {status}.")
                         # self._log_event('Coasting')
+                        if self.set_color:
+                            self.set_color([255, 255, 0])
                         status = 2
                         continue
                     else:
@@ -670,6 +674,8 @@ class InteractionsControl:
                             "Target": [round(x, 3) for x in hover_pos],
                             "Stabilize Time": grace_time
                         }
+                        if self.set_color:
+                            self.set_color([255, 255, 0])
                         self._log_event("User Disengage", log_data)
                         continue
 
@@ -704,6 +710,8 @@ class InteractionsControl:
                 self._safe_sleep(coast_t)
                 logger.info(f"Switching to Hover From {status}.")
                 hover_pos = end_pos
+                if self.set_color:
+                    self.set_color([255, 157, 0])
                 status = 0
                 continue
 
@@ -715,6 +723,8 @@ class InteractionsControl:
                     self._safe_sleep(dt)
 
                 # hover_pos = pos
+                if self.set_color:
+                    self.set_color([255, 157, 0])
                 status = 0
                 continue
 

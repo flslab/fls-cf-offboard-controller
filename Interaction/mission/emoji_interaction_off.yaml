@@ -1,7 +1,7 @@
 name: emoji_interaction_off
 drones:
-  lb11:
-    target: [-0.25, -0.1, 1.15, 0.0]
+  lb5:
+    target: [-0.25, -1, 1.15, 0.0]
     waypoints: []
     delta_t: 0.5
     iterations: 1
@@ -15,7 +15,7 @@ drones:
       rate: 0.5
       formula: "[255, 157, 0]"
   lb3:
-    target: [0.2, 0.10, 0.9, 0.0]
+    target: [0.2, 1, 0.9, 0.0]
     waypoints: []
     delta_t: 0.5
     iterations: 1
@@ -29,7 +29,7 @@ drones:
       rate: 0.5
       formula: "[255, 157, 0]"
   lb4:
-    target: [0.0, -0.1, 0.7, 0.0]
+    target: [0.0, -0.1, 0.5, 0.0]
     waypoints: []
     delta_t: 0.5
     iterations: 1
