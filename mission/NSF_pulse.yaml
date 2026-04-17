@@ -1,0 +1,104 @@
+name: nsf_pulse
+drones:
+  lb1:
+    target: [0.0, -0.302, 0.98, 0.0, 0.0]
+    waypoints: [[0.0, -0.302, 0.98, 0.0, 0.0], [0.0, -0.302, 0.98, 0.0, 9.9583]]
+    position_offset: [0.0, -0.02, 0.0]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[90.0, 417.56], [90.0, 417.56]]
+    pointers: [[3.0, 27.0], [3.0, 27.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0))]) if i < p1 else ([0, 0, 0])"
+  lb2:
+    target: [0.2288, -0.1913, 0.8502, 0.0, 0.0]
+    waypoints: [[0.2288, -0.1913, 0.8502, 0.0, 0.0], [0.2288, -0.1913, 0.8502, 0.0, 9.9583]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[237.56, 270.0], [237.56, 270.0]]
+    pointers: [[1.46, 45.66], [1.46, 45.66]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0))]) if i < p1 else ([0, 0, 0])"
+  lb3:
+    target: [-0.2299, -0.0513, 0.9841, 0.0, 0.0]
+    waypoints: [[-0.2299, -0.0513, 0.9841, 0.0, 0.0], [-0.2299, -0.0513, 0.9841, 0.0, 9.9583]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[90.0, 360.0], [90.0, 360.0]]
+    pointers: [[12.88, 41.0], [12.88, 41.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0))]) if i < p1 else ([0, 0, 0])"
+  lb4:
+    target: [0.4599, 0.0438, 0.9145, 0.0, 0.0]
+    waypoints: [[0.4599, 0.0438, 0.9145, 0.0, 0.0], [0.4599, 0.0438, 0.9145, 0.0, 9.9583]]
+    position_offset: [0.0, 0.0, 0.0]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[90.0, 180.0], [90.0, 180.0]]
+    pointers: [[16.25, 36.0], [16.25, 36.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0))]) if i < p1 else ([0, 0, 0])"
+  lb9:
+    target: [0.0, 0.3519, 0.9079, 0.0, 0.0]
+    waypoints: [[0.0, 0.3519, 0.9079, 0.0, 0.0], [0.0, 0.3519, 0.9079, 0.0, 9.9583]]
+    position_offset: [0.0, 0.0, -0.01]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[180.0, 360.0], [180.0, 360.0]]
+    pointers: [[3.0, 14.0], [3.0, 14.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0))]) if i < p1 else ([0, 0, 0])"
+  lb5:
+    target: [0.0, 0.0425, 0.84, 0.0, 0.0]
+    waypoints: [[0.0, 0.0425, 0.84, 0.0, 0.0], [0.0, 0.0425, 0.84, 0.0, 9.9583]]
+    position_offset: [0.0, 0.0, -0.01]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[180.0, 360], [180.0, 360]]
+    pointers: [[11.0, 26.0], [11.0, 26.0]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0))]) if i < p1 else ([0, 0, 0])"
+  lb7:
+    target: [0.2289, 0.1913, 0.9759, 0.0, 0.0]
+    waypoints: [[0.2289, 0.1913, 0.9759, 0.0, 0.0], [0.2289, 0.1913, 0.9759, 0.0, 9.9583]]
+    delta_t: 0.0
+    iterations: 1
+    params:
+      linear: true
+      relative: false
+    servos: [[90.0, 360], [90.0, 360]]
+    pointers: [[5.24, 37.58], [5.24, 37.58]]
+    led:
+      mode: "expression"
+      rate: 50
+      formula: "([0, 0, 0]) if i < p0 else ([255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0)), 255 * (0.5 + 0.5 * math.sin(t * 5.0))]) if i < p1 else ([0, 0, 0])"
