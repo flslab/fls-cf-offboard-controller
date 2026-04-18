@@ -14,7 +14,7 @@ drones:
       mode: "expression"
       rate: 0.5
       formula: "[255, 157, 0]"
-  lb3:
+  lb2:
     target: [0.2, 0.0, 0.9, 0.0]
     waypoints: []
     delta_t: 60
@@ -47,7 +47,7 @@ drones:
 Interaction:
   action: translation
   config:
-    delta_v: 0.13
+    delta_v: 0.1
     z: -1
     friction_coefficient: 0
     base_attitude: -1
