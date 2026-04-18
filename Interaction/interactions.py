@@ -644,7 +644,7 @@ class InteractionsControl:
                 # a_lb = Δvel/dt  (differentiate mocap velocity → acceleration)
                 # F = m_lb * a_lb,  a_virtual = F / m_virtual = a_lb * mass_ratio
                 dv_lb = interact_vel - prev_interact_vel
-                v_virtual += dv_lb * mass_ratio
+                v_virtual = interact_vel + dv_lb * (mass_ratio - 1)
                 prev_interact_vel = interact_vel.copy()
                 target_pos = pos + v_virtual * dt * v_scalar
 
