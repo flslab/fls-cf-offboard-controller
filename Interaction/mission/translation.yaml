@@ -8,12 +8,12 @@ drones:
 Interaction:
   action: translation
   config:
-    delta_v: 1.3
+    delta_v: 0.13
     z: null
     friction_coefficient: 0
     base_attitude: -1
     duration: 60
-    v_scalar: [10, 10, 10]
+    v_scalar: [10, 10, 5]
     grace_time: 2
     alpha_vel: 1               # velocity blending factor (0=state estimator only, 1=mocap only)
     mass_lightbender: 0.17      # physical mass of the LightBender drone (kg)
