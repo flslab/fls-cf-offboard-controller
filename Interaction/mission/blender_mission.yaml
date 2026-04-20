@@ -13,7 +13,7 @@ drones:
     led:
       mode: "expression"
       rate: 0.5
-      formula: "[255, 255, 255] if i < t*10 else [0,0,0]"
+      formula: "[255, 255, 255 ]"
 
 Interaction:
   action: translation

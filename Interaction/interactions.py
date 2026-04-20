@@ -717,8 +717,6 @@ class InteractionsControl:
                 pos[2] = z
                 vel[2] = 0
 
-            blender_state["position"] = [float(pos[0]), float(pos[1]), float(pos[2])]
-
             speed = np.linalg.norm(vel)
 
             if status == 0:  # wait for user interaction
