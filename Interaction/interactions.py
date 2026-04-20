@@ -596,7 +596,6 @@ class InteractionsControl:
         prev_interact_vel = np.zeros(3)  # previous tick's interact_vel, for differentiation
         start_time = time.time()
 
-        blender_state = {"position": [round(x, 3) for x in hover_pos]}
 
         if blender_port:
             try:
@@ -665,7 +664,7 @@ class InteractionsControl:
                                     continue
 
                                 if isinstance(msg, dict) and msg.get("cmd") == "request_position":
-                                    position = blender_state["position"]
+                                    position = hover_pos
                                     resp = {
                                         "id": self.drone_id,
                                         "drone_id": self.drone_id,
