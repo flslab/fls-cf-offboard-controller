@@ -731,7 +731,8 @@ class Controller:
             time.sleep(0.2)
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id,
-                                     pub_socket=interact_pub, sub_socket=interact_sub, execute=execution, set_color=self.led.show_single_color)
+                                     pub_socket=interact_pub, sub_socket=interact_sub, execute=execution, set_color=self.led.show_single_color,
+                                     orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
             IC.run()
             interact_pub.close()
             interact_sub.close()
@@ -772,7 +773,8 @@ class Controller:
                                                name=follow['id'])
 
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                     self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow, execute=execution)
+                                     self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow, execute=execution,
+                                     orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
             IC.run()
             self.mocap.unsubscribe_point(leader_id)
             self.cf.commander.send_notify_setpoint_stop()
@@ -807,7 +809,7 @@ class Controller:
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id,
                                      pub_socket=interact_pub, sub_socket=interact_sub, set_color=self.led.show_single_color,
-                                     execute=execution)
+                                     execute=execution, orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
             IC.run()
             if interact_pub is not None:
                 interact_pub.close()
@@ -845,7 +847,7 @@ class Controller:
                                      self.args.smooth_controller_rate,
                                      drone_id=self.args.drone_id,
                                      pub_socket=interact_pub, sub_socket=interact_sub,
-                                     execute=execution)
+                                     execute=execution, orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
             IC.run_passive_avoidance()
             if interact_pub is not None:
                 interact_pub.close()
@@ -895,6 +897,7 @@ class Controller:
                             self.cf, self._safe_sleep,
                             self.log_manager, self.mission,
                             self.args.smooth_controller_rate, drone_id=self.args.drone_id,
+                            orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None
                         )
                         IC.run_recap(file_path)
             elif self.mission.get('Interaction', {}).get('action') == 'peer_latency_test':
@@ -907,7 +910,8 @@ class Controller:
                 time.sleep(0.2)
                 IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                          self.args.smooth_controller_rate, drone_id=self.args.drone_id,
-                                         pub_socket=interact_pub, sub_socket=interact_sub)
+                                         pub_socket=interact_pub, sub_socket=interact_sub,
+                                         orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
                 IC.run()
                 interact_pub.close()
                 interact_sub.close()
@@ -936,7 +940,8 @@ class Controller:
                                                        name=follow['id'])
 
                     IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                             self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow)
+                                             self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow,
+                                             orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
                     IC.run()
 
         except Exception as e:

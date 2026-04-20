@@ -34,7 +34,7 @@ def calculate_tilt(roll, pitch, degrees=True):
 class InteractionsControl:
 
     def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True,
-                 leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, set_color=None, *args, **kwargs):
+                 leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, set_color=None, orchestrator_ip=None, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
@@ -43,6 +43,7 @@ class InteractionsControl:
         self.sub_socket = sub_socket
         self.drone_id = drone_id
         self.set_color = set_color
+        self.orchestrator_ip = orchestrator_ip
         # Network followers use their own 'frames' position, not the leader's mocap group
         self.pos_group_name = 'frames' if (leader_info is None or sub_socket is not None) else f"{leader_info['id']}"
 
@@ -174,7 +175,8 @@ class InteractionsControl:
                 alpha_vel=translation_setting.get('alpha_vel', 1),
                 pub_socket=self.pub_socket,
                 mass_ratio=mass_lb / mass_virtual,
-                init_hover=self.mission['drones'][self.drone_id]['target'][:3]
+                init_hover=self.mission['drones'][self.drone_id]['target'][:3],
+                blender_port=translation_setting.get('blender_port', None)
             )
         except Exception as e:
             tb_info = traceback.format_exc()
@@ -492,7 +494,8 @@ class InteractionsControl:
             alpha_vel=1,
             pub_socket=None,
             mass_ratio=1.0,
-            init_hover=None
+            init_hover=None,
+            blender_port=None
     ):
         if v_scalar is None:
             v_scalar = np.array([10, 10, 2])
@@ -592,6 +595,106 @@ class InteractionsControl:
         v_virtual    = np.zeros(3)   # virtual-object velocity, integrated from F/m_virtual
         prev_interact_vel = np.zeros(3)  # previous tick's interact_vel, for differentiation
         start_time = time.time()
+
+        blender_state = {"position": [round(x, 3) for x in hover_pos]}
+
+        if blender_port:
+            try:
+                blender_port = int(blender_port)
+            except (TypeError, ValueError):
+                logger.error(f"Invalid Blender TCP port: {blender_port}")
+                blender_port = None
+
+        if blender_port:
+            def blender_worker():
+                import json
+                import socket
+
+                host_candidates = []
+                if self.orchestrator_ip:
+                    host_candidates.append(self.orchestrator_ip)
+                for fallback_host in ("127.0.0.1", "localhost"):
+                    if fallback_host not in host_candidates:
+                        host_candidates.append(fallback_host)
+
+                sock = None
+                recv_buffer = ""
+                next_log_time = 0.0
+
+                try:
+                    while time.time() - start_time < duration:
+                        if sock is None:
+                            for host in host_candidates:
+                                try:
+                                    candidate = socket.create_connection((host, blender_port), timeout=1.0)
+                                    candidate.settimeout(0.1)
+                                    sock = candidate
+                                    recv_buffer = ""
+                                    logger.info(f"Connected to Blender static editor at {host}:{blender_port}")
+                                    break
+                                except OSError as exc:
+                                    now = time.time()
+                                    if now >= next_log_time:
+                                        logger.info(f"Waiting for Blender static editor at {host}:{blender_port} ({exc})")
+                                        next_log_time = now + 2.0
+
+                            if sock is None:
+                                time.sleep(0.25)
+                                continue
+
+                        try:
+                            data = sock.recv(1024)
+                            if not data:
+                                logger.info("Blender static editor connection closed. Retrying.")
+                                sock.close()
+                                sock = None
+                                time.sleep(0.1)
+                                continue
+
+                            recv_buffer += data.decode('utf-8', errors='ignore')
+                            while "\n" in recv_buffer:
+                                raw_line, recv_buffer = recv_buffer.split("\n", 1)
+                                raw_line = raw_line.strip()
+                                if not raw_line:
+                                    continue
+
+                                try:
+                                    msg = json.loads(raw_line)
+                                except json.JSONDecodeError:
+                                    logger.debug(f"Ignoring malformed Blender message: {raw_line!r}")
+                                    continue
+
+                                if isinstance(msg, dict) and msg.get("cmd") == "request_position":
+                                    position = blender_state["position"]
+                                    resp = {
+                                        "id": self.drone_id,
+                                        "drone_id": self.drone_id,
+                                        "position": [round(x, 3) for x in position],
+                                    }
+                                    sock.sendall((json.dumps(resp) + "\n").encode('utf-8'))
+                        except socket.timeout:
+                            pass
+                        except (BlockingIOError, InterruptedError):
+                            pass
+                        except OSError as exc:
+                            logger.info(f"Blender socket error, reconnecting: {exc}")
+                            try:
+                                sock.close()
+                            except OSError:
+                                pass
+                            sock = None
+
+                        time.sleep(0.01)
+                finally:
+                    if sock is not None:
+                        try:
+                            sock.close()
+                        except OSError:
+                            pass
+
+            blender_thread = threading.Thread(target=blender_worker, daemon=True)
+            blender_thread.start()
+
         while time.time() - start_time < duration:
 
             state = self._get_latest_drone_state()
@@ -613,6 +716,8 @@ class InteractionsControl:
             if z is not None:
                 pos[2] = z
                 vel[2] = 0
+
+            blender_state["position"] = [float(pos[0]), float(pos[1]), float(pos[2])]
 
             speed = np.linalg.norm(vel)
 
