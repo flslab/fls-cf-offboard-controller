@@ -46,7 +46,7 @@ def test_main():
     cflib.crtp.init_drivers(enable_debug_driver=False)
 
     URI = 'radio://0/100/2M/E7E7E7E706'
-    live_logger = LiveLogger(os.path.join('../logs', f"cf_test.json"))
+    live_logger = LiveLogger(os.path.join('../../logs', f"cf_test.json"))
 
     restart(URI)
     logger.info("Restarting")
