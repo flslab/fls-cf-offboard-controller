@@ -1,15 +1,12 @@
 import argparse
-import copy
 import datetime
 import json
-import threading
 from typing import Callable
 import math
 import random
 import yaml
 import logging
 import numpy as np
-import os
 import subprocess
 from threading import Event
 import time
@@ -27,7 +24,6 @@ from cflib.utils.reset_estimator import reset_estimator
 from Interaction.interactions import InteractionsControl
 
 from mocap import Mocap
-from restart import reboot_crazyflie
 from smooth_controller import SmoothController
 from tracker import Tracker
 from logger import setup_logging
@@ -36,7 +32,6 @@ setup_logging()
 
 logger = logging.getLogger(__name__)
 
-# See https://github.com/whoenig/uav_trajectories for a tool to generate trajectories
 
 pos_update_time_log = []
 pos_update_profile_log = []
@@ -156,7 +151,13 @@ class Controller:
 
     def __enter__(self):
         if self.args.radio:
-            reboot_crazyflie(self.uri)
+            import cflib.crtp
+            from cflib.utils.power_switch import PowerSwitch
+            cflib.crtp.init_drivers(enable_serial_driver=True)
+            try:
+                PowerSwitch(self.uri).stm_power_cycle()
+            except Exception as e:
+                print(f"Failed to reboot {self.uri}: {e}")
             time.sleep(5)
 
         if self.args.droneless:
