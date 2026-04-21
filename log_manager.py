@@ -24,9 +24,9 @@ class IlluminationLogger(LogManager):
         if self.cf_var_logger is not None:
             self.cf_var_logger.stop()
 
-        self.save_logs(kwargs['log_dir'], kwargs['tag'], kwargs['animation_start_time'], kwargs['animation_stop_time'])
+        self.save_logs(kwargs['log_dir'], kwargs['tag'], kwargs['animation_start_time'], kwargs['animation_stop_time'], kwargs['viewpoint_offsets'])
 
-    def save_logs(self, log_dir, tag, start_times, end_times):
+    def save_logs(self, log_dir, tag, start_times, end_times, viewpoint_offsets):
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
 
@@ -36,6 +36,7 @@ class IlluminationLogger(LogManager):
             "stop_time": e,
             "start_times": start_times,
             "stop_times": end_times,
+            "viewpoint_offsets": viewpoint_offsets,
         }
 
         for group, entries in self.groups.items():

@@ -136,6 +136,7 @@ class Controller:
         self.mission_duration = 0
         self.animation_start_times = []
         self.animation_stop_times = []
+        self.viewpoint_offsets = []
         self.smooth_controller = None
 
         self.flying = False
@@ -232,7 +233,8 @@ class Controller:
                 log_dir=self.args.log_dir,
                 tag=self.args.tag,
                 animation_start_time=self.animation_start_times,
-                animation_stop_time=self.animation_stop_times
+                animation_stop_time=self.animation_stop_times,
+                viewpoint_offsets=self.viewpoint_offsets
             )
 
         if self.tracker:
@@ -973,6 +975,7 @@ class Controller:
         led_setting = mission_setting.get('led', {})
 
         vp_offset = self._compute_viewpoint_offset(mission)
+        self.viewpoint_offsets.append(vp_offset)
         base_offset = position_offset if position_offset else [0.0, 0.0, 0.0]
         total_offset = [base_offset[0] + vp_offset[0],
                         base_offset[1] + vp_offset[1],
