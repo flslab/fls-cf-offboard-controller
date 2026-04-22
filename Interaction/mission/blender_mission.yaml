@@ -1,9 +1,9 @@
 name: blender_mission
 drones:
-  lb11:
-    target: [0.0, 0.0, 1.0, 0.0]
+  lb1:
+    target: [0.0, 0.0, 0.0, 0.0]
     waypoints: []
-    delta_t: 60.0
+    delta_t: 10.375
     iterations: 1
     interaction: single
     params:
@@ -13,7 +13,7 @@ drones:
     led:
       mode: "expression"
       rate: 0.5
-      formula: "[255, 255, 255 ]"
+      formula: "[255, 255, 255] if i < t*10 else [0,0,0]"
 
 Interaction:
   action: translation
@@ -22,9 +22,9 @@ Interaction:
     z: -1
     friction_coefficient: 0
     base_attitude: -1
-    duration: 60.0
+    duration: 10.375
     v_scalar: [10, 10, 3]
-    blender_port: 5580
+    blender_port: 5560
     grace_time: 2.0
 
 avoidance:
