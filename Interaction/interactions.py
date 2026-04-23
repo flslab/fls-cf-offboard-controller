@@ -611,6 +611,8 @@ class InteractionsControl:
                 'edit_active': False,
                 'edit_end_time': 0.0,
                 'stop_at_next_zero': False,
+                'status': 0,
+                'sending_positions': False,
             }
             worker_done = threading.Event()
 
@@ -679,21 +681,13 @@ class InteractionsControl:
                                     blender_state['edit_active'] = True
                                     blender_state['edit_end_time'] = time.time() + edit_dur
                                     blender_state['stop_at_next_zero'] = False
-                                    logger.info(f"Edit mode started for {edit_dur}s.")
+                                    blender_state['sending_positions'] = True
+                                    logger.info(f"Edit mode started for {edit_dur}s, streaming positions.")
 
-                                elif cmd == "request_position":
-                                    position = hover_pos
-                                    resp = {
-                                        "id": self.drone_id,
-                                        "drone_id": self.drone_id,
-                                        "position": [round(x, 3) for x in position],
-                                    }
-                                    try:
-                                        sock.sendall((_json.dumps(resp) + "\n").encode('utf-8'))
-                                    except OSError:
-                                        pass
+                                elif cmd == "finish_edit":
+                                    blender_state['sending_positions'] = False
                                     blender_state['stop_at_next_zero'] = True
-                                    logger.info("Position requested; will exit edit at next status 0.")
+                                    logger.info("Finish edit received; will exit edit at next status 0.")
 
                         except _socket.timeout:
                             pass
@@ -707,7 +701,34 @@ class InteractionsControl:
                                 pass
                             sock = None
 
-                        time.sleep(0.01)
+                        # Stream position to Blender every 100ms while active
+                        if sock is not None and blender_state['sending_positions']:
+                            cur_status = blender_state['status']
+                            if cur_status != 0:
+                                # Not idle — send current position
+                                try:
+                                    cur_pos = self._get_latest_pos()
+                                    resp = {
+                                        "id": self.drone_id,
+                                        "position": [round(float(x), 3) for x in cur_pos],
+                                    }
+                                    sock.sendall((_json.dumps(resp) + "\n").encode('utf-8'))
+                                except Exception:
+                                    pass
+                            else:
+                                # Just transitioned to idle hover — send final hover pos once
+                                resp = {
+                                    "id": self.drone_id,
+                                    "position": [round(float(x), 3) for x in hover_pos],
+                                }
+                                try:
+                                    sock.sendall((_json.dumps(resp) + "\n").encode('utf-8'))
+                                except OSError:
+                                    pass
+                                blender_state['sending_positions'] = False
+                                logger.info("Sent final hover position, stopped streaming.")
+
+                        time.sleep(0.1)
                 finally:
                     if sock is not None:
                         try:
@@ -767,11 +788,13 @@ class InteractionsControl:
                 speed = np.linalg.norm(vel)
 
                 if status == 0:  # wait for user interaction
+                    blender_state['status'] = 0
                     if detect_speed_threshold(speed):
                         logger.info(f"Switching to Translation From {status}.")
                         if self.set_color:
                             self.set_color([0, 255, 0])
                         status = 1
+                        blender_state['status'] = 1
                         interaction_heading = vel
                         v_virtual = np.zeros(3)
                         prev_interact_vel = vel.copy()
@@ -780,6 +803,7 @@ class InteractionsControl:
                         self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
                 elif status == 1:  # pushed by user
+                    blender_state['status'] = 1
                     if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
                         logger.info("Ignoring interaction: Direction change > 90 degrees.")
                         interact_vel = np.array([0.0, 0.0, 0.0])
@@ -801,11 +825,13 @@ class InteractionsControl:
                             if self.set_color:
                                 self.set_color([255, 255, 0])
                             status = 2
+                            blender_state['status'] = 2
                             continue
                         else:
                             logger.info(f"Switching to Grace Hover From {status}.")
                             hover_pos = pos + interact_vel * dt
                             status = 3
+                            blender_state['status'] = 3
 
                             tilt_angle = calculate_tilt(current_roll, current_pitch)
                             grace_time = get_grace_time(abs(tilt_angle), speed)
@@ -843,6 +869,7 @@ class InteractionsControl:
                         self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
 
                 elif status == 2:  # coasting
+                    blender_state['status'] = 2
                     end_pos, coast_t = self.calculate_coasting(pos, vel, fric_coe)
 
                     self.lo_commander.send_notify_setpoint_stop()
@@ -853,9 +880,11 @@ class InteractionsControl:
                     if self.set_color:
                         self.set_color([255, 157, 0])
                     status = 0
+                    blender_state['status'] = 0
                     continue
 
                 elif status == 3:  # grace period
+                    blender_state['status'] = 3
                     grace_start = time.time()
                     while time.time() < grace_time + grace_start:
                         self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -864,6 +893,7 @@ class InteractionsControl:
                     if self.set_color:
                         self.set_color([255, 157, 0])
                     status = 0
+                    blender_state['status'] = 0
                     continue
 
                 self._safe_sleep(dt)
