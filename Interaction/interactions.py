@@ -607,7 +607,6 @@ class InteractionsControl:
             import json as _json
             import socket as _socket
 
-            blender_lock = threading.Lock()
             blender_state = {
                 'edit_active': False,
                 'edit_end_time': 0.0,
@@ -677,10 +676,9 @@ class InteractionsControl:
 
                                 if cmd == "start_edit":
                                     edit_dur = float(msg.get("duration", 10.0))
-                                    with blender_lock:
-                                        blender_state['edit_active'] = True
-                                        blender_state['edit_end_time'] = time.time() + edit_dur
-                                        blender_state['stop_at_next_zero'] = False
+                                    blender_state['edit_active'] = True
+                                    blender_state['edit_end_time'] = time.time() + edit_dur
+                                    blender_state['stop_at_next_zero'] = False
                                     logger.info(f"Edit mode started for {edit_dur}s.")
 
                                 elif cmd == "request_position":
@@ -694,9 +692,8 @@ class InteractionsControl:
                                         sock.sendall((_json.dumps(resp) + "\n").encode('utf-8'))
                                     except OSError:
                                         pass
-                                    with blender_lock:
-                                        blender_state['stop_at_next_zero'] = True
-                                    logger.info("Position requested; will stop at next status 0.")
+                                    blender_state['stop_at_next_zero'] = True
+                                    logger.info("Position requested; will exit edit at next status 0.")
 
                         except _socket.timeout:
                             pass
@@ -731,25 +728,21 @@ class InteractionsControl:
                 tick = now - loop_tick_time
                 loop_tick_time = now
 
-                with blender_lock:
-                    if blender_state['edit_active'] and now >= blender_state['edit_end_time']:
-                        blender_state['edit_active'] = False
-                        blender_state['stop_at_next_zero'] = True
-                        logger.info("Edit duration expired; will stop at next status 0.")
-                    in_edit = blender_state['edit_active']
-                    stop_at_zero = blender_state['stop_at_next_zero']
+                if blender_state['edit_active'] and now >= blender_state['edit_end_time']:
+                    blender_state['edit_active'] = False
+                    blender_state['stop_at_next_zero'] = True
+                    logger.info("Edit duration expired; will exit edit at next status 0.")
 
-                if not in_edit:
+                if not blender_state['edit_active']:
                     elapsed_non_edit += tick
-                    # Ensure we're back at status 0 while waiting for next edit
+                    # Exit edit mode when stop flag is set and status returns to 0
+                    if blender_state['stop_at_next_zero'] and status == 0:
+                        blender_state['stop_at_next_zero'] = False
+                        logger.info("Exiting edit mode, returning to hover.")
                     status = 0
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
                     continue
-
-                # In edit mode: stop at next return to status 0 if flag is set
-                if status == 0 and stop_at_zero:
-                    break
 
                 state = self._get_latest_drone_state()
                 if not state:
