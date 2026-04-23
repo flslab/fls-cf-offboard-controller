@@ -602,7 +602,7 @@ class InteractionsControl:
             except (TypeError, ValueError):
                 logger.error(f"Invalid Blender TCP port: {blender_port}")
                 blender_port = None
-
+        blender_state = None
         if blender_port:
             import json as _json
             import socket as _socket
@@ -713,6 +713,8 @@ class InteractionsControl:
                                         "position": [round(float(x), 3) for x in cur_pos],
                                     }
                                     sock.sendall((_json.dumps(resp) + "\n").encode('utf-8'))
+
+                                    logger.info("Updating Position Information.")
                                 except Exception:
                                     pass
                             else:
@@ -788,8 +790,10 @@ class InteractionsControl:
                 speed = np.linalg.norm(vel)
 
                 if status == 0:  # wait for user interaction
-                    blender_state['status'] = 0
-                    if detect_speed_threshold(speed):
+                    if blender_state is not None:
+                        blender_state['status'] = 0
+
+                    if detect_speed_threshold(speed) and (blender_state is None or blender_state['edit_active']):
                         logger.info(f"Switching to Translation From {status}.")
                         if self.set_color:
                             self.set_color([0, 255, 0])
