@@ -610,9 +610,12 @@ class InteractionsControl:
             blender_state = {
                 'edit_active': False,
                 'edit_end_time': 0.0,
+                'finish_requested': False,
                 'stop_at_next_zero': False,
                 'status': 0,
                 'sending_positions': False,
+                'sock': None,
+                'sock_lock': threading.Lock(),
             }
             worker_done = threading.Event()
 
@@ -624,18 +627,21 @@ class InteractionsControl:
                     if fallback_host not in host_candidates:
                         host_candidates.append(fallback_host)
 
-                sock = None
                 recv_buffer = ""
                 next_log_time = 0.0
 
                 try:
                     while not worker_done.is_set():
+                        with blender_state['sock_lock']:
+                            sock = blender_state['sock']
+
                         if sock is None:
                             for host in host_candidates:
                                 try:
                                     candidate = _socket.create_connection((host, blender_port), timeout=1.0)
                                     candidate.settimeout(0.1)
-                                    sock = candidate
+                                    with blender_state['sock_lock']:
+                                        blender_state['sock'] = candidate
                                     recv_buffer = ""
                                     logger.info(f"Connected to Blender at {host}:{blender_port}")
                                     break
@@ -645,16 +651,23 @@ class InteractionsControl:
                                         logger.info(f"Waiting for Blender at {host}:{blender_port} ({exc})")
                                         next_log_time = now + 2.0
 
-                            if sock is None:
-                                time.sleep(0.25)
-                                continue
+                            with blender_state['sock_lock']:
+                                if blender_state['sock'] is None:
+                                    time.sleep(0.25)
+                                    continue
+                                sock = blender_state['sock']
 
                         try:
                             data = sock.recv(1024)
                             if not data:
                                 logger.info("Blender connection closed. Retrying.")
-                                sock.close()
-                                sock = None
+                                with blender_state['sock_lock']:
+                                    blender_state['sock'] = None
+                                try:
+                                    sock.close()
+                                except OSError:
+                                    pass
+                                recv_buffer = ""
                                 time.sleep(0.1)
                                 continue
 
@@ -664,30 +677,27 @@ class InteractionsControl:
                                 raw_line = raw_line.strip()
                                 if not raw_line:
                                     continue
-
                                 try:
                                     msg = _json.loads(raw_line)
                                 except _json.JSONDecodeError:
                                     logger.debug(f"Ignoring malformed Blender message: {raw_line!r}")
                                     continue
-
                                 if not isinstance(msg, dict):
                                     continue
-
                                 cmd = msg.get("cmd")
-
                                 if cmd == "start_edit":
                                     edit_dur = float(msg.get("duration", 10.0))
                                     blender_state['edit_active'] = True
                                     blender_state['edit_end_time'] = time.time() + edit_dur
+                                    blender_state['finish_requested'] = False
                                     blender_state['stop_at_next_zero'] = False
                                     blender_state['sending_positions'] = True
                                     logger.info(f"Edit mode started for {edit_dur}s, streaming positions.")
-
                                 elif cmd == "finish_edit":
-                                    blender_state['sending_positions'] = False
+                                    blender_state['finish_requested'] = True
+                                    blender_state['sending_positions'] = True
                                     blender_state['stop_at_next_zero'] = True
-                                    logger.info("Finish edit received; will exit edit at next status 0.")
+                                    logger.info("Finish edit received; will stream until next status 0.")
 
                         except _socket.timeout:
                             pass
@@ -695,56 +705,51 @@ class InteractionsControl:
                             pass
                         except OSError as exc:
                             logger.info(f"Blender socket error, reconnecting: {exc}")
-                            try:
-                                sock.close()
-                            except OSError:
-                                pass
-                            sock = None
-
-                        # Stream position to Blender every 100ms while active
-                        if sock is not None and blender_state['sending_positions']:
-                            cur_status = blender_state['status']
-                            if cur_status != 0:
-                                # Not idle — send current position
+                            with blender_state['sock_lock']:
                                 try:
-                                    cur_pos = self._get_latest_pos()
-                                    resp = {
-                                        "id": self.drone_id,
-                                        "position": [round(float(x), 3) for x in cur_pos],
-                                    }
-                                    sock.sendall((_json.dumps(resp) + "\n").encode('utf-8'))
-
-                                    logger.info("Updating Position Information.")
-                                except Exception:
-                                    pass
-                            else:
-                                # Just transitioned to idle hover — send final hover pos once
-                                resp = {
-                                    "id": self.drone_id,
-                                    "position": [round(float(x), 3) for x in hover_pos],
-                                }
-                                try:
-                                    sock.sendall((_json.dumps(resp) + "\n").encode('utf-8'))
+                                    blender_state['sock'].close()
                                 except OSError:
                                     pass
-                                blender_state['sending_positions'] = False
-                                logger.info("Sent final hover position, stopped streaming.")
+                                blender_state['sock'] = None
+                            recv_buffer = ""
 
-                        time.sleep(0.1)
                 finally:
-                    if sock is not None:
-                        try:
-                            sock.close()
-                        except OSError:
-                            pass
+                    with blender_state['sock_lock']:
+                        if blender_state['sock'] is not None:
+                            try:
+                                blender_state['sock'].close()
+                            except OSError:
+                                pass
+                            blender_state['sock'] = None
 
             blender_thread = threading.Thread(target=blender_worker, daemon=True)
             blender_thread.start()
+
+            def send_blender_position(pos_to_send):
+                with blender_state['sock_lock']:
+                    sock = blender_state['sock']
+                if sock is None:
+                    return
+                try:
+                    resp = {
+                        "id": self.drone_id,
+                        "position": [round(float(x), 3) for x in pos_to_send],
+                    }
+                    sock.sendall((_json.dumps(resp) + "\n").encode('utf-8'))
+                except Exception:
+                    with blender_state['sock_lock']:
+                        try:
+                            if blender_state['sock'] is not None:
+                                blender_state['sock'].close()
+                        except OSError:
+                            pass
+                        blender_state['sock'] = None
 
             # --- Main loop: blender mode ---
             # Overall timer counts only non-edit time; edit duration is excluded.
             elapsed_non_edit = 0.0
             loop_tick_time = time.time()
+            last_blender_send_time = 0.0
 
             while elapsed_non_edit < duration:
                 now = time.time()
@@ -752,16 +757,23 @@ class InteractionsControl:
                 loop_tick_time = now
 
                 if blender_state['edit_active'] and now >= blender_state['edit_end_time']:
-                    blender_state['edit_active'] = False
+                    blender_state['finish_requested'] = True
+                    blender_state['sending_positions'] = True
                     blender_state['stop_at_next_zero'] = True
-                    logger.info("Edit duration expired; will exit edit at next status 0.")
+                    blender_state['edit_end_time'] = float('inf')
+                    logger.info("Edit duration expired; will stream until next status 0.")
+
+                if blender_state['finish_requested'] and status == 0:
+                    send_blender_position(hover_pos)
+                    last_blender_send_time = now
+                    blender_state['sending_positions'] = False
+                    blender_state['finish_requested'] = False
+                    blender_state['stop_at_next_zero'] = False
+                    blender_state['edit_active'] = False
+                    logger.info("Sent final hover position, stopped streaming.")
 
                 if not blender_state['edit_active']:
                     elapsed_non_edit += tick
-                    # Exit edit mode when stop flag is set and status returns to 0
-                    if blender_state['stop_at_next_zero'] and status == 0:
-                        blender_state['stop_at_next_zero'] = False
-                        logger.info("Exiting edit mode, returning to hover.")
                     status = 0
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
@@ -798,7 +810,6 @@ class InteractionsControl:
                         if self.set_color:
                             self.set_color([0, 255, 0])
                         status = 1
-                        blender_state['status'] = 1
                         interaction_heading = vel
                         v_virtual = np.zeros(3)
                         prev_interact_vel = vel.copy()
@@ -807,7 +818,8 @@ class InteractionsControl:
                         self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
                 elif status == 1:  # pushed by user
-                    blender_state['status'] = 1
+                    if blender_state is not None:
+                        blender_state['status'] = 1
                     if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
                         logger.info("Ignoring interaction: Direction change > 90 degrees.")
                         interact_vel = np.array([0.0, 0.0, 0.0])
@@ -829,13 +841,11 @@ class InteractionsControl:
                             if self.set_color:
                                 self.set_color([255, 255, 0])
                             status = 2
-                            blender_state['status'] = 2
                             continue
                         else:
                             logger.info(f"Switching to Grace Hover From {status}.")
                             hover_pos = pos + interact_vel * dt
                             status = 3
-                            blender_state['status'] = 3
 
                             tilt_angle = calculate_tilt(current_roll, current_pitch)
                             grace_time = get_grace_time(abs(tilt_angle), speed)
@@ -873,7 +883,8 @@ class InteractionsControl:
                         self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
 
                 elif status == 2:  # coasting
-                    blender_state['status'] = 2
+                    if blender_state is not None:
+                        blender_state['status'] = 2
                     end_pos, coast_t = self.calculate_coasting(pos, vel, fric_coe)
 
                     self.lo_commander.send_notify_setpoint_stop()
@@ -884,11 +895,11 @@ class InteractionsControl:
                     if self.set_color:
                         self.set_color([255, 157, 0])
                     status = 0
-                    blender_state['status'] = 0
                     continue
 
                 elif status == 3:  # grace period
-                    blender_state['status'] = 3
+                    if blender_state is not None:
+                        blender_state['status'] = 3
                     grace_start = time.time()
                     while time.time() < grace_time + grace_start:
                         self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -899,6 +910,19 @@ class InteractionsControl:
                     status = 0
                     blender_state['status'] = 0
                     continue
+
+                if blender_state['sending_positions']:
+                    now_t = time.time()
+                    if now_t - last_blender_send_time >= 0.1:
+                        send_pos = hover_pos if status == 0 else list(pos)
+                        send_blender_position(send_pos)
+                        last_blender_send_time = now_t
+                        if status == 0 and blender_state['finish_requested']:
+                            blender_state['sending_positions'] = False
+                            blender_state['finish_requested'] = False
+                            blender_state['stop_at_next_zero'] = False
+                            blender_state['edit_active'] = False
+                            logger.info("Sent final hover position, stopped streaming.")
 
                 self._safe_sleep(dt)
 
