@@ -594,7 +594,6 @@ class InteractionsControl:
         interaction_heading = np.zeros(3)
         v_virtual    = np.zeros(3)   # virtual-object velocity, integrated from F/m_virtual
         prev_interact_vel = np.zeros(3)  # previous tick's interact_vel, for differentiation
-        start_time = time.time()
 
         if blender_port:
             try:
@@ -745,17 +744,19 @@ class InteractionsControl:
                             pass
                         blender_state['sock'] = None
 
-            # --- Main loop: blender mode ---
-            # Overall timer counts only non-edit time; edit duration is excluded.
-            elapsed_non_edit = 0.0
-            loop_tick_time = time.time()
-            last_blender_send_time = 0.0
+        # --- Unified main loop ---
+        # When blender_state is None the edit-mode pause is skipped and elapsed
+        # time accumulates every tick, matching the original no-blender behaviour.
+        elapsed_non_edit = 0.0
+        loop_tick_time = time.time()
+        last_blender_send_time = 0.0
 
-            while elapsed_non_edit < duration:
-                now = time.time()
-                tick = now - loop_tick_time
-                loop_tick_time = now
+        while elapsed_non_edit < duration:
+            now = time.time()
+            tick = now - loop_tick_time
+            loop_tick_time = now
 
+            if blender_state is not None:
                 if blender_state['edit_active'] and now >= blender_state['edit_end_time']:
                     blender_state['finish_requested'] = True
                     blender_state['sending_positions'] = True
@@ -773,301 +774,169 @@ class InteractionsControl:
                     logger.info("Sent final hover position, stopped streaming.")
 
                 if not blender_state['edit_active']:
+                    # Pause interaction during Blender edit; only accumulate non-edit time.
                     elapsed_non_edit += tick
                     status = 0
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
                     continue
+            else:
+                elapsed_non_edit += tick
 
-                state = self._get_latest_drone_state()
-                if not state:
-                    state = {}
+            state = self._get_latest_drone_state()
+            if not state:
+                state = {}
 
-                current_pitch = state.get('stateEstimate.pitch', 0.0)
-                current_roll = state.get('stateEstimate.roll', 0.0)
+            current_pitch = state.get('stateEstimate.pitch', 0.0)
+            current_roll = state.get('stateEstimate.roll', 0.0)
 
-                state_vx = state.get('stateEstimate.vx', 0.0)
-                state_vy = state.get('stateEstimate.vy', 0.0)
-                state_vz = state.get('stateEstimate.vz', 0.0)
-                state_vel = np.array([state_vx, state_vy, state_vz])
+            state_vx = state.get('stateEstimate.vx', 0.0)
+            state_vy = state.get('stateEstimate.vy', 0.0)
+            state_vz = state.get('stateEstimate.vz', 0.0)
+            state_vel = np.array([state_vx, state_vy, state_vz])
 
-                pos, vel = self._get_latest_pos(vel=True)
+            pos, vel = self._get_latest_pos(vel=True)
 
-                vel = (alpha_vel * vel) + ((1.0 - alpha_vel) * state_vel)
-                self.check_interaction_boundary(pos)
-                if z is not None:
-                    pos[2] = z
-                    vel[2] = 0
+            vel = (alpha_vel * vel) + ((1.0 - alpha_vel) * state_vel)
+            self.check_interaction_boundary(pos)
+            if z is not None:
+                pos[2] = z
+                vel[2] = 0
 
-                speed = np.linalg.norm(vel)
+            speed = np.linalg.norm(vel)
 
-                if status == 0:  # wait for user interaction
-                    if blender_state is not None:
-                        blender_state['status'] = 0
-
-                    if detect_speed_threshold(speed) and (blender_state is None or blender_state['edit_active']):
-                        logger.info(f"Switching to Translation From {status}.")
-                        if self.set_color:
-                            self.set_color([0, 255, 0])
-                        status = 1
-                        interaction_heading = vel
-                        v_virtual = np.zeros(3)
-                        prev_interact_vel = vel.copy()
-                        continue
-                    else:
-                        self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
-
-                elif status == 1:  # pushed by user
-                    if blender_state is not None:
-                        blender_state['status'] = 1
-                    if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
-                        logger.info("Ignoring interaction: Direction change > 90 degrees.")
-                        interact_vel = np.array([0.0, 0.0, 0.0])
-                        speed = 0
-                    else:
-                        interact_vel = vel
-
-                    dv_lb = interact_vel - prev_interact_vel
-                    v_virtual = interact_vel + dv_lb * (mass_ratio - 1)
-                    prev_interact_vel = interact_vel.copy()
-                    target_pos = pos + v_virtual * dt * v_scalar
-
-                    if not detect_speed_threshold(speed):
-                        interaction_heading = np.zeros(3)
-                        v_virtual = np.zeros(3)
-                        prev_interact_vel = np.zeros(3)
-                        if fric_coe > 0:
-                            logger.info(f"Switching to Coasting From {status}.")
-                            if self.set_color:
-                                self.set_color([255, 255, 0])
-                            status = 2
-                            continue
-                        else:
-                            logger.info(f"Switching to Grace Hover From {status}.")
-                            hover_pos = pos + interact_vel * dt
-                            status = 3
-
-                            tilt_angle = calculate_tilt(current_roll, current_pitch)
-                            grace_time = get_grace_time(abs(tilt_angle), speed)
-                            log_data = {
-                                "speed": round(speed, 3),
-                                "vel": [round(x, 3) for x in vel],
-                                "Pos": [round(x, 3) for x in pos],
-                                "Target": [round(x, 3) for x in hover_pos],
-                                "Stabilize Time": grace_time
-                            }
-                            if self.set_color:
-                                self.set_color([255, 255, 0])
-                            self._log_event("User Disengage", log_data)
-                            continue
-
-                    if base_attitude < 0:
-                        log_data = {
-                            "speed": round(speed, 3),
-                            "vel": [round(x, 3) for x in vel],
-                            "heading": [round(x, 3) for x in interaction_heading],
-                            "Pos": [round(x, 3) for x in pos],
-                            "Target": [round(x, 3) for x in target_pos]
-                        }
-                        self._log_event("User Pushing", log_data)
-                        self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
-                    else:
-                        log_data = {
-                            "speed": round(speed, 3),
-                            "vel": [round(x, 3) for x in vel],
-                            "heading": [round(x, 3) for x in interaction_heading],
-                            "Pos": [round(x, 3) for x in pos],
-                        }
-                        self._log_event("User Pushing", log_data)
-                        target_pitch, target_roll = base_attitude * calculate_braking_angles(*dv_lb[:2])
-                        self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
-
-                elif status == 2:  # coasting
-                    if blender_state is not None:
-                        blender_state['status'] = 2
-                    end_pos, coast_t = self.calculate_coasting(pos, vel, fric_coe)
-
-                    self.lo_commander.send_notify_setpoint_stop()
-                    self.hl_commander.go_to(end_pos[0], end_pos[1], end_pos[2], 0, coast_t, relative=False)
-                    self._safe_sleep(coast_t)
-                    logger.info(f"Switching to Hover From {status}.")
-                    hover_pos = end_pos
-                    if self.set_color:
-                        self.set_color([255, 157, 0])
-                    status = 0
-                    continue
-
-                elif status == 3:  # grace period
-                    if blender_state is not None:
-                        blender_state['status'] = 3
-                    grace_start = time.time()
-                    while time.time() < grace_time + grace_start:
-                        self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
-                        self._safe_sleep(dt)
-
-                    if self.set_color:
-                        self.set_color([255, 157, 0])
-                    status = 0
+            if status == 0:  # wait for user interaction
+                if blender_state is not None:
                     blender_state['status'] = 0
+
+                if detect_speed_threshold(speed):
+                    logger.info(f"Switching to Translation From {status}.")
+                    if self.set_color:
+                        self.set_color([0, 255, 0])
+                    status = 1
+                    interaction_heading = vel
+                    v_virtual = np.zeros(3)
+                    prev_interact_vel = vel.copy()
                     continue
+                else:
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
-                if blender_state['sending_positions']:
-                    now_t = time.time()
-                    if now_t - last_blender_send_time >= 0.1:
-                        send_pos = hover_pos if status == 0 else list(pos)
-                        send_blender_position(send_pos)
-                        last_blender_send_time = now_t
-                        if status == 0 and blender_state['finish_requested']:
-                            blender_state['sending_positions'] = False
-                            blender_state['finish_requested'] = False
-                            blender_state['stop_at_next_zero'] = False
-                            blender_state['edit_active'] = False
-                            logger.info("Sent final hover position, stopped streaming.")
+            elif status == 1:  # pushed by user
+                if blender_state is not None:
+                    blender_state['status'] = 1
+                if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
+                    logger.info("Ignoring interaction: Direction change > 90 degrees.")
+                    interact_vel = np.array([0.0, 0.0, 0.0])
+                    speed = 0
+                else:
+                    interact_vel = vel
 
-                self._safe_sleep(dt)
+                dv_lb = interact_vel - prev_interact_vel
+                v_virtual = interact_vel + dv_lb * (mass_ratio - 1)
+                prev_interact_vel = interact_vel.copy()
+                target_pos = pos + v_virtual * dt * v_scalar
 
-            worker_done.set()
-
-        else:
-            # --- Main loop: no blender port (original behavior) ---
-            while time.time() - start_time < duration:
-
-                state = self._get_latest_drone_state()
-                if not state:
-                    state = {}
-
-                current_pitch = state.get('stateEstimate.pitch', 0.0)
-                current_roll = state.get('stateEstimate.roll', 0.0)
-
-                state_vx = state.get('stateEstimate.vx', 0.0)
-                state_vy = state.get('stateEstimate.vy', 0.0)
-                state_vz = state.get('stateEstimate.vz', 0.0)
-                state_vel = np.array([state_vx, state_vy, state_vz])
-
-                pos, vel = self._get_latest_pos(vel=True)
-
-                vel = (alpha_vel * vel) + ((1.0 - alpha_vel) * state_vel)
-                self.check_interaction_boundary(pos)
-                if z is not None:
-                    pos[2] = z
-                    vel[2] = 0
-
-                speed = np.linalg.norm(vel)
-
-                if status == 0:  # wait for user interaction
-                    if detect_speed_threshold(speed):
-                        logger.info(f"Switching to Translation From {status}.")
-                        # self._log_event('Translation')
+                if not detect_speed_threshold(speed):
+                    interaction_heading = np.zeros(3)
+                    v_virtual = np.zeros(3)
+                    prev_interact_vel = np.zeros(3)
+                    if fric_coe > 0:
+                        logger.info(f"Switching to Coasting From {status}.")
                         if self.set_color:
-                            self.set_color([0, 255, 0])
-                        status = 1
-                        interaction_heading = vel
-                        v_virtual = np.zeros(3)
-                        prev_interact_vel = vel.copy()  # seed with current vel to avoid spike
+                            self.set_color([255, 255, 0])
+                        status = 2
                         continue
                     else:
-                        self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                        logger.info(f"Switching to Grace Hover From {status}.")
+                        hover_pos = pos + interact_vel * dt
+                        status = 3
 
-                elif status == 1:  # pushed by user
-                    # interact_vel = (vel / speed) * min((speed - 0.01), 0)
-                    if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
-                        logger.info("Ignoring interaction: Direction change > 90 degrees.")
-                        interact_vel = np.array([0.0, 0.0, 0.0])
-                        speed = 0
-                    else:
-                        # prev_interact_vel = vel
-                        interact_vel = vel
-
-                    # a_lb = Δvel/dt  (differentiate mocap velocity → acceleration)
-                    # F = m_lb * a_lb,  a_virtual = F / m_virtual = a_lb * mass_ratio
-                    dv_lb = interact_vel - prev_interact_vel
-                    v_virtual = interact_vel + dv_lb * (mass_ratio - 1)
-                    prev_interact_vel = interact_vel.copy()
-                    target_pos = pos + v_virtual * dt * v_scalar
-
-                    # self.check_interaction_boundary(target_pos)
-
-                    if not detect_speed_threshold(speed):
-                        interaction_heading = np.zeros(3)
-                        v_virtual = np.zeros(3)
-                        prev_interact_vel = np.zeros(3)
-                        if fric_coe > 0:
-                            logger.info(f"Switching to Coasting From {status}.")
-                            # self._log_event('Coasting')
-                            if self.set_color:
-                                self.set_color([255, 255, 0])
-                            status = 2
-                            continue
-                        else:
-                            logger.info(f"Switching to Grace Hover From {status}.")
-                            # self._log_event('Grace Hover')
-                            hover_pos = pos + interact_vel * dt
-                            status = 3
-
-                            tilt_angle = calculate_tilt(current_roll, current_pitch)
-                            grace_time = get_grace_time(abs(tilt_angle), speed)
-                            log_data = {
-                                "speed": round(speed, 3),
-                                "vel": [round(x, 3) for x in vel],
-                                "Pos": [round(x, 3) for x in pos],
-                                "Target": [round(x, 3) for x in hover_pos],
-                                "Stabilize Time": grace_time
-                            }
-                            if self.set_color:
-                                self.set_color([255, 255, 0])
-                            self._log_event("User Disengage", log_data)
-                            continue
-
-                    if base_attitude < 0:
-
+                        tilt_angle = calculate_tilt(current_roll, current_pitch)
+                        grace_time = get_grace_time(abs(tilt_angle), speed)
                         log_data = {
                             "speed": round(speed, 3),
                             "vel": [round(x, 3) for x in vel],
-                            "heading": [round(x, 3) for x in interaction_heading],
                             "Pos": [round(x, 3) for x in pos],
-                            "Target": [round(x, 3) for x in target_pos]
+                            "Target": [round(x, 3) for x in hover_pos],
+                            "Stabilize Time": grace_time
                         }
-                        self._log_event("User Pushing", log_data)
-                        self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
-                    else:
-                        log_data = {
-                            "speed": round(speed, 3),
-                            "vel": [round(x, 3) for x in vel],
-                            "heading": [round(x, 3) for x in interaction_heading],
-                            "Pos": [round(x, 3) for x in pos],
-                        }
-                        self._log_event("User Pushing", log_data)
-                        target_pitch, target_roll = base_attitude * calculate_braking_angles(*dv_lb[:2])
-                        self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
+                        if self.set_color:
+                            self.set_color([255, 255, 0])
+                        self._log_event("User Disengage", log_data)
+                        continue
 
-                elif status == 2:  # coasting
-                    end_pos, coast_t = self.calculate_coasting(pos, vel, fric_coe)
+                if base_attitude < 0:
+                    log_data = {
+                        "speed": round(speed, 3),
+                        "vel": [round(x, 3) for x in vel],
+                        "heading": [round(x, 3) for x in interaction_heading],
+                        "Pos": [round(x, 3) for x in pos],
+                        "Target": [round(x, 3) for x in target_pos]
+                    }
+                    self._log_event("User Pushing", log_data)
+                    self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
+                else:
+                    log_data = {
+                        "speed": round(speed, 3),
+                        "vel": [round(x, 3) for x in vel],
+                        "heading": [round(x, 3) for x in interaction_heading],
+                        "Pos": [round(x, 3) for x in pos],
+                    }
+                    self._log_event("User Pushing", log_data)
+                    target_pitch, target_roll = base_attitude * calculate_braking_angles(*dv_lb[:2])
+                    self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
 
-                    # self.check_interaction_boundary(end_pos)
-                    self.lo_commander.send_notify_setpoint_stop()
-                    self.hl_commander.go_to(end_pos[0], end_pos[1], end_pos[2], 0, coast_t, relative=False)
-                    self._safe_sleep(coast_t)
-                    logger.info(f"Switching to Hover From {status}.")
-                    hover_pos = end_pos
-                    if self.set_color:
-                        self.set_color([255, 157, 0])
-                    status = 0
-                    continue
+            elif status == 2:  # coasting
+                if blender_state is not None:
+                    blender_state['status'] = 2
+                end_pos, coast_t = self.calculate_coasting(pos, vel, fric_coe)
 
-                elif status == 3:  # grace period
+                self.lo_commander.send_notify_setpoint_stop()
+                self.hl_commander.go_to(end_pos[0], end_pos[1], end_pos[2], 0, coast_t, relative=False)
+                self._safe_sleep(coast_t)
+                logger.info(f"Switching to Hover From {status}.")
+                hover_pos = end_pos
+                if self.set_color:
+                    self.set_color([255, 157, 0])
+                status = 0
+                continue
 
-                    grace_start = time.time()
-                    while time.time() < grace_time + grace_start:
-                        self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
-                        self._safe_sleep(dt)
+            elif status == 3:  # grace period
+                if blender_state is not None:
+                    blender_state['status'] = 3
+                grace_start = time.time()
+                zdist_end = grace_start + 0.1
+                while time.time() < zdist_end:
+                    self.lo_commander.send_zdistance_setpoint(0, 0, 0, hover_pos[2])
+                    self._safe_sleep(dt)
+                while time.time() < grace_time + grace_start:
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    self._safe_sleep(dt)
 
-                    # hover_pos = pos
-                    if self.set_color:
-                        self.set_color([255, 157, 0])
-                    status = 0
-                    continue
+                if self.set_color:
+                    self.set_color([255, 157, 0])
+                status = 0
+                if blender_state is not None:
+                    blender_state['status'] = 0
+                continue
 
-                self._safe_sleep(dt)
+            if blender_state is not None and blender_state['sending_positions']:
+                now_t = time.time()
+                if now_t - last_blender_send_time >= 0.1:
+                    send_pos = hover_pos if status == 0 else list(pos)
+                    send_blender_position(send_pos)
+                    last_blender_send_time = now_t
+                    if status == 0 and blender_state['finish_requested']:
+                        blender_state['sending_positions'] = False
+                        blender_state['finish_requested'] = False
+                        blender_state['stop_at_next_zero'] = False
+                        blender_state['edit_active'] = False
+                        logger.info("Sent final hover position, stopped streaming.")
+
+            self._safe_sleep(dt)
+
+        if blender_state is not None:
+            worker_done.set()
 
         self.lo_commander.send_notify_setpoint_stop()
 
@@ -1685,6 +1554,7 @@ class InteractionsControl:
     #     self._safe_sleep(test_time)
     #     self._stop_pwm_override()
     #
+
 
     # def test_movement_threshold(self, test_pwm=10000, pwm_step=1000, duration=1.0):
     #     """
