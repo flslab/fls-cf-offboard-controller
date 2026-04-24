@@ -469,9 +469,77 @@ VEL_ORI = {
 }
 
 
+# Controller loop stage 1: Position → Velocity output, Velocity → Attitude output
+CTRL_LOOP_1 = {
+    "posCtl.targetVX": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "posCtl.targetVY": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "posCtl.targetVZ": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "controller.roll": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "controller.pitch": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "controller.cmd_thrust": {
+        "type": "float",
+        "unit": "PWM",
+        "data": [],
+    },
+}
+
+# Controller loop stage 2: Attitude → Rate output, Rate → Actuator output
+CTRL_LOOP_2 = {
+    "controller.rollRate": {
+        "type": "float",
+        "unit": "deg/s",
+        "data": [],
+    },
+    "controller.pitchRate": {
+        "type": "float",
+        "unit": "deg/s",
+        "data": [],
+    },
+    "controller.yawRate": {
+        "type": "float",
+        "unit": "deg/s",
+        "data": [],
+    },
+    "pid_rate.roll_out": {
+        "type": "float",
+        "unit": "PID",
+        "data": [],
+    },
+    "pid_rate.pitch_out": {
+        "type": "float",
+        "unit": "PID",
+        "data": [],
+    },
+    "pid_rate.yaw_out": {
+        "type": "float",
+        "unit": "PID",
+        "data": [],
+    },
+}
+
 # LOG_VARS = {'POS_ORI': POS_ORI, 'VEL_ACC': VEL_ACC, 'MOT_BAT': MOT_BAT}
 # LOG_VARS = {'POS_VEL': POS_VEL}
-LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT}
+LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'CTRL_LOOP_1': CTRL_LOOP_1, 'CTRL_LOOP_2': CTRL_LOOP_2}
 
 # PID Configurations
 PID_VALUES_PROP_2 = {

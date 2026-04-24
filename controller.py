@@ -399,7 +399,7 @@ class Controller:
             return
 
         logger.info(f"[{self.args.drone_id}] Sending READY...")
-        self.push_socket.send_json({"id": self.args.drone_id, "status": "READY"})
+        self.push_socket.send_json({"id": self.args.drone_id, "status": "READY", "battery": self.voltage})
 
         logger.info(f"[{self.args.drone_id}] Waiting for START...")
         while True:
