@@ -470,7 +470,7 @@ VEL_ORI = {
 
 
 # Controller loop stage 1: Position → Velocity output, Velocity → Attitude output
-CTRL_LOOP_1 = {
+POS_VEL_CTL = {
     "posCtl.targetVX": {
         "type": "float",
         "unit": "m/s",
@@ -504,7 +504,7 @@ CTRL_LOOP_1 = {
 }
 
 # Controller loop stage 2: Attitude → Rate output, Rate → Actuator output
-CTRL_LOOP_2 = {
+ATT_RATE_CTL = {
     "controller.rollRate": {
         "type": "float",
         "unit": "deg/s",
@@ -539,7 +539,7 @@ CTRL_LOOP_2 = {
 
 # LOG_VARS = {'POS_ORI': POS_ORI, 'VEL_ACC': VEL_ACC, 'MOT_BAT': MOT_BAT}
 # LOG_VARS = {'POS_VEL': POS_VEL}
-LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'CTRL_LOOP_1': CTRL_LOOP_1, 'CTRL_LOOP_2': CTRL_LOOP_2}
+LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'POS_VEL_CTL': POS_VEL_CTL, 'ATT_RATE_CTL': ATT_RATE_CTL}
 
 # PID Configurations
 PID_VALUES_PROP_2 = {

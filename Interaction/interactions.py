@@ -876,14 +876,16 @@ class InteractionsControl:
                     self._log_event("User Pushing", log_data)
                     self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
                 else:
+
+                    target_pitch, target_roll = base_attitude * calculate_braking_angles(*dv_lb[:2])
                     log_data = {
                         "speed": round(speed, 3),
                         "vel": [round(x, 3) for x in vel],
                         "heading": [round(x, 3) for x in interaction_heading],
                         "Pos": [round(x, 3) for x in pos],
+                        "Target_Attitude": [round(target_pitch, 3), round(target_roll, 3)],
                     }
                     self._log_event("User Pushing", log_data)
-                    target_pitch, target_roll = base_attitude * calculate_braking_angles(*dv_lb[:2])
                     self.lo_commander.send_zdistance_setpoint(target_pitch, target_roll, 0, target_pos[2])
 
             elif status == 2:  # coasting
