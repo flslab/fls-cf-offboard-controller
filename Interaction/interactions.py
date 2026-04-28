@@ -894,8 +894,14 @@ class InteractionsControl:
                     self._log_event("User Pushing", log_data)
                     self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
                 else:
+                    is_decelerating = np.dot(dv_lb, interact_vel) < 0
+                    if is_decelerating:
+                        # When decelerating, output a given value (defaulting to 0.0)
+                        given_decel_value = 0.0
+                        target_pitch, target_roll = given_decel_value, given_decel_value
+                    else:
+                        target_pitch, target_roll = calculate_braking_angles(*dv_lb[:2], yaw_deg=current_yaw)
 
-                    target_pitch, target_roll = base_attitude * np.array(calculate_braking_angles(*dv_lb[:2], yaw_deg=current_yaw))
                     log_data = {
                         "speed": round(speed, 3),
                         "vel": [round(x, 3) for x in vel],
