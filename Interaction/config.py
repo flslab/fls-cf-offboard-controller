@@ -520,19 +520,19 @@ ATT_RATE_CTL = {
         "unit": "deg/s",
         "data": [],
     },
-    "pid_rate.roll_out": {
+    "controller.roll": {
         "type": "float",
-        "unit": "PID",
+        "unit": "deg",
         "data": [],
     },
-    "pid_rate.pitch_out": {
+    "controller.pitch": {
         "type": "float",
-        "unit": "PID",
+        "unit": "deg",
         "data": [],
     },
-    "pid_rate.yaw_out": {
+    "controller.yaw": {
         "type": "float",
-        "unit": "PID",
+        "unit": "deg",
         "data": [],
     },
 }
