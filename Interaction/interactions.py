@@ -574,7 +574,7 @@ class InteractionsControl:
             body_dv_y = -dv_x * sin_y + dv_y * cos_y
 
             inv_mass_ratio = 1.0 / mass_ratio if mass_ratio != 0 else 1.0
-            sin_pitch = (1 - inv_mass_ratio) * body_dv_x / (_G * dt)
+            sin_pitch = -(1 - inv_mass_ratio) * body_dv_x / (_G * dt)
             sin_roll  = -(1 - inv_mass_ratio) * body_dv_y / (_G * dt)
 
             pitch = np.degrees(np.arcsin(np.clip(sin_pitch, -1.0, 1.0)))
