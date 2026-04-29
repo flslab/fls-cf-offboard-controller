@@ -821,7 +821,7 @@ class InteractionsControl:
                 pos[2] = z
                 vel[2] = 0
 
-            speed = float(np.linalg.norm(vel))
+            speed = np.linalg.norm(vel)
 
             if status == 0:  # wait for user interaction
                 if blender_state is not None:
@@ -845,7 +845,7 @@ class InteractionsControl:
                 if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
                     logger.info("Ignoring interaction: Direction change > 90 degrees.")
                     interact_vel = np.array([0.0, 0.0, 0.0])
-                    speed = 0.0
+                    speed = 0
                 else:
                     interact_vel = vel
 
@@ -866,7 +866,6 @@ class InteractionsControl:
                         continue
                     else:
                         logger.info(f"Switching to Grace Hover From {status}.")
-
                         hover_pos = pos + interact_vel * dt * v_scalar
                         status = 3
 
@@ -938,14 +937,22 @@ class InteractionsControl:
                 #     self.lo_commander.send_zdistance_setpoint(0, 0, 0, hover_pos[2])
                 #     self._safe_sleep(dt)
                 while time.time() < grace_time + grace_start:
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    # grace_state = self._get_latest_drone_state() or {}
+                    # grace_yaw = grace_state.get('stateEstimate.yaw', current_yaw)
+                    # yaw_rate_cmd = max(min(-5.0 * grace_yaw, 50.0), -50.0)
+                    self.lo_commander.send_hover_setpoint(0.0, 0.0, 0, hover_pos[2])
                     self._safe_sleep(dt)
+
+                hover_pos = self._get_latest_pos()
+                if z is not None:
+                    hover_pos[2] = z
+                self.check_interaction_boundary(hover_pos)
 
                 if self.set_color:
                     self.set_color([255, 157, 0])
-                status = 0
+                status = 1
                 if blender_state is not None:
-                    blender_state['status'] = 0
+                    blender_state['status'] = 1
                 continue
 
             if blender_state is not None and blender_state['sending_positions']:
