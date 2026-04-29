@@ -867,10 +867,7 @@ class InteractionsControl:
                     else:
                         logger.info(f"Switching to Grace Hover From {status}.")
 
-                        interact_speed = float(np.linalg.norm(interact_vel))
-                        dv_lb_norm = float(np.linalg.norm(dv_lb))
-                        time_to_dec = interact_speed / dv_lb_norm if dv_lb_norm > 0.0 else dt
-                        hover_pos = pos + interact_vel * time_to_dec * v_scalar
+                        hover_pos = pos + interact_vel * dt * v_scalar
                         status = 3
 
                         tilt_angle = calculate_tilt(current_roll, current_pitch)
