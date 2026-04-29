@@ -821,7 +821,7 @@ class InteractionsControl:
                 pos[2] = z
                 vel[2] = 0
 
-            speed = np.linalg.norm(vel)
+            speed = float(np.linalg.norm(vel))
 
             if status == 0:  # wait for user interaction
                 if blender_state is not None:
@@ -845,7 +845,7 @@ class InteractionsControl:
                 if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
                     logger.info("Ignoring interaction: Direction change > 90 degrees.")
                     interact_vel = np.array([0.0, 0.0, 0.0])
-                    speed = 0
+                    speed = 0.0
                 else:
                     interact_vel = vel
 
@@ -866,7 +866,11 @@ class InteractionsControl:
                         continue
                     else:
                         logger.info(f"Switching to Grace Hover From {status}.")
-                        hover_pos = pos + interact_vel * dt
+
+                        interact_speed = float(np.linalg.norm(interact_vel))
+                        dv_lb_norm = float(np.linalg.norm(dv_lb))
+                        time_to_dec = interact_speed / dv_lb_norm if dv_lb_norm > 0.0 else dt
+                        hover_pos = pos + interact_vel * time_to_dec * v_scalar
                         status = 3
 
                         tilt_angle = calculate_tilt(current_roll, current_pitch)
