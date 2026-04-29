@@ -866,7 +866,7 @@ class InteractionsControl:
                         continue
                     else:
                         logger.info(f"Switching to Grace Hover From {status}.")
-                        hover_pos = pos + interact_vel * dt * v_scalar
+                        hover_pos = pos + interact_vel * dt * v_scalar * 2
                         status = 3
 
                         tilt_angle = calculate_tilt(current_roll, current_pitch)
@@ -937,22 +937,14 @@ class InteractionsControl:
                 #     self.lo_commander.send_zdistance_setpoint(0, 0, 0, hover_pos[2])
                 #     self._safe_sleep(dt)
                 while time.time() < grace_time + grace_start:
-                    # grace_state = self._get_latest_drone_state() or {}
-                    # grace_yaw = grace_state.get('stateEstimate.yaw', current_yaw)
-                    # yaw_rate_cmd = max(min(-5.0 * grace_yaw, 50.0), -50.0)
-                    self.lo_commander.send_hover_setpoint(0.0, 0.0, 0, hover_pos[2])
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
-
-                hover_pos = self._get_latest_pos()
-                if z is not None:
-                    hover_pos[2] = z
-                self.check_interaction_boundary(hover_pos)
 
                 if self.set_color:
                     self.set_color([255, 157, 0])
-                status = 1
+                status = 0
                 if blender_state is not None:
-                    blender_state['status'] = 1
+                    blender_state['status'] = 0
                 continue
 
             if blender_state is not None and blender_state['sending_positions']:
