@@ -875,7 +875,6 @@ class InteractionsControl:
                 target_pos = pos + v_virtual * dt * v_scalar
 
                 if not detect_speed_threshold(speed):
-                    interaction_heading = np.zeros(3)
                     v_virtual = np.zeros(3)
                     prev_interact_vel = np.zeros(3)
                     if fric_coe > 0:
@@ -903,6 +902,8 @@ class InteractionsControl:
                         if self.set_color:
                             self.set_color([255, 255, 0])
                         self._log_event("User Disengage", log_data)
+
+                        interaction_heading = np.zeros(3)
                         continue
 
                 if base_attitude < 0:
@@ -957,19 +958,15 @@ class InteractionsControl:
                 grace_start = time.time()
 
                 # self.lo_commander.send_notify_setpoint_stop()
-                
-                # Fetch the latest state to get current roll and pitch
-                state = self._get_latest_drone_state()
-                if not state: state = {}
-                current_roll = state.get('stateEstimate.roll', 0.0)
-                current_pitch = state.get('stateEstimate.pitch', 0.0)
 
-                recover_time = abs(max(current_roll, current_roll)) / 7.2
+                self.cf.param.set_value('velCtlPid.vxKp', 0.0)
+                self.cf.param.set_value('velCtlPid.vyKp', 0.0)
+                self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
-                self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
-                self._safe_sleep(min(recover_time, dt))
 
-                # Then use send position setpoint command to hold position
+                self.cf.param.set_value('velCtlPid.vxKp', 30.0)
+                self.cf.param.set_value('velCtlPid.vyKp', 30.0)
+
                 while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
