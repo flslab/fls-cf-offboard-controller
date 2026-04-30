@@ -954,18 +954,12 @@ class InteractionsControl:
 
                 grace_start = time.time()
 
-                # self.lo_commander.send_notify_setpoint_stop()
+                self.lo_commander.send_notify_setpoint_stop()
 
                 self.cf.param.set_value('stabilizer.controller', '2')
-                self.cf.param.set_value('velCtlPid.vxKp', 0.0)
-                self.cf.param.set_value('velCtlPid.vyKp', 0.0)
+                # self.cf.param.set_value('stabilizer.controller', '1')
                 self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
-
-                self.cf.param.set_value('velCtlPid.vxKp', 30.0)
-                self.cf.param.set_value('velCtlPid.vyKp', 30.0)
-
-                self.cf.param.set_value('stabilizer.controller', '1')
                 while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
