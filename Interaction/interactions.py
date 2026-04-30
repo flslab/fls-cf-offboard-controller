@@ -934,7 +934,7 @@ class InteractionsControl:
 
                 grace_start = time.time()
 
-                while time.time() < grace_time + grace_start/2:
+                while time.time() < grace_time/2 + grace_start:
                     self.lo_commander.send_hover_setpoint(0, 0, 0, hover_pos[2])
                     self._safe_sleep(dt)
 
