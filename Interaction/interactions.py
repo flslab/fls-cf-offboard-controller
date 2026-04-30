@@ -844,8 +844,8 @@ class InteractionsControl:
                 self.lo_commander.send_notify_setpoint_stop()
 
                 hover_pos = [pos[0], pos[1]+2, pos[2]]
-                self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, grace_time, relative=False)
-                self._safe_sleep(10 + grace_time)
+                self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 10, relative=False)
+                self._safe_sleep(10 + 10)
                 return
 
                 if blender_state is not None:
