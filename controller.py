@@ -867,7 +867,7 @@ class Controller:
     def interation_switch(self):
 
         IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
-                                 self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow,
+                                 self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=None,
                                  orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
         IC.run_unit_test()
         return
