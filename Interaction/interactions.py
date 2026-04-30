@@ -154,7 +154,7 @@ class InteractionsControl:
             travel_time = d * 2
 
             if command_type == 'hi':
-                self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, travel_time, linear=True, relative=False)
+                self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, travel_time, relative=False)
                 self._safe_sleep(travel_time + 5)
             else:
                 start_time = time.time()
