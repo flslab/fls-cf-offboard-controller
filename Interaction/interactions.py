@@ -854,7 +854,7 @@ class InteractionsControl:
                     status = 1
                     interaction_heading = vel
 
-                    self.cf.param.set_value_raw('stabilizer.controller', 'uint8_t', '1')
+                    self.cf.param.set_value_raw('stabilizer.controller', 'uint16_t', '1')
                     cmd_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.05
                     self.lo_commander.send_position_setpoint(cmd_pos[0], cmd_pos[1], cmd_pos[2], 0)
 
@@ -962,7 +962,7 @@ class InteractionsControl:
 
                 self.lo_commander.send_notify_setpoint_stop()
 
-                self.cf.param.set_value_raw('stabilizer.controller', 'uint8_t', '2')
+                self.cf.param.set_value_raw('stabilizer.controller', 'uint16_t', '2')
 
                 while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
