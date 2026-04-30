@@ -145,7 +145,7 @@ class InteractionsControl:
             self.lo_commander.send_notify_setpoint_stop()
 
     def run_unit_test(self, command_type='hi'):
-        distance_to_test = [0.2, 0.5, 1, 2]
+        distance_to_test = [0.01, 0.02, 0.2, 0.5, 1, 2]
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
 
         for d in distance_to_test:
