@@ -932,17 +932,17 @@ class InteractionsControl:
                 if blender_state is not None:
                     blender_state['status'] = 3
                 
-                self.cf.param.set_value('velCtlPid.vxKd', '0.0')
-                self.cf.param.set_value('velCtlPid.vyKd', '0.0')
+                # self.cf.param.set_value('velCtlPid.vxKd', '0.0')
+                # self.cf.param.set_value('velCtlPid.vyKd', '0.0')
 
                 grace_start = time.time()
 
                 while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
-
-                self.cf.param.set_value('velCtlPid.vxKd', '0.005')
-                self.cf.param.set_value('velCtlPid.vyKd', '0.005')
+                #
+                # self.cf.param.set_value('velCtlPid.vxKd', '0.005')
+                # self.cf.param.set_value('velCtlPid.vyKd', '0.005')
 
                 if self.set_color:
                     self.set_color([255, 157, 0])
