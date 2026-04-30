@@ -962,7 +962,7 @@ class InteractionsControl:
                 current_roll = state.get('stateEstimate.roll', 0.0)
                 current_pitch = state.get('stateEstimate.pitch', 0.0)
 
-                recover_time = max(current_roll, current_roll) / 7.2
+                recover_time = abs(max(current_roll, current_roll)) / 7.2
 
                 self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
                 self._safe_sleep(max(recover_time, dt))
