@@ -9,6 +9,7 @@ import zmq
 
 from Interaction.CommandWrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
+
 # from Interaction.collision_avoidance.simulation import apf_velocity
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,8 @@ def calculate_tilt(roll, pitch, degrees=True):
 class InteractionsControl:
 
     def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True,
-                 leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, set_color=None, orchestrator_ip=None, *args, **kwargs):
+                 leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, set_color=None,
+                 orchestrator_ip=None, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
@@ -56,10 +58,8 @@ class InteractionsControl:
         self.bounds = self.mission.get('boundary_limits', None)
 
     def run(self) -> None:
-        # Recap missions use the 'Recap' key instead of 'Interaction'.
-        # if self.mission.get('Recap'):
-        #     self.run_recap()
-        #     return
+
+        self.run_unit_test()
 
         action = self.mission.get('Interaction', {}).get('action')
 
@@ -146,6 +146,25 @@ class InteractionsControl:
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
+    def run_unit_test(self, command_type='hi'):
+        distance_to_test = [0.2, 0.5, 1, 2]
+        dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
+
+        for d in distance_to_test:
+            pos, vel = self._get_latest_pos(vel=True)
+            hover_pos = [pos[0], pos[1] + d, pos[2]]
+            travel_time = d * 2
+
+            if command_type == 'hi':
+                self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, travel_time, relative=False)
+                self._safe_sleep(travel_time + 5)
+            else:
+                start_time = time.time()
+                while time.time() < start_time + travel_time:
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    self._safe_sleep(dt)
+        return
+
     def run_recap(self, file) -> None:
         """Replay a single recorded command log. File selection and takeoff/land
         orchestration are handled by controller.py before calling IC.run()."""
@@ -162,7 +181,7 @@ class InteractionsControl:
         """Run the velocity-based translation interaction."""
         try:
             translation_setting = self.mission['Interaction']['config']
-            mass_lb      = translation_setting.get('mass_lightbender', 1.0)
+            mass_lb = translation_setting.get('mass_lightbender', 1.0)
             mass_virtual = translation_setting.get('mass_virtual', 1.0)
             self.interaction_translation_vel(
                 vel_threshold=translation_setting['delta_v'],
@@ -575,17 +594,16 @@ class InteractionsControl:
 
             inv_mass_ratio = 1.0 / mass_ratio if mass_ratio != 0 else 1.0
             sin_pitch = -(1 - inv_mass_ratio) * body_dv_x / (_G * dt)
-            sin_roll  = -(1 - inv_mass_ratio) * body_dv_y / (_G * dt)
+            sin_roll = -(1 - inv_mass_ratio) * body_dv_y / (_G * dt)
 
             pitch = np.degrees(np.arcsin(np.clip(sin_pitch, -1.0, 1.0)))
-            roll  = np.degrees(np.arcsin(np.clip(sin_roll, -1.0, 1.0)))
+            roll = np.degrees(np.arcsin(np.clip(sin_roll, -1.0, 1.0)))
 
-            pitch = max(min(pitch, max_attitude ), -max_attitude)
-            roll  = max(min(roll,  max_attitude), -max_attitude)
+            pitch = max(min(pitch, max_attitude), -max_attitude)
+            roll = max(min(roll, max_attitude), -max_attitude)
             return pitch, roll
 
-
-        if init_hover: 
+        if init_hover:
             last_pos = init_hover
         else:
             while True:
@@ -609,7 +627,7 @@ class InteractionsControl:
         self._log_event('Waiting For User Interaction')
 
         interaction_heading = np.zeros(3)
-        v_virtual    = np.zeros(3)   # virtual-object velocity, integrated from F/m_virtual
+        v_virtual = np.zeros(3)  # virtual-object velocity, integrated from F/m_virtual
         prev_interact_vel = np.zeros(3)  # previous tick's interact_vel, for differentiation
 
         if blender_port:
@@ -837,21 +855,9 @@ class InteractionsControl:
                     prev_interact_vel = vel.copy()
                     continue
                 else:
-                    pass
-                    # self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
             elif status == 1:  # pushed by user
-                # self.lo_commander.send_notify_setpoint_stop()
-                #
-                hover_pos = [pos[0], pos[1]+2, pos[2]]
-                # self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 4.5, relative=False)
-                # self._safe_sleep(10 + 4)
-                start_time = time.time()
-                while time.time() < start_time + 14:
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
-                    self._safe_sleep(dt)
-                return
-
                 if blender_state is not None:
                     blender_state['status'] = 1
                 if np.linalg.norm(interaction_heading) > 0 > np.dot(vel, interaction_heading):
@@ -945,7 +951,7 @@ class InteractionsControl:
                     blender_state['status'] = 3
 
                 grace_start = time.time()
-                
+
                 self.lo_commander.send_notify_setpoint_stop()
                 self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, grace_time, relative=False)
 
@@ -1231,7 +1237,7 @@ class InteractionsControl:
                     if peer_start >= push_start_time:
                         leader_id = peer_msg.get('drone_id')
                         logger.info("Peer push is newer — abandoning local push, reverting position.")
-                        send_time=time.time()
+                        send_time = time.time()
                         pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
                         self._log_event("User Disengage", {
                             "leader_id": drone_id,
@@ -1333,7 +1339,8 @@ class InteractionsControl:
                     })
                     self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
                 else:
-                    target_pitch, target_roll = base_attitude * np.array(calculate_braking_angles(*interact_vel[:2], yaw_deg=current_yaw))
+                    target_pitch, target_roll = base_attitude * np.array(
+                        calculate_braking_angles(*interact_vel[:2], yaw_deg=current_yaw))
                     self._log_event("User Pushing", {
                         "leader_id": drone_id,
                         "speed": round(speed, 3),
@@ -1352,7 +1359,8 @@ class InteractionsControl:
                 hover_pos = np.array(end_pos, dtype=float)
                 send_time = time.time()
                 pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
-                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - send_time) * 1000, 2)})
+                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()],
+                                               "latency_ms": round((time.time() - send_time) * 1000, 2)})
                 if self.set_color:
                     self.set_color([227, 253, 255])
                 status = 0
@@ -1366,11 +1374,11 @@ class InteractionsControl:
                     self._safe_sleep(dt)
                 send_time = time.time()
                 pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
-                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()], "latency_ms": round((time.time() - send_time) * 1000, 2)})
+                self._log_event("Grace Done", {"leader_id": drone_id, "Pos": [round(x, 3) for x in hover_pos.tolist()],
+                                               "latency_ms": round((time.time() - send_time) * 1000, 2)})
                 if self.set_color:
                     self.set_color([227, 253, 255])
                 status = 0
-
 
         self.lo_commander.send_notify_setpoint_stop()
 
@@ -1471,7 +1479,8 @@ class InteractionsControl:
                 if base_attitude < 0:
                     self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
                 else:
-                    target_pitch, target_roll = base_attitude * np.array(calculate_braking_angles(*remote_vel[:2], yaw_deg=current_yaw))
+                    target_pitch, target_roll = base_attitude * np.array(
+                        calculate_braking_angles(*remote_vel[:2], yaw_deg=current_yaw))
                     yaw_rate_cmd = max(min(-5.0 * current_yaw, 50.0), -50.0)
                     self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2])
 
@@ -1612,7 +1621,6 @@ class InteractionsControl:
     #     self._safe_sleep(test_time)
     #     self._stop_pwm_override()
     #
-
 
     # def test_movement_threshold(self, test_pwm=10000, pwm_step=1000, duration=1.0):
     #     """
