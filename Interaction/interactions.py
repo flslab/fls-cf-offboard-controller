@@ -841,11 +841,15 @@ class InteractionsControl:
                     # self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
             elif status == 1:  # pushed by user
-                self.lo_commander.send_notify_setpoint_stop()
-
-                hover_pos = [pos[0], pos[1]+2, pos[2]]
-                self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 4.5, relative=False)
-                self._safe_sleep(10 + 4)
+                # self.lo_commander.send_notify_setpoint_stop()
+                #
+                # hover_pos = [pos[0], pos[1]+2, pos[2]]
+                # self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 4.5, relative=False)
+                # self._safe_sleep(10 + 4)
+                start_time = time.time()
+                while time.time() < start_time + 14:
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    self._safe_sleep(dt)
                 return
 
                 if blender_state is not None:
