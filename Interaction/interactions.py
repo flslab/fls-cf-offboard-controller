@@ -148,6 +148,8 @@ class InteractionsControl:
         distance_to_test = [0.01, 0.02, 0.2, 0.5, 1, 2]
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
 
+        self._safe_sleep(2)
+
         for d in distance_to_test:
             pos, vel = self._get_latest_pos(vel=True)
             hover_pos = [pos[0], pos[1] + d, 1]
