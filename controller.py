@@ -232,9 +232,10 @@ class Controller:
             self.log_manager.stop(
                 log_dir=self.args.log_dir,
                 tag=self.args.tag,
-                animation_start_time=self.animation_start_times,
-                animation_stop_time=self.animation_stop_times,
-                viewpoint_offsets=self.viewpoint_offsets
+                start_times=self.animation_start_times,
+                end_times=self.animation_stop_times,
+                viewpoint_offsets=self.viewpoint_offsets,
+                args=vars(self.args),
             )
 
         if self.tracker:
