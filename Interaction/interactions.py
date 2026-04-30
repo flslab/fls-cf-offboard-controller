@@ -153,14 +153,14 @@ class InteractionsControl:
         for d in distance_to_test:
             pos, vel = self._get_latest_pos(vel=True)
             hover_pos = [pos[0], pos[1] + d, 1]
-            travel_time = d * 2
+            travel_time = d * 5
 
             if command_type == 'hi':
                 self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, travel_time, relative=False)
-                self._safe_sleep(travel_time + 5)
+                self._safe_sleep(travel_time + 3)
             else:
                 start_time = time.time()
-                while time.time() < start_time + travel_time + 5:
+                while time.time() < start_time + travel_time + 3:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
 
