@@ -866,7 +866,7 @@ class InteractionsControl:
                         continue
                     else:
                         logger.info(f"Switching to Grace Hover From {status}.")
-                        hover_pos = pos + interact_vel * dt * v_scalar
+                        hover_pos = pos + interact_vel * dt * v_scalar * 2
                         status = 3
 
                         tilt_angle = calculate_tilt(current_roll, current_pitch)
@@ -931,15 +931,18 @@ class InteractionsControl:
             elif status == 3:  # grace period
                 if blender_state is not None:
                     blender_state['status'] = 3
-                grace_start = time.time()
+                
+                self.cf.param.set_value('velCtlPid.vxKd', '0.0')
+                self.cf.param.set_value('velCtlPid.vyKd', '0.0')
 
-                while time.time() < grace_time/2 + grace_start:
-                    self.lo_commander.send_position_setpoint(pos[0], pos[1], pos[2], 0)
-                    self._safe_sleep(dt)
+                grace_start = time.time()
 
                 while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
+
+                self.cf.param.set_value('velCtlPid.vxKd', '0.005')
+                self.cf.param.set_value('velCtlPid.vyKd', '0.005')
 
                 if self.set_color:
                     self.set_color([255, 157, 0])
