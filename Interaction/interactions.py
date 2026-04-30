@@ -842,7 +842,7 @@ class InteractionsControl:
             elif status == 1:  # pushed by user
                 hover_pos = [pos[0], pos[1]+1, pos[2]]
                 self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, grace_time, relative=False)
-                self._safe_sleep(5)
+                self._safe_sleep(10)
                 return
 
                 if blender_state is not None:
