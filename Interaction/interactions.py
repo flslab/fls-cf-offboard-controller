@@ -964,7 +964,7 @@ class InteractionsControl:
 
                 recover_time = max(current_roll, current_roll) / 7.2
 
-                self.lo_commander.send_zdistance_setpoint(current_roll, current_pitch, 0, hover_pos[2])
+                self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
                 self._safe_sleep(recover_time)
 
                 # Then use send position setpoint command to hold position
