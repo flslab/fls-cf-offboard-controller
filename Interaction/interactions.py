@@ -837,9 +837,12 @@ class InteractionsControl:
                     prev_interact_vel = vel.copy()
                     continue
                 else:
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    pass
+                    # self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
             elif status == 1:  # pushed by user
+                self.lo_commander.send_notify_setpoint_stop()
+
                 hover_pos = [pos[0], pos[1]+1, pos[2]]
                 self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, grace_time, relative=False)
                 self._safe_sleep(10)
