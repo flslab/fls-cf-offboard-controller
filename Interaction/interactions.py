@@ -160,9 +160,11 @@ class InteractionsControl:
                 self._safe_sleep(travel_time + 5)
             else:
                 start_time = time.time()
-                while time.time() < start_time + travel_time:
+                while time.time() < start_time + travel_time + 5:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
+
+        self.lo_commander.send_notify_setpoint_stop()
         return
 
     def run_recap(self, file) -> None:
