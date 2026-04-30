@@ -889,9 +889,6 @@ class InteractionsControl:
 
                         hover_pos = pos + interaction_heading/np.linalg.norm(interaction_heading) * 0.05
                         status = 3
-
-                        tilt_angle = calculate_tilt(current_roll, current_pitch)
-                        grace_time = get_grace_time(abs(tilt_angle), speed)
                         log_data = {
                             "speed": round(speed, 3),
                             "vel": [round(x, 3) for x in vel],
@@ -959,6 +956,7 @@ class InteractionsControl:
 
                 # self.lo_commander.send_notify_setpoint_stop()
 
+                self.cf.param.set_value('stabilizer.controller', '2')
                 self.cf.param.set_value('velCtlPid.vxKp', 0.0)
                 self.cf.param.set_value('velCtlPid.vyKp', 0.0)
                 self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -967,6 +965,7 @@ class InteractionsControl:
                 self.cf.param.set_value('velCtlPid.vxKp', 30.0)
                 self.cf.param.set_value('velCtlPid.vyKp', 30.0)
 
+                self.cf.param.set_value('stabilizer.controller', '1')
                 while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
