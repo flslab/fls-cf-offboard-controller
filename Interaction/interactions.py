@@ -956,7 +956,7 @@ class InteractionsControl:
 
                 self.lo_commander.send_notify_setpoint_stop()
 
-                # self.cf.param.set_value('stabilizer.controller', '2')
+                self.cf.param.set_value('stabilizer.controller', '2')
                 # self.cf.param.set_value('stabilizer.controller', '1')
                 self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
