@@ -59,8 +59,6 @@ class InteractionsControl:
 
     def run(self) -> None:
 
-        self.run_unit_test()
-
         action = self.mission.get('Interaction', {}).get('action')
 
         if action == 'peer_latency_test':
