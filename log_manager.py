@@ -6,6 +6,7 @@ from log_manager_abs import LogManager
 from cflib.crazyflie.log import LogConfig
 import time
 import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,19 +25,31 @@ class IlluminationLogger(LogManager):
         if self.cf_var_logger is not None:
             self.cf_var_logger.stop()
 
-        self.save_logs(kwargs['log_dir'], kwargs['tag'], kwargs['animation_start_time'], kwargs['animation_stop_time'], kwargs['viewpoint_offsets'])
+        self.save_logs(**kwargs)
 
-    def save_logs(self, log_dir, tag, start_times, end_times, viewpoint_offsets):
+    def save_logs(self, **kwargs):
+        log_dir = kwargs.get('log_dir')
+        tag = kwargs.get('tag')
+        start_times = kwargs.get('start_times')
+        end_times = kwargs.get('end_times')
+        viewpoint_offsets = kwargs.get('viewpoint_offsets')
+        args = kwargs.get('args')
+
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
 
         s, e = (start_times[0], end_times[-1]) if len(end_times) > 0 else (0, 0)
+
+        import subprocess
+
         output_data = {
             "start_time": s,
             "stop_time": e,
             "start_times": start_times,
             "stop_times": end_times,
             "viewpoint_offsets": viewpoint_offsets,
+            "args": args,
+            "git_ver": subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
         }
 
         for group, entries in self.groups.items():
