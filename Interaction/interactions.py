@@ -153,7 +153,7 @@ class InteractionsControl:
         for d in distance_to_test:
             pos, vel = self._get_latest_pos(vel=True)
             hover_pos = [pos[0], pos[1] + d, 1]
-            travel_time = d * 5
+            travel_time = d * 3
 
             if command_type == 'hi':
                 self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, travel_time, relative=False)
