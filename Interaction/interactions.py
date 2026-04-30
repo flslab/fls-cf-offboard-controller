@@ -954,7 +954,7 @@ class InteractionsControl:
 
                 grace_start = time.time()
 
-                self.lo_commander.send_notify_setpoint_stop()
+                # self.lo_commander.send_notify_setpoint_stop()
                 
                 # Fetch the latest state to get current roll and pitch
                 state = self._get_latest_drone_state()
@@ -965,7 +965,7 @@ class InteractionsControl:
                 recover_time = max(current_roll, current_roll) / 7.2
 
                 self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
-                self._safe_sleep(max(recover_time), dt)
+                self._safe_sleep(max(recover_time, dt))
 
                 # Then use send position setpoint command to hold position
                 while time.time() < grace_time + grace_start:
