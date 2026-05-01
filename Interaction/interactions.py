@@ -875,7 +875,7 @@ class InteractionsControl:
                     interaction_heading = vel
 
                     self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
-                    cmd_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.05
+                    cmd_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.2
                     self.lo_commander.send_position_setpoint(cmd_pos[0], cmd_pos[1], cmd_pos[2], 0)
 
 
