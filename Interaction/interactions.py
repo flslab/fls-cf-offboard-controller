@@ -877,6 +877,8 @@ class InteractionsControl:
                     self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
                     v_virtual = np.zeros(3)
                     prev_interact_vel = vel.copy()
+                    self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2] + 0.02)
+                    self._safe_sleep(0.01)
                     continue
                 else:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -961,7 +963,7 @@ class InteractionsControl:
                     }
                     self._log_event("User Pushing", log_data)
                     yaw_rate_cmd = max(min(-5.0 * current_yaw, 50.0), -50.0)
-                    self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2]+ 0.02)
+                    self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2])
 
             elif status == 2:  # coasting
                 if blender_state is not None:
