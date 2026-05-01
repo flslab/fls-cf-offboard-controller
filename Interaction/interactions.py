@@ -808,8 +808,7 @@ class InteractionsControl:
         loop_tick_time = time.time()
         last_blender_send_time = 0.0
 
-        self.cf.param.set_value_raw('stabilizer.controller', 0x08, 2)
-        self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2] - 0.02, 0)
+        self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
         while elapsed_non_edit < duration:
             now = time.time()
             tick = now - loop_tick_time
@@ -876,13 +875,12 @@ class InteractionsControl:
                     status = 1
                     interaction_heading = vel
 
-                    self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
                     v_virtual = np.zeros(3)
                     prev_interact_vel = vel.copy()
                     self._safe_sleep(0.01)
                     continue
                 else:
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2]-0.02, 0)
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
 
             elif status == 1:  # pushed by user
                 if blender_state is not None:
@@ -964,7 +962,7 @@ class InteractionsControl:
                     }
                     self._log_event("User Pushing", log_data)
                     yaw_rate_cmd = max(min(-5.0 * current_yaw, 50.0), -50.0)
-                    self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2] + 0.02)
+                    self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2])
 
             elif status == 2:  # coasting
                 if blender_state is not None:
@@ -988,9 +986,11 @@ class InteractionsControl:
                 grace_start = time.time()
 
                 self.cf.param.set_value_raw('stabilizer.controller', 0x08, 2)
-                # self.lo_commander.send_setpoint(0, 0, 0, 0)
+                self.lo_commander.send_setpoint(0, 0, 0, 0)
+                self._safe_sleep(1/500)
+
                 while time.time() < grace_time + grace_start:
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2]-0.02, 0)
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
 
                 if self.set_color:
