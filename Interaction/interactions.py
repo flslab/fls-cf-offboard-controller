@@ -875,7 +875,7 @@ class InteractionsControl:
                     interaction_heading = vel
 
                     self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
-                    cmd_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.2
+                    cmd_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.05
                     self.lo_commander.send_position_setpoint(cmd_pos[0], cmd_pos[1], cmd_pos[2], 0)
 
 
@@ -918,7 +918,7 @@ class InteractionsControl:
                         logger.info(f"Switching to Grace Hover From {status}.")
                         hover_pos = pos + interact_vel * dt * v_scalar
 
-                        hover_pos = pos + interaction_heading/np.linalg.norm(interaction_heading) * 0.05
+                        hover_pos = pos + interaction_heading/np.linalg.norm(interaction_heading) * 0.2
                         status = 3
                         log_data = {
                             "speed": round(speed, 3),
