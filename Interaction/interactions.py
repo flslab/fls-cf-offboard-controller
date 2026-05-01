@@ -187,6 +187,13 @@ class InteractionsControl:
             mass_virtual = translation_setting.get('mass_virtual', 1.0)
             self.interaction_translation_vel(
                 vel_threshold=translation_setting['delta_v'],
+                acc_threshold=translation_setting.get(
+                    'delta_a',
+                    translation_setting.get(
+                        'acceleration_threshold',
+                        translation_setting.get('acc_threshold', None)
+                    )
+                ),
                 z=translation_setting['z'],
                 fric_coe=translation_setting['friction_coefficient'],
                 base_attitude=translation_setting['base_attitude'],
@@ -506,6 +513,7 @@ class InteractionsControl:
     def interaction_translation_vel(
             self,
             vel_threshold=0.01,
+            acc_threshold=None,
             z=1,
             fric_coe=-1.0,
             base_attitude=1,
@@ -523,6 +531,13 @@ class InteractionsControl:
         else:
             v_scalar = np.array(v_scalar)
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
+        if acc_threshold is not None:
+            try:
+                acc_threshold = float(acc_threshold)
+            except (TypeError, ValueError):
+                logger.error(f"Invalid acceleration threshold: {acc_threshold}")
+                acc_threshold = None
+
         if isinstance(grace_time, (int, float)):
             get_grace_time = lambda a, v: grace_time
             stabilize_time = grace_time
@@ -544,7 +559,7 @@ class InteractionsControl:
         self.log_manager.add_log_entry(group_name="configs",
                                        entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt,
                                               "Orientation CMD": base_attitude, 'Stabilize Time': stabilize_time,
-                                              'mass_ratio': mass_ratio},
+                                              'mass_ratio': mass_ratio, 'delta_a': acc_threshold},
                                        name='Translation Config')
 
         status = 0
@@ -564,6 +579,11 @@ class InteractionsControl:
             if s > vel_threshold:
                 return True
             return False
+
+        def detect_user_disengage(s, accel):
+            if acc_threshold is not None:
+                return accel < acc_threshold
+            return not detect_speed_threshold(s)
 
         _G = 9.81  # m/s²
 
@@ -876,11 +896,16 @@ class InteractionsControl:
                     interact_vel = vel
 
                 dv_lb = interact_vel - prev_interact_vel
+                interaction_heading_norm = np.linalg.norm(interaction_heading)
+                if interaction_heading_norm > 0:
+                    acceleration = np.dot(dv_lb / dt, interaction_heading / interaction_heading_norm)
+                else:
+                    acceleration = 0.0
                 v_virtual = interact_vel + dv_lb * (mass_ratio - 1)
                 prev_interact_vel = interact_vel.copy()
                 target_pos = pos + v_virtual * dt * v_scalar
 
-                if not detect_speed_threshold(speed):
+                if detect_user_disengage(speed, acceleration):
                     v_virtual = np.zeros(3)
                     prev_interact_vel = np.zeros(3)
                     if fric_coe > 0:
@@ -897,6 +922,7 @@ class InteractionsControl:
                         status = 3
                         log_data = {
                             "speed": round(speed, 3),
+                            "acceleration": round(acceleration, 3),
                             "vel": [round(x, 3) for x in vel],
                             "Pos": [round(x, 3) for x in pos],
                             "Target": [round(x, 3) for x in hover_pos],
@@ -912,6 +938,7 @@ class InteractionsControl:
                 if base_attitude < 0:
                     log_data = {
                         "speed": round(speed, 3),
+                        "acceleration": round(acceleration, 3),
                         "vel": [round(x, 3) for x in vel],
                         "heading": [round(x, 3) for x in interaction_heading],
                         "Pos": [round(x, 3) for x in pos],
@@ -930,6 +957,7 @@ class InteractionsControl:
 
                     log_data = {
                         "speed": round(speed, 3),
+                        "acceleration": round(acceleration, 3),
                         "vel": [round(x, 3) for x in vel],
                         "heading": [round(x, 3) for x in interaction_heading],
                         "Pos": [round(x, 3) for x in pos],
