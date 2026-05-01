@@ -985,7 +985,6 @@ class InteractionsControl:
 
                 grace_start = time.time()
 
-                self.cf.param.set_value_raw('stabilizer.controller', 0x08, 2)
                 self.lo_commander.send_setpoint(0, 0, 0, 0)
                 self._safe_sleep(1/500)
 
