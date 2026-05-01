@@ -918,7 +918,7 @@ class InteractionsControl:
                         logger.info(f"Switching to Grace Hover From {status}.")
                         hover_pos = pos + interact_vel * dt * v_scalar
 
-                        hover_pos = pos + interaction_heading/np.linalg.norm(interaction_heading) * 0.8
+                        hover_pos = pos + interaction_heading/np.linalg.norm(interaction_heading) * 0.6
                         status = 3
                         log_data = {
                             "speed": round(speed, 3),
