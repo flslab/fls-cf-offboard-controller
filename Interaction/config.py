@@ -537,9 +537,111 @@ ATT_RATE_CTL = {
     },
 }
 
+TARGET_POS_VEL = {
+    "ctrltarget.x": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "ctrltarget.y": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "ctrltarget.z": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "ctrltarget.vx": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "ctrltarget.vy": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "ctrltarget.vz": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+}
+
+
+TARGET_ACC_ATT = {
+    "ctrltarget.ax": {
+        "type": "float",
+        "unit": "m/s^2",
+        "data": [],
+    },
+    "ctrltarget.ay": {
+        "type": "float",
+        "unit": "m/s^2",
+        "data": [],
+    },
+    "ctrltarget.az": {
+        "type": "float",
+        "unit": "m/s^2",
+        "data": [],
+    },
+    "ctrltarget.roll": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "ctrltarget.pitch": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "ctrltarget.yaw": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+}
+
+CTL_I_D = {
+    "posCtl.Xi": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "posCtl.Yi": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "posCtl.VXi": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "posCtl.VYi": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "posCtl.VXd": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "posCtl.VYd": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+}
+
 # LOG_VARS = {'POS_ORI': POS_ORI, 'VEL_ACC': VEL_ACC, 'MOT_BAT': MOT_BAT}
 # LOG_VARS = {'POS_VEL': POS_VEL}
-LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'POS_VEL_CTL': POS_VEL_CTL, 'ATT_RATE_CTL': ATT_RATE_CTL}
+# LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'POS_VEL_CTL': POS_VEL_CTL, 'ATT_RATE_CTL': ATT_RATE_CTL}
+
+LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'POS_CTL_I_D': CTL_I_D, 'TARGET_POS_VEL': TARGET_POS_VEL ,'TARGET_ACC_ATT': TARGET_ACC_ATT}
 
 # PID Configurations
 PID_VALUES_PROP_2 = {
