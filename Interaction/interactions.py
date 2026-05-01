@@ -808,6 +808,8 @@ class InteractionsControl:
         loop_tick_time = time.time()
         last_blender_send_time = 0.0
 
+        self.cf.param.set_value_raw('stabilizer.controller', 0x08, 2)
+        self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2] - 0.02, 0)
         while elapsed_non_edit < duration:
             now = time.time()
             tick = now - loop_tick_time
@@ -880,7 +882,7 @@ class InteractionsControl:
                     self._safe_sleep(0.01)
                     continue
                 else:
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2]-0.02, 0)
 
             elif status == 1:  # pushed by user
                 if blender_state is not None:
@@ -988,7 +990,7 @@ class InteractionsControl:
                 self.cf.param.set_value_raw('stabilizer.controller', 0x08, 2)
                 # self.lo_commander.send_setpoint(0, 0, 0, 0)
                 while time.time() < grace_time + grace_start:
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2]-0.02, 0)
                     self._safe_sleep(dt)
 
                 if self.set_color:
