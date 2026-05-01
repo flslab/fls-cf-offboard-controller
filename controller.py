@@ -436,6 +436,9 @@ class Controller:
     def land(self):
         if self.args.skip_landing:
             return
+
+
+        self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
         logger.info("Landing...")
         z = self.args.takeoff_altitude
         if self.init_coord:
