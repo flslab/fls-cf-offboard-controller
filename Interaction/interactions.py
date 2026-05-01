@@ -989,12 +989,14 @@ class InteractionsControl:
                 grace_start = time.time()
 
                 self.lo_commander.send_notify_setpoint_stop()
+                self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, grace_time, relative=False)
+                self._safe_sleep(grace_time)
 
                 # self.cf.param.set_value_raw('stabilizer.controller', 0x08, 2)
-                self.lo_commander.send_setpoint(0, 0, 0, 0)
-                while time.time() < grace_time + grace_start:
-                    self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
-                    self._safe_sleep(dt)
+                # self.lo_commander.send_setpoint(0, 0, 0, 0)
+                # while time.time() < grace_time + grace_start:
+                #     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
+                #     self._safe_sleep(dt)
 
                 if self.set_color:
                     self.set_color([255, 157, 0])
