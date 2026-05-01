@@ -486,19 +486,19 @@ POS_VEL_CTL = {
         "unit": "m/s",
         "data": [],
     },
-    "controller.roll": {
+    "posCtl.targetX": {
         "type": "float",
-        "unit": "deg",
+        "unit": "m",
         "data": [],
     },
-    "controller.pitch": {
+    "posCtl.targetY": {
         "type": "float",
-        "unit": "deg",
+        "unit": "m",
         "data": [],
     },
-    "controller.cmd_thrust": {
+    "posCtl.targetZ": {
         "type": "float",
-        "unit": "PWM",
+        "unit": "m",
         "data": [],
     },
 }
@@ -639,10 +639,7 @@ CTL_I_D = {
 
 # LOG_VARS = {'POS_ORI': POS_ORI, 'VEL_ACC': VEL_ACC, 'MOT_BAT': MOT_BAT}
 # LOG_VARS = {'POS_VEL': POS_VEL}
-# LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'POS_VEL_CTL': POS_VEL_CTL, 'ATT_RATE_CTL': ATT_RATE_CTL}
-
-LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'POS_CTL_I_D': CTL_I_D, 'TARGET_POS_VEL': TARGET_POS_VEL ,'TARGET_ACC_ATT': TARGET_ACC_ATT}
-
+LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'POS_CTL_I_D': CTL_I_D, 'POS_VEL_CTL': POS_VEL_CTL, 'ATT_RATE_CTL': ATT_RATE_CTL}
 # PID Configurations
 PID_VALUES_PROP_2 = {
     # 'quadSysId.armLength': '0.053',
