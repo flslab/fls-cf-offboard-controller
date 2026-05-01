@@ -1385,7 +1385,7 @@ class InteractionsControl:
                         "latency_ms": push_latency_ms,
                     })
                     yaw_rate_cmd = max(min(-5.0 * current_yaw, 50.0), -50.0)
-                    self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2])
+                    self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2] + 0.02)
 
             elif status == 2:  # coasting
                 end_pos, coast_t = self.calculate_coasting(pos, vel, fric_coe)
