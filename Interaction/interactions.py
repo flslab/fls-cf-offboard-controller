@@ -1013,7 +1013,7 @@ class InteractionsControl:
                         logger.info("Sent final hover position, stopped streaming.")
 
             elif status == 4:
-                if detect_speed_threshold(speed):
+                if not detect_speed_threshold(speed):
                     hover_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.08
                     status = 3
                 self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
