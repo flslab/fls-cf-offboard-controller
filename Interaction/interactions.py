@@ -984,7 +984,7 @@ class InteractionsControl:
                     blender_state['status'] = 3
 
                 self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
-                self._safe_sleep(dt)
+                self._safe_sleep(1/500)
 
                 grace_start = time.time()
 
