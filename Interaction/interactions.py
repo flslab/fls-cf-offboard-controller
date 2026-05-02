@@ -915,7 +915,7 @@ class InteractionsControl:
                         logger.info(f"Switching to Grace Hover From {status}.")
                         hover_pos = pos + interact_vel * dt * v_scalar
 
-                        hover_pos = pos + interaction_heading/np.linalg.norm(interaction_heading) * 0.08
+                        hover_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.08
                         status = 3
                         log_data = {
                             "speed": round(speed, 3),
@@ -983,12 +983,6 @@ class InteractionsControl:
                 if blender_state is not None:
                     blender_state['status'] = 3
 
-                decelerate_time = 2 * max([current_roll, current_pitch])/720
-                dec_start = time.time()
-                while time.time() < dec_start + decelerate_time:
-                    self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
-                    self._safe_sleep(1/500)
-
                 self.cf.param.set_value("posCtlPid.resetI", "1")
                 self.cf.param.set_value("velCtlPid.resetI", "1")
 
@@ -1017,6 +1011,12 @@ class InteractionsControl:
                         blender_state['edit_active'] = False
                         logger.info("Sent final hover position, stopped streaming.")
 
+            elif status == 4:
+                if detect_speed_threshold(speed):
+                    status = 3
+                self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
+                self._safe_sleep(1 / 500)
+                continue
             self._safe_sleep(dt)
 
         if blender_state is not None:
