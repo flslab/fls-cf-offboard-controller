@@ -984,10 +984,8 @@ class InteractionsControl:
                     blender_state['status'] = 3
 
                 grace_start = time.time()
-                self.cf.param.set_value('velCtlPid.vyKd', '0')
 
-                self.lo_commander.send_setpoint(0, 0, 0, 0)
-                self._safe_sleep(1/500)
+                self.cf.param.set_value("velCtlPid.resetI", "1")
 
                 while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
