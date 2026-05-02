@@ -983,8 +983,11 @@ class InteractionsControl:
                 if blender_state is not None:
                     blender_state['status'] = 3
 
-                self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
-                self._safe_sleep(dt)
+                decelerate_time = max([current_roll, current_pitch])/720
+                dec_start = time.time()
+                while time.time() < dec_start + decelerate_time:
+                    self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
+                    self._safe_sleep(1/500)
 
                 self.cf.param.set_value("posCtlPid.resetI", "1")
                 self.cf.param.set_value("velCtlPid.resetI", "1")
