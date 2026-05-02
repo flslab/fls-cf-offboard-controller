@@ -929,7 +929,6 @@ class InteractionsControl:
                             self.set_color([255, 255, 0])
                         self._log_event("User Disengage", log_data)
 
-                        interaction_heading = np.zeros(3)
                         continue
 
                 if base_attitude < 0:
@@ -996,6 +995,8 @@ class InteractionsControl:
                 status = 0
                 if blender_state is not None:
                     blender_state['status'] = 0
+
+                interaction_heading = np.zeros(3)
                 continue
 
             if blender_state is not None and blender_state['sending_positions']:
@@ -1013,6 +1014,7 @@ class InteractionsControl:
 
             elif status == 4:
                 if detect_speed_threshold(speed):
+                    hover_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.08
                     status = 3
                 self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
                 self._safe_sleep(1 / 500)
