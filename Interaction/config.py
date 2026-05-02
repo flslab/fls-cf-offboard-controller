@@ -641,7 +641,7 @@ CTL_I_D = {
 # LOG_VARS = {'POS_VEL': POS_VEL}
 LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'POS_CTL_I_D': CTL_I_D, 'POS_VEL_CTL': POS_VEL_CTL, 'ATT_RATE_CTL': ATT_RATE_CTL}
 # PID Configurations
-PID_VALUES_PROP_2 = {
+PID_VALUES_PROP_2_NO_D = {
     # 'quadSysId.armLength': '0.053',
     'posCtlPid.xKp': '1.9',
     'posCtlPid.xKi': '0.1',
@@ -681,4 +681,44 @@ PID_VALUES_PROP_2 = {
     'pid_rate.omzFiltCut': '160'
 }
 
+
+PID_VALUES_PROP_2 = {
+    'quadSysId.armLength': '0.053',
+    'posCtlPid.xKp': '1.9',
+    'posCtlPid.xKi': '0.1',
+    'posCtlPid.xKd': '0.0',
+    'posCtlPid.yKp': '2.1',
+    'posCtlPid.yKi': '0.1',
+    'posCtlPid.yKd': '0.0',
+    'posCtlPid.zKp': '1.9',
+    'posCtlPid.zKi': '2.0',
+    'posCtlPid.zKd': '0.05',
+    'posCtlPid.thrustMin': '12000',
+    'posCtlPid.thrustBase': '28000',
+    'velCtlPid.vxKp': '30.0',
+    'velCtlPid.vxKi': '4.0',
+    'velCtlPid.vxKd': '0.005',
+    'velCtlPid.vyKp': '30.0',
+    'velCtlPid.vyKi': '4.0',
+    'velCtlPid.vyKd': '0.005',
+    'velCtlPid.vzKp': '30.0',
+    'velCtlPid.vzKi': '5.0',
+    'velCtlPid.vzKd': '0.05',
+    'pid_attitude.roll_kp': '6.0',
+    'pid_attitude.roll_ki': '1.0',
+    'pid_attitude.roll_kd': '0.005',
+    'pid_attitude.pitch_kp': '7.1',
+    'pid_attitude.pitch_ki': '1.0',
+    'pid_attitude.pitch_kd': '0.005',
+    'pid_rate.roll_kp': '90',
+    'pid_rate.roll_ki': '270.0',
+    'pid_rate.roll_kd': '2.5',
+    'pid_rate.pitch_kp': '75',
+    'pid_rate.pitch_ki': '270.0',
+    'pid_rate.pitch_kd': '2.5',
+    'pid_rate.rateFiltEn': '1',
+    'pid_rate.omxFiltCut': '160',
+    'pid_rate.omyFiltCut': '160',
+    'pid_rate.omzFiltCut': '160'
+}
 PID_VALUES = PID_VALUES_PROP_2

@@ -1016,7 +1016,15 @@ class InteractionsControl:
                 if not detect_speed_threshold(speed):
                     hover_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.08
                     status = 3
-                self.lo_commander.send_zdistance_setpoint(-current_roll, -current_pitch, 0, hover_pos[2])
+                h_norm = np.linalg.norm(interaction_heading)
+                if h_norm > 0:
+                    h = interaction_heading / h_norm
+                    roll_cmd = -np.sign(h[1]) * abs(current_roll)
+                    pitch_cmd = -np.sign(h[0]) * abs(current_pitch)
+                else:
+                    roll_cmd = -current_roll
+                    pitch_cmd = -current_pitch
+                self.lo_commander.send_zdistance_setpoint(roll_cmd, pitch_cmd, 0, hover_pos[2])
                 self._safe_sleep(1 / 500)
                 continue
             self._safe_sleep(dt)
