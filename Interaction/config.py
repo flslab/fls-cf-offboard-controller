@@ -683,7 +683,6 @@ PID_VALUES_PROP_2_NO_D = {
 
 
 PID_VALUES_PROP_2 = {
-    'quadSysId.armLength': '0.053',
     'posCtlPid.xKp': '1.9',
     'posCtlPid.xKi': '0.1',
     'posCtlPid.xKd': '0.0',
