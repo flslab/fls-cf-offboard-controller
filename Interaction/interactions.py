@@ -916,7 +916,7 @@ class InteractionsControl:
                         hover_pos = pos + interact_vel * dt * v_scalar
 
                         hover_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.08
-                        status = 3
+                        status = 4
                         log_data = {
                             "speed": round(speed, 3),
                             "acceleration": round(acceleration, 3),
