@@ -199,7 +199,7 @@ class InteractionsControl:
                 base_attitude=translation_setting['base_attitude'],
                 duration=translation_setting['duration'],
                 v_scalar=translation_setting['v_scalar'],
-                grace_time=translation_setting['grace_time'],
+                grace_time=translation_setting.get('grace_time', 0),
                 alpha_vel=translation_setting.get('alpha_vel', 1),
                 pub_socket=self.pub_socket,
                 mass_ratio=mass_lb / mass_virtual,
@@ -538,27 +538,9 @@ class InteractionsControl:
                 logger.error(f"Invalid acceleration threshold: {acc_threshold}")
                 acc_threshold = None
 
-        if isinstance(grace_time, (int, float)):
-            get_grace_time = lambda a, v: grace_time
-            stabilize_time = grace_time
-
-        else:
-            import joblib
-            # Load the dictionary containing both the transformer and the model
-            saved_poly_data = joblib.load(grace_time)
-
-            poly_transformer = saved_poly_data['poly']  # Assuming 'poly' is the key for PolynomialFeatures
-            loaded_model = saved_poly_data['model']
-
-            # Use the transformer to expand features before predicting
-            get_grace_time = lambda a, v: loaded_model.predict(
-                poly_transformer.transform([[a, v]])
-            )[0] + 0.2
-            stabilize_time = 'dynamic'
-
         self.log_manager.add_log_entry(group_name="configs",
                                        entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt,
-                                              "Orientation CMD": base_attitude, 'Stabilize Time': stabilize_time,
+                                              "Orientation CMD": base_attitude, 'Grace Period': grace_time,
                                               'mass_ratio': mass_ratio, 'delta_a': acc_threshold},
                                        name='Translation Config')
 
@@ -985,6 +967,9 @@ class InteractionsControl:
                 self.cf.param.set_value("posCtlPid.resetI", "1")
                 self.cf.param.set_value("velCtlPid.resetI", "1")
 
+                # self.cf.param.set_value('velCtlPid.vxKd', '0.0')
+                # self.cf.param.set_value('velCtlPid.vyKd', '0.0')
+
                 grace_start = time.time()
                 while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -997,6 +982,10 @@ class InteractionsControl:
                     blender_state['status'] = 0
 
                 interaction_heading = np.zeros(3)
+                #
+                # self.cf.param.set_value('velCtlPid.vxKd', '0.005')
+                # self.cf.param.set_value('velCtlPid.vyKd', '0.005')
+
                 continue
 
             if blender_state is not None and blender_state['sending_positions']:
@@ -1061,18 +1050,6 @@ class InteractionsControl:
 
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
 
-        if isinstance(grace_time, (int, float)):
-            get_grace_time = lambda a, v: grace_time
-            stabilize_time = grace_time
-        else:
-            import joblib
-            saved_poly_data = joblib.load(grace_time)
-            poly_transformer = saved_poly_data['poly']
-            loaded_model = saved_poly_data['model']
-            get_grace_time = lambda a, v: loaded_model.predict(
-                poly_transformer.transform([[a, v]])
-            )[0] + 0.2
-            stabilize_time = 'dynamic'
 
         grace_time_val = grace_time if isinstance(grace_time, (int, float)) else 2.0
 
@@ -1125,7 +1102,7 @@ class InteractionsControl:
 
         self.log_manager.add_log_entry(
             group_name="configs",
-            entry={'delta_v': vel_threshold, 'Delta': dt, 'Stabilize Time': stabilize_time},
+            entry={'delta_v': vel_threshold, 'Delta': dt, 'Grace Period': grace_time},
             name='Peer Config',
         )
 
