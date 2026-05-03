@@ -1003,6 +1003,8 @@ class InteractionsControl:
 
             elif status == 4:
                 if not detect_speed_threshold(speed):
+                    self.lo_commander.send_zdistance_setpoint(0, 0, 0, hover_pos[2])
+                    self._safe_sleep(dt)
                     hover_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.08
                     status = 3
                 h_norm = np.linalg.norm(interaction_heading)
