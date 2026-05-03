@@ -543,6 +543,7 @@ class Controller:
             self.led.show_single_color(color=(230, 180, 0))
 
         self._activate_kalman_estimator()
+        self._activate_tumble_check()
         if self.args.vicon:
             self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
             self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
@@ -1305,6 +1306,9 @@ class Controller:
 
     def _activate_kalman_estimator(self):
         self.cf.param.set_value('stabilizer.estimator', '2')
+
+    def _activate_tumble_check(self):
+        self.cf.param.set_value("supervisor.tmblChckEn", "1")
 
     def _set_orientation_sensitivity(self, std_dev):
         self.cf.param.set_value('locSrv.extQuatStdDev', std_dev)

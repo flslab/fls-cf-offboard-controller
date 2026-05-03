@@ -905,7 +905,7 @@ class InteractionsControl:
                             "vel": [round(x, 3) for x in vel],
                             "Pos": [round(x, 3) for x in pos],
                             "Target": [round(x, 3) for x in hover_pos],
-                            "Stabilize Time": grace_time
+                            "Grace Period": grace_time
                         }
                         if self.set_color:
                             self.set_color([255, 255, 0])
@@ -1050,9 +1050,6 @@ class InteractionsControl:
 
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
 
-
-        grace_time_val = grace_time if isinstance(grace_time, (int, float)) else 2.0
-
         def drain_sub(duration):
             if sub_socket is None:
                 return None
@@ -1157,7 +1154,7 @@ class InteractionsControl:
                             last_peer_push_time = None
                             peer_push_start_time = None
                             peer_hover_start = None
-                        elif time.time() - peer_grace_start > grace_time_val:
+                        elif time.time() - peer_grace_start > grace_time:
                             logger.info("Peer mode: follower grace timeout — resuming detection.")
                             receiving_peer_push = False
                             peer_grace_start = None
@@ -1204,7 +1201,7 @@ class InteractionsControl:
                             })
                             peer_grace_start = time.time()
                             self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
-                        elif last_peer_push_time is not None and time.time() - last_peer_push_time > grace_time_val:
+                        elif last_peer_push_time is not None and time.time() - last_peer_push_time > grace_time:
                             # No push for too long — give up following
                             logger.info("Peer mode: no push received — giving up following.")
                             receiving_peer_push = False
@@ -1331,14 +1328,13 @@ class InteractionsControl:
                         hover_pos = pos + interact_vel * dt
                         status = 3
                         tilt_angle = calculate_tilt(current_roll, current_pitch)
-                        grace_time_val = get_grace_time(abs(tilt_angle), speed)
                         self._log_event("User Disengage", {
                             "leader_id": drone_id,
                             "speed": round(speed, 3),
                             "vel": [round(x, 3) for x in vel],
                             "Pos": [round(x, 3) for x in pos],
                             "Target": [round(x, 3) for x in hover_pos],
-                            "Stabilize Time": grace_time_val,
+                            "Grace Period": grace_time,
                             "latency_ms": disengage_latency_ms,
                         })
                         if self.set_color:
@@ -1395,8 +1391,8 @@ class InteractionsControl:
             elif status == 3:  # grace period
                 grace_start = time.time()
                 self.lo_commander.send_notify_setpoint_stop()
-                self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, grace_time_val, relative=False)
-                while time.time() < grace_time_val + grace_start:
+                self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, grace_time, relative=False)
+                while time.time() < grace_time + grace_start:
                     self._safe_sleep(dt)
                 send_time = time.time()
                 pub_socket.send_json({"type": "grace_done", "drone_id": drone_id})
