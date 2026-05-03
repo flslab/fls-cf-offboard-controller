@@ -1008,8 +1008,8 @@ class InteractionsControl:
                 h_norm = np.linalg.norm(interaction_heading)
                 if h_norm > 0:
                     h = interaction_heading / h_norm
-                    roll_cmd = -np.sign(h[1]) * abs(current_roll)
-                    pitch_cmd = -np.sign(h[0]) * abs(current_pitch)
+                    roll_cmd = np.sign(h[1]) * abs(current_roll)
+                    pitch_cmd = np.sign(h[0]) * abs(current_pitch)
                 else:
                     roll_cmd = -current_roll
                     pitch_cmd = -current_pitch
