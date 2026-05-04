@@ -859,8 +859,8 @@ class InteractionsControl:
 
                     v_virtual = np.zeros(3)
                     prev_interact_vel = vel.copy()
-                    # self.cf.param.set_value("posCtlPid.resetI", "1")
-                    # self.cf.param.set_value("velCtlPid.resetI", "1")
+                    self.cf.param.set_value("posCtlPid.resetI", "1")
+                    self.cf.param.set_value("velCtlPid.resetI", "1")
                     continue
                 else:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -899,7 +899,10 @@ class InteractionsControl:
                         hover_pos = pos + interact_vel * dt * v_scalar
 
                         hover_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.08
-                        status = 4
+                        if acc_threshold is not None:
+                            status = 4
+                        else:
+                            status = 3
                         log_data = {
                             "speed": round(speed, 3),
                             "acceleration": round(acceleration, 3),
