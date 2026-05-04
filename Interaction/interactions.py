@@ -859,8 +859,8 @@ class InteractionsControl:
 
                     v_virtual = np.zeros(3)
                     prev_interact_vel = vel.copy()
-                    self.cf.param.set_value("posCtlPid.resetI", "1")
-                    self.cf.param.set_value("velCtlPid.resetI", "1")
+                    # self.cf.param.set_value("posCtlPid.resetI", "1")
+                    # self.cf.param.set_value("velCtlPid.resetI", "1")
                     continue
                 else:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -899,10 +899,7 @@ class InteractionsControl:
                         hover_pos = pos + interact_vel * dt * v_scalar
 
                         hover_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.08
-                        if acc_threshold is not None:
-                            status = 4
-                        else:
-                            status = 3
+                        status = 4
                         log_data = {
                             "speed": round(speed, 3),
                             "acceleration": round(acceleration, 3),
@@ -968,9 +965,6 @@ class InteractionsControl:
                 if blender_state is not None:
                     blender_state['status'] = 3
 
-                # self.cf.param.set_value('velCtlPid.vxKd', '0.0')
-                # self.cf.param.set_value('velCtlPid.vyKd', '0.0')
-
                 grace_start = time.time()
                 while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -983,10 +977,6 @@ class InteractionsControl:
                     blender_state['status'] = 0
 
                 interaction_heading = np.zeros(3)
-                #
-                # self.cf.param.set_value('velCtlPid.vxKd', '0.005')
-                # self.cf.param.set_value('velCtlPid.vyKd', '0.005')
-
                 continue
 
             if blender_state is not None and blender_state['sending_positions']:
