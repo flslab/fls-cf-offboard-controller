@@ -859,7 +859,8 @@ class InteractionsControl:
 
                     v_virtual = np.zeros(3)
                     prev_interact_vel = vel.copy()
-                    self._safe_sleep(0.01)
+                    # self.cf.param.set_value("posCtlPid.resetI", "1")
+                    # self.cf.param.set_value("velCtlPid.resetI", "1")
                     continue
                 else:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -963,9 +964,6 @@ class InteractionsControl:
             elif status == 3:  # grace period
                 if blender_state is not None:
                     blender_state['status'] = 3
-
-                self.cf.param.set_value("posCtlPid.resetI", "1")
-                self.cf.param.set_value("velCtlPid.resetI", "1")
 
                 # self.cf.param.set_value('velCtlPid.vxKd', '0.0')
                 # self.cf.param.set_value('velCtlPid.vyKd', '0.0')
