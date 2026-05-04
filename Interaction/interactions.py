@@ -859,8 +859,8 @@ class InteractionsControl:
 
                     v_virtual = np.zeros(3)
                     prev_interact_vel = vel.copy()
-                    # self.cf.param.set_value("posCtlPid.resetI", "1")
-                    # self.cf.param.set_value("velCtlPid.resetI", "1")
+                    self.cf.param.set_value("posCtlPid.resetI", "1")
+                    self.cf.param.set_value("velCtlPid.resetI", "1")
                     continue
                 else:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
