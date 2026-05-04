@@ -641,13 +641,13 @@ CTL_I_D = {
 # LOG_VARS = {'POS_VEL': POS_VEL}
 LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'POS_CTL_I_D': CTL_I_D, 'POS_VEL_CTL': POS_VEL_CTL, 'ATT_RATE_CTL': ATT_RATE_CTL}
 # PID Configurations
-PID_VALUES_PROP_2_NO_D = {
+PID_VALUES_PROP_2_NO_I = {
     # 'quadSysId.armLength': '0.053',
     'posCtlPid.xKp': '1.9',
-    'posCtlPid.xKi': '0.1',
+    'posCtlPid.xKi': '0.0',
     'posCtlPid.xKd': '0.0',
     'posCtlPid.yKp': '2.1',
-    'posCtlPid.yKi': '0.1',
+    'posCtlPid.yKi': '0.0',
     'posCtlPid.yKd': '0.0',
     'posCtlPid.zKp': '1.9',
     'posCtlPid.zKi': '2.0',
@@ -655,10 +655,10 @@ PID_VALUES_PROP_2_NO_D = {
     'posCtlPid.thrustMin': '12000',
     'posCtlPid.thrustBase': '28000',
     'velCtlPid.vxKp': '30.0',
-    'velCtlPid.vxKi': '4.0',
+    'velCtlPid.vxKi': '0.0',
     'velCtlPid.vxKd': '0.0',
     'velCtlPid.vyKp': '30.0',
-    'velCtlPid.vyKi': '4.0',
+    'velCtlPid.vyKi': '0.0',
     'velCtlPid.vyKd': '0.0',
     'velCtlPid.vzKp': '30.0',
     'velCtlPid.vzKi': '5.0',
@@ -720,4 +720,4 @@ PID_VALUES_PROP_2 = {
     'pid_rate.omyFiltCut': '160',
     'pid_rate.omzFiltCut': '160'
 }
-PID_VALUES = PID_VALUES_PROP_2
+PID_VALUES = PID_VALUES_PROP_2_NO_I
