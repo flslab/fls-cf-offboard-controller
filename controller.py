@@ -547,7 +547,12 @@ class Controller:
         if self.args.vicon:
             self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
             self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
-        self._activate_pid_controller()
+        if self.args.controller_type == "pid":
+            self._activate_pid_controller()
+        elif self.args.controller_type == "mellinger":
+            self._activate_mellinger_controller()
+        else:
+            self._activate_pid_controller()
         self._activate_high_level_commander()
         self._set_pid_values(self.cfg.PID_VALUES)
 
@@ -1447,6 +1452,7 @@ if __name__ == '__main__':
     ap.add_argument("--viewpoint", type=float, nargs=3, help="actual camera viewpoint coordinates x y z", default=None)
     ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
     ap.add_argument("--light-module-offset", type=float, nargs=3, help="light module offset from marker coordinates x y z", default=[0.075, 0.0, -0.040])
+    ap.add_argument("--controller-type", type=str, choices=["pid", "mellinger"], help="pid or mellinger", default="pid")
 
     args = ap.parse_args()
 
