@@ -1093,7 +1093,8 @@ class Controller:
         if not len(pointers) and led_setting.get('mode') == 'expression':
             self.smooth_controller.remove_update_callback(update_led_cb)
 
-        self.led.clear()
+        if self.led:
+            self.led.clear()
 
     def run_control_loop(self, mission_index, waypoints, angles, pointers, params, delta_t, iterations):
         elapsed_time = 0.0
