@@ -1059,8 +1059,9 @@ class InteractionsControl:
             elif status == 4:
                 if not detect_speed_threshold(speed):
                     logger.info("Calculate Hover.")
-                    self.lo_commander.send_zdistance_setpoint(-np.sign(current_roll), -np.sign(current_pitch), 0, hover_pos[2])
-                    self._safe_sleep(dt)
+                    if not use_virtual_stopping_model:
+                        self.lo_commander.send_zdistance_setpoint(-np.sign(current_roll), -np.sign(current_pitch), 0, hover_pos[2])
+                        self._safe_sleep(dt)
                     hover_pos, stopping_distance = calculate_virtual_hover_pos(pos, interaction_heading, speed)
                     log_data = {
                         "stopping_distance": round(stopping_distance, 3),
