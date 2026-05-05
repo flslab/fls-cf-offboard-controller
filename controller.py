@@ -429,7 +429,7 @@ class Controller:
         if self.args.interaction:
             self.log_manager.start()
 
-        logger.info(f"Taking off to {args.takeoff_altitude}m ...")
+        logger.info(f"Taking off to {self.args.takeoff_altitude}m ...")
         self.flying = True
         t = self.args.takeoff_altitude * 2
         self.cf.high_level_commander.takeoff(self.args.takeoff_altitude, t)
@@ -440,7 +440,7 @@ class Controller:
             return
 
         self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
-        logger.info("Landing...")
+        logger.info(f"Landing... Battery: {self.voltage:.2f}V")
         z = self.args.takeoff_altitude
         if self.init_coord:
             x, y, z = self._get_latest_mocap_frame()["tvec"]
