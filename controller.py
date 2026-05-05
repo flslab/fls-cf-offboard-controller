@@ -335,7 +335,7 @@ class Controller:
         logger.debug("led activated")
 
     def setup_motion_capture(self):
-        if not self.args.vicon or not self.args.save_vicon:
+        if not self.args.vicon and not self.args.save_vicon:
             return
 
         if self.args.save_vicon:
