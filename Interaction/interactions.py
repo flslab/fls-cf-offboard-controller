@@ -1620,8 +1620,10 @@ class InteractionsControl:
                 )
             elif friction_coefficient > 0.0:
                 distance = speed ** 2 / (2.0 * friction_coefficient * g)
+            elif drag_lumped > 0.0:
+                v_stop = 0.05
+                distance = (mass / drag_lumped) * np.log(speed / v_stop) if speed > v_stop else 0.0
             else:
-                # Pure quadratic drag approaches zero velocity asymptotically.
                 distance = fallback_distance
 
         if not np.isfinite(distance):
