@@ -187,13 +187,13 @@ class Controller:
             self.scf.close_link()
 
     def start(self):
+        self.check_deck()
         self.load_manifest()
         self.setup_sockets()
         self.download_mission_config()
         self.setup_logging()
         self.setup_motion_capture()
         if not self.args.droneless:
-            self.check_deck()
             self.setup_smooth_controller()
             self.setup_led()
             self.setup_servo()
