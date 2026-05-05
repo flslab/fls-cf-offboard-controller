@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 class IlluminationLogger(LogManager):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.cf_var_logger = None
-        self.cf_log_times = []
+        self.cf_var_loggers = []
+        self.cf_log_times = {}
         self.cf_log_data = None
         self.verbose = kwargs.get('verbose', False)
 
@@ -22,8 +22,9 @@ class IlluminationLogger(LogManager):
         pass
 
     def stop(self, *args, **kwargs):
-        if self.cf_var_logger is not None:
-            self.cf_var_logger.stop()
+        if len(self.cf_var_loggers) > 0:
+            for log_config in self.cf_var_loggers:
+                log_config.stop()
 
         self.save_logs(**kwargs)
 
@@ -55,11 +56,12 @@ class IlluminationLogger(LogManager):
         for group, entries in self.groups.items():
             output_data[group] = entries
 
-        if self.cf_var_logger:
-            output_data["cf"] = {
-                "time": self.cf_log_times,
-                "params": self.cf_log_data
-            }
+        if len(self.cf_var_loggers) > 0:
+            for group_name, group_vars in self.cf_log_data.items():
+                output_data[f"cf_{group_name}"] = {
+                    "time": self.cf_log_times[group_name],
+                    "params": group_vars
+                }
 
         filename = os.path.join(log_dir, f"{tag}.json")
         with open(filename, 'w') as f:
@@ -68,19 +70,25 @@ class IlluminationLogger(LogManager):
 
     def init_cf_logger(self, cf, cf_log_vars, cf_log_period=100):
         self.cf_log_data = copy.deepcopy(cf_log_vars)
-        self.cf_var_logger = LogConfig(name='Controller', period_in_ms=cf_log_period)
 
-        for par, conf in cf_log_vars.items():
-            self.cf_var_logger.add_variable(par, conf["type"])
+        for group_name, group_vars in self.cf_log_data.items():
+            cf_var_logger = LogConfig(name=group_name, period_in_ms=cf_log_period)
+            for par, conf in group_vars.items():
+                cf_var_logger.add_variable(par, conf["type"])
 
-        cf.log.add_config(self.cf_var_logger)
-        self.cf_var_logger.data_received_cb.add_callback(self.cf_log_callback)
-        self.cf_var_logger.start()
+            cf.log.add_config(cf_var_logger)
+            cf_var_logger.data_received_cb.add_callback(self.cf_log_callback)
+            cf_var_logger.start()
+            time.sleep(0.1)
+            self.cf_var_loggers.append(cf_var_logger)
+            self.cf_log_times[group_name] = []
 
     def cf_log_callback(self, timestamp, data, log_conf):
-        self.cf_log_times.append(time.time())
-        for par in self.cf_log_data.keys():
-            self.cf_log_data[par]["data"].append(data[par])
+        cur_time = time.time()
+        group_name = log_conf.name
+        self.cf_log_times[group_name].append(cur_time)
+        for par in self.cf_log_data[group_name].keys():
+            self.cf_log_data[group_name][par]["data"].append(data[par])
             if self.verbose:
                 logger.info(f"{par} = {data[par]}")
 
