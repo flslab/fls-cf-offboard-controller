@@ -183,8 +183,8 @@ class InteractionsControl:
         """Run the velocity-based translation interaction."""
         try:
             translation_setting = self.mission['Interaction']['config']
-            mass_lb = translation_setting.get('mass_lightbender', 1.0)
-            mass_virtual = translation_setting.get('mass_virtual', 1.0)
+            current_mass = translation_setting.get('current_mass', translation_setting.get('mass_lightbender', 1.0))
+            virtual_mass = translation_setting.get('virtual_mass', translation_setting.get('mass_virtual', 1.0))
             self.interaction_translation_vel(
                 vel_threshold=translation_setting['delta_v'],
                 acc_threshold=translation_setting.get(
@@ -202,7 +202,9 @@ class InteractionsControl:
                 grace_time=translation_setting.get('grace_time', 0),
                 alpha_vel=translation_setting.get('alpha_vel', 1),
                 pub_socket=self.pub_socket,
-                mass_ratio=mass_lb / mass_virtual,
+                current_mass=current_mass,
+                virtual_mass=virtual_mass,
+                virtual_object_config=translation_setting.get('virtual_object', None),
                 init_hover=self.mission['drones'][self.drone_id]['target'][:3],
                 blender_port=translation_setting.get('blender_port', None)
             )
@@ -522,7 +524,9 @@ class InteractionsControl:
             v_scalar=None,
             alpha_vel=1,
             pub_socket=None,
-            mass_ratio=1.0,
+            current_mass=1.0,
+            virtual_mass=1.0,
+            virtual_object_config=None,
             init_hover=None,
             blender_port=None
     ):
@@ -538,10 +542,51 @@ class InteractionsControl:
                 logger.error(f"Invalid acceleration threshold: {acc_threshold}")
                 acc_threshold = None
 
+        virtual_object_config = virtual_object_config or {}
+        use_virtual_stopping_model = bool(virtual_object_config)
+
+        def get_virtual_config_float(name, default):
+            value = virtual_object_config.get(name, default)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                logger.error(f"Invalid virtual object config {name}: {value}")
+                return float(default)
+
+        current_mass = get_virtual_config_float('current_mass', current_mass)
+        virtual_mass = get_virtual_config_float('mass', virtual_mass)
+        virtual_friction_coe = get_virtual_config_float(
+            'kinetic_friction_coefficient',
+            virtual_object_config.get('friction_coefficient', 0.01)
+        )
+        virtual_drag_coe = get_virtual_config_float('drag_coefficient', 1.0)
+        virtual_frontal_area = get_virtual_config_float('frontal_area', 0.019)
+        virtual_air_density = get_virtual_config_float('air_density', 1.225)
+        virtual_fallback_distance = get_virtual_config_float('fallback_stopping_distance', 0.08)
+        virtual_max_distance = virtual_object_config.get('max_stopping_distance', None)
+        if virtual_max_distance is not None:
+            try:
+                virtual_max_distance = float(virtual_max_distance)
+            except (TypeError, ValueError):
+                logger.error(f"Invalid virtual object config max_stopping_distance: {virtual_max_distance}")
+                virtual_max_distance = None
+
         self.log_manager.add_log_entry(group_name="configs",
                                        entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt,
                                               "Orientation CMD": base_attitude, 'Grace Period': grace_time,
-                                              'mass_ratio': mass_ratio, 'delta_a': acc_threshold},
+                                              'current_mass': current_mass, 'virtual_mass': virtual_mass,
+                                              'delta_a': acc_threshold,
+                                              'virtual_object': {
+                                                  'enabled': use_virtual_stopping_model,
+                                                  'current_mass': current_mass,
+                                                  'mass': virtual_mass,
+                                                  'kinetic_friction_coefficient': virtual_friction_coe,
+                                                  'drag_coefficient': virtual_drag_coe,
+                                                  'frontal_area': virtual_frontal_area,
+                                                  'air_density': virtual_air_density,
+                                                  'fallback_stopping_distance': virtual_fallback_distance,
+                                                  'max_stopping_distance': virtual_max_distance,
+                                              }},
                                        name='Translation Config')
 
         status = 0
@@ -567,8 +612,30 @@ class InteractionsControl:
                 return accel < acc_threshold
             return not detect_speed_threshold(s)
 
+        def calculate_virtual_hover_pos(cur_pos, heading, initial_speed):
+            heading_norm = np.linalg.norm(heading)
+            if heading_norm <= 0:
+                return cur_pos.copy(), 0.0
+
+            if use_virtual_stopping_model:
+                stopping_distance = self.calculate_virtual_stopping_distance(
+                    initial_speed=initial_speed,
+                    mass=virtual_mass,
+                    friction_coefficient=virtual_friction_coe,
+                    drag_coefficient=virtual_drag_coe,
+                    frontal_area=virtual_frontal_area,
+                    air_density=virtual_air_density,
+                    fallback_distance=virtual_fallback_distance,
+                    max_distance=virtual_max_distance,
+                )
+            else:
+                stopping_distance = virtual_fallback_distance
+
+            return cur_pos + heading / heading_norm * stopping_distance, stopping_distance
+
         _G = 9.81  # m/s²
 
+        virtual_to_current_mass = virtual_mass / current_mass if current_mass != 0 else 1.0
         def calculate_braking_angles(dv_x, dv_y, yaw_deg=0.0, max_attitude=20.0):
             """Compute pitch/roll to emulate a virtual mass, considering global yaw.
 
@@ -583,7 +650,6 @@ class InteractionsControl:
 
               F_aero_x = m_lb * g * sin(pitch) = (m_lb - m_virtual) * (dv_x / dt)
               sin(pitch) = (1 - m_virtual / m_lb) * (dv_x / (g * dt))
-                         = (1 - 1 / mass_ratio) * (dv_x / (g * dt))
 
             Sign convention (Crazyflie):
               +pitch tilts nose up  → force in +Xsi
@@ -596,9 +662,8 @@ class InteractionsControl:
             body_dv_x = dv_x * cos_y + dv_y * sin_y
             body_dv_y = -dv_x * sin_y + dv_y * cos_y
 
-            inv_mass_ratio = 1.0 / mass_ratio if mass_ratio != 0 else 1.0
-            sin_pitch = -(1 - inv_mass_ratio) * body_dv_x / (_G * dt)
-            sin_roll = -(1 - inv_mass_ratio) * body_dv_y / (_G * dt)
+            sin_pitch = -(1 - virtual_to_current_mass) * body_dv_x / (_G * dt)
+            sin_roll = -(1 - virtual_to_current_mass) * body_dv_y / (_G * dt)
 
             pitch = np.degrees(np.arcsin(np.clip(sin_pitch, -1.0, 1.0)))
             roll = np.degrees(np.arcsin(np.clip(sin_roll, -1.0, 1.0)))
@@ -859,8 +924,6 @@ class InteractionsControl:
 
                     v_virtual = np.zeros(3)
                     prev_interact_vel = vel.copy()
-                    self.cf.param.set_value("posCtlPid.resetI", "1")
-                    self.cf.param.set_value("velCtlPid.resetI", "1")
                     continue
                 else:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
@@ -881,7 +944,8 @@ class InteractionsControl:
                     acceleration = np.dot(dv_lb / dt, interaction_heading / interaction_heading_norm)
                 else:
                     acceleration = 0.0
-                v_virtual = interact_vel + dv_lb * (mass_ratio - 1)
+                current_to_virtual_mass = current_mass / virtual_mass if virtual_mass != 0 else 1.0
+                v_virtual = interact_vel + dv_lb * (current_to_virtual_mass - 1)
                 prev_interact_vel = interact_vel.copy()
                 target_pos = pos + v_virtual * dt * v_scalar
 
@@ -896,16 +960,16 @@ class InteractionsControl:
                         continue
                     else:
                         logger.info(f"Switching to Grace Hover From {status}.")
-                        hover_pos = pos + interact_vel * dt * v_scalar
-
-                        hover_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.08
                         status = 4
+
+                        self.cf.param.set_value("posCtlPid.resetI", "1")
+                        self.cf.param.set_value("velCtlPid.resetI", "1")
+
                         log_data = {
                             "speed": round(speed, 3),
                             "acceleration": round(acceleration, 3),
                             "vel": [round(x, 3) for x in vel],
                             "Pos": [round(x, 3) for x in pos],
-                            "Target": [round(x, 3) for x in hover_pos],
                             "Grace Period": grace_time
                         }
                         if self.set_color:
@@ -996,8 +1060,16 @@ class InteractionsControl:
                 if not detect_speed_threshold(speed):
                     self.lo_commander.send_zdistance_setpoint(0, 0, 0, hover_pos[2])
                     self._safe_sleep(dt)
-                    hover_pos = pos + interaction_heading / np.linalg.norm(interaction_heading) * 0.08
+                    hover_pos, stopping_distance = calculate_virtual_hover_pos(pos, interaction_heading, speed)
+                    log_data = {
+                        "stopping_distance": round(stopping_distance, 3),
+                        "Target": [round(x, 3) for x in hover_pos],
+                        "Grace Period": grace_time
+                    }
+
+                    self._log_event("Hover_calculated", log_data)
                     status = 3
+
                 h_norm = np.linalg.norm(interaction_heading)
                 if h_norm > 0:
                     h = interaction_heading / h_norm
@@ -1512,6 +1584,50 @@ class InteractionsControl:
             self._safe_sleep(dt)
 
         self.lo_commander.send_notify_setpoint_stop()
+
+    @staticmethod
+    def calculate_virtual_stopping_distance(
+            initial_speed,
+            mass,
+            friction_coefficient,
+            drag_coefficient,
+            frontal_area,
+            air_density=1.225,
+            fallback_distance=0.08,
+            max_distance=None,
+    ):
+        speed = max(float(initial_speed), 0.0)
+        mass = float(mass)
+        friction_coefficient = max(float(friction_coefficient), 0.0)
+        drag_coefficient = max(float(drag_coefficient), 0.0)
+        frontal_area = max(float(frontal_area), 0.0)
+        air_density = max(float(air_density), 0.0)
+        fallback_distance = max(float(fallback_distance), 0.0)
+
+        if speed <= 0.0:
+            distance = 0.0
+        elif mass <= 0.0:
+            distance = fallback_distance
+        else:
+            g = 9.81
+            drag_lumped = 0.5 * air_density * drag_coefficient * frontal_area
+
+            if friction_coefficient > 0.0 and drag_lumped > 0.0:
+                friction_force = friction_coefficient * mass * g
+                distance = mass / (2.0 * drag_lumped) * np.log1p(
+                    drag_lumped * speed ** 2 / friction_force
+                )
+            elif friction_coefficient > 0.0:
+                distance = speed ** 2 / (2.0 * friction_coefficient * g)
+            else:
+                # Pure quadratic drag approaches zero velocity asymptotically.
+                distance = fallback_distance
+
+        if not np.isfinite(distance):
+            distance = fallback_distance
+        if max_distance is not None:
+            distance = min(distance, max(float(max_distance), 0.0))
+        return max(float(distance), 0.0)
 
     def calculate_coasting(self, cur_pos, cur_vel, deceleration, fixZ=True):
         vx, vy, vz = cur_vel
