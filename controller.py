@@ -187,13 +187,13 @@ class Controller:
             self.scf.close_link()
 
     def start(self):
+        self.check_deck()
         self.load_manifest()
         self.setup_sockets()
         self.download_mission_config()
         self.setup_logging()
         self.setup_motion_capture()
         if not self.args.droneless:
-            self.check_deck()
             self.setup_smooth_controller()
             self.setup_led()
             self.setup_servo()
@@ -335,10 +335,12 @@ class Controller:
         logger.debug("led activated")
 
     def setup_motion_capture(self):
-        if not self.args.vicon:
+        if not self.args.vicon and not self.args.save_vicon:
             return
 
-        if self.args.vicon_full_pose:
+        if self.args.save_vicon:
+            on_pose = self._log_mocap
+        elif self.args.vicon_full_pose:
             on_pose = self._send_position_orientation
         else:
             on_pose = self._send_position
@@ -427,7 +429,7 @@ class Controller:
         if self.args.interaction:
             self.log_manager.start()
 
-        logger.info(f"Taking off to {args.takeoff_altitude}m ...")
+        logger.info(f"Taking off to {self.args.takeoff_altitude}m ...")
         self.flying = True
         t = self.args.takeoff_altitude * 2
         self.cf.high_level_commander.takeoff(self.args.takeoff_altitude, t)
@@ -438,7 +440,8 @@ class Controller:
             return
 
         self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
-        logger.info("Landing...")
+        voltage_str = f"{self.voltage:.2f}V" if self.voltage is not None else "NA"
+        logger.info(f"Landing... Battery: {voltage_str}")
         z = self.args.takeoff_altitude
         if self.init_coord:
             x, y, z = self._get_latest_mocap_frame()["tvec"]
@@ -547,7 +550,12 @@ class Controller:
         if self.args.vicon:
             self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
             self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
-        self._activate_pid_controller()
+        if self.args.controller_type == "pid":
+            self._activate_pid_controller()
+        elif self.args.controller_type == "mellinger":
+            self._activate_mellinger_controller()
+        else:
+            self._activate_pid_controller()
         self._activate_high_level_commander()
         self._set_pid_values(self.cfg.PID_VALUES)
 
@@ -588,7 +596,7 @@ class Controller:
             logger.info(f"Hovering for {self.args.t} seconds...")
             self._safe_sleep(self.args.t)
 
-    def hover(self, hover_time=0.5):
+    def hover(self, hover_time=None):
         if hover_time is None:
             hover_time = self.args.t
         self.commander.go_to(0.0, 0.0, self.args.takeoff_altitude, 0, hover_time, relative=False)
@@ -1085,7 +1093,8 @@ class Controller:
         if not len(pointers) and led_setting.get('mode') == 'expression':
             self.smooth_controller.remove_update_callback(update_led_cb)
 
-        self.led.clear()
+        if self.led:
+            self.led.clear()
 
     def run_control_loop(self, mission_index, waypoints, angles, pointers, params, delta_t, iterations):
         elapsed_time = 0.0
@@ -1447,6 +1456,7 @@ if __name__ == '__main__':
     ap.add_argument("--viewpoint", type=float, nargs=3, help="actual camera viewpoint coordinates x y z", default=None)
     ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
     ap.add_argument("--light-module-offset", type=float, nargs=3, help="light module offset from marker coordinates x y z", default=[0.075, 0.0, -0.040])
+    ap.add_argument("--controller-type", type=str, choices=["pid", "mellinger"], help="pid or mellinger", default="pid")
 
     args = ap.parse_args()
 
