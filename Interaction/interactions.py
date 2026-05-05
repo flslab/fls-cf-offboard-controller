@@ -995,8 +995,10 @@ class InteractionsControl:
                         # When decelerating, output a given value (defaulting to 0.0)
                         given_decel_value = 0.0
                         target_pitch, target_roll = given_decel_value, given_decel_value
-                    else:
+                    elif base_attitude > 0:
                         target_pitch, target_roll = calculate_braking_angles(*dv_lb[:2], yaw_deg=current_yaw)
+                    else:
+                        target_pitch, target_roll = 0, 0
 
                     log_data = {
                         "speed": round(speed, 3),
