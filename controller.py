@@ -588,7 +588,7 @@ class Controller:
             logger.info(f"Hovering for {self.args.t} seconds...")
             self._safe_sleep(self.args.t)
 
-    def hover(self, hover_time=0.5):
+    def hover(self, hover_time=None):
         if hover_time is None:
             hover_time = self.args.t
         self.commander.go_to(0.0, 0.0, self.args.takeoff_altitude, 0, hover_time, relative=False)
