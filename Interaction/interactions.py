@@ -1058,6 +1058,8 @@ class InteractionsControl:
 
             elif status == 4:
                 if not detect_speed_threshold(speed):
+                    logger.info("Calculate Hover.")
+
                     self.lo_commander.send_zdistance_setpoint(0, 0, 0, hover_pos[2])
                     self._safe_sleep(dt)
                     hover_pos, stopping_distance = calculate_virtual_hover_pos(pos, interaction_heading, speed)
@@ -1066,8 +1068,7 @@ class InteractionsControl:
                         "Target": [round(x, 3) for x in hover_pos],
                         "Grace Period": grace_time
                     }
-
-                    self._log_event("Hover_calculated", log_data)
+                    self._log_event("Hover Calculated", log_data)
                     status = 3
 
                 h_norm = np.linalg.norm(interaction_heading)
