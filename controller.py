@@ -335,10 +335,12 @@ class Controller:
         logger.debug("led activated")
 
     def setup_motion_capture(self):
-        if not self.args.vicon:
+        if not self.args.vicon or not self.args.save_vicon:
             return
 
-        if self.args.vicon_full_pose:
+        if self.args.save_vicon:
+            on_pose = self._log_mocap
+        elif self.args.vicon_full_pose:
             on_pose = self._send_position_orientation
         else:
             on_pose = self._send_position
