@@ -1066,7 +1066,7 @@ class InteractionsControl:
                         self._safe_sleep(dt)
                     hover_pos, stopping_distance = calculate_virtual_hover_pos(pos, interaction_heading, speed)
                     log_data = {
-                        "stopping_distance": round(stopping_distance, 3),
+                        "stopping_distance": round(stopping_distance, 4),
                         "Target": [round(x, 3) for x in hover_pos],
                         "Grace Period": grace_time
                     }
