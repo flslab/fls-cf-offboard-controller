@@ -635,7 +635,7 @@ class InteractionsControl:
 
         _G = 9.81  # m/s²
 
-        virtual_to_current_mass = virtual_mass / current_mass if current_mass != 0 else 1.0
+        virtual_to_current_mass = virtual_mass / current_mass if current_mass != 0 and virtual_mass > current_mass else 1.0
         def calculate_braking_angles(dv_x, dv_y, yaw_deg=0.0, max_attitude=20.0):
             """Compute pitch/roll to emulate a virtual mass, considering global yaw.
 
