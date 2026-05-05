@@ -440,7 +440,8 @@ class Controller:
             return
 
         self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
-        logger.info(f"Landing... Battery: {self.voltage:.2f}V")
+        voltage_str = f"{self.voltage:.2f}V" if self.voltage is not None else "NA"
+        logger.info(f"Landing... Battery: {voltage_str}")
         z = self.args.takeoff_altitude
         if self.init_coord:
             x, y, z = self._get_latest_mocap_frame()["tvec"]
