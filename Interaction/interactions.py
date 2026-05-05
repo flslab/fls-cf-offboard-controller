@@ -625,11 +625,11 @@ class InteractionsControl:
                     drag_coefficient=virtual_drag_coe,
                     frontal_area=virtual_frontal_area,
                     air_density=virtual_air_density,
-                    fallback_distance=virtual_fallback_distance,
+                    fallback_distance=initial_speed * dt,
                     max_distance=virtual_max_distance,
                 )
             else:
-                stopping_distance = virtual_fallback_distance
+                stopping_distance = initial_speed * dt
 
             return cur_pos + heading / heading_norm * stopping_distance, stopping_distance
 
@@ -1596,7 +1596,7 @@ class InteractionsControl:
             drag_coefficient,
             frontal_area,
             air_density=1.225,
-            fallback_distance=0.08,
+            fallback_distance=0.0,
             max_distance=None,
     ):
         speed = max(float(initial_speed), 0.0)
