@@ -100,5 +100,5 @@ class IlluminationLogger(LogManager):
         self.groups[name] = []
 
     def add_log_entry(self, group_name, entry, *args, **kwargs):
-        self.groups[group_name].append(entry)
+        self.groups[group_name].append(entry | kwargs)
 
