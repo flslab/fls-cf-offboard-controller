@@ -637,7 +637,7 @@ class InteractionsControl:
                 drag_lumped = 0.5 * virtual_air_density * virtual_drag_coe * virtual_frontal_area
                 
                 dist_accum = 0.0
-                while v > 0.01:
+                while v > 0.06:
                     friction_force = virtual_friction_coe * virtual_mass * g
                     drag_force = drag_lumped * v**2
                     a = (friction_force + drag_force) / virtual_mass if virtual_mass > 0 else 0
