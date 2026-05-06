@@ -1449,7 +1449,7 @@ if __name__ == '__main__':
     ap.add_argument("--smooth-controller-rate", type=int, default=30, help="rate of smooth controller update loop")
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
-    ap.add_argument("--cf-log-period", type=int, default=50, help="log period of cf logger in millisecond")
+    ap.add_argument("--cf-log-period", type=int, default=20, help="log period of cf logger in millisecond")
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
