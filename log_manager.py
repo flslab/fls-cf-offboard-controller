@@ -34,6 +34,8 @@ class IlluminationLogger(LogManager):
         start_times = kwargs.get('start_times')
         end_times = kwargs.get('end_times')
         viewpoint_offsets = kwargs.get('viewpoint_offsets')
+        mission_start_time = kwargs.get('mission_start_time')
+        mission_duration = kwargs.get('mission_duration')
         args = kwargs.get('args')
 
         if not os.path.exists(log_dir):
@@ -46,6 +48,8 @@ class IlluminationLogger(LogManager):
         output_data = {
             "start_time": s,
             "stop_time": e,
+            "mission_start_time": mission_start_time,
+            "mission_duration": mission_duration,
             "start_times": start_times,
             "stop_times": end_times,
             "viewpoint_offsets": viewpoint_offsets,
