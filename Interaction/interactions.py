@@ -1688,6 +1688,7 @@ class InteractionsControl:
                         dp = max_distance - dist_accum
                         p = p + h_dir * dp
                         trajectory.append({'pos': p.copy(), 'dt': dt_actual})
+                        dist_accum += dp
                         break
                         
                     dist_accum += dp
@@ -1695,6 +1696,8 @@ class InteractionsControl:
                     trajectory.append({'pos': p.copy(), 'dt': dt_actual})
                     v = v_next
                 
+                # Override analytical distance with the actually integrated distance
+                distance = dist_accum
                 final_pos = cur_pos + h_dir * distance
                 if trajectory:
                     trajectory.append({'pos': final_pos.copy(), 'dt': 0.0})
