@@ -1117,6 +1117,8 @@ class InteractionsControl:
 
                     if use_virtual_stopping_model:
                         self.virtual_trajectory = trajectory
+
+                        logger.info(f"Waypoint:{len(trajectory)}")
                     else:
                         self.virtual_trajectory = None
                         
