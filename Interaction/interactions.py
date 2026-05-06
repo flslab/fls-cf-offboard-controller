@@ -618,7 +618,7 @@ class InteractionsControl:
                 return cur_pos.copy(), 0.0, None
 
             if use_virtual_stopping_model:
-                stopping_distance = self.calculate_virtual_stopping_distance(
+                stopping_distance, trajectory = self.calculate_virtual_stopping_distance(
                     initial_speed=initial_speed,
                     mass=virtual_mass,
                     friction_coefficient=virtual_friction_coe,
@@ -627,49 +627,11 @@ class InteractionsControl:
                     air_density=virtual_air_density,
                     fallback_distance=initial_speed * dt,
                     max_distance=virtual_max_distance,
+                    dt=dt,
+                    cur_pos=cur_pos,
+                    heading=heading
                 )
-                
-                trajectory = []
-                v = initial_speed
-                p = cur_pos.copy()
-                h_dir = heading / heading_norm
-                g = 9.81
-                drag_lumped = 0.5 * virtual_air_density * virtual_drag_coe * virtual_frontal_area
-                
-                dist_accum = 0.0
-                while v > 0.06:
-                    friction_force = virtual_friction_coe * virtual_mass * g
-                    drag_force = drag_lumped * v**2
-                    a = (friction_force + drag_force) / virtual_mass if virtual_mass > 0 else 0
-                    
-                    if a < 1e-5:
-                        break
-                        
-                    v_next = v - a * dt
-                    dt_actual = dt
-                    if v_next < 0:
-                        dt_actual = v / a
-                        v_next = 0
-                        
-                    dp = (v * dt_actual) - 0.5 * a * (dt_actual**2)
-                    
-                    if virtual_max_distance is not None and dist_accum + dp >= virtual_max_distance:
-                        dp = virtual_max_distance - dist_accum
-                        p = p + h_dir * dp
-                        trajectory.append({'pos': p.copy(), 'dt': dt_actual})
-                        break
-                        
-                    dist_accum += dp
-                    p = p + h_dir * dp
-                    trajectory.append({'pos': p.copy(), 'dt': dt_actual})
-                    v = v_next
-                    
-                final_pos = cur_pos + h_dir * stopping_distance
-                
-                # Snap to the exact analytical destination as the final waypoint
-                if trajectory:
-                    trajectory.append({'pos': final_pos.copy(), 'dt': 0.0})
-                    
+                final_pos = cur_pos + (heading / heading_norm) * stopping_distance
                 return final_pos, stopping_distance, trajectory
             else:
                 stopping_distance = initial_speed * dt
@@ -1657,6 +1619,9 @@ class InteractionsControl:
             air_density=1.225,
             fallback_distance=0.0,
             max_distance=None,
+            dt=0.01,
+            cur_pos=None,
+            heading=None
     ):
         speed = max(float(initial_speed), 0.0)
         mass = float(mass)
@@ -1667,13 +1632,14 @@ class InteractionsControl:
         fallback_distance = max(float(fallback_distance), 0.0)
 
         if speed <= 0.0:
-            distance = 0.0
-        elif mass <= 0.0:
+            return 0.0, []
+
+        g = 9.81
+        drag_lumped = 0.5 * air_density * drag_coefficient * frontal_area
+
+        if mass <= 0.0:
             distance = fallback_distance
         else:
-            g = 9.81
-            drag_lumped = 0.5 * air_density * drag_coefficient * frontal_area
-
             if friction_coefficient > 0.0 and drag_lumped > 0.0:
                 friction_force = friction_coefficient * mass * g
                 distance = mass / (2.0 * drag_lumped) * np.log1p(
@@ -1691,7 +1657,49 @@ class InteractionsControl:
             distance = fallback_distance
         if max_distance is not None:
             distance = min(distance, max(float(max_distance), 0.0))
-        return max(float(distance), 0.0)
+        distance = max(float(distance), 0.0)
+
+        trajectory = []
+        if cur_pos is not None and heading is not None and mass > 0.0:
+            heading_norm = np.linalg.norm(heading)
+            if heading_norm > 0:
+                h_dir = heading / heading_norm
+                v = speed
+                p = cur_pos.copy()
+                dist_accum = 0.0
+                
+                while v > 0.06:
+                    friction_force = friction_coefficient * mass * g
+                    drag_force = drag_lumped * v**2
+                    a = (friction_force + drag_force) / mass
+                    
+                    if a < 1e-5:
+                        break
+                        
+                    v_next = v - a * dt
+                    dt_actual = dt
+                    if v_next < 0:
+                        dt_actual = v / a
+                        v_next = 0
+                        
+                    dp = (v * dt_actual) - 0.5 * a * (dt_actual**2)
+                    
+                    if max_distance is not None and dist_accum + dp >= max_distance:
+                        dp = max_distance - dist_accum
+                        p = p + h_dir * dp
+                        trajectory.append({'pos': p.copy(), 'dt': dt_actual})
+                        break
+                        
+                    dist_accum += dp
+                    p = p + h_dir * dp
+                    trajectory.append({'pos': p.copy(), 'dt': dt_actual})
+                    v = v_next
+                
+                final_pos = cur_pos + h_dir * distance
+                if trajectory:
+                    trajectory.append({'pos': final_pos.copy(), 'dt': 0.0})
+
+        return distance, trajectory
 
     def calculate_coasting(self, cur_pos, cur_vel, deceleration, fixZ=True):
         vx, vy, vz = cur_vel
