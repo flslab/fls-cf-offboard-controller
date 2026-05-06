@@ -82,10 +82,10 @@ class IlluminationLogger(LogManager):
 
             cf.log.add_config(cf_var_logger)
             cf_var_logger.data_received_cb.add_callback(self.cf_log_callback)
-            cf_var_logger.start()
-            time.sleep(0.1)
             self.cf_var_loggers.append(cf_var_logger)
             self.cf_log_times[group_name] = []
+            cf_var_logger.start()
+            time.sleep(0.1)
 
     def cf_log_callback(self, timestamp, data, log_conf):
         cur_time = time.time()
