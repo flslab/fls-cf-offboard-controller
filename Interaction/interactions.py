@@ -1080,6 +1080,7 @@ class InteractionsControl:
                         self.lo_commander.send_position_setpoint(wp['pos'][0], wp['pos'][1], wp['pos'][2], 0)
                         self._safe_sleep(wp['dt'])
                     self.virtual_trajectory = None
+                    self._log_event("Hovering")
 
                 while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
