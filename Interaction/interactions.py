@@ -1072,7 +1072,7 @@ class InteractionsControl:
                 
                 if getattr(self, 'virtual_trajectory', None) is not None:
                     for wp in self.virtual_trajectory:
-                        self.lo_commander.send_position_setpoint(wp['pos'][0], wp['pos'][1], hover_pos[2], 0)
+                        self.lo_commander.send_position_setpoint(wp['pos'][0], wp['pos'][1], wp['pos'][2], 0)
                         self._safe_sleep(wp['dt'])
                     self.virtual_trajectory = None
 
@@ -1116,7 +1116,6 @@ class InteractionsControl:
                     }
 
                     if use_virtual_stopping_model:
-                        move_time = sum(wp['dt'] for wp in trajectory) if trajectory else stopping_distance * 3
                         self.virtual_trajectory = trajectory
                     else:
                         self.virtual_trajectory = None
