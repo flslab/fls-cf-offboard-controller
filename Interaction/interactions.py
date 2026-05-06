@@ -854,6 +854,7 @@ class InteractionsControl:
         elapsed_non_edit = 0.0
         loop_tick_time = time.time()
         last_blender_send_time = 0.0
+        move_time = 0
 
         self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
         while elapsed_non_edit < duration:
@@ -1032,7 +1033,7 @@ class InteractionsControl:
                     blender_state['status'] = 3
 
                 grace_start = time.time()
-                while time.time() < grace_time + grace_start:
+                while time.time() < grace_time + grace_start + move_time:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
 
@@ -1070,6 +1071,7 @@ class InteractionsControl:
                         "Target": [round(x, 3) for x in hover_pos],
                         "Grace Period": grace_time
                     }
+                    move_time = (stopping_distance - 0.08) * 2
                     self._log_event("Hover Calculated", log_data)
                     status = 3
 
