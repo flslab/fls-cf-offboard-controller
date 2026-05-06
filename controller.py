@@ -22,6 +22,7 @@ from cflib.utils import uri_helper
 from cflib.utils.reset_estimator import reset_estimator
 
 from Interaction.interactions import InteractionsControl
+from Interaction.command_wrapper import CommandWrapper
 
 from mocap import Mocap
 from smooth_controller import SmoothController
@@ -114,7 +115,8 @@ class Controller:
             self.uri = uri_helper.uri_from_env(default=self.cfg.DEFAULT_URI)
         self.scf = None
         self.cf = None
-        self.commander = None
+        self.hl_commander = None
+        self.ll_commander = None
         self.manifest = None
         self.mission = None
         self.missions = []
@@ -178,13 +180,13 @@ class Controller:
         self.scf = SyncCrazyflie(self.uri, cf=Crazyflie(rw_cache='./cache'))
         self.scf.open_link()
         self.cf = self.scf.cf
-        self.commander = self.cf.high_level_commander
         logger.info(f"Connected")
 
     def disconnect(self):
         logger.info("Disconnecting...")
         if self.scf:
             self.scf.close_link()
+        logger.info("Disconnected.")
 
     def start(self):
         self.check_deck()
@@ -192,6 +194,7 @@ class Controller:
         self.setup_sockets()
         self.download_mission_config()
         self.setup_logging()
+        self.setup_commander()
         self.setup_motion_capture()
         if not self.args.droneless:
             self.setup_smooth_controller()
@@ -290,6 +293,24 @@ class Controller:
                 raise
                 
         self.mission = self.missions[0]
+
+    def setup_commander(self):
+        log_function = self.log_manager.add_log_entry if self.log_manager else None
+        
+        self.hl_commander = CommandWrapper(
+            self.cf.high_level_commander, 
+            log_function=log_function, 
+            execute=True,
+            offset=np.zeros(3),
+            start_time=0
+        )
+        self.ll_commander = CommandWrapper(
+            self.cf.commander, 
+            log_function=log_function, 
+            execute=True,
+            offset=np.zeros(3),
+            start_time=0
+        )
 
     def check_deck(self):
         if not self.args.check_deck:
@@ -451,7 +472,7 @@ class Controller:
             xi, yi, _ = self.init_coord
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = 2 * dist
-            self.commander.go_to(xi, yi, z, 0, dt, relative=False)
+            self.hl_commander.go_to(xi, yi, z, 0, dt, relative=False)
             time.sleep(dt + 0.5)
 
         if self.flying:
@@ -486,7 +507,7 @@ class Controller:
             xi, yi, _ = self.init_coord
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = 2 * dist
-            self.commander.go_to(xi, yi, z, 0, dt, relative=False)
+            self.hl_commander.go_to(xi, yi, z, 0, dt, relative=False)
             time.sleep(dt + 0.5)
         if self.flying:
             dt = z * 6
@@ -509,6 +530,7 @@ class Controller:
             if not self.args.droneless:
                 self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
             self.log_manager.add_log_group("frames")
+            self.log_manager.add_log_group("commands")
 
         elif self.args.interaction:
             from Interaction.log_manager import InteractionLogger
@@ -600,40 +622,40 @@ class Controller:
     def hover(self, hover_time=None):
         if hover_time is None:
             hover_time = self.args.t
-        self.commander.go_to(0.0, 0.0, self.args.takeoff_altitude, 0, hover_time, relative=False)
+        self.hl_commander.go_to(0.0, 0.0, self.args.takeoff_altitude, 0, hover_time, relative=False)
         self._safe_sleep(hover_time)
 
     def xy_tune_pattern(self):
         logger.info("Executing XY Tune Pattern...")
         flight_time = 2
-        self.commander.go_to(0, 0, 1, 0, flight_time, relative=False)
+        self.hl_commander.go_to(0, 0, 1, 0, flight_time, relative=False)
         self._safe_sleep(flight_time)
 
         for _ in range(3):
-            self.commander.go_to(1.5, 0, 1, 0, flight_time, relative=False)
+            self.hl_commander.go_to(1.5, 0, 1, 0, flight_time, relative=False)
             self._safe_sleep(flight_time)
 
-            self.commander.go_to(0, 0, 1, 0, flight_time, relative=False)
+            self.hl_commander.go_to(0, 0, 1, 0, flight_time, relative=False)
             self._safe_sleep(flight_time)
 
         for _ in range(3):
-            self.commander.go_to(0, 1.5, 1, 0, flight_time, relative=False)
+            self.hl_commander.go_to(0, 1.5, 1, 0, flight_time, relative=False)
             self._safe_sleep(flight_time)
 
-            self.commander.go_to(0, 0, 1, 0, flight_time, relative=False)
+            self.hl_commander.go_to(0, 0, 1, 0, flight_time, relative=False)
             self._safe_sleep(flight_time)
 
     def z_tune_pattern(self):
         logger.info("Executing Z Tune Pattern...")
 
         flight_time = 1.5
-        self.commander.go_to(0, 0, 0.5, 0, flight_time, relative=False)
+        self.hl_commander.go_to(0, 0, 0.5, 0, flight_time, relative=False)
         self._safe_sleep(flight_time)
 
         for _ in range(3):
-            self.commander.go_to(0, 0, 1.5, 0, flight_time, relative=False)
+            self.hl_commander.go_to(0, 0, 1.5, 0, flight_time, relative=False)
             self._safe_sleep(flight_time)
-            self.commander.go_to(0, 0, 0.5, 0, flight_time, relative=False)
+            self.hl_commander.go_to(0, 0, 0.5, 0, flight_time, relative=False)
             self._safe_sleep(flight_time)
 
     def fly_trajectory(self, file_path):
@@ -641,7 +663,7 @@ class Controller:
         trajectory, fps = create_trajectory_from_file(file_path, self.args.takeoff_altitude)
 
         for p in trajectory:
-            self.commander.go_to(*p, 0, 1 / fps)
+            self.hl_commander.go_to(*p, 0, 1 / fps)
             self._safe_sleep(1 / fps)
 
     def _compute_viewpoint_offset(self, mission):
@@ -707,7 +729,7 @@ class Controller:
             self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
 
         if not self.args.ground_test:
-            self.commander.go_to(x, y, z, yaw, dt, relative=False)
+            self.hl_commander.go_to(x, y, z, yaw, dt, relative=False)
             self._safe_sleep(dt + 1)
 
         if self.manifest['mission']['require_handshake']:
@@ -772,7 +794,7 @@ class Controller:
                                                name=leader_id)
                     self._safe_sleep(delta_t)
                     self.mocap.unsubscribe_point(leader_id)
-                self.cf.commander.send_notify_setpoint_stop()
+                self.ll_commander.send_notify_setpoint_stop()
             leader_id = follow['id']
             leader_drone = self._get_drone_by_id(leader_id)
 
@@ -793,7 +815,7 @@ class Controller:
                                      orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
             IC.run()
             self.mocap.unsubscribe_point(leader_id)
-            self.cf.commander.send_notify_setpoint_stop()
+            self.ll_commander.send_notify_setpoint_stop()
 
         elif interaction_mode == 'single':
             # Find drones that are passive (no 'interaction' and no 'follow' in their
@@ -969,7 +991,7 @@ class Controller:
         except Exception as e:
             logging.error(f"Interaction Error: {e}\n")
         finally:
-            self.cf.commander.send_notify_setpoint_stop()
+            self.ll_commander.send_notify_setpoint_stop()
 
     def run_multiple_orchestrated_missions(self):
         for i in range(len(self.missions)):
@@ -1027,7 +1049,7 @@ class Controller:
                 self.smooth_controller.set_group_values("servos", angles[0], duration=1.0)
 
         if not self.args.ground_test:
-            self.commander.go_to(x, y, z, yaw, dt, relative=False)
+            self.hl_commander.go_to(x, y, z, yaw, dt, relative=False)
             self._safe_sleep(dt + 1)
 
         if self.manifest['mission']['require_handshake']:
@@ -1068,15 +1090,15 @@ class Controller:
                                                name=leader_id)
                     self._safe_sleep(delta_t)
                     self.mocap.unsubscribe_point(leader_id)
-                self.cf.commander.send_notify_setpoint_stop()
+                self.ll_commander.send_notify_setpoint_stop()
         elif len(low_level_setpoint):
             def position_setpoint_cb():
-                self.cf.commander.send_position_setpoint(*low_level_setpoint)
+                self.ll_commander.send_position_setpoint(*low_level_setpoint)
             self.smooth_controller.add_update_callback(position_setpoint_cb)
             logger.info(f"send position setpoint {low_level_setpoint}")
             self._safe_sleep(delta_t)
             self.smooth_controller.remove_update_callback(position_setpoint_cb)
-            self.cf.commander.send_notify_setpoint_stop()
+            self.ll_commander.send_notify_setpoint_stop()
         elif len(rotation_test):
             self.test_rotation_limit(*rotation_test)
         else:
@@ -1116,7 +1138,7 @@ class Controller:
 
                 if i < len(waypoints):
                     duration = waypoints[i][4]
-                    self.commander.go_to(*waypoints[i], **params)
+                    self.hl_commander.go_to(*waypoints[i], **params)
                     logger.info(f"go to {waypoints[i]}")
                 if i < len(angles):
                     self.smooth_controller.set_group_values("servos", angles[i], duration=duration)
@@ -1197,7 +1219,7 @@ class Controller:
         for i in range(iterations):
             for j, (w, a) in enumerate(zip(waypoints, angles)):
                 duration = w[4]
-                self.commander.go_to(*w, **params)
+                self.hl_commander.go_to(*w, **params)
                 logger.info(f"go to {w}")
                 self.smooth_controller.set_group_values("servos", a, duration=duration)
 
@@ -1216,21 +1238,21 @@ class Controller:
         start_t = time.time()
 
         while time.time() - start_t < 2:
-            self.cf.commander.send_position_setpoint(0.0, 0.0, self.args.takeoff_altitude, 0)
+            self.ll_commander.send_position_setpoint(0.0, 0.0, self.args.takeoff_altitude, 0)
             self._safe_sleep(dt)
 
         for yawrate in np.linspace(low_limit, high_limit, num=num_steps):
 
             start_t = time.time()
             while time.time() - start_t < duration:
-                self.cf.commander.send_hover_setpoint(0.0, 0.0, yawrate, self.args.takeoff_altitude)
+                self.ll_commander.send_hover_setpoint(0.0, 0.0, yawrate, self.args.takeoff_altitude)
                 self._safe_sleep(dt)
 
             while time.time() - start_t < duration + 2:
-                self.cf.commander.send_position_setpoint(0.0, 0.0, self.args.takeoff_altitude, 0)
+                self.ll_commander.send_position_setpoint(0.0, 0.0, self.args.takeoff_altitude, 0)
                 self._safe_sleep(dt)
 
-        self.cf.commander.send_notify_setpoint_stop()
+        self.ll_commander.send_notify_setpoint_stop()
 
     def _safe_sleep_standalone(self, seconds):
         is_battery_critical = self.battery_critical.wait(timeout=seconds)
@@ -1246,7 +1268,7 @@ class Controller:
             self.smooth_controller.stop()
         if self.led:
             self.led.show_single_color((230, 20, 20))
-        self.cf.commander.send_notify_setpoint_stop()
+        self.ll_commander.send_notify_setpoint_stop()
         time.sleep(0.01)
 
     def _safe_sleep_orchestrated(self, duration):
@@ -1402,7 +1424,7 @@ class Controller:
     def _follow_with_offset(self, frame, offset):
         x, y, z = frame['tvec']
         xo, yo, zo = offset
-        self.cf.commander.send_position_setpoint(x + xo, y + yo, z + zo, 0)
+        self.ll_commander.send_position_setpoint(x + xo, y + yo, z + zo, 0)
 
 
 if __name__ == '__main__':
@@ -1428,7 +1450,7 @@ if __name__ == '__main__':
     ap.add_argument("--smooth-controller-rate", type=int, default=30, help="rate of smooth controller update loop")
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
-    ap.add_argument("--cf-log-period", type=int, default=50, help="log period of cf logger in millisecond")
+    ap.add_argument("--cf-log-period", type=int, default=20, help="log period of cf logger in millisecond")
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")

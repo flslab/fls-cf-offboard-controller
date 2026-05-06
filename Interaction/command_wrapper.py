@@ -6,10 +6,10 @@ import numpy as np
 
 
 class CommandWrapper:
-    def __init__(self, target, log_function, execute=True, offset=np.zeros(3)):
+    def __init__(self, target, log_function, execute=True, offset=np.zeros(3), start_time=None):
         # Setup background logging
         self.log_function = log_function
-        self.start_time = time.time()
+        self.start_time = start_time if start_time is not None else time.time()
         self._wrapped_instance = target
         self.class_name = target.__class__.__name__
         self.execution = execute
@@ -40,7 +40,7 @@ class CommandWrapper:
 
                 if self.log_function:
                     timestamp = time.time() - self.start_time
-                    log_entry = {'time': timestamp, "args": args,  "kwargs": kwargs}
+                    log_entry = {'time': timestamp, 'args': args, 'kwargs': kwargs}
                     self.log_function(group_name='commands', entry=log_entry, name=f"{self.class_name}.{name}")
 
                 if self.execution:
