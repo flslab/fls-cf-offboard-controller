@@ -1071,9 +1071,12 @@ class InteractionsControl:
                         "Target": [round(x, 3) for x in hover_pos],
                         "Grace Period": grace_time
                     }
-                    move_time = (stopping_distance - 0.08) * 2
+
+                    if  use_virtual_stopping_model:
+                        move_time = stopping_distance * 3
                     self._log_event("Hover Calculated", log_data)
                     status = 3
+                    continue
 
                 h_norm = np.linalg.norm(interaction_heading)
                 if h_norm > 0:
@@ -1625,7 +1628,7 @@ class InteractionsControl:
             elif friction_coefficient > 0.0:
                 distance = speed ** 2 / (2.0 * friction_coefficient * g)
             elif drag_lumped > 0.0:
-                v_stop = 0.05
+                v_stop = 0.01
                 distance = (mass / drag_lumped) * np.log(speed / v_stop) if speed > v_stop else 0.0
             else:
                 distance = fallback_distance
