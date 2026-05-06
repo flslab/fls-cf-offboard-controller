@@ -1108,7 +1108,7 @@ class InteractionsControl:
                         logger.info("Sent final hover position, stopped streaming.")
 
             elif status == 4:
-                if not detect_speed_threshold(speed):
+                if not detect_speed_threshold(speed) or use_virtual_stopping_model:
                     logger.info("Calculate Hover.")
                     if not use_virtual_stopping_model:
                         self.lo_commander.send_zdistance_setpoint(-np.sign(current_roll), -np.sign(current_pitch), 0, hover_pos[2])
