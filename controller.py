@@ -21,8 +21,8 @@ from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.utils import uri_helper
 from cflib.utils.reset_estimator import reset_estimator
 
-from interaction.interactions import InteractionsControl
-from interaction.command_wrapper import CommandWrapper
+from Interaction.interactions import InteractionsControl
+from Interaction.command_wrapper import CommandWrapper
 
 from mocap import Mocap
 from smooth_controller import SmoothController
