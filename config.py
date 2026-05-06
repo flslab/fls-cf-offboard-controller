@@ -140,7 +140,7 @@ XY_RATE_LOG_VARS = {
     },
 }
 
-MOTOR_LOG_VARS = {
+MOT_ACC = {
     "motor.m1": {
         "type": "uint16_t",
         "unit": "PWM",
@@ -159,6 +159,21 @@ MOTOR_LOG_VARS = {
     "motor.m4": {
         "type": "uint16_t",
         "unit": "PWM",
+        "data": [],
+    },
+    "stateEstimate.ax": {
+        "type": "float",
+        "unit": "m/s^2",
+        "data": [],
+    },
+    "stateEstimate.ay": {
+        "type": "float",
+        "unit": "m/s^2",
+        "data": [],
+    },
+    "stateEstimate.az": {
+        "type": "float",
+        "unit": "m/s^2",
         "data": [],
     },
 }
@@ -199,7 +214,161 @@ ATT_LOG_VARS = {
     },
 }
 
-LOG_VARS = ATT_LOG_VARS
+CTRL_ATT_RATE = {
+    "controller.roll": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "controller.pitch": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "controller.yaw": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "controller.pitchRate": {
+        "type": "float",
+        "unit": "rad/s",
+        "scale": PI / 180,
+        "data": [],
+    },
+    "controller.rollRate": {
+        "type": "float",
+        "unit": "rad/s",
+        "scale": PI / 180,
+        "data": [],
+    },
+    "controller.yawRate": {
+        "type": "float",
+        "unit": "rad/s",
+        "scale": PI / 180,
+        "data": [],
+    },
+}
+
+CTRL_VEL_POS = {
+    "ctrltarget.vx": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "ctrltarget.vy": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "ctrltarget.vz": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "ctrltarget.x": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "ctrltarget.y": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "ctrltarget.z": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+}
+
+ATT_RATE = {
+    "stateEstimate.roll": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "stateEstimate.pitch": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "stateEstimate.yaw": {
+        "type": "float",
+        "unit": "deg",
+        "data": [],
+    },
+    "stateEstimateZ.ratePitch": {
+        "type": "int16_t",
+        "unit": "rad/s",
+        "scale": 0.001,
+        "data": [],
+    },
+    "stateEstimateZ.rateRoll": {
+        "type": "int16_t",
+        "unit": "rad/s",
+        "scale": 0.001,
+        "data": [],
+    },
+    "stateEstimateZ.rateYaw": {
+        "type": "int16_t",
+        "unit": "rad/s",
+        "scale": 0.001,
+        "data": [],
+    },
+}
+
+VEL_POS = {
+    "stateEstimate.vx": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "stateEstimate.vy": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "stateEstimate.vz": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "stateEstimate.x": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "stateEstimate.y": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "stateEstimate.z": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+}
+
+
+TUNING_LOG_VARS = {
+    'CTRL_ATT_RATE': CTRL_ATT_RATE,
+    'CTRL_VEL_POS': CTRL_VEL_POS,
+    'ATT_RATE': ATT_RATE,
+    'VEL_POS': VEL_POS,
+    'MOT_ACC': MOT_ACC
+}
+
+LOG_VARS = TUNING_LOG_VARS
+# LOG_VARS = {
+#     'ATT_LOG_VARS': ATT_LOG_VARS,
+#     'XY_ATTITUDE_LOG_VARS': XY_ATTITUDE_LOG_VARS,
+#     'XY_VELOCITY_LOG_VARS': XY_VELOCITY_LOG_VARS,
+#     'XY_POSITION_LOG_VARS': XY_POSITION_LOG_VARS,
+# }
+
 
 # PID Configurations
 PID_VALUES_PROP_2 = {

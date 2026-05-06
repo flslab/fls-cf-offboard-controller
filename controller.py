@@ -202,6 +202,7 @@ class Controller:
             self.setup_params()
 
         self.handshake()
+        self.mission_start_time = time.time()
 
         if not self.args.droneless:
             if self.led:
@@ -235,6 +236,8 @@ class Controller:
                 start_times=self.animation_start_times,
                 end_times=self.animation_stop_times,
                 viewpoint_offsets=self.viewpoint_offsets,
+                mission_start_time=self.mission_start_time,
+                mission_duration=self.mission_duration,
                 args=vars(self.args),
             )
 
@@ -574,8 +577,6 @@ class Controller:
         time.sleep(1.0)
 
     def run_mission(self):
-        self.mission_start_time = time.time()
-
         if self.args.simple_takeoff:
             self.hover()
         elif self.args.rotation_test:
