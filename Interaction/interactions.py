@@ -7,7 +7,7 @@ import cflib.crazyflie
 import numpy as np
 import zmq
 
-from Interaction.CommandWrapper import CommandWrapper
+from Interaction.command_wrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
 
 # from Interaction.collision_avoidance.simulation import apf_velocity
