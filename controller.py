@@ -456,7 +456,7 @@ class Controller:
         logger.info(f"Taking off to {self.args.takeoff_altitude}m ...")
         self.flying = True
         t = self.args.takeoff_altitude * 2
-        self.cf.high_level_commander.takeoff(self.args.takeoff_altitude, t)
+        self.hl_commander.takeoff(self.args.takeoff_altitude, t)
         self._safe_sleep(t + 1)
 
     def land(self):
@@ -477,9 +477,9 @@ class Controller:
 
         if self.flying:
             dt = z * 6
-            self.cf.high_level_commander.land(0.12, dt)
+            self.hl_commander.land(0.12, dt)
             time.sleep(dt + 1)
-            self.cf.high_level_commander.stop()
+            self.hl_commander.stop()
             self.flying = False
 
     def _recap_takeoff(self):
@@ -531,6 +531,7 @@ class Controller:
                 self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
             self.log_manager.add_log_group("frames")
             self.log_manager.add_log_group("commands")
+            self.log_manager.add_log_group("events")
 
         elif self.args.interaction:
             from Interaction.log_manager import InteractionLogger
@@ -597,6 +598,7 @@ class Controller:
         logger.info("Arming...")
         self.cf.platform.send_arming_request(True)
         time.sleep(1.0)
+        self.log_manager.add_log_entry("events", {"time": time.time(), "name": "armed"})
 
     def run_mission(self):
         if self.args.simple_takeoff:
@@ -1295,6 +1297,7 @@ class Controller:
                     msg = self.sub_socket.recv_json(flags=zmq.NOBLOCK)
 
                     if msg.get('cmd') == 'EMERGENCY':
+                        self.log_manager.add_log_entry("events", {"time": time.time(), "name": "emergency_stop"})
                         self._prepare_for_emergency_landing()
                         raise EmergencyStopException("Orchestrator requested Emergency Stop")
                     elif msg.get('cmd') == 'START':
@@ -1311,6 +1314,7 @@ class Controller:
         logger.debug(f"Voltage: {voltage:.2f}V")
         if voltage < self.min_voltage:
             self.battery_critical.set()
+            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "battery_critical", "voltage": voltage})
 
     def _send_landing_confirmation(self):
         if self.args.orchestrated:
