@@ -283,6 +283,39 @@ CTRL_VEL_POS = {
     },
 }
 
+POSCTL_VEL_POS = {
+    "posCtl.targetVX": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "posCtl.targetVY": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "posCtl.targetVZ": {
+        "type": "float",
+        "unit": "m/s",
+        "data": [],
+    },
+    "posCtl.targetX": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "posCtl.targetY": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+    "posCtl.targetZ": {
+        "type": "float",
+        "unit": "m",
+        "data": [],
+    },
+}
+
 ATT_RATE = {
     "stateEstimate.roll": {
         "type": "float",
@@ -356,6 +389,7 @@ VEL_POS = {
 TUNING_LOG_VARS = {
     'CTRL_ATT_RATE': CTRL_ATT_RATE,
     'CTRL_VEL_POS': CTRL_VEL_POS,
+    'POSCTL_VEL_POS': POSCTL_VEL_POS,
     'ATT_RATE': ATT_RATE,
     'VEL_POS': VEL_POS,
     'MOT_ACC': MOT_ACC
@@ -424,10 +458,10 @@ PID_VALUES_FLOWDECK = {
     'posCtlPid.zKd': '0.05',
     'posCtlPid.thrustMin': '12000',
     'posCtlPid.thrustBase': '28000',
-    'velCtlPid.vxKp': '30.0',
+    'velCtlPid.vxKp': '20.0',
     'velCtlPid.vxKi': '0.0',
     'velCtlPid.vxKd': '0.005',
-    'velCtlPid.vyKp': '30.0',
+    'velCtlPid.vyKp': '20.0',
     'velCtlPid.vyKi': '0.0',
     'velCtlPid.vyKd': '0.005',
     'velCtlPid.vzKp': '30.0',
