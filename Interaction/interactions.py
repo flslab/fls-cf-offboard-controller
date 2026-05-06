@@ -615,7 +615,7 @@ class InteractionsControl:
         def calculate_virtual_hover_pos(cur_pos, heading, initial_speed):
             heading_norm = np.linalg.norm(heading)
             if heading_norm <= 0:
-                return cur_pos.copy(), 0.0
+                return cur_pos.copy(), 0.0, None
 
             if use_virtual_stopping_model:
                 stopping_distance = self.calculate_virtual_stopping_distance(
@@ -628,10 +628,47 @@ class InteractionsControl:
                     fallback_distance=initial_speed * dt,
                     max_distance=virtual_max_distance,
                 )
+                
+                trajectory = []
+                v = initial_speed
+                p = cur_pos.copy()
+                h_dir = heading / heading_norm
+                g = 9.81
+                drag_lumped = 0.5 * virtual_air_density * virtual_drag_coe * virtual_frontal_area
+                
+                dist_accum = 0.0
+                while v > 0.0:
+                    friction_force = virtual_friction_coe * virtual_mass * g
+                    drag_force = drag_lumped * v**2
+                    a = (friction_force + drag_force) / virtual_mass if virtual_mass > 0 else 0
+                    
+                    if a <= 0:
+                        break
+                        
+                    v_next = v - a * dt
+                    dt_actual = dt
+                    if v_next < 0:
+                        dt_actual = v / a
+                        v_next = 0
+                        
+                    dp = (v * dt_actual) - 0.5 * a * (dt_actual**2)
+                    
+                    if virtual_max_distance is not None and dist_accum + dp > virtual_max_distance:
+                        dp = virtual_max_distance - dist_accum
+                        p = p + h_dir * dp
+                        trajectory.append({'pos': p.copy(), 'dt': dt_actual})
+                        break
+                        
+                    dist_accum += dp
+                    p = p + h_dir * dp
+                    trajectory.append({'pos': p.copy(), 'dt': dt_actual})
+                    v = v_next
+                    
+                final_pos = cur_pos + h_dir * stopping_distance
+                return final_pos, stopping_distance, trajectory
             else:
                 stopping_distance = initial_speed * dt
-
-            return cur_pos + heading / heading_norm * stopping_distance, stopping_distance
+                return cur_pos + heading / heading_norm * stopping_distance, stopping_distance, None
 
         _G = 9.81  # m/s²
 
@@ -854,7 +891,6 @@ class InteractionsControl:
         elapsed_non_edit = 0.0
         loop_tick_time = time.time()
         last_blender_send_time = 0.0
-        move_time = 0
 
         self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
         while elapsed_non_edit < duration:
@@ -1033,7 +1069,14 @@ class InteractionsControl:
                     blender_state['status'] = 3
 
                 grace_start = time.time()
-                while time.time() < grace_time + grace_start + move_time:
+                
+                if getattr(self, 'virtual_trajectory', None) is not None:
+                    for wp in self.virtual_trajectory:
+                        self.lo_commander.send_position_setpoint(wp['pos'][0], wp['pos'][1], hover_pos[2], 0)
+                        self._safe_sleep(wp['dt'])
+                    self.virtual_trajectory = None
+
+                while time.time() < grace_time + grace_start:
                     self.lo_commander.send_position_setpoint(hover_pos[0], hover_pos[1], hover_pos[2], 0)
                     self._safe_sleep(dt)
 
@@ -1065,15 +1108,19 @@ class InteractionsControl:
                     if not use_virtual_stopping_model:
                         self.lo_commander.send_zdistance_setpoint(-np.sign(current_roll), -np.sign(current_pitch), 0, hover_pos[2])
                         self._safe_sleep(dt)
-                    hover_pos, stopping_distance = calculate_virtual_hover_pos(pos, interaction_heading, speed)
+                    hover_pos, stopping_distance, trajectory = calculate_virtual_hover_pos(pos, interaction_heading, speed)
                     log_data = {
                         "stopping_distance": round(stopping_distance, 4),
                         "Target": [round(x, 3) for x in hover_pos],
                         "Grace Period": grace_time
                     }
 
-                    if  use_virtual_stopping_model:
-                        move_time = stopping_distance * 3
+                    if use_virtual_stopping_model:
+                        move_time = sum(wp['dt'] for wp in trajectory) if trajectory else stopping_distance * 3
+                        self.virtual_trajectory = trajectory
+                    else:
+                        self.virtual_trajectory = None
+                        
                     self._log_event("Hover Calculated", log_data)
                     status = 3
                     continue
