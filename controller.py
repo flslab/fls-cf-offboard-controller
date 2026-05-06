@@ -186,6 +186,7 @@ class Controller:
         logger.info("Disconnecting...")
         if self.scf:
             self.scf.close_link()
+        logger.info("Disconnected.")
 
     def start(self):
         self.check_deck()
