@@ -464,7 +464,7 @@ PID_VALUES_FLOWDECK = {
     'velCtlPid.vyKp': '10.0',
     'velCtlPid.vyKi': '0.0',
     'velCtlPid.vyKd': '0.005',
-    'velCtlPid.vzKp': '30.0',
+    'velCtlPid.vzKp': '10.0',
     'velCtlPid.vzKi': '0.0',
     'velCtlPid.vzKd': '0.05',
     'pid_attitude.roll_kp': '6.0',
