@@ -637,12 +637,12 @@ class InteractionsControl:
                 drag_lumped = 0.5 * virtual_air_density * virtual_drag_coe * virtual_frontal_area
                 
                 dist_accum = 0.0
-                while v > 0.0:
+                while v > 0.01:
                     friction_force = virtual_friction_coe * virtual_mass * g
                     drag_force = drag_lumped * v**2
                     a = (friction_force + drag_force) / virtual_mass if virtual_mass > 0 else 0
                     
-                    if a <= 0:
+                    if a < 1e-5:
                         break
                         
                     v_next = v - a * dt
@@ -653,7 +653,7 @@ class InteractionsControl:
                         
                     dp = (v * dt_actual) - 0.5 * a * (dt_actual**2)
                     
-                    if virtual_max_distance is not None and dist_accum + dp > virtual_max_distance:
+                    if virtual_max_distance is not None and dist_accum + dp >= virtual_max_distance:
                         dp = virtual_max_distance - dist_accum
                         p = p + h_dir * dp
                         trajectory.append({'pos': p.copy(), 'dt': dt_actual})
@@ -665,6 +665,11 @@ class InteractionsControl:
                     v = v_next
                     
                 final_pos = cur_pos + h_dir * stopping_distance
+                
+                # Snap to the exact analytical destination as the final waypoint
+                if trajectory:
+                    trajectory.append({'pos': final_pos.copy(), 'dt': 0.0})
+                    
                 return final_pos, stopping_distance, trajectory
             else:
                 stopping_distance = initial_speed * dt
@@ -1121,7 +1126,7 @@ class InteractionsControl:
                         logger.info(f"Waypoint:{len(trajectory)}")
                     else:
                         self.virtual_trajectory = None
-                        
+
                     self._log_event("Hover Calculated", log_data)
                     status = 3
                     continue
