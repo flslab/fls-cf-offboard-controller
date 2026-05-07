@@ -159,22 +159,22 @@ class PIDAutotuner:
         # --- 2. X-axis Cascade Tuning ---
         logger.info("=== Tuning X-Axis Cascade ===")
 
-        if self.config['xy_rate']:
+        if self.config['x_rate']:
             # Pitch Rate Loop
             self.twiddle(['pid_rate.pitch_kp', 'pid_rate.pitch_ki', 'pid_rate.pitch_kd'], 
                         axis="x", target_var="controller.pitchRate", state_var="stateEstimateZ.ratePitch")
         
-        if self.config['xy_att']:
+        if self.config['x_att']:
             # Pitch Attitude Loop
             self.twiddle(['pid_attitude.pitch_kp', 'pid_attitude.pitch_ki', 'pid_attitude.pitch_kd'], 
                         axis="x", target_var="controller.pitch", state_var="stateEstimate.pitch")
 
-        if self.config['xy_vel']:
+        if self.config['x_vel']:
             # X Velocity Loop
             self.twiddle(['velCtlPid.vxKp', 'velCtlPid.vxKi', 'velCtlPid.vxKd'], 
                         axis="x", target_var="posCtl.targetVX", state_var="stateEstimate.vx")
         
-        if self.config['xy_pos']:
+        if self.config['x_pos']:
             # X Position Loop
             self.twiddle(['posCtlPid.xKp', 'posCtlPid.xKi', 'posCtlPid.xKd'], 
                         axis="x", target_var="posCtl.targetX", state_var="stateEstimate.x")
@@ -182,22 +182,22 @@ class PIDAutotuner:
         # --- 3. Y-axis Cascade Tuning ---
         logger.info("=== Tuning Y-Axis Cascade ===")
 
-        if self.config['xy_rate']:
+        if self.config['y_rate']:
             # Roll Rate Loop
             self.twiddle(['pid_rate.roll_kp', 'pid_rate.roll_ki', 'pid_rate.roll_kd'], 
                         axis="y", target_var="controller.rollRate", state_var="stateEstimateZ.rateRoll")
         
-        if self.config['xy_att']:
+        if self.config['y_att']:
             # Roll Attitude Loop
             self.twiddle(['pid_attitude.roll_kp', 'pid_attitude.roll_ki', 'pid_attitude.roll_kd'], 
                         axis="y", target_var="controller.roll", state_var="stateEstimate.roll")
         
-        if self.config['xy_vel']:
+        if self.config['y_vel']:
             # Y Velocity Loop
             self.twiddle(['velCtlPid.vyKp', 'velCtlPid.vyKi', 'velCtlPid.vyKd'], 
                         axis="y", target_var="posCtl.targetVY", state_var="stateEstimate.vy")
         
-        if self.config['xy_pos']:
+        if self.config['y_pos']:
             # Y Position Loop
             self.twiddle(['posCtlPid.yKp', 'posCtlPid.yKi', 'posCtlPid.yKd'], 
                      axis="y", target_var="posCtl.targetY", state_var="stateEstimate.y")
