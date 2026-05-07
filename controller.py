@@ -1020,7 +1020,7 @@ class Controller:
         iterations = mission_setting['iterations']
         led_color = mission_setting.get('color')
         led_setting = mission_setting.get('led', {})
-        autotune = mission_setting.get('autotune', False)
+        autotune = mission_setting.get('autotune', {'enabled': False})
 
         vp_offset = self._compute_viewpoint_offset(mission)
         self.viewpoint_offsets.append(vp_offset)
@@ -1108,8 +1108,8 @@ class Controller:
             self.ll_commander.send_notify_setpoint_stop()
         elif len(rotation_test):
             self.test_rotation_limit(*rotation_test)
-        elif autotune:
-            autotuner = PIDAutotuner(self)
+        elif autotune['enabled']:
+            autotuner = PIDAutotuner(self, autotune)
             autotuner.run_autotune()
         else:
             if not len(waypoints):

@@ -5,9 +5,10 @@ import math
 logger = logging.getLogger(__name__)
 
 class PIDAutotuner:
-    def __init__(self, controller):
+    def __init__(self, controller, config):
         self.controller = controller
         self.current_params = self.controller.cfg.PID_VALUES.copy()
+        self.config = config if config else {'z_pos': True, 'z_vel': True, 'xy_pos': True, 'xy_vel': True, 'xy_att': True, 'xy_rate': True}
         
     def set_pid_values(self, params_dict):
         """Send PID values to Crazyflie and store them locally."""
@@ -145,41 +146,60 @@ class PIDAutotuner:
         
         # --- 1. Z-axis Cascade Tuning ---
         logger.info("=== Tuning Z-Axis Cascade ===")
-        # Z Velocity Loop
-        self.twiddle(['velCtlPid.vzKp', 'velCtlPid.vzKi', 'velCtlPid.vzKd'], 
-                     axis="z", target_var="posCtl.targetVZ", state_var="stateEstimate.vz")
-        # Z Position Loop
-        self.twiddle(['posCtlPid.zKp', 'posCtlPid.zKi', 'posCtlPid.zKd'], 
-                     axis="z", target_var="posCtl.targetZ", state_var="stateEstimate.z")
+        
+        if self.config['z_vel']:
+            # Z Velocity Loop
+            self.twiddle(['velCtlPid.vzKp', 'velCtlPid.vzKi', 'velCtlPid.vzKd'], 
+                         axis="z", target_var="posCtl.targetVZ", state_var="stateEstimate.vz")
+        if self.config['z_pos']:
+            # Z Position Loop
+            self.twiddle(['posCtlPid.zKp', 'posCtlPid.zKi', 'posCtlPid.zKd'], 
+                        axis="z", target_var="posCtl.targetZ", state_var="stateEstimate.z")
 
         # --- 2. X-axis Cascade Tuning ---
         logger.info("=== Tuning X-Axis Cascade ===")
-        # Pitch Rate Loop
-        self.twiddle(['pid_rate.pitch_kp', 'pid_rate.pitch_ki', 'pid_rate.pitch_kd'], 
-                     axis="x", target_var="controller.pitchRate", state_var="stateEstimateZ.ratePitch")
-        # Pitch Attitude Loop
-        self.twiddle(['pid_attitude.pitch_kp', 'pid_attitude.pitch_ki', 'pid_attitude.pitch_kd'], 
-                     axis="x", target_var="controller.pitch", state_var="stateEstimate.pitch")
-        # X Velocity Loop
-        self.twiddle(['velCtlPid.vxKp', 'velCtlPid.vxKi', 'velCtlPid.vxKd'], 
-                     axis="x", target_var="posCtl.targetVX", state_var="stateEstimate.vx")
-        # X Position Loop
-        self.twiddle(['posCtlPid.xKp', 'posCtlPid.xKi', 'posCtlPid.xKd'], 
-                     axis="x", target_var="posCtl.targetX", state_var="stateEstimate.x")
+
+        if self.config['xy_rate']:
+            # Pitch Rate Loop
+            self.twiddle(['pid_rate.pitch_kp', 'pid_rate.pitch_ki', 'pid_rate.pitch_kd'], 
+                        axis="x", target_var="controller.pitchRate", state_var="stateEstimateZ.ratePitch")
+        
+        if self.config['xy_att']:
+            # Pitch Attitude Loop
+            self.twiddle(['pid_attitude.pitch_kp', 'pid_attitude.pitch_ki', 'pid_attitude.pitch_kd'], 
+                        axis="x", target_var="controller.pitch", state_var="stateEstimate.pitch")
+
+        if self.config['xy_vel']:
+            # X Velocity Loop
+            self.twiddle(['velCtlPid.vxKp', 'velCtlPid.vxKi', 'velCtlPid.vxKd'], 
+                        axis="x", target_var="posCtl.targetVX", state_var="stateEstimate.vx")
+        
+        if self.config['xy_pos']:
+            # X Position Loop
+            self.twiddle(['posCtlPid.xKp', 'posCtlPid.xKi', 'posCtlPid.xKd'], 
+                        axis="x", target_var="posCtl.targetX", state_var="stateEstimate.x")
 
         # --- 3. Y-axis Cascade Tuning ---
         logger.info("=== Tuning Y-Axis Cascade ===")
-        # Roll Rate Loop
-        self.twiddle(['pid_rate.roll_kp', 'pid_rate.roll_ki', 'pid_rate.roll_kd'], 
-                     axis="y", target_var="controller.rollRate", state_var="stateEstimateZ.rateRoll")
-        # Roll Attitude Loop
-        self.twiddle(['pid_attitude.roll_kp', 'pid_attitude.roll_ki', 'pid_attitude.roll_kd'], 
-                     axis="y", target_var="controller.roll", state_var="stateEstimate.roll")
-        # Y Velocity Loop
-        self.twiddle(['velCtlPid.vyKp', 'velCtlPid.vyKi', 'velCtlPid.vyKd'], 
-                     axis="y", target_var="posCtl.targetVY", state_var="stateEstimate.vy")
-        # Y Position Loop
-        self.twiddle(['posCtlPid.yKp', 'posCtlPid.yKi', 'posCtlPid.yKd'], 
+
+        if self.config['xy_rate']:
+            # Roll Rate Loop
+            self.twiddle(['pid_rate.roll_kp', 'pid_rate.roll_ki', 'pid_rate.roll_kd'], 
+                        axis="y", target_var="controller.rollRate", state_var="stateEstimateZ.rateRoll")
+        
+        if self.config['xy_att']:
+            # Roll Attitude Loop
+            self.twiddle(['pid_attitude.roll_kp', 'pid_attitude.roll_ki', 'pid_attitude.roll_kd'], 
+                        axis="y", target_var="controller.roll", state_var="stateEstimate.roll")
+        
+        if self.config['xy_vel']:
+            # Y Velocity Loop
+            self.twiddle(['velCtlPid.vyKp', 'velCtlPid.vyKi', 'velCtlPid.vyKd'], 
+                        axis="y", target_var="posCtl.targetVY", state_var="stateEstimate.vy")
+        
+        if self.config['xy_pos']:
+            # Y Position Loop
+            self.twiddle(['posCtlPid.yKp', 'posCtlPid.yKi', 'posCtlPid.yKd'], 
                      axis="y", target_var="posCtl.targetY", state_var="stateEstimate.y")
 
         logger.info("Autotuning Sequence Completed!")
