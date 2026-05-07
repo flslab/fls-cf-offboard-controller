@@ -28,6 +28,7 @@ from mocap import Mocap
 from smooth_controller import SmoothController
 from tracker import Tracker
 from logger import setup_logging
+from pid_autotuner import PIDAutotuner
 
 setup_logging()
 
@@ -601,7 +602,10 @@ class Controller:
         self.log_manager.add_log_entry("events", {"time": time.time(), "name": "armed"})
 
     def run_mission(self):
-        if self.args.simple_takeoff:
+        if self.args.autotune:
+            autotuner = PIDAutotuner(self)
+            autotuner.run_autotune()
+        elif self.args.simple_takeoff:
             self.hover()
         elif self.args.rotation_test:
             self.test_rotation_limit()
@@ -1016,6 +1020,7 @@ class Controller:
         iterations = mission_setting['iterations']
         led_color = mission_setting.get('color')
         led_setting = mission_setting.get('led', {})
+        autotune = mission_setting.get('autotune', False)
 
         vp_offset = self._compute_viewpoint_offset(mission)
         self.viewpoint_offsets.append(vp_offset)
@@ -1103,6 +1108,9 @@ class Controller:
             self.ll_commander.send_notify_setpoint_stop()
         elif len(rotation_test):
             self.test_rotation_limit(*rotation_test)
+        elif autotune:
+            autotuner = PIDAutotuner(self)
+            autotuner.run_autotune()
         else:
             if not len(waypoints):
                 waypoints.append([target[0], target[1], target[2], target[3], delta_t])
@@ -1484,6 +1492,7 @@ if __name__ == '__main__':
     ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
     ap.add_argument("--light-module-offset", type=float, nargs=3, help="light module offset from marker coordinates x y z", default=[0.075, 0.0, -0.040])
     ap.add_argument("--controller-type", type=str, choices=["pid", "mellinger"], help="pid or mellinger", default="pid")
+    ap.add_argument("--autotune", action="store_true", help="run automatic pid tuner")
 
     args = ap.parse_args()
 
