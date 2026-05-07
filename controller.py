@@ -225,7 +225,6 @@ class Controller:
                 time.sleep(1)
 
         self.land()
-        self._send_landing_confirmation()
 
         if self.bat_logger:
             self.bat_logger.stop()
@@ -465,7 +464,8 @@ class Controller:
             return
 
         self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
-        voltage_str = f"{self.voltage:.2f}V" if self.voltage is not None else "NA"
+        voltage = self.voltage
+        voltage_str = f"{voltage:.2f}V" if voltage is not None else "NA"
         logger.info(f"Landing... Battery: {voltage_str}")
         z = self.args.takeoff_altitude
         if self.init_coord:
@@ -482,6 +482,8 @@ class Controller:
             time.sleep(dt + 1)
             self.hl_commander.stop()
             self.flying = False
+
+        self._send_landing_confirmation(voltage)
 
     def _recap_takeoff(self):
         """Takeoff for a Recap iteration (flight-only, no log-start side-effects)."""
@@ -1324,12 +1326,12 @@ class Controller:
             self.battery_critical.set()
             self.log_manager.add_log_entry("events", {"time": time.time(), "name": "battery_critical", "voltage": voltage})
 
-    def _send_landing_confirmation(self):
+    def _send_landing_confirmation(self, voltage):
         if self.args.orchestrated:
             self.push_socket.send_json({
                 "id": self.args.drone_id,
                 "status": "LANDED",
-                "battery": self.voltage,
+                "battery": voltage,
                 "flight_duration": self.mission_duration
             })
             logger.info("Sent landing confirmation")
