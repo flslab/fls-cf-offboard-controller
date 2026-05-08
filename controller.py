@@ -1390,7 +1390,7 @@ class Controller:
             "--fps", str(self.args.tracker_fps),
             "--json-path", f"logs/tracker_{self.args.tag}.json"
         ]
-        if self.args.save_camera:
+        if self.args.save_tracker:
             params.extend([
                 "--save-video",
                 "--video-fps", "30",
