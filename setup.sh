@@ -4,6 +4,16 @@
 # FLS Offboard Controller Setup Script
 # ==========================================
 
+# Parse arguments
+INSTALL_TRACKER=false
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --with-tracker) INSTALL_TRACKER=true; shift ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+done
+
 # Ensure script is run from the repo root
 CURRENT_DIR=$(pwd)
 echo "Running setup from: $CURRENT_DIR"
@@ -186,5 +196,42 @@ fi
 
 # Return to original directory
 cd "$CURRENT_DIR"
+
+echo ""
+
+if [ "$INSTALL_TRACKER" = true ]; then
+    # ==========================================
+    # 7. Install fls-marker-localization
+    # ==========================================
+    echo "--- Installing fls-marker-localization ---"
+
+    echo "Installing dependencies for fls-marker-localization..."
+    sudo apt install -y libopencv-dev libeigen3-dev libcamera-dev nlohmann-json3-dev
+
+    echo "Moving to parent directory..."
+    cd ..
+
+    if [ -d "fls-marker-localization" ]; then
+        echo "Directory fls-marker-localization already exists, pulling latest..."
+        cd fls-marker-localization
+        git pull
+    else
+        echo "Cloning fls-marker-localization repository..."
+        git clone https://github.com/flslab/fls-marker-localization.git
+        cd fls-marker-localization
+    fi
+
+    echo "Building fls-marker-localization..."
+    mkdir -p build
+    cd build
+    cmake ..
+    make
+
+    echo "Copying config to build directory..."
+    cp ../src/dfrobot_gs_800p_camera_config.json ./camera_config.json
+
+    # Return to original directory
+    cd "$CURRENT_DIR"
+fi
 
 echo "Setup Complete. Please restart your terminal or run 'source env/bin/activate' to start working."
