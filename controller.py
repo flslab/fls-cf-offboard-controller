@@ -1396,7 +1396,7 @@ class Controller:
                 "--video-fps", "30",
                 "--video-path", "logs/video.mp4",
             ])
-        if self.args.stream_camera:
+        if self.args.stream_tracker:
             params.extend(["--stream", "--stream-rate", "10"])
 
         self.tracker_process = subprocess.Popen(params)
