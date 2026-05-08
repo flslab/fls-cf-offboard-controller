@@ -8,6 +8,7 @@ import yaml
 import logging
 import numpy as np
 import subprocess
+import signal
 from threading import Event
 import time
 import urllib.request
@@ -246,6 +247,13 @@ class Controller:
 
         if self.tracker:
             self.tracker.stop()
+            
+        if hasattr(self, 'tracker_process') and self.tracker_process:
+            try:
+                self.tracker_process.send_signal(signal.SIGINT)
+                self.tracker_process.wait(timeout=5)
+            except Exception as e:
+                logger.error(f"Failed to terminate tracker process: {e}")
 
         if self.smooth_controller:
             self.smooth_controller.stop()
@@ -1374,19 +1382,24 @@ class Controller:
         """Starts the external C++ localization process."""
         params = [
             "/home/fls/fls-marker-localization/build/eye",
-            "-t", str(20 + self.args.t),
+            "-t", "0",
             "--config", "/home/fls/fls-marker-localization/build/camera_config.json",
             "--brightness", "0.5",
             "--contrast", "2.5",
             "--exposure", "500",
-            "--fps", str(self.args.fps),
+            "--fps", str(self.args.tracker_fps),
+            "--json-path", f"logs/tracker_{self.args.tag}.json"
         ]
         if self.args.save_camera:
-            params.extend(["-s", "--save-rate", "10"])
+            params.extend([
+                "--save-video",
+                "--video-fps", "30",
+                "--video-path", "logs/video.mp4",
+            ])
         if self.args.stream_camera:
             params.extend(["--stream", "--stream-rate", "10"])
 
-        subprocess.Popen(params)
+        self.tracker_process = subprocess.Popen(params)
 
     def _trigger_failsafe(self):
         self.failsafe = True
@@ -1453,7 +1466,6 @@ if __name__ == '__main__':
     ap.add_argument("--morphing", action="store_true", help="illumination application with morphing emulator")
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=None, type=float)
     ap.add_argument("-t", help="flight duration", default=None, type=float)
-    ap.add_argument("--fps", type=int, default=120, help="position estimation rate, works with --localize")
     ap.add_argument("--led", help="Turn LEDs on", action="store_true", default=False)
     ap.add_argument("--led-brightness", type=float, default=1.0, help="change led brightness between 0 and 1")
     ap.add_argument("--led-count", type=int, default=50, help="Number of LEDs")
@@ -1467,6 +1479,11 @@ if __name__ == '__main__':
     ap.add_argument("--cf-log-period", type=int, default=20, help="log period of cf logger in millisecond")
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
+    ap.add_argument("--save-tracker", action="store_true",
+                    help="save trakcer camera video, works with --trakcer")
+    ap.add_argument("--stream-tracker", action="store_true",
+                    help="stream trakcer camera video, works with --trakcer")
+    ap.add_argument("--tracker-fps", type=int, default=120, help="position estimation rate, works with --tracker")
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
     ap.add_argument("--vicon-full-pose", action="store_true",
                     help="if passed send both position and orientation otherwise send only position")
@@ -1482,10 +1499,6 @@ if __name__ == '__main__':
     ap.add_argument("--rotation-test", action="store_true", help="test rotation rate")
     ap.add_argument("--xy-tune", action="store_true", help="forward/back left/right flight pattern")
     ap.add_argument("--z-tune", action="store_true", help="up/down flight pattern")
-    ap.add_argument("--save-camera", action="store_true",
-                    help="save camera at 1/10 of original fps, works with --localize")
-    ap.add_argument("--stream-camera", action="store_true",
-                    help="stream camera at 1/10 of original fps, works with --localize")
     ap.add_argument("--skip-takeoff", action="store_true", help="run mission without taking off")
     ap.add_argument("--skip-landing", action="store_true", help="run mission without landing")
     ap.add_argument("--radio", type=str, help="specify the CrazyRadio URI (e.g., 'radio://0/6/1M/E7E7E7E704')")
@@ -1505,11 +1518,3 @@ if __name__ == '__main__':
             logger.error(e)
         except EmergencyStopException as e:
             logger.error(e)
-
-    # with open("pose_update_time.txt", "w") as f:
-    #     for number in pos_update_time_log:
-    #         f.write(f"{number}\n")
-    #
-    # with open("pose_update_profile.txt", "w") as f:
-    #     for number in pos_update_profile_log:
-    #         f.write(f"{number}\n")
