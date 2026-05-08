@@ -594,7 +594,10 @@ class Controller:
         else:
             self._activate_pid_controller()
         self._activate_high_level_commander()
-        self._set_pid_values(self.cfg.PID_VALUES)
+        if self.args.check_deck is not None and self.args.check_deck == "bcFlow2":
+            self._set_pid_values(self.cfg.PID_VALUES_FLOWDECK)
+        else:
+            self._set_pid_values(self.cfg.PID_VALUES)
 
         if self.args.vicon and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
             reset_estimator(self.cf)
