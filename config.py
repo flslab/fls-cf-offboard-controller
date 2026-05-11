@@ -404,7 +404,7 @@ LOG_VARS = TUNING_LOG_VARS
 
 
 # PID Configurations
-PID_VALUES_PROP_2 = {
+PID_VALUES = {
     'quadSysId.armLength': '0.053',
     'posCtlPid.xKp': '1.9',
     'posCtlPid.xKi': '0.1',
@@ -483,5 +483,3 @@ PID_VALUES_FLOWDECK = {
     'pid_rate.omyFiltCut': '160',
     'pid_rate.omzFiltCut': '160'
 }
-
-PID_VALUES = PID_VALUES_PROP_2
