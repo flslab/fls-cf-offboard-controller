@@ -539,7 +539,11 @@ class Controller:
             self.log_manager = IlluminationLogger(verbose=self.args.verbose)
             self.log_manager.start()
             if not self.args.droneless:
-                self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
+                log_vars = self.cfg.LOG_VARS
+                if self.args.check_deck is not None and self.args.check_deck == "bcFlow2":
+                    log_vars["MOTION"] = self.cfg.MOTION
+                    log_vars["KAL_FLOW"] = self.cfg.KAL_FLOW
+                self.log_manager.init_cf_logger(self.cf, log_vars, self.args.cf_log_period)
             self.log_manager.add_log_group("frames")
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("events")

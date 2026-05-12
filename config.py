@@ -386,6 +386,72 @@ VEL_POS = {
 }
 
 
+KAL_FLOW = {
+    "kalman_pred.predNX": {
+        "type": "float",
+        "unit": "px/fr",
+        "data": [],
+    },
+    "kalman_pred.predNY": {
+        "type": "float",
+        "unit": "px/fr",
+        "data": [],
+    },
+    "kalman_pred.measNX": {
+        "type": "float",
+        "unit": "px/fr",
+        "data": [],
+    },
+    "kalman_pred.measNY": {
+        "type": "float",
+        "unit": "px/fr",
+        "data": [],
+    },
+}
+
+MOTION = {
+    "motion.deltaX": {
+        "type": "int16_t",
+        "unit": "flow/fr",
+        "data": [],
+    },
+    "motion.deltaY": {
+        "type": "int16_t",
+        "unit": "flow/fr",
+        "data": [],
+    },
+    "motion.squal": {
+        "type": "uint8_t",
+        "unit": "#",
+        "data": [],
+    },
+    "motion.std": {
+        "type": "float",
+        "unit": "flow/fr",
+        "data": [],
+    },
+    "motion.maxRaw": {
+        "type": "uint8_t",
+        "unit": "px/fr",
+        "data": [],
+    },
+    "motion.minRaw": {
+        "type": "uint8_t",
+        "unit": "px/fr",
+        "data": [],
+    },
+    "motion.Rawsum": {
+        "type": "uint8_t",
+        "unit": "px/fr",
+        "data": [],
+    },
+    "motion.outlierCount": {
+        "type": "uint8_t",
+        "unit": "#",
+        "data": [],
+    },
+}
+
 TUNING_LOG_VARS = {
     'CTRL_ATT_RATE': CTRL_ATT_RATE,
     'POSCTL_VEL_POS': POSCTL_VEL_POS,
