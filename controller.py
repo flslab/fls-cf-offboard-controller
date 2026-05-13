@@ -198,6 +198,7 @@ class Controller:
         self.setup_logging()
         self.setup_commander()
         self.setup_motion_capture()
+        self.save_init_coord()
         if not self.args.droneless:
             self.setup_smooth_controller()
             self.setup_led()
@@ -212,7 +213,6 @@ class Controller:
         if not self.args.droneless:
             if self.led:
                 self.led.clear()
-            self.save_init_coord()
             self.arm()
             self.takeoff()
         self.run_mission()
@@ -604,6 +604,7 @@ class Controller:
             self._set_pid_values(self.cfg.PID_VALUES)
 
         if self.args.vicon and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
+            self._set_initial_position(self.init_coord[0], self.init_coord[1], self.init_coord[2], 0)
             reset_estimator(self.cf)
 
         if self.led:
@@ -1377,6 +1378,14 @@ class Controller:
     def _set_position_sensitivity(self, std_dev):
         self.cf.param.set_value('locSrv.extPosStdDev', std_dev)
 
+    def _set_initial_position(self, x, y, z, yaw_deg):
+        self.cf.param.set_value('kalman.initialX', x)
+        self.cf.param.set_value('kalman.initialY', y)
+        self.cf.param.set_value('kalman.initialZ', z)
+
+        yaw_radians = math.radians(yaw_deg)
+        self.cf.param.set_value('kalman.initialYaw', yaw_radians)
+
     def _set_safe_servo_angles(self):
         if not self.servo or not self.smooth_controller:
             return
@@ -1498,6 +1507,7 @@ if __name__ == '__main__':
                     help="object name in mocap system, works with --vicon.")
     ap.add_argument("--vicon-mode", default="mixed", choices=["rigidbody", "pointcloud", "mixed"], help="Tracking mode")
     ap.add_argument("--init-pos", type=float, nargs=3, help="Initial point x y z", default=[0.0, 0.0, 0.0])
+    ap.add_argument("--init-yaw", type=float, help="Initial yaw (degrees)", default=0)
     ap.add_argument("--save-vicon", action="store_true", help="track with vicon and save the data")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
