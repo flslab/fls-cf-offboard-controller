@@ -482,7 +482,7 @@ class Controller:
             xi, yi, _ = self.init_coord
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = 2 * dist
-            self.hl_commander.go_to(xi, yi, z, 0, dt, relative=False)
+            self.hl_commander.go_to(xi, yi, z, self.args.init_yaw, dt, relative=False)
             time.sleep(dt + 0.5)
 
         if self.flying:
@@ -519,7 +519,7 @@ class Controller:
             xi, yi, _ = self.init_coord
             dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
             dt = 2 * dist
-            self.hl_commander.go_to(xi, yi, z, 0, dt, relative=False)
+            self.hl_commander.go_to(xi, yi, z, self.args.init_yaw, dt, relative=False)
             time.sleep(dt + 0.5)
         if self.flying:
             dt = z * 6
@@ -647,7 +647,7 @@ class Controller:
     def hover(self, hover_time=None):
         if hover_time is None:
             hover_time = self.args.t
-        self.hl_commander.go_to(0.0, 0.0, self.args.takeoff_altitude, 0, hover_time, relative=False)
+        self.hl_commander.go_to(0.0, 0.0, self.args.takeoff_altitude, self.args.init_yaw, hover_time, relative=False)
         self._safe_sleep(hover_time)
 
     def xy_tune_pattern(self):
@@ -1379,14 +1379,12 @@ class Controller:
     def _set_position_sensitivity(self, std_dev):
         self.cf.param.set_value('locSrv.extPosStdDev', std_dev)
 
-    def _set_initial_position(self, x, y, z, yaw_deg):
+    def _set_initial_position(self, x, y, z, yaw_rad):
         self.cf.param.set_value('kalman.initialX', x)
         self.cf.param.set_value('kalman.initialY', y)
         self.cf.param.set_value('kalman.initialZ', z)
-
-        yaw_radians = math.radians(yaw_deg)
-        self.cf.param.set_value('kalman.initialYaw', yaw_radians)
-        logger.info(f"Set initial position to ({x}, {y}, {z}) and yaw to {yaw_deg} degrees")
+        self.cf.param.set_value('kalman.initialYaw', yaw_rad)
+        logger.info(f"Set initial position to ({x}, {y}, {z}) and yaw to {yaw_rad} radians ({math.degrees(yaw_rad)} degrees)")
 
     def _set_safe_servo_angles(self):
         if not self.servo or not self.smooth_controller:
@@ -1509,7 +1507,7 @@ if __name__ == '__main__':
                     help="object name in mocap system, works with --vicon.")
     ap.add_argument("--vicon-mode", default="mixed", choices=["rigidbody", "pointcloud", "mixed"], help="Tracking mode")
     ap.add_argument("--init-pos", type=float, nargs=3, help="Initial point x y z", default=[0.0, 0.0, 0.0])
-    ap.add_argument("--init-yaw", type=float, help="Initial yaw (degrees)", default=0)
+    ap.add_argument("--init-yaw", type=float, help="Initial yaw (radians)", default=0)
     ap.add_argument("--save-vicon", action="store_true", help="track with vicon and save the data")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
