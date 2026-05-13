@@ -198,13 +198,13 @@ class Controller:
         self.setup_logging()
         self.setup_commander()
         self.setup_motion_capture()
-        self.save_init_coord()
         if not self.args.droneless:
             self.setup_smooth_controller()
             self.setup_led()
             self.setup_servo()
             self.setup_battery_watcher()
             self.setup_tracker()
+            self.save_init_coord()
             self.setup_params()
 
         self.handshake()
@@ -399,6 +399,7 @@ class Controller:
             logger.info(f"Tracking Anchor: {anchor}")
             self.mocap.set_anchor_point(anchor)
 
+        time.sleep(0.1)
         logger.debug("mocap activated")
 
     def setup_tracker(self):
