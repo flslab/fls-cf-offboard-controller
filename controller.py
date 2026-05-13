@@ -1034,6 +1034,7 @@ class Controller:
         waypoints = mission_setting.get('waypoints', [])
         position_offset = mission_setting.get('position_offset', None)
         low_level_setpoint = mission_setting.get('low_level_setpoint', [])
+        velocity_commands = mission_setting.get('velocity_commands', [])
         rotation_test = mission_setting.get('rotation_test', [])
         follow = mission_setting.get('follow', False)
         params = mission_setting.get('params', {'linear': False, 'relative': False})
@@ -1131,6 +1132,8 @@ class Controller:
             self.ll_commander.send_notify_setpoint_stop()
         elif len(rotation_test):
             self.test_rotation_limit(*rotation_test)
+        elif len(velocity_commands):
+            self.follow_velocity_commands(velocity_commands)
         elif autotune['enabled']:
             autotuner = PIDAutotuner(self, autotune)
             autotuner.run_autotune()
@@ -1265,6 +1268,18 @@ class Controller:
                 else:
                     # If sleep_duration is negative, we are lagging behind!
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
+
+    def follow_velocity_commands(self, commands):
+        dt = 1.0 / self.args.smooth_controller_rate
+
+        for command in commands:
+            start_t = time.time()
+            vx, vy, yawrate, z, duration = command
+            while time.time() - start_t < duration:
+                self.ll_commander.send_hover_setpoint(vx, vy, yawrate, z)
+                self._safe_sleep(dt)
+
+        self.ll_commander.send_notify_setpoint_stop()
 
     def test_rotation_limit(self, low_limit=400, high_limit=600, num_steps=3, duration=5):
         dt = 1.0 / self.args.smooth_controller_rate
