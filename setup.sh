@@ -228,7 +228,7 @@ if [ "$INSTALL_TRACKER" = true ]; then
     make
 
     echo "Copying config to build directory..."
-    cp ../src/dfrobot_gs_800p_camera_config.json ./camera_config.json
+    cp ../src/dfrobot_gs_camera_config.json ./camera_config.json
 
     # Return to original directory
     cd "$CURRENT_DIR"
