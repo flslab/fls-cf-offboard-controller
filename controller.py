@@ -604,7 +604,7 @@ class Controller:
             self._set_pid_values(self.cfg.PID_VALUES)
 
         if self.args.vicon and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
-            self._set_initial_position(self.init_coord[0], self.init_coord[1], self.init_coord[2], 0)
+            self._set_initial_position(self.init_coord[0], self.init_coord[1], self.init_coord[2], self.args.init_yaw)
             reset_estimator(self.cf)
 
         if self.led:
@@ -1385,6 +1385,7 @@ class Controller:
 
         yaw_radians = math.radians(yaw_deg)
         self.cf.param.set_value('kalman.initialYaw', yaw_radians)
+        logger.info(f"Set initial position to ({x}, {y}, {z}) and yaw to {yaw_deg} degrees")
 
     def _set_safe_servo_angles(self):
         if not self.servo or not self.smooth_controller:
