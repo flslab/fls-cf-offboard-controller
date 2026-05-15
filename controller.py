@@ -147,6 +147,7 @@ class Controller:
         self.failsafe = False
         self.init_coord = None
         self.mocap_frames = []
+        self.use_flowdeck = self.args.check_deck is not None and self.args.check_deck == "bcFlow2"
 
         self._safe_sleep: Callable[[float], None]
         if self.args.orchestrated:
@@ -538,7 +539,7 @@ class Controller:
             self.log_manager.start()
             if not self.args.droneless:
                 log_vars = self.cfg.LOG_VARS
-                if self.args.check_deck is not None and self.args.check_deck == "bcFlow2":
+                if self.use_flowdeck:
                     log_vars["MOTION"] = self.cfg.MOTION
                     log_vars["KAL_FLOW"] = self.cfg.KAL_FLOW
                 self.log_manager.init_cf_logger(self.cf, log_vars, self.args.cf_log_period)
@@ -596,12 +597,12 @@ class Controller:
         else:
             self._activate_pid_controller()
         self._activate_high_level_commander()
-        if self.args.check_deck is not None and self.args.check_deck == "bcFlow2":
+        if self.use_flowdeck:
             self._set_pid_values(self.cfg.PID_VALUES_FLOWDECK)
         else:
             self._set_pid_values(self.cfg.PID_VALUES)
 
-        if self.args.vicon and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
+        if (self.args.vicon or self.use_flowdeck) and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
             self._set_initial_position(self.init_coord[0], self.init_coord[1], self.init_coord[2], self.args.init_yaw)
             reset_estimator(self.cf)
 
