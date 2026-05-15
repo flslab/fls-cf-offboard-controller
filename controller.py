@@ -334,7 +334,7 @@ class Controller:
             exit()
 
     def setup_smooth_controller(self):
-        if self.args.servo or self.args.led:
+        if self.args.servo or self.args.led or self.args.tracker:
             self.smooth_controller = SmoothController(rate=self.args.smooth_controller_rate)
 
     def setup_servo(self):
@@ -406,11 +406,7 @@ class Controller:
         if self.args.tracker:
             self._start_tracker_process()
             time.sleep(2)
-            self.tracker = Tracker(
-                on_pose=self._send_position,
-                on_failsafe=self._trigger_failsafe
-            )
-            self.tracker.start()
+            self.tracker = Tracker(self)
             logger.debug("tracker activated")
 
     def setup_sockets(self):
@@ -1037,6 +1033,7 @@ class Controller:
         velocity_commands = mission_setting.get('velocity_commands', [])
         rotation_test = mission_setting.get('rotation_test', [])
         follow = mission_setting.get('follow', False)
+        relative_anchor = mission_setting.get('relative_anchor', False)
         params = mission_setting.get('params', {'linear': False, 'relative': False})
         angles = mission_setting.get('servos', [])
         pointers = mission_setting.get('pointers', [])
@@ -1143,7 +1140,23 @@ class Controller:
             if len(waypoints[0]) == 4:
                 for w in waypoints:
                     w.append(delta_t)
-            self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations)
+            if relative_anchor:
+                anchor_id = relative_anchor['id']
+                anchor_waypoints = self.missions[mission_index]['drones'][anchor_id]['waypoints']
+                for i in range(len(waypoints)):
+                    # only convert x, y coordinates to relative coordinates
+                    waypoints[i][0] = anchor_waypoints[i][0] - waypoints[i][0]
+                    waypoints[i][1] = anchor_waypoints[i][1] - waypoints[i][1]
+
+                self.smooth_controller.register_group(
+                    name="relative_position",
+                    initial_values=waypoints[0],
+                    callback=lambda vals: self.tracker.localize(vals),
+                    always_callback=True
+                )
+            self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, relative=True)
+            if relative_anchor:
+                self.smooth_controller.remove_group("relative_position")
 
         self.animation_stop_times.append(time.time())
 
@@ -1155,7 +1168,7 @@ class Controller:
         if self.led:
             self.led.clear()
 
-    def run_control_loop(self, mission_index, waypoints, angles, pointers, params, delta_t, iterations):
+    def run_control_loop(self, mission_index, waypoints, angles, pointers, params, delta_t, iterations, relative=False):
         elapsed_time = 0.0
         num_steps = max(len(waypoints), len(angles), len(pointers))
         if num_steps == 1:
@@ -1174,8 +1187,11 @@ class Controller:
 
                 if i < len(waypoints):
                     duration = waypoints[i][4]
-                    self.hl_commander.go_to(*waypoints[i], **params)
-                    logger.info(f"go to {waypoints[i]}")
+                    if relative:
+                        self.smooth_controller.set_group_values("relative_position", waypoints[i], duration=duration)
+                    else:
+                        self.hl_commander.go_to(*waypoints[i], **params)
+                        logger.info(f"go to {waypoints[i]}")
                 if i < len(angles):
                     self.smooth_controller.set_group_values("servos", angles[i], duration=duration)
                 if i < len(pointers):
@@ -1422,7 +1438,7 @@ class Controller:
             "--brightness", "0.5",
             "--contrast", "2.5",
             "--exposure", "500",
-            "--fps", str(self.args.tracker_fps),
+            "--fps", str(int(min(self.args.smooth_controller_rate, self.args.tracker_fps))),
             "--json-path", f"logs/tracker_{self.args.tag}.json"
         ]
         if self.args.save_tracker:
