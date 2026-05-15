@@ -1157,6 +1157,7 @@ class Controller:
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, relative=True)
             if relative_anchor:
                 self.smooth_controller.remove_group("relative_position")
+            self.ll_commander.send_notify_setpoint_stop()
 
         self.animation_stop_times.append(time.time())
 
