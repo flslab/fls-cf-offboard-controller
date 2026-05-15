@@ -472,14 +472,14 @@ class Controller:
         logger.info(f"Landing... Battery: {voltage_str}")
         z = self.args.takeoff_altitude
         if self.init_coord:
+            xi, yi, _ = self.init_coord
             if self.args.vicon:
-                xi, yi, _ = self.init_coord
                 x, y, z = self._get_latest_mocap_frame()["tvec"]
+                dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
+                dt = 2 * dist + 0.1
             else:
-                x, y = 0, 0
-                xi, yi, z = 0, 0, self.args.takeoff_altitude
-            dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
-            dt = 2 * dist + 0.1
+                z = self.args.takeoff_altitude
+                dt = 2
             self.hl_commander.go_to(xi, yi, z, self.args.init_yaw, dt, relative=False)
             time.sleep(dt + 0.5)
 
