@@ -41,9 +41,9 @@ class Tracker():
         v *= p
         z = relative_position[2]
         self.controller.ll_commander.send_hover_setpoint(v[0], v[1], 0, z)
-        logger.info(f"gt: {gt}")
-        logger.info(f"act: {act}")
-        logger.info(f"hover command: {v[0]}, {v[1]}, {z}")
+        logger.debug(f"gt: {gt}")
+        logger.debug(f"act: {act}")
+        logger.debug(f"hover command: {v[0]}, {v[1]}, {z}")
         
         
     def run(self):
