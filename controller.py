@@ -244,9 +244,6 @@ class Controller:
                 mission_duration=self.mission_duration,
                 args=vars(self.args),
             )
-
-        if self.tracker:
-            self.tracker.stop()
             
         if hasattr(self, 'tracker_process') and self.tracker_process:
             try:
