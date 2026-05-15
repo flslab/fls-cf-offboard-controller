@@ -99,12 +99,11 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
 class Controller:
     def __init__(self, args):
         self.args = args
-
-        if getattr(self.args, 'illumination', False):
-            import config as cfg
-            self.cfg = cfg
-        elif getattr(self.args, 'interaction', False):
+        if getattr(self.args, 'interaction', False):
             import Interaction.config as cfg
+            self.cfg = cfg
+        else:
+            import config as cfg
             self.cfg = cfg
         if self.args.takeoff_altitude is None:
             self.args.takeoff_altitude = self.cfg.DEFAULT_HEIGHT
