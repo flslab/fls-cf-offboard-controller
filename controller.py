@@ -1,3 +1,5 @@
+from cflib import crazyflie
+from cflib import crazyflie
 import argparse
 import datetime
 import json
@@ -543,6 +545,7 @@ class Controller:
                     log_vars["KAL_FLOW"] = self.cfg.KAL_FLOW
                 self.log_manager.init_cf_logger(self.cf, log_vars, self.args.cf_log_period)
             self.log_manager.add_log_group("frames")
+            self.log_manager.add_log_group("anchor_frames")
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("events")
 
@@ -1140,15 +1143,29 @@ class Controller:
             if relative_anchor:
                 anchor_id = relative_anchor['id']
                 anchor_waypoints = self.missions[mission_index]['drones'][anchor_id]['waypoints']
+                anchor_target = self.missions[mission_index]['drones'][anchor_id]['target'][:3]
                 for i in range(len(waypoints)):
-                    # only convert x, y coordinates to relative coordinates
+                    # only convert x, y coordinates to relative coordinates for velocity commands
                     waypoints[i][0] = anchor_waypoints[i][0] - waypoints[i][0]
                     waypoints[i][1] = anchor_waypoints[i][1] - waypoints[i][1]
+                    if relative_anchor.get("method") == "position_control":
+                        waypoints[i][2] = anchor_waypoints[i][2] - waypoints[i][2]
+
+                if self.args.vicon:
+                    localization_method = self.do_mocap_relative_localization
+
+                    self.mocap.subscribe_point(
+                        anchor_target,
+                        lambda frame: self._log_mocap(frame, group_name="anchor_frames"),
+                        anchor_id
+                    )
+                elif self.args.tracker:
+                    localization_method = self.do_tracker_relative_localization 
 
                 self.smooth_controller.register_group(
                     name="relative_position",
                     initial_values=waypoints[0],
-                    callback=lambda vals: self.tracker.localize(vals),
+                    callback=lambda vals: localization_method(vals, relative_anchor),
                     always_callback=True
                 )
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, relative=relative_anchor)
@@ -1204,6 +1221,49 @@ class Controller:
                 else:
                     # If sleep_duration is negative, we are lagging behind!
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
+    
+    def do_tracker_relative_localization(self, gt_relative_position, config):
+        latest_pose = self.tracker.get_latest_pose()
+        if not latest_pose:
+            return
+
+        right, down, forward, _, _, _ = latest_pose
+        act_relative_position = [-right, -forward, -down]
+
+        if config["method"] == "velocity_control":
+            self.do_localization_veolocity_cmd(gt_relative_position, act_relative_position)
+        elif config["method"] == "position_control":
+            self.do_localization_position_cmd(gt_relative_position, act_relative_position)
+
+    def do_mocap_relative_localization(self, gt_relative_position, config):
+        localizing_latest_pose = np.array(self._get_latest_mocap_frame()["tvec"])
+        anchor_latest_pose = np.array(self._get_latest_mocap_frame(group_name="anchor_frames")["tvec"])
+
+        act_relative_position = anchor_latest_pose - localizing_latest_pose
+
+        if config["method"] == "velocity_control":
+            self.do_localization_veolocity_cmd(gt_relative_position, act_relative_position)
+        elif config["method"] == "position_control":
+            self.do_localization_position_cmd(gt_relative_position, anchor_latest_pose)
+        
+    
+    def do_localization_veolocity_cmd(self, gt_relative_position, act_relative_position):
+        act = np.array([act_relative_position[0], act_relative_position[1]])
+        gt = np.array([gt_relative_position[0], gt_relative_position[1]])
+        v = act - gt
+        p = 1.0
+        v *= p
+        z = gt_relative_position[2]
+        self.ll_commander.send_hover_setpoint(v[0], v[1], 0, z)
+        logger.debug(f"gt: {gt}")
+        logger.debug(f"act: {act}")
+        logger.debug(f"hover command: {v[0]}, {v[1]}, {z}")
+
+    def do_localization_position_cmd(self, gt_relative_position, anchor_position):
+        anchor = np.array(anchor_position)
+        gt = np.array(gt_relative_position)
+        localizing_position = anchor + gt
+        self.ll_commander.send_position_setpoint(*localizing_position, 0)
 
     def update_led(self, pointers, led_setting, mission_index=0):
         formula_str = led_setting["formula"]
@@ -1469,8 +1529,8 @@ class Controller:
     def _log_mocap(self, frame, group_name='frames'):
         self.log_manager.add_log_entry(group_name, frame)
 
-    def _get_latest_mocap_frame(self):
-        return self.log_manager.groups['frames'][-1]
+    def _get_latest_mocap_frame(self, group_name='frames'):
+        return self.log_manager.groups[group_name][-1]
 
     def _get_latest_angles(self, window_size=5):
 
