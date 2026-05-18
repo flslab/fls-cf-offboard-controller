@@ -1263,7 +1263,7 @@ class Controller:
         anchor = np.array(anchor_position)
         gt = np.array(gt_relative_position)
         localizing_position = anchor + gt
-        self.ll_commander.send_position_setpoint(*localizing_position, 0)
+        self.ll_commander.send_position_setpoint(localizing_position[0], localizing_position[1], localizing_position[2], 0)
 
     def update_led(self, pointers, led_setting, mission_index=0):
         formula_str = led_setting["formula"]
