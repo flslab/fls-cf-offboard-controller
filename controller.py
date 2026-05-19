@@ -1231,9 +1231,9 @@ class Controller:
         act_relative_position = [-right, -forward, -down]
 
         if config["method"] == "velocity_control":
-            self.do_localization_veolocity_cmd(gt_relative_position, act_relative_position)
+            self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
         elif config["method"] == "position_control":
-            self.do_localization_position_cmd(gt_relative_position, act_relative_position)
+            self.do_localization_position_cmd(gt_relative_position[:3], act_relative_position)
 
     def do_mocap_relative_localization(self, gt_relative_position, config):
         localizing_latest_pose = np.array(self._get_latest_mocap_frame()["tvec"])
@@ -1242,9 +1242,9 @@ class Controller:
         act_relative_position = anchor_latest_pose - localizing_latest_pose
 
         if config["method"] == "velocity_control":
-            self.do_localization_veolocity_cmd(gt_relative_position, act_relative_position)
+            self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
         elif config["method"] == "position_control":
-            self.do_localization_position_cmd(gt_relative_position, anchor_latest_pose)
+            self.do_localization_position_cmd(gt_relative_position[:3], anchor_latest_pose)
         
     
     def do_localization_veolocity_cmd(self, gt_relative_position, act_relative_position):
