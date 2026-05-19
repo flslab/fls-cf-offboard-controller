@@ -1251,7 +1251,7 @@ class Controller:
         act = np.array([act_relative_position[0], act_relative_position[1]])
         gt = np.array([gt_relative_position[0], gt_relative_position[1]])
         v = act - gt
-        p = 1.0
+        p = 2.0
         v *= p
         z = gt_relative_position[2]
         self.ll_commander.send_hover_setpoint(v[0], v[1], 0, z)
