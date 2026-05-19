@@ -1232,7 +1232,7 @@ class Controller:
         right, down, forward, _, _, _ = latest_pose
         cx, cy, cz = self.args.camera_offset
         mx, my, mz = self.args.marker_offset
-        act_relative_position = [-right + mx - cx, -forward + my - cy, -down + mz - cz]
+        act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
 
         if config["method"] == "velocity_control":
             self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
