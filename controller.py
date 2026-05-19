@@ -1151,7 +1151,7 @@ class Controller:
                     if relative_anchor.get("method") == "position_control":
                         waypoints[i][2] = anchor_waypoints[i][2] - waypoints[i][2]
 
-                if self.args.vicon:
+                if relative_anchor["source"] == "mocap":
                     localization_method = self.do_mocap_relative_localization
 
                     self.mocap.subscribe_point(
@@ -1159,7 +1159,7 @@ class Controller:
                         lambda frame: self._log_mocap(frame, group_name="anchor_frames"),
                         anchor_id
                     )
-                elif self.args.tracker:
+                elif relative_anchor["source"] == "tracker":
                     localization_method = self.do_tracker_relative_localization 
 
                 self.smooth_controller.register_group(
@@ -1228,7 +1228,9 @@ class Controller:
             return
 
         right, down, forward, _, _, _ = latest_pose
-        act_relative_position = [-right, -forward, -down]
+        cx, cy, cz = self.args.camera_offset
+        mx, my, mz = self.args.marker_offset
+        act_relative_position = [-right + mx - cx, -forward + my - cy, -down + mz - cz]
 
         if config["method"] == "velocity_control":
             self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
@@ -1616,6 +1618,8 @@ if __name__ == '__main__':
     ap.add_argument("--viewpoint", type=float, nargs=3, help="actual camera viewpoint coordinates x y z", default=None)
     ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
     ap.add_argument("--light-module-offset", type=float, nargs=3, help="light module offset from marker coordinates x y z", default=[0.075, 0.0, -0.040])
+    ap.add_argument("--camera-offset", type=float, nargs=3, help="camera offset from marker coordinates x y z", default=[0.04, -0.035, -0.025])
+    ap.add_argument("--marker-offset", type=float, nargs=3, help="marker offset from marker module coordinates x y z", default=[0.01, 0.035, -0.035])
     ap.add_argument("--controller-type", type=str, choices=["pid", "mellinger"], help="pid or mellinger", default="pid")
     ap.add_argument("--autotune", action="store_true", help="run automatic pid tuner")
 
