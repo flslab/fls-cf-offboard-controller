@@ -1225,6 +1225,8 @@ class Controller:
     def do_tracker_relative_localization(self, gt_relative_position, config):
         latest_pose = self.tracker.get_latest_pose()
         if not latest_pose:
+            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "tracker_lost_frame"})
+            self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
             return
 
         right, down, forward, _, _, _ = latest_pose
