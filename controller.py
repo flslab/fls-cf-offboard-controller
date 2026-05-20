@@ -1624,7 +1624,7 @@ if __name__ == '__main__':
     ap.add_argument("--viewpoint", type=float, nargs=3, help="actual camera viewpoint coordinates x y z", default=None)
     ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
     ap.add_argument("--light-module-offset", type=float, nargs=3, help="light module offset from marker coordinates x y z", default=[0.075, 0.0, -0.040])
-    ap.add_argument("--camera-offset", type=float, nargs=3, help="camera offset from marker coordinates x y z", default=[0.01, -0.035, -0.025])
+    ap.add_argument("--camera-offset", type=float, nargs=3, help="camera offset from marker coordinates x y z", default=[0.015, -0.035, -0.035])
     ap.add_argument("--marker-offset", type=float, nargs=3, help="marker offset from marker module coordinates x y z", default=[0.01, 0.035, -0.035])
     ap.add_argument("--controller-type", type=str, choices=["pid", "mellinger"], help="pid or mellinger", default="pid")
     ap.add_argument("--autotune", action="store_true", help="run automatic pid tuner")
