@@ -206,7 +206,7 @@ if [ "$INSTALL_TRACKER" = true ]; then
     echo "--- Installing fls-marker-localization ---"
 
     echo "Installing dependencies for fls-marker-localization..."
-    sudo apt install -y libopencv-dev libeigen3-dev libcamera-dev nlohmann-json3-dev
+    sudo apt install -y libopencv-dev libeigen3-dev libcamera-dev nlohmann-json3-dev cmake
 
     echo "Moving to parent directory..."
     cd ..
