@@ -1234,6 +1234,10 @@ class Controller:
         mx, my, mz = self.args.marker_offset
         act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
 
+        logger.info(f"gt_relative_position: {gt_relative_position}")
+        logger.info(f"act_relative_position: {[-right, -forward, -down]}")
+        logger.info(f"act_relative_position offseted: {act_relative_position}")
+
         if config["method"] == "velocity_control":
             self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
         elif config["method"] == "position_control":
@@ -1620,7 +1624,7 @@ if __name__ == '__main__':
     ap.add_argument("--viewpoint", type=float, nargs=3, help="actual camera viewpoint coordinates x y z", default=None)
     ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
     ap.add_argument("--light-module-offset", type=float, nargs=3, help="light module offset from marker coordinates x y z", default=[0.075, 0.0, -0.040])
-    ap.add_argument("--camera-offset", type=float, nargs=3, help="camera offset from marker coordinates x y z", default=[0.04, -0.035, -0.025])
+    ap.add_argument("--camera-offset", type=float, nargs=3, help="camera offset from marker coordinates x y z", default=[0.01, -0.035, -0.025])
     ap.add_argument("--marker-offset", type=float, nargs=3, help="marker offset from marker module coordinates x y z", default=[0.01, 0.035, -0.035])
     ap.add_argument("--controller-type", type=str, choices=["pid", "mellinger"], help="pid or mellinger", default="pid")
     ap.add_argument("--autotune", action="store_true", help="run automatic pid tuner")
