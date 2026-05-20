@@ -1234,9 +1234,9 @@ class Controller:
         mx, my, mz = self.args.marker_offset
         act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
 
-        logger.info(f"gt_relative_position: {gt_relative_position}")
-        logger.info(f"act_relative_position: {[-right, -forward, -down]}")
-        logger.info(f"act_relative_position offseted: {act_relative_position}")
+        logger.debug(f"gt_relative_position: {gt_relative_position}")
+        logger.debug(f"act_relative_position: {[-right, -forward, -down]}")
+        logger.debug(f"act_relative_position offseted: {act_relative_position}")
 
         if config["method"] == "velocity_control":
             self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
