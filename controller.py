@@ -1049,6 +1049,8 @@ class Controller:
         total_offset = [base_offset[0] + vp_offset[0],
                         base_offset[1] + vp_offset[1],
                         base_offset[2] + vp_offset[2]]
+        if self.use_flowdeck:
+            total_offset[2] -= 0.09
 
         if any(abs(v) > 1e-6 for v in total_offset):
             for i in range(3):
