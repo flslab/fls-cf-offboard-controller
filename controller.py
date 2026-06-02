@@ -1509,6 +1509,8 @@ class Controller:
             "--contrast", "2.5",
             "--exposure", "500",
             "--fps", str(int(min(self.args.smooth_controller_rate, self.args.tracker_fps))),
+            "--payload-size", str(self.args.payload_size),
+            "--target-id", str(self.args.target_id),
             "--json-path", f"logs/tracker_{self.args.tag}.json"
         ]
         if self.args.save_tracker:
@@ -1605,6 +1607,9 @@ if __name__ == '__main__':
     ap.add_argument("--stream-tracker", action="store_true",
                     help="stream trakcer camera video, works with --trakcer")
     ap.add_argument("--tracker-fps", type=int, default=120, help="position estimation rate, works with --tracker")
+    ap.add_argument("--marker-id", type=int, default=-1, help="ID of the blinking marker")
+    ap.add_argument("--target-id", type=int, default=-1, help="ID of the anchor to track")
+    ap.add_argument("--payload-size", type=int, default=4, help="size of the payload")
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
     ap.add_argument("--vicon-full-pose", action="store_true",
                     help="if passed send both position and orientation otherwise send only position")
