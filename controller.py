@@ -143,6 +143,8 @@ class Controller:
         self.animation_stop_times = []
         self.viewpoint_offsets = []
         self.smooth_controller = None
+        self.blinker_process = None
+        self.tracker_process = None
 
         self.flying = False
         self.failsafe = False
@@ -247,12 +249,19 @@ class Controller:
                 args=vars(self.args),
             )
             
-        if hasattr(self, 'tracker_process') and self.tracker_process:
+        if self.tracker_process:
             try:
                 self.tracker_process.send_signal(signal.SIGINT)
                 self.tracker_process.wait(timeout=5)
             except Exception as e:
                 logger.error(f"Failed to terminate tracker process: {e}")
+        
+        if self.blinker_process:
+            try:
+                self.blinker_process.send_signal(signal.SIGINT)
+                self.blinker_process.wait(timeout=5)
+            except Exception as e:
+                logger.error(f"Failed to terminate blinker process: {e}")
 
         if self.smooth_controller:
             self.smooth_controller.stop()
@@ -407,6 +416,11 @@ class Controller:
             time.sleep(2)
             self.tracker = Tracker(self)
             logger.debug("tracker activated")
+
+    def setup_blinker(self):
+        if self.args.marker_id >= 0:
+            self._start_blinker_process()
+            logger.debug("blinker activated")
 
     def setup_sockets(self):
         if not self.args.orchestrated:
@@ -1508,7 +1522,7 @@ class Controller:
             "--brightness", "0.5",
             "--contrast", "2.5",
             "--exposure", "500",
-            "--fps", str(int(min(self.args.smooth_controller_rate, self.args.tracker_fps))),
+            "--fps", str(self.args.tracker_fps),
             "--payload-size", str(self.args.payload_size),
             "--target-id", str(self.args.target_id),
             "--json-path", f"logs/tracker_{self.args.tag}.json"
@@ -1523,6 +1537,17 @@ class Controller:
             params.extend(["--stream", "--stream-rate", "10"])
 
         self.tracker_process = subprocess.Popen(params)
+
+    def _start_blinker_process(self):
+        """Starts the external C++ blinker process for OOK markers."""
+        params = [
+            "/home/fls/fls-marker-localization/build/blinker",
+            "--fps", str(self.args.tracker_fps),
+            "--payload-size", str(self.args.payload_size),
+            "--marker-id", str(self.args.marker_id),
+        ]
+
+        self.blinker_process = subprocess.Popen(params)
 
     def _trigger_failsafe(self):
         self.failsafe = True
