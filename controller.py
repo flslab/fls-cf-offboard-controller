@@ -202,6 +202,7 @@ class Controller:
         self.setup_logging()
         self.setup_commander()
         self.setup_motion_capture()
+        self.setup_blinker()
         if not self.args.droneless:
             self.setup_smooth_controller()
             self.setup_led()
