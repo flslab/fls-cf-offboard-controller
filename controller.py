@@ -1242,6 +1242,7 @@ class Controller:
                             logger.info(f"go to {waypoints[i]}")
                         else:
                             self.smooth_controller.set_group_values("relative_position", waypoints[i], duration=duration)
+                            logger.info(f"set relative position to {waypoints[i]} in {duration}")
                     else:
                         self.hl_commander.go_to(*waypoints[i], **params)
                         logger.info(f"go to {waypoints[i]}")
