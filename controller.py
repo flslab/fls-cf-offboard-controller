@@ -1273,9 +1273,9 @@ class Controller:
         mx, my, mz = self.args.marker_offset
         act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
 
-        logger.debug(f"gt_relative_position: {gt_relative_position}")
-        logger.debug(f"act_relative_position: {[-right, -forward, -down]}")
-        logger.debug(f"act_relative_position offseted: {act_relative_position}")
+        # logger.info(f"gt_relative_position: {gt_relative_position}")
+        # logger.info(f"act_relative_position: {[-right, -forward, -down]}")
+        # logger.info(f"act_relative_position offseted: {act_relative_position}")
 
         if config["method"] == "velocity_control":
             self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
@@ -1308,9 +1308,9 @@ class Controller:
         v *= p
         z = gt_relative_position[2]
         self.ll_commander.send_hover_setpoint(v[0], v[1], 0, z)
-        logger.debug(f"gt: {gt}")
-        logger.debug(f"act: {act}")
-        logger.debug(f"hover command: {v[0]}, {v[1]}, {z}")
+        logger.info(f"gt: {gt}")
+        logger.info(f"act: {act}")
+        logger.info(f"hover command: {v[0]}, {v[1]}, {z}")
 
     def do_localization_position_cmd(self, gt_relative_position, anchor_position):
         anchor = np.array(anchor_position)
