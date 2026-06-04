@@ -1284,6 +1284,7 @@ class Controller:
             ax, ay, az = gt_relative_position[:3]
             x, y, z = act_relative_position
             frame = {"tvec": [ax - x, ay - y, az - z]}
+            logger.info(frame)
             self._send_position(frame)
 
     def do_mocap_relative_localization(self, gt_relative_position, config):
