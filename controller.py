@@ -1548,7 +1548,8 @@ class Controller:
             "--brightness", "0.5",
             "--contrast", "2.5",
             "--exposure", "500",
-            "--fps", str(self.args.tracker_fps),
+            "--fps", str(self.args.tracker_camera_rate),
+            "--encoder-fps", str(self.args.tracker_encoder_rate),
             "--payload-size", str(self.args.payload_size),
             "--target-id", str(self.args.target_id),
             "--json-path", f"logs/tracker_{self.args.tag}.json"
@@ -1568,7 +1569,7 @@ class Controller:
         """Starts the external C++ blinker process for OOK markers."""
         params = [
             "/home/fls/fls-marker-localization/build/blinker",
-            "--fps", str(self.args.tracker_fps),
+            "--fps", str(self.args.tracker_encoder_rate),
             "--payload-size", str(self.args.payload_size),
             "--marker-id", str(self.args.marker_id),
         ]
@@ -1657,7 +1658,9 @@ if __name__ == '__main__':
                     help="save tracker camera video, works with --tracker")
     ap.add_argument("--stream-tracker", action="store_true",
                     help="stream tracker camera video, works with --tracker")
-    ap.add_argument("--tracker-fps", type=int, default=120, help="position estimation rate, works with --tracker")
+    ap.add_argument("--tracker-encoder-rate", type=int, default=60, help="id encoder rate")
+    ap.add_argument("--tracker-camera-rate", type=int, default=120, help="camera frame rate, works with --tracker")
+
     ap.add_argument("--marker-id", type=int, default=-1, help="ID of the blinking marker")
     ap.add_argument("--target-id", type=int, default=-1, help="ID of the anchor to track")
     ap.add_argument("--payload-size", type=int, default=4, help="size of the payload")
