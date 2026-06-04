@@ -1281,7 +1281,9 @@ class Controller:
         elif config["method"] == "position_control":
             self.do_localization_position_cmd(gt_relative_position[:3], act_relative_position)
         elif config["method"] == "ekf":
-            frame = {"tvec": np.array(gt_relative_position[:3]) - np.array(act_relative_position)}
+            ax, ay, az = gt_relative_position[:3]
+            x, y, z = act_relative_position
+            frame = {"tvec": [ax - x, ay - y, az - z]}
             self._send_position(frame)
 
     def do_mocap_relative_localization(self, gt_relative_position, config):
