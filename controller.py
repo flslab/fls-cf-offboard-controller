@@ -1163,12 +1163,14 @@ class Controller:
                 anchor_id = relative_anchor['id']
                 anchor_waypoints = self.missions[mission_index]['drones'][anchor_id]['waypoints']
                 anchor_target = self.missions[mission_index]['drones'][anchor_id]['target'][:3]
-                for i in range(len(waypoints)):
-                    # only convert x, y coordinates to relative coordinates for velocity commands
-                    waypoints[i][0] = anchor_waypoints[i][0] - waypoints[i][0]
-                    waypoints[i][1] = anchor_waypoints[i][1] - waypoints[i][1]
-                    if relative_anchor.get("method") == "position_control":
-                        waypoints[i][2] = anchor_waypoints[i][2] - waypoints[i][2]
+
+                if not relative_anchor["method"] == "ekf":
+                    for i in range(len(waypoints)):
+                        # only convert x, y coordinates to relative coordinates for velocity commands
+                        waypoints[i][0] = anchor_waypoints[i][0] - waypoints[i][0]
+                        waypoints[i][1] = anchor_waypoints[i][1] - waypoints[i][1]
+                        if relative_anchor.get("method") == "position_control":
+                            waypoints[i][2] = anchor_waypoints[i][2] - waypoints[i][2]
 
                 if relative_anchor["source"] == "mocap":
                     localization_method = self.do_mocap_relative_localization
@@ -1181,15 +1183,26 @@ class Controller:
                 elif relative_anchor["source"] == "tracker":
                     localization_method = self.do_tracker_relative_localization 
 
-                self.smooth_controller.register_group(
-                    name="relative_position",
-                    initial_values=waypoints[0],
-                    callback=lambda vals: localization_method(vals, relative_anchor),
-                    always_callback=True
-                )
-            self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, relative=relative_anchor)
+                if relative_anchor["method"] == "ekf":
+                    self.smooth_controller.register_group(
+                        name="anchor_position",
+                        initial_values=anchor_waypoints[0],
+                        callback=lambda vals: localization_method(vals, relative_anchor),
+                        always_callback=True
+                    )
+                else:
+                    self.smooth_controller.register_group(
+                        name="relative_position",
+                        initial_values=waypoints[0],
+                        callback=lambda vals: localization_method(vals, relative_anchor),
+                        always_callback=True
+                    )
+            self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
             if relative_anchor:
-                self.smooth_controller.remove_group("relative_position")
+                if relative_anchor["method"] == "ekf":
+                    self.smooth_controller.remove_group("anchor_position")
+                else:
+                    self.smooth_controller.remove_group("relative_position")
             self.ll_commander.send_notify_setpoint_stop()
 
         self.animation_stop_times.append(time.time())
@@ -1202,7 +1215,7 @@ class Controller:
         if self.led:
             self.led.clear()
 
-    def run_control_loop(self, mission_index, waypoints, angles, pointers, params, delta_t, iterations, relative=False):
+    def run_control_loop(self, mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=False):
         elapsed_time = 0.0
         num_steps = max(len(waypoints), len(angles), len(pointers))
         if num_steps == 1:
@@ -1222,7 +1235,12 @@ class Controller:
                 if i < len(waypoints):
                     duration = waypoints[i][4]
                     if relative:
-                        self.smooth_controller.set_group_values("relative_position", waypoints[i], duration=duration)
+                        if relative["method"] == "ekf":
+                            self.smooth_controller.set_group_values("anchor_position", anchor_waypoints[i], duration=duration)
+                            self.hl_commander.go_to(*waypoints[i], **params)
+                            logger.info(f"go to {waypoints[i]}")
+                        else:
+                            self.smooth_controller.set_group_values("relative_position", waypoints[i], duration=duration)
                     else:
                         self.hl_commander.go_to(*waypoints[i], **params)
                         logger.info(f"go to {waypoints[i]}")
@@ -1261,6 +1279,9 @@ class Controller:
             self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
         elif config["method"] == "position_control":
             self.do_localization_position_cmd(gt_relative_position[:3], act_relative_position)
+        elif config["method"] == "ekf":
+            frame = {"tvec": np.array(gt_relative_position) - np.array(act_relative_position)}
+            self._send_position(frame)
 
     def do_mocap_relative_localization(self, gt_relative_position, config):
         localizing_latest_pose = np.array(self._get_latest_mocap_frame()["tvec"])
@@ -1629,9 +1650,9 @@ if __name__ == '__main__':
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--save-tracker", action="store_true",
-                    help="save trakcer camera video, works with --trakcer")
+                    help="save tracker camera video, works with --tracker")
     ap.add_argument("--stream-tracker", action="store_true",
-                    help="stream trakcer camera video, works with --trakcer")
+                    help="stream tracker camera video, works with --tracker")
     ap.add_argument("--tracker-fps", type=int, default=120, help="position estimation rate, works with --tracker")
     ap.add_argument("--marker-id", type=int, default=-1, help="ID of the blinking marker")
     ap.add_argument("--target-id", type=int, default=-1, help="ID of the anchor to track")
