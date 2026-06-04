@@ -1154,6 +1154,7 @@ class Controller:
             autotuner = PIDAutotuner(self, autotune)
             autotuner.run_autotune()
         else:
+            anchor_waypoints = []
             if not len(waypoints):
                 waypoints.append([target[0], target[1], target[2], target[3], delta_t])
             if len(waypoints[0]) == 4:
