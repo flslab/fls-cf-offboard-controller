@@ -1661,8 +1661,8 @@ if __name__ == '__main__':
     ap.add_argument("--tracker-encoder-rate", type=int, default=60, help="id encoder rate")
     ap.add_argument("--tracker-camera-rate", type=int, default=120, help="camera frame rate, works with --tracker")
 
-    ap.add_argument("--marker-id", type=int, default=-1, help="ID of the blinking marker")
-    ap.add_argument("--target-id", type=int, default=-1, help="ID of the anchor to track")
+    ap.add_argument("--marker-id", type=int, default=0, help="ID of the blinking marker")
+    ap.add_argument("--target-id", type=int, default=0, help="ID of the anchor to track")
     ap.add_argument("--payload-size", type=int, default=4, help="size of the payload")
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
     ap.add_argument("--vicon-full-pose", action="store_true",
