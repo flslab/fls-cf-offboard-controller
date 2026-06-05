@@ -1553,6 +1553,7 @@ class Controller:
             "--encoder-fps", str(self.args.tracker_encoder_rate),
             "--payload-size", str(self.args.payload_size),
             "--target-id", str(self.args.target_id),
+            "--kf",
             "--json-path", f"logs/tracker_{self.args.tag}.json"
         ]
         if self.args.save_tracker:
@@ -1659,7 +1660,7 @@ if __name__ == '__main__':
                     help="save tracker camera video, works with --tracker")
     ap.add_argument("--stream-tracker", action="store_true",
                     help="stream tracker camera video, works with --tracker")
-    ap.add_argument("--tracker-encoder-rate", type=int, default=60, help="id encoder rate")
+    ap.add_argument("--tracker-encoder-rate", type=int, default=50, help="id encoder rate")
     ap.add_argument("--tracker-camera-rate", type=int, default=120, help="camera frame rate, works with --tracker")
 
     ap.add_argument("--marker-id", type=int, default=0, help="ID of the blinking marker")
