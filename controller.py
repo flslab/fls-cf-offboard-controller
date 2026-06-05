@@ -1304,7 +1304,7 @@ class Controller:
         act = np.array([act_relative_position[0], act_relative_position[1]])
         gt = np.array([gt_relative_position[0], gt_relative_position[1]])
         v = act - gt
-        p = 2.0
+        p = self.args.velocity_p
         v *= p
         z = gt_relative_position[2]
         self.ll_commander.send_hover_setpoint(v[0], v[1], 0, z)
@@ -1667,6 +1667,7 @@ if __name__ == '__main__':
     ap.add_argument("--marker-id", type=int, default=0, help="ID of the blinking marker")
     ap.add_argument("--target-id", type=int, default=0, help="ID of the anchor to track")
     ap.add_argument("--payload-size", type=int, default=4, help="size of the payload")
+    ap.add_argument("--velocity-p", type=float, default=1.0, help="velocity gain for tracker-based velocity control")
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
     ap.add_argument("--vicon-full-pose", action="store_true",
                     help="if passed send both position and orientation otherwise send only position")
