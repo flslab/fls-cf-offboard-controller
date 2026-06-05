@@ -230,6 +230,9 @@ if [ "$INSTALL_TRACKER" = true ]; then
     echo "Copying config to build directory..."
     cp ../src/dfrobot_gs_camera_config.json ./camera_config.json
 
+    echo "Building blinker..."
+    g++ -O2 ../src/blinker.cpp -o blinker -llgpio
+
     # Return to original directory
     cd "$CURRENT_DIR"
 fi
