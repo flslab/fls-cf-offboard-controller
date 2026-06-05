@@ -1553,7 +1553,6 @@ class Controller:
             "--encoder-fps", str(self.args.tracker_encoder_rate),
             "--payload-size", str(self.args.payload_size),
             "--target-id", str(self.args.target_id),
-            "--kf",
             "--json-path", f"logs/tracker_{self.args.tag}.json"
         ]
         if self.args.save_tracker:
@@ -1564,6 +1563,8 @@ class Controller:
             ])
         if self.args.stream_tracker:
             params.extend(["--stream", "--stream-rate", "10"])
+        if self.args.enable_tracker_kf:
+            params.append("--kf")
 
         self.tracker_process = subprocess.Popen(params)
 
@@ -1662,7 +1663,7 @@ if __name__ == '__main__':
                     help="stream tracker camera video, works with --tracker")
     ap.add_argument("--tracker-encoder-rate", type=int, default=50, help="id encoder rate")
     ap.add_argument("--tracker-camera-rate", type=int, default=120, help="camera frame rate, works with --tracker")
-
+    ap.add_argument("--enable-tracker-kf", action="store_true", default=False, help="enable Kalman filter for tracker")
     ap.add_argument("--marker-id", type=int, default=0, help="ID of the blinking marker")
     ap.add_argument("--target-id", type=int, default=0, help="ID of the anchor to track")
     ap.add_argument("--payload-size", type=int, default=4, help="size of the payload")
