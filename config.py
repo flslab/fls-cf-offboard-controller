@@ -512,10 +512,10 @@ PID_VALUES = {
 
 PID_VALUES_FLOWDECK = {
     'quadSysId.armLength': '0.053',
-    'posCtlPid.xKp': '0.5',
+    'posCtlPid.xKp': '0.05',
     'posCtlPid.xKi': '0.09',
     'posCtlPid.xKd': '0.0',
-    'posCtlPid.yKp': '0.5',
+    'posCtlPid.yKp': '0.05',
     'posCtlPid.yKi': '0.09',
     'posCtlPid.yKd': '0.0',
     'posCtlPid.zKp': '1.5',
