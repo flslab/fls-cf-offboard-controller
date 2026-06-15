@@ -545,7 +545,7 @@ PID_VALUES_FLOWDECK = {
     'pid_rate.pitch_ki': '270.0',
     'pid_rate.pitch_kd': '2.5',
     'pid_rate.rateFiltEn': '1',
-    'pid_rate.omxFiltCut': '70',
-    'pid_rate.omyFiltCut': '70',
-    'pid_rate.omzFiltCut': '70'
+    'pid_rate.omxFiltCut': '40',
+    'pid_rate.omyFiltCut': '40',
+    'pid_rate.omzFiltCut': '80'
 }
