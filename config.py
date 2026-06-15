@@ -538,7 +538,7 @@ PID_VALUES_FLOWDECK = {
     'pid_attitude.pitch_kp': '7.1',
     'pid_attitude.pitch_ki': '1.0',
     'pid_attitude.pitch_kd': '0.005',
-    'pid_rate.roll_kp': '90',
+    'pid_rate.roll_kp': '75',
     'pid_rate.roll_ki': '270.0',
     'pid_rate.roll_kd': '2.5',
     'pid_rate.pitch_kp': '75',
