@@ -453,7 +453,7 @@ MOTION = {
 }
 
 ACC = {
-    "log_period_ms": 1,
+    "log_period_ms": 10,
     "acc.x": {
         "type": "float",
         "unit": "Gs",
