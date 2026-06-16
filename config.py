@@ -452,6 +452,59 @@ MOTION = {
     },
 }
 
+ACC = {
+    "log_period_ms": 1,
+    "acc.x": {
+        "type": "float",
+        "unit": "Gs",
+        "data": [],
+    },
+    "acc.y": {
+        "type": "float",
+        "unit": "Gs",
+        "data": [],
+    },
+    "acc.z": {
+        "type": "float",
+        "unit": "Gs",
+        "data": [],
+    }
+}
+
+GYRO = {
+    "log_period_ms": 1,
+    "gyro.x": {
+        "type": "float",
+        "unit": "deg/s",
+        "data": [],
+    },
+    "gyro.y": {
+        "type": "float",
+        "unit": "deg/s",
+        "data": [],
+    },
+    "gyro.z": {
+        "type": "float",
+        "unit": "deg/s",
+        "data": [],
+    },
+    "gyro.xRaw": {
+        "type": "int16_t",
+        "unit": "",
+        "data": [],
+    },
+    "gyro.yRaw": {
+        "type": "int16_t",
+        "unit": "",
+        "data": [],
+    },
+    "gyro.zRaw": {
+        "type": "int16_t",
+        "unit": "",
+        "data": [],
+    }
+}
+
 TUNING_LOG_VARS = {
     'CTRL_ATT_RATE': CTRL_ATT_RATE,
     'POSCTL_VEL_POS': POSCTL_VEL_POS,

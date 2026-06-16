@@ -76,7 +76,12 @@ class IlluminationLogger(LogManager):
         self.cf_log_data = copy.deepcopy(cf_log_vars)
 
         for group_name, group_vars in self.cf_log_data.items():
-            cf_var_logger = LogConfig(name=group_name, period_in_ms=cf_log_period)
+            log_period = cf_log_period
+            if "log_period_ms" in group_vars:
+                log_period = group_vars["log_period_ms"]
+                group_vars.pop("log_period_ms")
+
+            cf_var_logger = LogConfig(name=group_name, period_in_ms=log_period)
             for par, conf in group_vars.items():
                 cf_var_logger.add_variable(par, conf["type"])
 
