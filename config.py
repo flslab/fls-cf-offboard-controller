@@ -526,7 +526,7 @@ LOG_VARS = TUNING_LOG_VARS
 
 # PID Configurations
 PID_VALUES = {
-    'quadSysId.armLength': '0.053',
+    # 'quadSysId.armLength': '0.053',
     'posCtlPid.xKp': '1.9',
     'posCtlPid.xKi': '0.1',
     'posCtlPid.xKd': '0.0',
@@ -566,7 +566,7 @@ PID_VALUES = {
 }
 
 PID_VALUES_FLOWDECK = {
-    'quadSysId.armLength': '0.053',
+    # 'quadSysId.armLength': '0.053',
     'posCtlPid.xKp': '0.5',
     'posCtlPid.xKi': '0.09',
     'posCtlPid.xKd': '0.0',
