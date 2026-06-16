@@ -472,7 +472,7 @@ ACC = {
 }
 
 GYRO = {
-    "log_period_ms": 1,
+    "log_period_ms": 10,
     "gyro.x": {
         "type": "float",
         "unit": "deg/s",

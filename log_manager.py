@@ -76,7 +76,7 @@ class IlluminationLogger(LogManager):
         self.cf_log_data = copy.deepcopy(cf_log_vars)
 
         for group_name, group_vars in self.cf_log_data.items():
-            log_period = cf_log_period
+            log_period = cf_log_period * 10
             if "log_period_ms" in group_vars:
                 log_period = group_vars["log_period_ms"]
                 group_vars.pop("log_period_ms")
