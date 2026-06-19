@@ -1414,7 +1414,7 @@ class Controller:
 
     def send_motor_commands(self, commands, mission_index):
         logger.info("Sending motor commands")
-        self.cf.param.set_value('motorPowerSet.enable', '1')
+        self.cf.param.set_value('motorPowerSet.enable', '3')
         elapsed_time = 0
 
         for m1, m2, m3, m4, dt in commands:
