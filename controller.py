@@ -1413,6 +1413,7 @@ class Controller:
         self.ll_commander.send_notify_setpoint_stop()
 
     def send_motor_commands(self, commands, mission_index):
+        logger.info("Sending motor commands")
         self.cf.param.set_value('motorPowerSet.enable', '1')
         elapsed_time = 0
 
@@ -1434,6 +1435,7 @@ class Controller:
         self.cf.param.set_value('motorPowerSet.m3', '0')
         self.cf.param.set_value('motorPowerSet.m4', '0')
         self.cf.param.set_value('motorPowerSet.enable', '0')
+        logger.info("Stop sending motor commands")
         
     def test_rotation_limit(self, low_limit=400, high_limit=600, num_steps=3, duration=5):
         dt = 1.0 / self.args.smooth_controller_rate
