@@ -1153,7 +1153,7 @@ class Controller:
         elif len(velocity_commands):
             self.follow_velocity_commands(velocity_commands)
         elif len(motor_commands):
-            self.send_motor_commands(motor_commands)
+            self.send_motor_commands(motor_commands, mission_index)
         elif autotune['enabled']:
             autotuner = PIDAutotuner(self, autotune)
             autotuner.run_autotune()
