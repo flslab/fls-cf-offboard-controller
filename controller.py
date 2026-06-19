@@ -1153,7 +1153,7 @@ class Controller:
         elif len(velocity_commands):
             self.follow_velocity_commands(velocity_commands)
         elif len(motor_commands):
-            self.send_motor_commands(motor_commands, mission_index)
+            self.send_motor_commands_json(motor_commands, mission_index)
         elif autotune['enabled']:
             autotuner = PIDAutotuner(self, autotune)
             autotuner.run_autotune()
@@ -1412,6 +1412,58 @@ class Controller:
 
         self.ll_commander.send_notify_setpoint_stop()
 
+    def send_motor_commands_json(self, commands, mission_index):
+        logger.info("Sending motor commands")
+
+        # Load motor command log from JSON file
+        json_path = commands[0] if isinstance(commands[0], str) else None
+        if json_path is None:
+            logger.error("motor_commands[0] must be a path to a JSON log file")
+            return
+
+        with open(json_path, 'r') as f:
+            log_data = json.load(f)
+
+        mot = log_data['cf_MOT_ACC']
+        times = mot['time']
+        m1_data = mot['params']['motor.m1']['data']
+        m2_data = mot['params']['motor.m2']['data']
+        m3_data = mot['params']['motor.m3']['data']
+        m4_data = mot['params']['motor.m4']['data']
+
+        logger.info(f"Loaded {len(times)} motor samples from {json_path}")
+
+        self.cf.param.set_value('motorPowerSet.enable', '1')
+        elapsed_time = 0.0
+
+        for i in range(len(times)):
+            m1, m2, m3, m4 = m1_data[i], m2_data[i], m3_data[i], m4_data[i]
+
+            self.cf.param.set_value('motorPowerSet.m1', m1)
+            self.cf.param.set_value('motorPowerSet.m2', m2)
+            self.cf.param.set_value('motorPowerSet.m3', m3)
+            self.cf.param.set_value('motorPowerSet.m4', m4)
+
+            # Compute dt from recorded timestamps
+            if i < len(times) - 1:
+                dt = times[i + 1] - times[i]
+            else:
+                dt = 0
+
+            target_time = self.animation_start_times[mission_index] + elapsed_time + dt
+            sleep_duration = target_time - time.time()
+            elapsed_time += dt
+
+            if sleep_duration > 0:
+                self._safe_sleep(sleep_duration)
+
+        self.cf.param.set_value('motorPowerSet.m1', '0')
+        self.cf.param.set_value('motorPowerSet.m2', '0')
+        self.cf.param.set_value('motorPowerSet.m3', '0')
+        self.cf.param.set_value('motorPowerSet.m4', '0')
+        self.cf.param.set_value('motorPowerSet.enable', '0')
+        logger.info("Stop sending motor commands")
+
     def send_motor_commands(self, commands, mission_index):
         logger.info("Sending motor commands")
         self.cf.param.set_value('motorPowerSet.enable', '1')
@@ -1422,14 +1474,14 @@ class Controller:
             self.cf.param.set_value('motorPowerSet.m2', m2)
             self.cf.param.set_value('motorPowerSet.m3', m3)
             self.cf.param.set_value('motorPowerSet.m4', m4)
-            
+
             target_time = self.animation_start_times[mission_index] + elapsed_time + dt
             sleep_duration = target_time - time.time()
             elapsed_time += dt
 
             if sleep_duration > 0:
                 self._safe_sleep(sleep_duration)
-        
+
         self.cf.param.set_value('motorPowerSet.m1', '0')
         self.cf.param.set_value('motorPowerSet.m2', '0')
         self.cf.param.set_value('motorPowerSet.m3', '0')
