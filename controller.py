@@ -482,6 +482,7 @@ class Controller:
 
     def land(self):
         if self.args.skip_landing:
+            self._send_landing_confirmation(self.voltage)
             return
 
         self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
@@ -1048,6 +1049,7 @@ class Controller:
         position_offset = mission_setting.get('position_offset', None)
         low_level_setpoint = mission_setting.get('low_level_setpoint', [])
         velocity_commands = mission_setting.get('velocity_commands', [])
+        motor_commands = mission_setting.get('motor_commands', [])
         rotation_test = mission_setting.get('rotation_test', [])
         follow = mission_setting.get('follow', False)
         relative_anchor = mission_setting.get('relative_anchor', False)
@@ -1150,6 +1152,8 @@ class Controller:
             self.test_rotation_limit(*rotation_test)
         elif len(velocity_commands):
             self.follow_velocity_commands(velocity_commands)
+        elif len(motor_commands):
+            self.send_motor_commands(motor_commands)
         elif autotune['enabled']:
             autotuner = PIDAutotuner(self, autotune)
             autotuner.run_autotune()
@@ -1408,6 +1412,29 @@ class Controller:
 
         self.ll_commander.send_notify_setpoint_stop()
 
+    def send_motor_commands(self, commands, mission_index):
+        self.cf.param.set_value('motorPowerSet.enable', '1')
+        elapsed_time = 0
+
+        for m1, m2, m3, m4, dt in commands:
+            self.cf.param.set_value('motorPowerSet.m1', m1)
+            self.cf.param.set_value('motorPowerSet.m2', m2)
+            self.cf.param.set_value('motorPowerSet.m3', m3)
+            self.cf.param.set_value('motorPowerSet.m4', m4)
+            
+            target_time = self.animation_start_times[mission_index] + elapsed_time + dt
+            sleep_duration = target_time - time.time()
+            elapsed_time += dt
+
+            if sleep_duration > 0:
+                self._safe_sleep(sleep_duration)
+        
+        self.cf.param.set_value('motorPowerSet.m1', '0')
+        self.cf.param.set_value('motorPowerSet.m2', '0')
+        self.cf.param.set_value('motorPowerSet.m3', '0')
+        self.cf.param.set_value('motorPowerSet.m4', '0')
+        self.cf.param.set_value('motorPowerSet.enable', '0')
+        
     def test_rotation_limit(self, low_limit=400, high_limit=600, num_steps=3, duration=5):
         dt = 1.0 / self.args.smooth_controller_rate
         start_t = time.time()
