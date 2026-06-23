@@ -1626,7 +1626,6 @@ class Controller:
         params = [
             "/home/fls/fls-marker-localization/build/eye",
             "-t", "0",
-            "--config", "/home/fls/fls-marker-localization/build/camera_config.json",
             "--brightness", "0.5",
             "--contrast", "2.5",
             "--exposure", "500",
@@ -1636,6 +1635,22 @@ class Controller:
             "--target-id", str(self.args.target_id),
             "--json-path", f"logs/tracker_{self.args.tag}.json"
         ]
+        if self.args.tracker_res == 400:
+            params.extend([
+                "--width", "640",
+                "--height", "400",
+                "--config", "/home/fls/fls-marker-localization/src/dfrobot_gs_camera_config.json",
+            ])
+        elif self.args.tracker_res == 800:
+            params.extend([
+                "--width", "1280",
+                "--height", "800",
+                "--config", "/home/fls/fls-marker-localization/src/dfrobot_gs_800p_camera_config.json",
+            ])
+        else:
+            params.extend([
+                "--config", "/home/fls/fls-marker-localization/build/camera_config.json",
+            ])
         if self.args.save_tracker:
             params.extend([
                 "--save-video",
@@ -1646,6 +1661,8 @@ class Controller:
             params.extend(["--stream", "--stream-rate", "10"])
         if self.args.enable_tracker_kf:
             params.append("--kf")
+        if self.args.track_aruco:
+            params.append("--aruco")
 
         self.tracker_process = subprocess.Popen(params)
 
@@ -1738,12 +1755,14 @@ if __name__ == '__main__':
     ap.add_argument("--cf-log-period", type=int, default=20, help="log period of cf logger in millisecond")
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
+    ap.add_argument("--track-aruco", help="Track aruco markers", action="store_true", default=False)
     ap.add_argument("--save-tracker", action="store_true",
                     help="save tracker camera video, works with --tracker")
     ap.add_argument("--stream-tracker", action="store_true",
                     help="stream tracker camera video, works with --tracker")
     ap.add_argument("--tracker-encoder-rate", type=int, default=50, help="id encoder rate")
     ap.add_argument("--tracker-camera-rate", type=int, default=120, help="camera frame rate, works with --tracker")
+    ap.add_argument("--tracker-res", help="camera resolution", type=int, choices=[400, 800], default=400)
     ap.add_argument("--enable-tracker-kf", action="store_true", default=False, help="enable Kalman filter for tracker")
     ap.add_argument("--marker-id", type=int, default=0, help="ID of the blinking marker")
     ap.add_argument("--target-id", type=int, default=0, help="ID of the anchor to track")
