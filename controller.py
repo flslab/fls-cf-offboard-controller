@@ -1272,10 +1272,15 @@ class Controller:
             self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
             return
 
-        right, down, forward, _, _, _ = latest_pose
-        cx, cy, cz = self.args.camera_offset
-        mx, my, mz = self.args.marker_offset
-        act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
+        # side camera
+        # right, down, forward, _, _, _ = latest_pose
+        # cx, cy, cz = self.args.camera_offset
+        # mx, my, mz = self.args.marker_offset
+        # act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
+
+        # downward camera aruco
+        right, forward, up, _, _, _ = latest_pose
+        act_relative_position = [-forward, right, up]
 
         # logger.info(f"gt_relative_position: {gt_relative_position}")
         # logger.info(f"act_relative_position: {[-right, -forward, -down]}")
@@ -1312,9 +1317,9 @@ class Controller:
         v *= p
         z = gt_relative_position[2]
         self.ll_commander.send_hover_setpoint(v[0], v[1], 0, z)
-        logger.debug(f"gt: {gt}")
-        logger.debug(f"act: {act}")
-        logger.debug(f"hover command: {v[0]}, {v[1]}, {z}")
+        logger.info(f"gt: {gt}")
+        logger.info(f"act: {act}")
+        logger.info(f"hover command: {v[0]}, {v[1]}, {z}")
 
     def do_localization_position_cmd(self, gt_relative_position, anchor_position):
         anchor = np.array(anchor_position)
