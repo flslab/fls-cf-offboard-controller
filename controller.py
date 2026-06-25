@@ -1202,6 +1202,13 @@ class Controller:
                         callback=lambda vals: localization_method(vals, relative_anchor),
                         always_callback=True
                     )
+            latest_x = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.x")
+            latest_y = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.y")
+            latest_z = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.z")
+
+            self._set_initial_position(latest_x, latest_y, latest_z, self.args.init_yaw)
+            reset_estimator(self.cf)
+
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
             if relative_anchor:
                 if relative_anchor["method"] == "ekf":
