@@ -1281,7 +1281,7 @@ class Controller:
         left, forward, up, _, _, _ = latest_pose
         self._set_initial_position(-forward, -left, -up, self.args.init_yaw)
         reset_estimator(self.cf)
-        logger.info(f"Initialized EKF relative position: {self.ekf_relative_position}")
+        logger.info(f"Initialized EKF relative position")
 
     def do_tracker_relative_localization(self, gt_relative_position, config):
         latest_pose = self.tracker.get_latest_pose()
