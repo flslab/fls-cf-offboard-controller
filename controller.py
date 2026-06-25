@@ -1279,7 +1279,7 @@ class Controller:
                 time.sleep(retry_delay)
                 return self._initialize_ekf_relative_position(retry_count - 1, retry_delay)
             else:
-                raise RuntimeError(f"Tracker lost frame, cannot initialize EKF relative position after {retry_count} retries.")
+                raise RuntimeError("Tracker lost frame, cannot initialize EKF relative position after retries.")
 
         left, forward, up, _, _, _ = latest_pose
         self._set_initial_position(-forward, -left, -up, self.args.init_yaw)
