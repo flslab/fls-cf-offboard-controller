@@ -107,3 +107,9 @@ class IlluminationLogger(LogManager):
     def add_log_entry(self, group_name, entry, *args, **kwargs):
         self.groups[group_name].append(entry | kwargs)
 
+    def get_latest_cf_log_data(self, group_name, param_name):
+        if group_name in self.cf_log_data and param_name in self.cf_log_data[group_name]:
+            return self.cf_log_data[group_name][param_name]["data"][-1]
+        else:
+            return None
+
