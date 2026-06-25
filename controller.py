@@ -1660,7 +1660,8 @@ class Controller:
             "--encoder-fps", str(self.args.tracker_encoder_rate),
             "--payload-size", str(self.args.payload_size),
             "--target-id", str(self.args.target_id),
-            "--json-path", f"logs/tracker_{self.args.tag}.json"
+            "--json-path", f"logs/tracker_{self.args.tag}.json",
+            "--static-markers"
         ]
         if self.args.tracker_res == 400:
             params.extend([
