@@ -1290,7 +1290,8 @@ class Controller:
         latest_pose = self.tracker.get_latest_pose()
         if not latest_pose:
             self.log_manager.add_log_entry("events", {"time": time.time(), "name": "tracker_lost_frame"})
-            self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
+            if not config["method"] == "ekf":
+                self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
             return
 
         # side camera
