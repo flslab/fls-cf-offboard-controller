@@ -1279,8 +1279,8 @@ class Controller:
         # act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
 
         # downward camera aruco
-        right, forward, up, _, _, _ = latest_pose
-        act_relative_position = [-forward, -right, up]
+        left, forward, up, _, _, _ = latest_pose
+        act_relative_position = [-forward, -left, -up]
 
         # logger.info(f"gt_relative_position: {gt_relative_position}")
         # logger.info(f"act_relative_position: {[-right, -forward, -down]}")
