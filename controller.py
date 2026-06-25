@@ -1189,7 +1189,10 @@ class Controller:
                     localization_method = self.do_tracker_relative_localization 
 
                 if relative_anchor["method"] == "ekf":
+                    self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
+                    self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
                     self._initialize_ekf_relative_position()
+                    self._set_pid_values(self.cfg.PID_VALUES)
 
                     self.smooth_controller.register_group(
                         name="anchor_position",
@@ -1311,8 +1314,8 @@ class Controller:
         elif config["method"] == "ekf":
             ax, ay, az = gt_relative_position[:3]
             x, y, z = act_relative_position
-            frame = {"tvec": [ax - x, ay - y, az - z]}
-            logger.info(frame)
+            frame = {"tvec": [ax - x, ay - y, az - z], "time": time.time()}
+            # logger.info(frame)
             self._send_position(frame)
 
     def do_mocap_relative_localization(self, gt_relative_position, config):
