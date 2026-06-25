@@ -1189,6 +1189,8 @@ class Controller:
                     localization_method = self.do_tracker_relative_localization 
 
                 if relative_anchor["method"] == "ekf":
+                    self._initialize_ekf_relative_position()
+
                     self.smooth_controller.register_group(
                         name="anchor_position",
                         initial_values=anchor_waypoints[0],
@@ -1202,12 +1204,6 @@ class Controller:
                         callback=lambda vals: localization_method(vals, relative_anchor),
                         always_callback=True
                     )
-            latest_x = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.x")
-            latest_y = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.y")
-            latest_z = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.z")
-
-            self._set_initial_position(latest_x, latest_y, latest_z, self.args.init_yaw)
-            reset_estimator(self.cf)
 
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
             if relative_anchor:
@@ -1272,6 +1268,21 @@ class Controller:
                     # If sleep_duration is negative, we are lagging behind!
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
     
+    def _initialize_ekf_relative_position(self, retry_count=3, retry_delay=1):
+        latest_pose = self.tracker.get_latest_pose()
+        if not latest_pose:
+            if retry_count > 0:
+                logger.warning("Tracker lost frame, cannot initialize EKF relative position.")
+                time.sleep(retry_delay)
+                return self._initialize_ekf_relative_position(retry_count - 1, retry_delay)
+            else:
+                raise RuntimeError(f"Tracker lost frame, cannot initialize EKF relative position after {retry_count} retries.")
+
+        left, forward, up, _, _, _ = latest_pose
+        self._set_initial_position(-forward, -left, -up, self.args.init_yaw)
+        reset_estimator(self.cf)
+        logger.info(f"Initialized EKF relative position: {self.ekf_relative_position}")
+
     def do_tracker_relative_localization(self, gt_relative_position, config):
         latest_pose = self.tracker.get_latest_pose()
         if not latest_pose:
