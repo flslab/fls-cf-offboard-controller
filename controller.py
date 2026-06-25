@@ -617,10 +617,10 @@ class Controller:
         else:
             self._activate_pid_controller()
         self._activate_high_level_commander()
-        if self.use_flowdeck:
-            self._set_pid_values(self.cfg.PID_VALUES_FLOWDECK)
-        else:
-            self._set_pid_values(self.cfg.PID_VALUES)
+        # if self.use_flowdeck:
+        #     self._set_pid_values(self.cfg.PID_VALUES_FLOWDECK)
+        # else:
+        self._set_pid_values(self.cfg.PID_VALUES)
 
         if (self.args.vicon or self.use_flowdeck) and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
             self._set_initial_position(self.init_coord[0], self.init_coord[1], self.init_coord[2], self.args.init_yaw)
@@ -1192,7 +1192,7 @@ class Controller:
                     self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
                     self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
                     self._initialize_ekf_relative_position()
-                    self._set_pid_values(self.cfg.PID_VALUES)
+                    # self._set_pid_values(self.cfg.PID_VALUES)
 
                     self.smooth_controller.register_group(
                         name="anchor_position",
