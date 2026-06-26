@@ -1728,7 +1728,8 @@ class Controller:
             self.deck_attached_event.set()
 
     def _send_position(self, frame):
-        self.cf.extpos.send_extpos(*frame['tvec'])
+        x, y, z = frame['tvec']
+        self.cf.extpos.send_extpos(x, y, z - 0.092)
         self._log_mocap(frame)
 
     def _send_position_orientation(self, frame):
