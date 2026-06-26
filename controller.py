@@ -1,3 +1,5 @@
+from turtle import forward
+
 from cflib import crazyflie
 from cflib import crazyflie
 import argparse
@@ -1158,6 +1160,18 @@ class Controller:
             autotuner = PIDAutotuner(self, autotune)
             autotuner.run_autotune()
         else:
+            # temp
+            self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
+            self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
+            xiv, yiv, ziv = self._get_latest_mocap_frame()["tvec"]
+            self._set_initial_position(xiv, yiv, ziv, self.args.init_yaw)
+            reset_estimator(self.cf)
+            logger.info("Initialized EKF position")
+            self.mocap.unsubscribe_point(self.args.drone_id)
+            logger.info("unsubscribed mocap logger")
+            self.mocap.subscribe_point(self.args.init_pos, self._send_position, name=f"{self.args.drone_id}_midflight") 
+            logger.info("subscribed mocap external position and logger")
+
             anchor_waypoints = []
             if not len(waypoints):
                 waypoints.append([target[0], target[1], target[2], target[3], delta_t])
