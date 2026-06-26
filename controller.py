@@ -1160,18 +1160,6 @@ class Controller:
             autotuner = PIDAutotuner(self, autotune)
             autotuner.run_autotune()
         else:
-            # temp
-            self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
-            self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
-            xiv, yiv, ziv = self._get_latest_mocap_frame()["tvec"]
-            self._set_initial_position(xiv, yiv, ziv, self.args.init_yaw)
-            reset_estimator(self.cf)
-            logger.info("Initialized EKF position")
-            self.mocap.unsubscribe_point(self.args.drone_id)
-            logger.info("unsubscribed mocap logger")
-            self.mocap.subscribe_point([xiv, yiv, ziv], self._send_position, name=f"{self.args.drone_id}_midflight") 
-            logger.info("subscribed mocap external position and logger")
-
             anchor_waypoints = []
             if not len(waypoints):
                 waypoints.append([target[0], target[1], target[2], target[3], delta_t])
@@ -1299,6 +1287,18 @@ class Controller:
         self._set_initial_position(-forward, -left, -up, self.args.init_yaw)
         reset_estimator(self.cf)
         logger.info(f"Initialized EKF relative position")
+
+    def _initialize_ekf_vicon(self):
+        self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
+        self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
+        xiv, yiv, ziv = self._get_latest_mocap_frame()["tvec"]
+        self._set_initial_position(xiv, yiv, ziv, self.args.init_yaw)
+        reset_estimator(self.cf)
+        logger.info("Initialized EKF position")
+        self.mocap.unsubscribe_point(self.args.drone_id)
+        logger.info("unsubscribed mocap logger")
+        self.mocap.subscribe_point([xiv, yiv, ziv], self._send_position, name=f"{self.args.drone_id}_midflight") 
+        logger.info("subscribed mocap external position and logger")
 
     def do_tracker_relative_localization(self, gt_relative_position, config):
         latest_pose = self.tracker.get_latest_pose()
@@ -1728,8 +1728,7 @@ class Controller:
             self.deck_attached_event.set()
 
     def _send_position(self, frame):
-        x, y, z = frame['tvec']
-        self.cf.extpos.send_extpos(x, y, z - 0.092)
+        self.cf.extpos.send_extpos(*frame['tvec'])
         self._log_mocap(frame)
 
     def _send_position_orientation(self, frame):
