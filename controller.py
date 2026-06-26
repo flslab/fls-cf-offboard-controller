@@ -1169,7 +1169,7 @@ class Controller:
             logger.info("Initialized EKF position")
             self.mocap.unsubscribe_point(self.args.drone_id)
             logger.info("unsubscribed mocap logger")
-            self.mocap.subscribe_point(self.args.init_pos, self._send_position, name=f"{self.args.drone_id}_midflight") 
+            self.mocap.subscribe_point([xiv, yiv, ziv], self._send_position, name=f"{self.args.drone_id}_midflight") 
             logger.info("subscribed mocap external position and logger")
 
             anchor_waypoints = []
