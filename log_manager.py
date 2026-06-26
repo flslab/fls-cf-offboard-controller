@@ -34,6 +34,7 @@ class IlluminationLogger(LogManager):
         start_times = kwargs.get('start_times')
         end_times = kwargs.get('end_times')
         viewpoint_offsets = kwargs.get('viewpoint_offsets')
+        reference_offsets = kwargs.get('reference_offsets')
         mission_start_time = kwargs.get('mission_start_time')
         mission_duration = kwargs.get('mission_duration')
         args = kwargs.get('args')
@@ -53,6 +54,7 @@ class IlluminationLogger(LogManager):
             "start_times": start_times,
             "stop_times": end_times,
             "viewpoint_offsets": viewpoint_offsets,
+            "reference_offsets": reference_offsets,
             "args": args,
             "git_ver": subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
         }

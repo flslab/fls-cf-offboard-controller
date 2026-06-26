@@ -144,6 +144,7 @@ class Controller:
         self.animation_start_times = []
         self.animation_stop_times = []
         self.viewpoint_offsets = []
+        self.reference_offsets = []
         self.smooth_controller = None
         self.blinker_process = None
         self.tracker_process = None
@@ -247,6 +248,7 @@ class Controller:
                 start_times=self.animation_start_times,
                 end_times=self.animation_stop_times,
                 viewpoint_offsets=self.viewpoint_offsets,
+                reference_offsets=self.reference_offsets,
                 mission_start_time=self.mission_start_time,
                 mission_duration=self.mission_duration,
                 args=vars(self.args),
@@ -734,6 +736,27 @@ class Controller:
 
         return vp_offset
 
+    def _compute_reference_offset(self, mission):
+        if not getattr(self.args, 'reference', None):
+            return [0.0, 0.0, 0.0]
+            
+        reference = mission.get('reference', None)
+        if not reference:
+            return [0.0, 0.0, 0.0]
+
+            
+        ref_offset = [
+            self.args.reference[0] - reference[0],
+            self.args.reference[1] - reference[1],
+            self.args.reference[2] - reference[2]
+        ]
+
+        logger.info(f"GT Reference: {reference}")
+        logger.info(f"ACT Reference: {self.args.reference}")
+        logger.info(f"Reference offset: {ref_offset}")
+
+        return ref_offset
+
     def orchestrated_mission_interaction(self):
         mission_setting = self.mission['drones'][self.args.drone_id]
         target = mission_setting['target']
@@ -1046,6 +1069,7 @@ class Controller:
     def orchestrated_mission(self, mission_index):
         mission = self.missions[mission_index]
         mission_setting = mission['drones'][self.args.drone_id]
+        markers = mission.get('markers', [])
         target = mission_setting['target']
         waypoints = mission_setting.get('waypoints', [])
         position_offset = mission_setting.get('position_offset', None)
@@ -1065,11 +1089,13 @@ class Controller:
         autotune = mission_setting.get('autotune', {'enabled': False})
 
         vp_offset = self._compute_viewpoint_offset(mission)
+        ref_offset = self._compute_reference_offset(mission)
         self.viewpoint_offsets.append(vp_offset)
+        self.reference_offsets.append(ref_offset)
         base_offset = position_offset if position_offset else [0.0, 0.0, 0.0]
-        total_offset = [base_offset[0] + vp_offset[0],
-                        base_offset[1] + vp_offset[1],
-                        base_offset[2] + vp_offset[2]]
+        total_offset = [base_offset[0] + vp_offset[0] + ref_offset[0],
+                        base_offset[1] + vp_offset[1] + ref_offset[1],
+                        base_offset[2] + vp_offset[2] + ref_offset[2]]
         if self.use_flowdeck:
             total_offset[2] -= 0.09
 
@@ -1830,7 +1856,8 @@ if __name__ == '__main__':
     ap.add_argument("--skip-landing", action="store_true", help="run mission without landing")
     ap.add_argument("--radio", type=str, help="specify the CrazyRadio URI (e.g., 'radio://0/6/1M/E7E7E7E704')")
     ap.add_argument("--droneless", action="store_true", help="run mission without connecting to fc")
-    ap.add_argument("--viewpoint", type=float, nargs=3, help="actual camera viewpoint coordinates x y z", default=None)
+    ap.add_argument("--viewpoint", type=float, nargs=3, help="actual camera viewpoint coordinates x y z which will be used to offset the waypoints", default=None)
+    ap.add_argument("--reference", type=float, nargs=3, help="actual reference coordinates x y z which will be used to offset the waypoints", default=None)
     ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
     ap.add_argument("--light-module-offset", type=float, nargs=3, help="light module offset from marker coordinates x y z", default=[0.075, 0.0, -0.040])
     ap.add_argument("--camera-offset", type=float, nargs=3, help="camera offset from marker coordinates x y z", default=[0.015, -0.035, -0.035])
