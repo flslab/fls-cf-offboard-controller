@@ -16,6 +16,7 @@ class IlluminationLogger(LogManager):
         self.cf_var_loggers = []
         self.cf_log_times = {}
         self.cf_log_data = None
+        self.cf_log_callbacks = {}
         self.verbose = kwargs.get('verbose', False)
 
     def start(self, *args, **kwargs):
@@ -80,7 +81,7 @@ class IlluminationLogger(LogManager):
         for group_name, group_vars in self.cf_log_data.items():
             log_period = cf_log_period * 10
             if "log_period_ms" in group_vars:
-                log_period = group_vars["log_period_ms"]
+                log_period = group_vars["log_period_ms"] * 10
                 group_vars.pop("log_period_ms")
 
             cf_var_logger = LogConfig(name=group_name, period_in_ms=log_period)
@@ -102,6 +103,15 @@ class IlluminationLogger(LogManager):
             self.cf_log_data[group_name][par]["data"].append(data[par])
             if self.verbose:
                 logger.info(f"{par} = {data[par]}")
+
+        if group_name in self.cf_log_callbacks:
+            for callback in self.cf_log_callbacks[group_name]:
+                callback(timestamp, data, log_conf)
+
+    def register_cf_log_callback(self, group_name, callback):
+        if group_name not in self.cf_log_callbacks:
+            self.cf_log_callbacks[group_name] = []
+        self.cf_log_callbacks[group_name].append(callback)
 
     def add_log_group(self, name, *args, **kwargs):
         self.groups[name] = []

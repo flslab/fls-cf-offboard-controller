@@ -1,3 +1,4 @@
+from relative_localization import imu_callback
 from turtle import forward
 
 from cflib import crazyflie
@@ -570,6 +571,8 @@ class Controller:
             self.log_manager.add_log_group("anchor_frames")
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("events")
+            self.log_manager.add_log_group("camera_pos_world")
+            self.log_manager.register_cf_log_callback("QUAT", self.marker_imu_fusion)
 
         elif self.args.interaction:
             from Interaction.log_manager import InteractionLogger
@@ -1325,6 +1328,17 @@ class Controller:
         logger.info("unsubscribed mocap logger")
         self.mocap.subscribe_point([xiv, yiv, ziv], self._send_position, name=f"{self.args.drone_id}_midflight") 
         logger.info("subscribed mocap external position and logger")
+
+    def marker_imu_fusion(self, data):
+        latest_pose = self.tracker.get_latest_pose()
+        if not latest_pose:
+            return
+
+        quat_x, quat_y, quat_z, quat_w = data["stateEstimate.qx"], data["stateEstimate.qy"], data["stateEstimate.qz"], data["stateEstimate.qw"]
+        camera_pos_world = imu_callback(quat_x, quat_y, quat_z, quat_w, latest_pose)
+
+        self.log_manager.add_log_entry("camera_pos_world", {"time": time.time(), "pos": [camera_pos_world[0], camera_pos_world[1], camera_pos_world[2]]})
+
 
     def do_tracker_relative_localization(self, gt_relative_position, config):
         latest_pose = self.tracker.get_latest_pose()
