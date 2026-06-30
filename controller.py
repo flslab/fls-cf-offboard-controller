@@ -571,8 +571,8 @@ class Controller:
             self.log_manager.add_log_group("anchor_frames")
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("events")
-            self.log_manager.add_log_group("camera_pos_world")
-            self.log_manager.register_cf_log_callback("QUAT", self.marker_imu_fusion)
+            # self.log_manager.add_log_group("camera_pos_world")
+            # self.log_manager.register_cf_log_callback("QUAT", self.marker_imu_fusion)
 
         elif self.args.interaction:
             from Interaction.log_manager import InteractionLogger
