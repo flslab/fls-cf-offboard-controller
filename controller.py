@@ -1329,7 +1329,7 @@ class Controller:
         self.mocap.subscribe_point([xiv, yiv, ziv], self._send_position, name=f"{self.args.drone_id}_midflight") 
         logger.info("subscribed mocap external position and logger")
 
-    def marker_imu_fusion(self, data):
+    def marker_imu_fusion(self, timestamp, data, log_conf):
         latest_pose = self.tracker.get_latest_pose()
         if not latest_pose:
             return

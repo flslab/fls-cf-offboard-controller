@@ -106,7 +106,7 @@ class IlluminationLogger(LogManager):
 
         if group_name in self.cf_log_callbacks:
             for callback in self.cf_log_callbacks[group_name]:
-                callback(data)
+                callback(timestamp, data, log_conf)
 
     def register_cf_log_callback(self, group_name, callback):
         if group_name not in self.cf_log_callbacks:
