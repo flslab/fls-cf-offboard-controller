@@ -1335,7 +1335,7 @@ class Controller:
             return
 
         quat_x, quat_y, quat_z, quat_w = data["stateEstimate.qx"], data["stateEstimate.qy"], data["stateEstimate.qz"], data["stateEstimate.qw"]
-        camera_pos_world = imu_callback(quat_x, quat_y, quat_z, quat_w, latest_pose)
+        camera_pos_world = imu_callback(quat_x, quat_y, quat_z, quat_w, latest_pose[:3])
 
         self.log_manager.add_log_entry("camera_pos_world", {"time": time.time(), "pos": [camera_pos_world[0], camera_pos_world[1], camera_pos_world[2]]})
 
