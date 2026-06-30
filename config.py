@@ -537,6 +537,7 @@ TUNING_LOG_VARS = {
     'MOT_ACC': MOT_ACC,
     'ACC': ACC,
     'GYRO': GYRO,
+    'QUAT': QUAT,
 }
 
 LOG_VARS = TUNING_LOG_VARS
