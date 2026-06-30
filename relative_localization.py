@@ -24,7 +24,7 @@ def imu_callback(quat_x, quat_y, quat_z, quat_w, latest_marker_position_c):
     Expects quaternion representing rotation from world to drone (R_w_d).
     """
     # 1. Create rotation object from quaternion (Assuming scalar-last [x,y,z,w])
-    rot_w_d = R.from_quat([quat_x, quat_y, quat_z, quat_w])
+    rot_w_d = R.from_quat([-quat_x, -quat_y, quat_z, quat_w])
     R_w_d_mat = rot_w_d.as_matrix()
 
     # 2. Compute Camera orientation in world frame (R_w_c)
