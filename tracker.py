@@ -15,17 +15,18 @@ class Tracker():
         self.on_failsafe = on_failsafe
         self.running = False
         self.failsafe = False
-        self.position_size = 1 + 3 + 6 * 4  # 1 byte + 3 byte padding + 6 floats (4 bytes each)
+        self.position_size = 40  # sizeof(Position) in C++ (40 bytes due to double alignment)
         self.shm_name = "/pos_shared_mem"
         self.shm_fd = open(f"/dev/shm{self.shm_name}", "r+b")  # Open shared memory
         self.shm_map = mmap.mmap(self.shm_fd.fileno(), self.position_size, access=mmap.ACCESS_READ)
 
     def get_latest_pose(self):
-        data = self.shm_map[:self.position_size]  # Read 8 bytes (bool + 7 floats = 1 byte + 28 bytes)
+        data = self.shm_map[:self.position_size]  # Read 40 bytes (bool + padding + 6 floats + padding + double)
         valid = struct.unpack("<4?", data[:4])[0]  # Extract the validity flag (1 byte)
         if valid:
-            right, down, forward, roll, pitch, yaw = struct.unpack("<6f", data[4:28])
-            return right, down, forward, roll, pitch, yaw
+            x, y, z, roll, pitch, yaw = struct.unpack("<6f", data[4:28])
+            timestamp = struct.unpack("<d", data[32:40])[0]
+            return x, y, z, roll, pitch, yaw, timestamp
         return None
 
     def localize(self, relative_position):
@@ -33,7 +34,7 @@ class Tracker():
         if not latest_pose:
             return
 
-        right, down, forward, _, _, _ = latest_pose
+        right, down, forward, _, _, _, _ = latest_pose
         act = np.array([-right, -forward])
         gt = np.array([relative_position[0], relative_position[1]])
         v = act - gt
@@ -49,7 +50,7 @@ class Tracker():
     def run(self):
         last_valid = time.time()
         while self.running:
-            data = self.shm_map[:self.position_size]  # Read 8 bytes (bool + 7 floats = 1 byte + 28 bytes)
+            data = self.shm_map[:self.position_size]  # Read 40 bytes (bool + padding + 6 floats + padding + double)
             # print("raw data:", data)
             valid = struct.unpack("<4?", data[:4])[0]  # Extract the validity flag (1 byte)
 
