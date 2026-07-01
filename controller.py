@@ -1,4 +1,4 @@
-from relative_localization import imu_callback
+from relative_localization import imu_callback, imu_callback_quat, imu_callback_euler
 from turtle import forward
 
 from cflib import crazyflie
@@ -571,8 +571,6 @@ class Controller:
             self.log_manager.add_log_group("anchor_frames")
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("events")
-            # self.log_manager.add_log_group("camera_pos_world")
-            # self.log_manager.register_cf_log_callback("QUAT", self.marker_imu_fusion)
 
         elif self.args.interaction:
             from Interaction.log_manager import InteractionLogger
@@ -1339,6 +1337,44 @@ class Controller:
 
         self.log_manager.add_log_entry("camera_pos_world", {"time": time.time(), "pos": [camera_pos_world[0], camera_pos_world[1], camera_pos_world[2]]})
 
+    def marker_imu_fusion_quat(self, timestamp, data, log_conf):
+        latest_pose = self.tracker.get_latest_pose()
+        if not latest_pose:
+            return
+
+        quat_x, quat_y, quat_z, quat_w = data["stateEstimate.qx"], data["stateEstimate.qy"], data["stateEstimate.qz"], data["stateEstimate.qw"]
+        drone_pos, rot_w_d = imu_callback_quat(
+            quat_x, quat_y, quat_z, quat_w,
+            latest_pose[:3],
+            marker_world_pos=self.args.marker_offset,
+            camera_drone_pos=self.args.camera_offset
+        )
+
+        self.log_manager.add_log_entry("drone_pos_imu_quat", {
+            "time": time.time(),
+            "pos": drone_pos.tolist(),
+            "ori": rot_w_d.as_rotvec().tolist()
+        })
+
+    def marker_imu_fusion_euler(self, timestamp, data, log_conf):
+        latest_pose = self.tracker.get_latest_pose()
+        if not latest_pose:
+            return
+
+        roll, pitch, yaw = data["stateEstimate.roll"], data["stateEstimate.pitch"], data["stateEstimate.yaw"]
+        drone_pos, rot_w_d = imu_callback_euler(
+            roll, pitch, yaw,
+            latest_pose[:3],
+            marker_world_pos=self.args.marker_offset,
+            camera_drone_pos=self.args.camera_offset
+        )
+
+        self.log_manager.add_log_entry("drone_pos_imu_euler", {
+            "time": time.time(),
+            "pos": drone_pos.tolist(),
+            "ori": rot_w_d.as_rotvec().tolist()
+        })
+
 
     def do_tracker_relative_localization(self, gt_relative_position, config):
         latest_pose = self.tracker.get_latest_pose()
@@ -1747,6 +1783,12 @@ class Controller:
             params.append("--aruco")
 
         self.tracker_process = subprocess.Popen(params)
+
+        # temp
+        self.log_manager.add_log_group("drone_pos_imu_quat")
+        self.log_manager.add_log_group("drone_pos_imu_euler")
+        self.log_manager.register_cf_log_callback("QUAT", self.marker_imu_fusion_quat)
+        self.log_manager.register_cf_log_callback("ATT_RATE", self.marker_imu_fusion_euler)
 
     def _start_blinker_process(self):
         """Starts the external C++ blinker process for OOK markers."""
