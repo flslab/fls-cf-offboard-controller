@@ -1389,12 +1389,18 @@ class Controller:
         qz = self.log_manager.get_latest_cf_log_data("QUAT", "stateEstimate.qz")
         qw = self.log_manager.get_latest_cf_log_data("QUAT", "stateEstimate.qw")
 
-        drone_pos, _ = imu_callback_quat(
+        drone_pos, rot_w_d = imu_callback_quat(
             qx, qy, qz, qw,
             latest_pose[:3],
             marker_world_pos=self.args.marker_offset,
             camera_drone_pos=self.args.camera_offset
         )
+
+        self.log_manager.add_log_entry("drone_pos_imu_quat", {
+            "time": time.time(),
+            "pos": drone_pos.tolist(),
+            "ori": rot_w_d.as_rotvec().tolist()
+        })
         
         # side camera
         # right, down, forward, _, _, _ = latest_pose
@@ -1441,9 +1447,9 @@ class Controller:
         v *= p
         z = gt_relative_position[2]
         self.ll_commander.send_hover_setpoint(v[0], v[1], 0, z)
-        logger.info(f"gt: {gt}")
-        logger.info(f"act: {act}")
-        logger.info(f"hover command: {v[0]}, {v[1]}, {z}")
+        logger.debug(f"gt: {gt}")
+        logger.debug(f"act: {act}")
+        logger.debug(f"hover command: {v[0]}, {v[1]}, {z}")
 
     def do_localization_position_cmd(self, gt_relative_position, anchor_position):
         anchor = np.array(anchor_position)
@@ -1797,7 +1803,7 @@ class Controller:
         self.tracker_process = subprocess.Popen(params)
 
         # temp
-        # self.log_manager.add_log_group("drone_pos_imu_quat")
+        self.log_manager.add_log_group("drone_pos_imu_quat")
         # self.log_manager.add_log_group("drone_pos_imu_euler")
         # self.log_manager.register_cf_log_callback("QUAT", self.marker_imu_fusion_quat)
         # self.log_manager.register_cf_log_callback("ATT_RATE", self.marker_imu_fusion_euler)
