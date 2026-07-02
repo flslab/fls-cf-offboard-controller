@@ -19,8 +19,6 @@ import time
 import urllib.request
 import urllib.error
 import zmq
-from collections import deque
-from scipy.spatial.transform import Rotation as R, Slerp
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -136,10 +134,6 @@ class Controller:
         self.tracker = None
         self.log_manager = None
         self.bat_logger = None
-        
-        self.imu_buffer_quat = deque(maxlen=200)
-        self.imu_buffer_euler = deque(maxlen=200)
-
         self.sub_socket = None
         self.push_socket = None
         self.poller = None
@@ -1339,74 +1333,25 @@ class Controller:
             return
 
         quat_x, quat_y, quat_z, quat_w = data["stateEstimate.qx"], data["stateEstimate.qy"], data["stateEstimate.qz"], data["stateEstimate.qw"]
-        camera_pos_world = imu_callback(quat_x, quat_y, quat_z, quat_w, latest_pose[:3], latest_pose[6])
+        camera_pos_world = imu_callback(quat_x, quat_y, quat_z, quat_w, latest_pose[:3])
 
         self.log_manager.add_log_entry("camera_pos_world", {"time": time.time(), "pos": [camera_pos_world[0], camera_pos_world[1], camera_pos_world[2]]})
-
-    def _interpolate_imu(self, buffer, target_time, is_quat=True):
-        """
-        Interpolates IMU data (quaternion or euler) in the buffer to the target_time.
-        """
-        if not buffer:
-            return None
-        
-        if target_time <= buffer[0][0]:
-            return buffer[0][1]
-        if target_time >= buffer[-1][0]:
-            return buffer[-1][1]
-            
-        right_idx = len(buffer) - 1
-        while right_idx > 0 and buffer[right_idx][0] > target_time:
-            right_idx -= 1
-        
-        left_idx = right_idx
-        right_idx = left_idx + 1
-        
-        if right_idx >= len(buffer):
-            return buffer[left_idx][1]
-            
-        t0, data0 = buffer[left_idx]
-        t1, data1 = buffer[right_idx]
-        
-        if t1 == t0:
-            return data0
-            
-        try:
-            if is_quat:
-                slerp = Slerp([t0, t1], R.from_quat([data0, data1]))
-                interp_rot = slerp([target_time])
-                return interp_rot[0].as_quat()
-            else:
-                slerp = Slerp([t0, t1], R.from_euler('xyz', [data0, data1], degrees=True))
-                interp_rot = slerp([target_time])
-                return interp_rot[0].as_euler('xyz', degrees=True)
-        except Exception as e:
-            logger.error(f"IMU interpolation error: {e}")
-            return data1
 
     def marker_imu_fusion_quat(self, timestamp, data, log_conf):
         latest_pose = self.tracker.get_latest_pose()
         if not latest_pose:
             return
 
-        sys_time = time.time()
-        quat = [data["stateEstimate.qx"], data["stateEstimate.qy"], data["stateEstimate.qz"], data["stateEstimate.qw"]]
-        self.imu_buffer_quat.append((sys_time, quat))
-
-        tracker_timestamp = latest_pose[6]
-        interp_quat = self._interpolate_imu(self.imu_buffer_quat, tracker_timestamp, is_quat=True)
-        if interp_quat is None:
-            interp_quat = quat
-
+        quat_x, quat_y, quat_z, quat_w = data["stateEstimate.qx"], data["stateEstimate.qy"], data["stateEstimate.qz"], data["stateEstimate.qw"]
         drone_pos, rot_w_d = imu_callback_quat(
-            interp_quat[0], interp_quat[1], interp_quat[2], interp_quat[3],
+            quat_x, quat_y, quat_z, quat_w,
             latest_pose[:3],
             marker_world_pos=self.args.marker_offset,
             camera_drone_pos=self.args.camera_offset
         )
 
         self.log_manager.add_log_entry("drone_pos_imu_quat", {
-            "time": sys_time,
+            "time": time.time(),
             "pos": drone_pos.tolist(),
             "ori": rot_w_d.as_rotvec().tolist()
         })
@@ -1416,24 +1361,16 @@ class Controller:
         if not latest_pose:
             return
 
-        sys_time = time.time()
-        euler = [data["stateEstimate.roll"], data["stateEstimate.pitch"], data["stateEstimate.yaw"]]
-        self.imu_buffer_euler.append((sys_time, euler))
-
-        tracker_timestamp = latest_pose[6]
-        interp_euler = self._interpolate_imu(self.imu_buffer_euler, tracker_timestamp, is_quat=False)
-        if interp_euler is None:
-            interp_euler = euler
-
+        roll, pitch, yaw = data["stateEstimate.roll"], data["stateEstimate.pitch"], data["stateEstimate.yaw"]
         drone_pos, rot_w_d = imu_callback_euler(
-            interp_euler[0], interp_euler[1], interp_euler[2],
+            roll, pitch, yaw,
             latest_pose[:3],
             marker_world_pos=self.args.marker_offset,
             camera_drone_pos=self.args.camera_offset
         )
 
         self.log_manager.add_log_entry("drone_pos_imu_euler", {
-            "time": sys_time,
+            "time": time.time(),
             "pos": drone_pos.tolist(),
             "ori": rot_w_d.as_rotvec().tolist()
         })
@@ -1447,6 +1384,18 @@ class Controller:
                 self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
             return
 
+        qx = self.log_manager.get_latest_cf_log_data("QUAT", "stateEstimate.qx")
+        qy = self.log_manager.get_latest_cf_log_data("QUAT", "stateEstimate.qy")
+        qz = self.log_manager.get_latest_cf_log_data("QUAT", "stateEstimate.qz")
+        qw = self.log_manager.get_latest_cf_log_data("QUAT", "stateEstimate.qw")
+
+        drone_pos, _ = imu_callback_quat(
+            qx, qy, qz, qw,
+            latest_pose[:3],
+            marker_world_pos=self.args.marker_offset,
+            camera_drone_pos=self.args.camera_offset
+        )
+        
         # side camera
         # right, down, forward, _, _, _ = latest_pose
         # cx, cy, cz = self.args.camera_offset
@@ -1454,8 +1403,8 @@ class Controller:
         # act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
 
         # downward camera aruco
-        right, forward, up, _, _, _, _ = latest_pose
-        act_relative_position = [-forward, right, -up]
+        x, y, z = drone_pos
+        act_relative_position = [-x, -y, -z]
 
         # logger.info(f"gt_relative_position: {gt_relative_position}")
         # logger.info(f"act_relative_position: {[-right, -forward, -down]}")
@@ -1848,10 +1797,10 @@ class Controller:
         self.tracker_process = subprocess.Popen(params)
 
         # temp
-        self.log_manager.add_log_group("drone_pos_imu_quat")
-        self.log_manager.add_log_group("drone_pos_imu_euler")
-        self.log_manager.register_cf_log_callback("QUAT", self.marker_imu_fusion_quat)
-        self.log_manager.register_cf_log_callback("ATT_RATE", self.marker_imu_fusion_euler)
+        # self.log_manager.add_log_group("drone_pos_imu_quat")
+        # self.log_manager.add_log_group("drone_pos_imu_euler")
+        # self.log_manager.register_cf_log_callback("QUAT", self.marker_imu_fusion_quat)
+        # self.log_manager.register_cf_log_callback("ATT_RATE", self.marker_imu_fusion_euler)
 
     def _start_blinker_process(self):
         """Starts the external C++ blinker process for OOK markers."""
