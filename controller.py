@@ -1769,7 +1769,6 @@ class Controller:
             "--payload-size", str(self.args.payload_size),
             "--target-id", str(self.args.target_id),
             "--json-path", f"logs/tracker_{self.args.tag}.json",
-            "--static-markers"
         ]
         if self.args.tracker_res == 400:
             params.extend([
@@ -1799,6 +1798,8 @@ class Controller:
             params.append("--kf")
         if self.args.track_aruco:
             params.append("--aruco")
+        if self.args.tracker_static_marker:
+            params.append("--static-markers")
 
         self.tracker_process = subprocess.Popen(params)
 
@@ -1905,6 +1906,7 @@ if __name__ == '__main__':
     ap.add_argument("--tracker-encoder-rate", type=int, default=50, help="id encoder rate")
     ap.add_argument("--tracker-camera-rate", type=int, default=120, help="camera frame rate, works with --tracker")
     ap.add_argument("--tracker-res", help="camera resolution", type=int, choices=[400, 800], default=400)
+    ap.add_argument("--tracker-static-marker", action="store_true", default=False, help="use static marker")
     ap.add_argument("--enable-tracker-kf", action="store_true", default=False, help="enable Kalman filter for tracker")
     ap.add_argument("--marker-id", type=int, default=0, help="ID of the blinking marker")
     ap.add_argument("--target-id", type=int, default=0, help="ID of the anchor to track")
