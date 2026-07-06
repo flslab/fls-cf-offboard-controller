@@ -466,11 +466,7 @@ class Controller:
 
     def save_init_coord(self):
         if self.mocap and not self.args.ground_test and not (self.args.skip_landing and self.args.skip_takeoff):
-            for _ in range(50):
-                try:
-                    self.init_coord = self._get_latest_mocap_frame()["tvec"]
-                except:
-                    self._safe_sleep(0.1)
+            self.init_coord = self._get_latest_mocap_frame()["tvec"]
         elif self.use_flowdeck:
             self.init_coord = self.args.init_pos
 
