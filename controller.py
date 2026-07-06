@@ -466,7 +466,7 @@ class Controller:
 
     def save_init_coord(self):
         if self.mocap and not self.args.ground_test and not (self.args.skip_landing and self.args.skip_takeoff):
-            for _ in range(20):
+            for _ in range(50):
                 try:
                     self.init_coord = self._get_latest_mocap_frame()["tvec"]
                 except:
