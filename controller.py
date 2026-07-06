@@ -213,8 +213,12 @@ class Controller:
             self.setup_servo()
             self.setup_battery_watcher()
             self.setup_tracker()
+            if self.led:
+                self.led.show_single_color(color=(230, 180, 0))
             self.save_init_coord()
             self.setup_params()
+            if self.led:
+                self.led.show_single_color(color=(80, 240, 30))
 
         self.handshake()
         self.mission_start_time = time.time()
@@ -466,7 +470,11 @@ class Controller:
 
     def save_init_coord(self):
         if self.mocap and not self.args.ground_test and not (self.args.skip_landing and self.args.skip_takeoff):
-            self.init_coord = self._get_latest_mocap_frame()["tvec"]
+            while self.init_coord is None:
+                try:
+                    self.init_coord = self._get_latest_mocap_frame()["tvec"]
+                except:
+                    self._safe_sleep(1)
         elif self.use_flowdeck:
             self.init_coord = self.args.init_pos
 
@@ -607,9 +615,6 @@ class Controller:
     def setup_params(self):
         logger.info("Setting up parameters...")
 
-        if self.led:
-            self.led.show_single_color(color=(230, 180, 0))
-
         self._activate_kalman_estimator()
         self._activate_tumble_check()
         if self.args.vicon:
@@ -630,9 +635,6 @@ class Controller:
         if (self.args.vicon or self.use_flowdeck) and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
             self._set_initial_position(self.init_coord[0], self.init_coord[1], self.init_coord[2], self.args.init_yaw)
             reset_estimator(self.cf)
-
-        if self.led:
-            self.led.show_single_color(color=(80, 240, 30))
 
     def arm(self):
         if self.args.ground_test:
