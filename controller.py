@@ -1408,7 +1408,7 @@ class Controller:
         )
 
         self.log_manager.add_log_entry("drone_pos_imu_quat", {
-            "time": time.time(),
+            "time": latest_pose[6],
             "pos": drone_pos.tolist(),
             "ori": rot_w_d.as_rotvec().tolist()
         })
@@ -1427,16 +1427,16 @@ class Controller:
         # logger.info(f"act_relative_position: {[-right, -forward, -down]}")
         # logger.info(f"act_relative_position offseted: {act_relative_position}")
 
-        if config["method"] == "velocity_control":
-            self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
-        elif config["method"] == "position_control":
-            self.do_localization_position_cmd(gt_relative_position[:3], act_relative_position)
-        elif config["method"] == "ekf":
-            ax, ay, az = gt_relative_position[:3]
-            x, y, z = act_relative_position
-            frame = {"tvec": [ax - x, ay - y, az - z], "time": time.time()}
-            # logger.info(frame)
-            self._send_position(frame)
+        # if config["method"] == "velocity_control":
+        #     self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
+        # elif config["method"] == "position_control":
+        #     self.do_localization_position_cmd(gt_relative_position[:3], act_relative_position)
+        # elif config["method"] == "ekf":
+        #     ax, ay, az = gt_relative_position[:3]
+        #     x, y, z = act_relative_position
+        #     frame = {"tvec": [ax - x, ay - y, az - z], "time": time.time()}
+        #     # logger.info(frame)
+        #     self._send_position(frame)
 
     def do_mocap_relative_localization(self, gt_relative_position, config):
         localizing_latest_pose = np.array(self._get_latest_mocap_frame()["tvec"])
