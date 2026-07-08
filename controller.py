@@ -1238,6 +1238,10 @@ class Controller:
                         callback=lambda vals: localization_method(vals, relative_anchor),
                         always_callback=True
                     )
+            # temp
+            if mission_setting.get("test"):
+                self.smooth_controller.add_update_callback(lambda _: self.do_tracker_relative_localization((0,0,0), {"method": "ekf"}))
+
 
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
             if relative_anchor:
