@@ -506,7 +506,7 @@ GYRO = {
 }
 
 QUAT = {
-    "log_period_ms": 10,
+    "log_period_ms": 1,
     "stateEstimate.qx": {
         "type": "float",
         "unit": "",

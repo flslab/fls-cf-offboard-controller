@@ -1386,10 +1386,19 @@ class Controller:
                 self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
             return
 
-        qx = self.log_manager.get_latest_cf_log_data("QUAT", "stateEstimate.qx")
-        qy = self.log_manager.get_latest_cf_log_data("QUAT", "stateEstimate.qy")
-        qz = self.log_manager.get_latest_cf_log_data("QUAT", "stateEstimate.qz")
-        qw = self.log_manager.get_latest_cf_log_data("QUAT", "stateEstimate.qw")
+        [smaller_res, larger_res] = self.log_manager.get_cf_log_data_at_timestamp("QUAT", latest_pose[6])
+        if smaller_res and larger_res:
+            quat_data = smaller_res[1] if abs(smaller_res[0] - latest_pose[6]) < abs(larger_res[0] - latest_pose[6]) else larger_res[1]
+            qx = quat_data["stateEstimate.qx"]
+            qy = quat_data["stateEstimate.qy"]
+            qz = quat_data["stateEstimate.qz"]
+            qw = quat_data["stateEstimate.qw"]
+        
+        else:
+            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "quat_not_found"})
+            if config["method"] != "ekf":
+                self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
+            return
 
         drone_pos, rot_w_d = imu_callback_quat(
             qx, qy, qz, qw,

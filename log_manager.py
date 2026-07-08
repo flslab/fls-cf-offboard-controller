@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import bisect
 
 from log_manager_abs import LogManager
 from cflib.crazyflie.log import LogConfig
@@ -124,4 +125,43 @@ class IlluminationLogger(LogManager):
             return self.cf_log_data[group_name][param_name]["data"][-1]
         else:
             return None
+
+    def get_cf_log_data_at_timestamp(self, group_name, target_timestamp, search_range=1.0):
+        if group_name not in self.cf_log_data:
+            return None
+            
+        times = self.cf_log_times.get(group_name)
+        if not times:
+            return None
+            
+        group_data = self.cf_log_data[group_name]
+        
+        idx = bisect.bisect_left(times, target_timestamp)
+        
+        smaller_res = None
+        larger_res = None
+        logger.info(f"target timestamp = {target_timestamp}")
+        
+        if idx < len(times):
+            t_larger = times[idx]
+            logger.info(f"t_larger = {t_larger}, {idx}")
+            if t_larger == target_timestamp:
+                data_at_idx = {par: group_data[par]["data"][idx] for par in group_data.keys()}
+                return (t_larger, data_at_idx), (t_larger, data_at_idx)
+            if t_larger - target_timestamp <= search_range:
+                data_at_idx = {par: group_data[par]["data"][idx] for par in group_data.keys()}
+                larger_res = (t_larger, data_at_idx)
+                
+        if idx > 0:
+            t_smaller = times[idx - 1]
+            logger.info(f"t_smaller = {t_smaller}, {idx - 1}")
+            if target_timestamp - t_smaller <= search_range:
+                data_at_idx_minus_1 = {par: group_data[par]["data"][idx - 1] for par in group_data.keys()}
+                smaller_res = (t_smaller, data_at_idx_minus_1)
+                
+        if smaller_res is None and larger_res is None:
+            return None
+            
+        
+        return smaller_res, larger_res
 

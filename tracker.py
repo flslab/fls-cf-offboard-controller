@@ -28,24 +28,6 @@ class Tracker():
             timestamp = struct.unpack("<d", data[32:40])[0]
             return x, y, z, roll, pitch, yaw, timestamp
         return None
-
-    def localize(self, relative_position):
-        latest_pose = self.get_latest_pose()
-        if not latest_pose:
-            return
-
-        right, down, forward, _, _, _, _ = latest_pose
-        act = np.array([-right, -forward])
-        gt = np.array([relative_position[0], relative_position[1]])
-        v = act - gt
-        p = 1.0
-        v *= p
-        z = relative_position[2]
-        self.controller.ll_commander.send_hover_setpoint(v[0], v[1], 0, z)
-        logger.debug(f"gt: {gt}")
-        logger.debug(f"act: {act}")
-        logger.debug(f"hover command: {v[0]}, {v[1]}, {z}")
-        
         
     def run(self):
         last_valid = time.time()
