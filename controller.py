@@ -627,10 +627,10 @@ class Controller:
         else:
             self._activate_pid_controller()
         self._activate_high_level_commander()
-        if self.use_flowdeck:
-            self._set_pid_values(self.cfg.PID_VALUES_FLOWDECK)
-        else:
-            self._set_pid_values(self.cfg.PID_VALUES)
+        # if self.use_flowdeck:
+        #     self._set_pid_values(self.cfg.PID_VALUES_FLOWDECK)
+        # else:
+        self._set_pid_values(self.cfg.PID_VALUES)
 
         if (self.args.vicon or self.use_flowdeck) and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
             self._set_initial_position(self.init_coord[0], self.init_coord[1], self.init_coord[2], self.args.init_yaw)
