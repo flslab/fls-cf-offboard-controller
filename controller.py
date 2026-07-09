@@ -1436,9 +1436,11 @@ class Controller:
         elif config["method"] == "position_control":
             self.do_localization_position_cmd(gt_relative_position[:3], act_relative_position)
         elif config["method"] == "ekf":
-            ax, ay, az = gt_relative_position[:3]
-            x, y, z = act_relative_position
-            frame = {"tvec": [ax - x, ay - y, az - z], "time": time.time()}
+            [smaller_res, larger_res] = self.log_manager.get_cf_log_data_at_timestamp("VEL_POS", latest_pose[6])
+            z = smaller_res[1]["stateEstimate.z"]
+            # ax, ay, az = gt_relative_position[:3]
+            # x, y, z = act_relative_position
+            frame = {"tvec": [x, y, z], "time": time.time()}
             # logger.info(frame)
             self._send_position(frame)
 
