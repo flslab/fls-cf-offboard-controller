@@ -1446,7 +1446,7 @@ class Controller:
             # x, y, z = act_relative_position
             frame = {"tvec": [x, y, z], "time": time.time()}
             # logger.info(frame)
-            self._send_position(frame)
+            self._send_position_no_log(frame)
 
     def do_mocap_relative_localization(self, gt_relative_position, config):
         localizing_latest_pose = np.array(self._get_latest_mocap_frame()["tvec"])
@@ -1851,6 +1851,9 @@ class Controller:
         value = int(value_str)
         if value:
             self.deck_attached_event.set()
+
+    def _send_position_no_log(self, frame):
+        self.cf.extpos.send_extpos(*frame['tvec'])
 
     def _send_position(self, frame):
         self.cf.extpos.send_extpos(*frame['tvec'])
