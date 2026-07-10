@@ -1240,7 +1240,8 @@ class Controller:
                     )
             # temp
             if mission_setting.get("test"):
-                self.smooth_controller.add_update_callback(lambda: self.do_tracker_relative_localization((0,0,0), {"method": "ekf"}))
+                self._set_ignore_external_z()
+                # self.smooth_controller.add_update_callback(lambda: self.do_tracker_relative_localization((0,0,0), {"method": "ekf"}))
 
 
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
@@ -1757,6 +1758,9 @@ class Controller:
 
     def _set_position_sensitivity(self, std_dev):
         self.cf.param.set_value('locSrv.extPosStdDev', std_dev)
+
+    def _set_ignore_external_z(self):
+        self.cf.param.set_value("locSrv.extPosIgnoreZ", "1")
 
     def _set_initial_position(self, x, y, z, yaw_rad):
         self.cf.param.set_value('kalman.initialX', x)
