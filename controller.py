@@ -1224,6 +1224,7 @@ class Controller:
                     localization_method = self.do_tracker_relative_localization 
 
                 if relative_anchor["method"] == "ekf":
+                    self._set_ignore_external_z()
                     self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
                     self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
                     self._initialize_ekf_relative_position()
@@ -1441,8 +1442,6 @@ class Controller:
         elif config["method"] == "position_control":
             self.do_localization_position_cmd(gt_relative_position[:3], act_relative_position)
         elif config["method"] == "ekf":
-            [smaller_res, larger_res] = self.log_manager.get_cf_log_data_at_timestamp("VEL_POS", latest_pose[6])
-            z = smaller_res[1]["stateEstimate.z"]
             # ax, ay, az = gt_relative_position[:3]
             # x, y, z = act_relative_position
             frame = {"tvec": [x, y, z], "time": time.time()}
