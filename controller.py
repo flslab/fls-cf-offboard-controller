@@ -503,21 +503,25 @@ class Controller:
         voltage_str = f"{voltage:.2f}V" if voltage is not None else "NA"
         logger.info(f"Landing... Battery: {voltage_str}")
         z = self.args.takeoff_altitude
-        if self.init_coord:
-            xi, yi, _ = self.init_coord
-            if self.args.vicon:
-                x, y, z = self._get_latest_mocap_frame()["tvec"]
-                dist = ((xi - x) ** 2 + (yi - y) ** 2) ** 0.5
-                dt = 2 * dist + 0.1
-            else:
-                z = self.args.takeoff_altitude
-                dt = 2
-            self.hl_commander.go_to(xi, yi, z, self.args.init_yaw, dt, relative=False)
+
+        if self.log_manager:
+            current_x = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.x")
+            current_y = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.y")
+            current_z = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.z")
+        elif self.mocap:
+            current_x, current_y, current_z = self._get_latest_mocap_frame()["tvec"]
+
+        if self.init_coord and None not in [current_x, current_y, current_z]:
+            initial_x, initial_y, _ = self.init_coord
+            dist = ((initial_x - current_x) ** 2 + (initial_y - current_y) ** 2) ** 0.5
+            dt = 2 * dist + 0.1
+
+            self.hl_commander.go_to(initial_x, initial_y, current_z, self.args.init_yaw, dt, relative=False)
             time.sleep(dt + 0.5)
 
         if self.flying:
             dt = z * 6
-            self.hl_commander.land(0.12, dt)
+            self.hl_commander.land(0.10, dt)
             time.sleep(dt + 1)
             self.hl_commander.stop()
             self.flying = False
