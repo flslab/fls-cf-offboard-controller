@@ -144,7 +144,6 @@ class IlluminationLogger(LogManager):
         
         if idx < len(times):
             t_larger = times[idx]
-            logger.info(f"t_larger = {t_larger}, {idx}")
             if t_larger == target_timestamp:
                 data_at_idx = {par: group_data[par]["data"][idx] for par in group_data.keys()}
                 return (t_larger, data_at_idx), (t_larger, data_at_idx)
@@ -154,7 +153,6 @@ class IlluminationLogger(LogManager):
                 
         if idx > 0:
             t_smaller = times[idx - 1]
-            logger.info(f"t_smaller = {t_smaller}, {idx - 1}")
             if target_timestamp - t_smaller <= search_range:
                 data_at_idx_minus_1 = {par: group_data[par]["data"][idx - 1] for par in group_data.keys()}
                 smaller_res = (t_smaller, data_at_idx_minus_1)
