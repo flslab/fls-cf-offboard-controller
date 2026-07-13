@@ -1225,6 +1225,7 @@ class Controller:
 
                 if relative_anchor["method"] == "ekf":
                     self._set_ignore_external_z()
+                    self._set_ignore_flowdeck_xy()
                     self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
                     self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
                     self._initialize_ekf_relative_position()
@@ -1245,11 +1246,16 @@ class Controller:
                     )
             # temp
             if mission_setting.get("test"):
-                self._set_ignore_external_z()
+                # self._set_ignore_external_z()
+                self._set_ignore_flowdeck_xy()
                 # self.smooth_controller.add_update_callback(lambda: self.do_tracker_relative_localization((0,0,0), {"method": "ekf"}))
 
 
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
+
+            if mission_setting.get("test"):
+                self._set_ignore_flowdeck_xy(0)
+
             if relative_anchor:
                 if relative_anchor["method"] == "ekf":
                     self.smooth_controller.remove_group("anchor_position")
@@ -1762,8 +1768,11 @@ class Controller:
     def _set_position_sensitivity(self, std_dev):
         self.cf.param.set_value('locSrv.extPosStdDev', std_dev)
 
-    def _set_ignore_external_z(self):
-        self.cf.param.set_value("locSrv.extPosIgnoreZ", "1")
+    def _set_ignore_external_z(self, val=1):
+        self.cf.param.set_value("locSrv.extPosIgnoreZ", str(val))
+
+    def _set_ignore_flowdeck_xy(self, val=1):
+        self.cf.param.set_value("flowdeck.ignoreXY", str(val))
 
     def _set_initial_position(self, x, y, z, yaw_rad):
         self.cf.param.set_value('kalman.initialX', x)
