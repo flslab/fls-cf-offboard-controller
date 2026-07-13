@@ -1225,7 +1225,7 @@ class Controller:
 
                 if relative_anchor["method"] == "ekf":
                     self._set_ignore_external_z()
-                    self._set_ignore_flowdeck_xy()
+                    # self._set_ignore_flowdeck_xy()
                     self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
                     self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
                     self._initialize_ekf_relative_position()
@@ -1244,13 +1244,6 @@ class Controller:
                         callback=lambda vals: localization_method(vals, relative_anchor),
                         always_callback=True
                     )
-            # temp
-            if mission_setting.get("test"):
-                # self._set_ignore_external_z()
-                self._set_ignore_flowdeck_xy()
-                logger.info("ignore flowdeck xy")
-                # self.smooth_controller.add_update_callback(lambda: self.do_tracker_relative_localization((0,0,0), {"method": "ekf"}))
-
 
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
 
@@ -1319,6 +1312,10 @@ class Controller:
                 else:
                     # If sleep_duration is negative, we are lagging behind!
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
+                # temp
+                if i == 1:
+                    self._set_ignore_flowdeck_xy()
+                    logger.info("ignore flowdeck xy")
     
     def _initialize_ekf_relative_position(self, retry_count=3, retry_delay=1):
         latest_pose = self.tracker.get_latest_pose()
