@@ -1248,6 +1248,7 @@ class Controller:
             if mission_setting.get("test"):
                 # self._set_ignore_external_z()
                 self._set_ignore_flowdeck_xy()
+                logger.info("ignore flowdeck xy")
                 # self.smooth_controller.add_update_callback(lambda: self.do_tracker_relative_localization((0,0,0), {"method": "ekf"}))
 
 
@@ -1255,6 +1256,7 @@ class Controller:
 
             if mission_setting.get("test"):
                 self._set_ignore_flowdeck_xy(0)
+                logger.info("enable flowdeck xy")
 
             if relative_anchor:
                 if relative_anchor["method"] == "ekf":
