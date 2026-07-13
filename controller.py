@@ -1312,10 +1312,10 @@ class Controller:
                 else:
                     # If sleep_duration is negative, we are lagging behind!
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
-                # temp
-                if i == 1:
-                    self._set_ignore_flowdeck_xy()
-                    logger.info("ignore flowdeck xy")
+                # # temp
+                # if i == 1:
+                #     self._set_ignore_flowdeck_xy()
+                #     logger.info("ignore flowdeck xy")
     
     def _initialize_ekf_relative_position(self, retry_count=3, retry_delay=1):
         latest_pose = self.tracker.get_latest_pose()
