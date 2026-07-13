@@ -140,7 +140,6 @@ class IlluminationLogger(LogManager):
         
         smaller_res = None
         larger_res = None
-        logger.info(f"target timestamp = {target_timestamp}")
         
         if idx < len(times):
             t_larger = times[idx]
