@@ -1245,11 +1245,23 @@ class Controller:
                         always_callback=True
                     )
 
+            if mission_setting.get("test"):
+                self._safe_sleep(5)
+                self._set_ignore_flowdeck_xy(1)
+                logger.info("Ignore flowdeck xy")
+                self._safe_sleep(5)
+                logger.info("Fading PID values from flowdeck to standard PID values")
+                self._fade_pid_values(self.cfg.PID_VALUES_FLOWDECK, self.cfg.PID_VALUES)
+                logger.info("New PID values set")
+
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
 
             if mission_setting.get("test"):
                 self._set_ignore_flowdeck_xy(0)
                 logger.info("enable flowdeck xy")
+                logger.info("Fading PID values from standard to flowdeck PID values")
+                self._fade_pid_values(self.cfg.PID_VALUES, self.cfg.PID_VALUES_FLOWDECK)
+                logger.info("New PID values set")
 
             if relative_anchor:
                 if relative_anchor["method"] == "ekf":
@@ -1312,10 +1324,6 @@ class Controller:
                 else:
                     # If sleep_duration is negative, we are lagging behind!
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
-                # # temp
-                # if i == 1:
-                self._set_ignore_flowdeck_xy(i % 2)
-                logger.info(f"ignore flowdeck xy: {i % 2}")
     
     def _initialize_ekf_relative_position(self, retry_count=3, retry_delay=1):
         latest_pose = self.tracker.get_latest_pose()
@@ -1749,6 +1757,22 @@ class Controller:
     def _set_pid_values(self, pid_dict):
         for param, value in pid_dict.items():
             self.cf.param.set_value(param, value)
+
+    def _fade_pid_values(self, start_pid, end_pid, duration=2.0, steps=20):
+        """Gradually transition PID values from start_pid to end_pid over a given duration."""
+        common_keys = set(start_pid.keys()) & set(end_pid.keys())
+        sleep_time = duration / steps
+        
+        for step in range(1, steps + 1):
+            fraction = step / steps
+            current_pid = {}
+            for key in common_keys:
+                start_val = float(start_pid[key])
+                end_val = float(end_pid[key])
+                current_pid[key] = start_val + (end_val - start_val) * fraction
+            
+            self._set_pid_values(current_pid)
+            self._safe_sleep(sleep_time)
 
     def _activate_high_level_commander(self):
         self.cf.param.set_value('commander.enHighLevel', '1')
