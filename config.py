@@ -624,6 +624,15 @@ XY_PID_VALUES = {
     'pid_rate.omzFiltCut': '160'
 }
 
+XY_POS_PID_VALUES = {
+    'posCtlPid.xKp': '1.9',
+    'posCtlPid.xKi': '0.1',
+    'posCtlPid.xKd': '0.0',
+    'posCtlPid.yKp': '2.1',
+    'posCtlPid.yKi': '0.1',
+    'posCtlPid.yKd': '0.0',
+}
+
 PID_VALUES_FLOWDECK = {
     # 'quadSysId.armLength': '0.053',
     'posCtlPid.xKp': '0.5',
