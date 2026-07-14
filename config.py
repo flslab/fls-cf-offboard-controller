@@ -633,6 +633,21 @@ XY_POS_PID_VALUES = {
     'posCtlPid.yKd': '0.0',
 }
 
+XY_POS_VEL_PID_VALUES = {
+    'posCtlPid.xKp': '1.9',
+    'posCtlPid.xKi': '0.1',
+    'posCtlPid.xKd': '0.0',
+    'posCtlPid.yKp': '2.1',
+    'posCtlPid.yKi': '0.1',
+    'posCtlPid.yKd': '0.0',
+    'velCtlPid.vxKp': '30.0',
+    'velCtlPid.vxKi': '4.0',
+    'velCtlPid.vxKd': '0.005',
+    'velCtlPid.vyKp': '30.0',
+    'velCtlPid.vyKi': '4.0',
+    'velCtlPid.vyKd': '0.005',
+}
+
 PID_VALUES_FLOWDECK = {
     # 'quadSysId.armLength': '0.053',
     'posCtlPid.xKp': '0.5',
