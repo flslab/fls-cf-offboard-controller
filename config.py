@@ -590,6 +590,40 @@ PID_VALUES = {
     'pid_rate.omzFiltCut': '160'
 }
 
+XY_PID_VALUES = {
+    # 'quadSysId.armLength': '0.053',
+    'posCtlPid.xKp': '1.9',
+    'posCtlPid.xKi': '0.1',
+    'posCtlPid.xKd': '0.0',
+    'posCtlPid.yKp': '2.1',
+    'posCtlPid.yKi': '0.1',
+    'posCtlPid.yKd': '0.0',
+    'posCtlPid.thrustMin': '12000',
+    'posCtlPid.thrustBase': '28000',
+    'velCtlPid.vxKp': '30.0',
+    'velCtlPid.vxKi': '4.0',
+    'velCtlPid.vxKd': '0.005',
+    'velCtlPid.vyKp': '30.0',
+    'velCtlPid.vyKi': '4.0',
+    'velCtlPid.vyKd': '0.005',
+    'pid_attitude.roll_kp': '6.0',
+    'pid_attitude.roll_ki': '1.0',
+    'pid_attitude.roll_kd': '0.005',
+    'pid_attitude.pitch_kp': '7.1',
+    'pid_attitude.pitch_ki': '1.0',
+    'pid_attitude.pitch_kd': '0.005',
+    'pid_rate.roll_kp': '90',
+    'pid_rate.roll_ki': '270.0',
+    'pid_rate.roll_kd': '2.5',
+    'pid_rate.pitch_kp': '75',
+    'pid_rate.pitch_ki': '270.0',
+    'pid_rate.pitch_kd': '2.5',
+    'pid_rate.rateFiltEn': '1',
+    'pid_rate.omxFiltCut': '160',
+    'pid_rate.omyFiltCut': '160',
+    'pid_rate.omzFiltCut': '160'
+}
+
 PID_VALUES_FLOWDECK = {
     # 'quadSysId.armLength': '0.053',
     'posCtlPid.xKp': '0.5',
