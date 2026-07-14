@@ -1226,8 +1226,8 @@ class Controller:
                 if relative_anchor["method"] == "ekf":
                     self._set_ignore_external_z()
                     # self._set_ignore_flowdeck_xy()
-                    # self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
-                    # self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
+                    self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
+                    self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
                     self._initialize_ekf_relative_position()
                     # self._set_pid_values(self.cfg.PID_VALUES)
 
