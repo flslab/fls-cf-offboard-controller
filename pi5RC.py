@@ -72,14 +72,20 @@ class pi5RC:
             print(f"Failed to write to {path}: {e}")
             raise
 
-    def __del__(self):
+    def __del__(self, _os=os, _open=open, _print=print):
         try:
-            if self.file_duty and not self.file_duty.closed:
+            if hasattr(self, 'file_duty') and self.file_duty and not self.file_duty.closed:
                 self.file_duty.close()
-            self.enable(False)
-            if os.path.exists(f"/sys/class/pwm/pwmchip{self.pwmchip}/unexport"):
-                with open(f"/sys/class/pwm/pwmchip{self.pwmchip}/unexport", "w") as f:
+                
+            try:
+                with _open(f"{self.pwm_path}/enable", "w") as f:
+                    f.write("0")
+            except Exception as e:
+                _print(f"Failed to write to {self.pwm_path}/enable: {e}")
+
+            if _os.path.exists(f"/sys/class/pwm/pwmchip{self.pwmchip}/unexport"):
+                with _open(f"/sys/class/pwm/pwmchip{self.pwmchip}/unexport", "w") as f:
                     f.write(str(self.pwmchan))
-            os.system(f"/usr/bin/pinctrl set {self.pin} no")
+            _os.system(f"/usr/bin/pinctrl set {self.pin} no")
         except Exception as e:
-            print(f"Cleanup failed: {e}")
+            _print(f"Cleanup failed: {e}")
