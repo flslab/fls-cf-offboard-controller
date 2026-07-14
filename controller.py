@@ -1248,10 +1248,13 @@ class Controller:
             if mission_setting.get("test"):
                 self._safe_sleep(5)
                 self._set_ignore_flowdeck_xy(1)
+                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "flowdeck_xy_disabled"})
                 logger.info("Ignore flowdeck xy")
                 self._safe_sleep(5)
+                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "start_increase_pid"})
                 logger.info("Fading PID values from flowdeck to standard PID values")
                 self._fade_pid_values(self.cfg.PID_VALUES_FLOWDECK, self.cfg.PID_VALUES)
+                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "end_increase_pid"})
                 logger.info("New PID values set")
                 self.animation_start_times[-1] = time.time()
 
@@ -1259,9 +1262,12 @@ class Controller:
 
             if mission_setting.get("test"):
                 self._set_ignore_flowdeck_xy(0)
+                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "flowdeck_xy_enabled"})
                 logger.info("enable flowdeck xy")
+                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "start_decrease_pid"})
                 logger.info("Fading PID values from standard to flowdeck PID values")
                 self._fade_pid_values(self.cfg.PID_VALUES, self.cfg.PID_VALUES_FLOWDECK)
+                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "end_decrease_pid"})
                 logger.info("New PID values set")
 
             if relative_anchor:
