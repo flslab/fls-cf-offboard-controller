@@ -1253,6 +1253,7 @@ class Controller:
                 logger.info("Fading PID values from flowdeck to standard PID values")
                 self._fade_pid_values(self.cfg.PID_VALUES_FLOWDECK, self.cfg.PID_VALUES)
                 logger.info("New PID values set")
+                self.animation_start_times[-1] = time.time()
 
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
 
