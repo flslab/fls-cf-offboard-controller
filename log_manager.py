@@ -128,11 +128,11 @@ class IlluminationLogger(LogManager):
 
     def get_cf_log_data_at_timestamp(self, group_name, target_timestamp, search_range=1.0):
         if group_name not in self.cf_log_data:
-            return None
+            return None, None
             
         times = self.cf_log_times.get(group_name)
         if not times:
-            return None
+            return None, None
             
         group_data = self.cf_log_data[group_name]
         
@@ -157,7 +157,7 @@ class IlluminationLogger(LogManager):
                 smaller_res = (t_smaller, data_at_idx_minus_1)
                 
         if smaller_res is None and larger_res is None:
-            return None
+            return None, None
             
         
         return smaller_res, larger_res

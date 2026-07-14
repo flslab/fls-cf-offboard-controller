@@ -1327,8 +1327,9 @@ class Controller:
             else:
                 raise RuntimeError("Tracker lost frame, cannot initialize EKF relative position after retries.")
 
-        left, forward, up, _, _, _, _ = latest_pose
-        self._set_initial_position(-forward, -left, -up, self.args.init_yaw)
+        drone_pos, _, _ = self.get_latest_relative_pos()
+        x, y, z = drone_pos
+        self._set_initial_position(x, y, z, self.args.init_yaw)
         reset_estimator(self.cf)
         logger.info(f"Initialized EKF relative position")
 
@@ -1392,16 +1393,13 @@ class Controller:
             "ori": rot_w_d.as_rotvec().tolist()
         })
 
-
-    def do_tracker_relative_localization(self, gt_relative_position, config):
+    def get_latest_relative_pos(self):
         latest_pose = self.tracker.get_latest_pose()
         if not latest_pose:
-            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "tracker_lost_frame"})
-            if config["method"] != "ekf":
-                self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
-            return
+            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "tracker_frame_not_found"})
+            return None, None, None
 
-        [smaller_res, larger_res] = self.log_manager.get_cf_log_data_at_timestamp("QUAT", latest_pose[6])
+        smaller_res, larger_res = self.log_manager.get_cf_log_data_at_timestamp("QUAT", latest_pose[6])
         if smaller_res and larger_res:
             quat_data = smaller_res[1] if abs(smaller_res[0] - latest_pose[6]) < abs(larger_res[0] - latest_pose[6]) else larger_res[1]
             qx = quat_data["stateEstimate.qx"]
@@ -1411,9 +1409,7 @@ class Controller:
         
         else:
             self.log_manager.add_log_entry("events", {"time": time.time(), "name": "quat_not_found"})
-            if config["method"] != "ekf":
-                self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
-            return
+            return None, None, None
 
         drone_pos, rot_w_d = imu_callback_quat(
             qx, qy, qz, qw,
@@ -1422,8 +1418,17 @@ class Controller:
             camera_drone_pos=self.args.camera_offset
         )
 
+        return drone_pos, rot_w_d, latest_pose[6]
+
+    def do_tracker_relative_localization(self, gt_relative_position, config):
+        drone_pos, rot_w_d, t = self.get_latest_relative_pos()
+        if drone_pos is None:
+            if config["method"] != "ekf":
+                self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
+            return
+
         self.log_manager.add_log_entry("drone_pos_imu_quat", {
-            "time": latest_pose[6],
+            "time": t,
             "pos": drone_pos.tolist(),
             "ori": rot_w_d.as_rotvec().tolist()
         })
