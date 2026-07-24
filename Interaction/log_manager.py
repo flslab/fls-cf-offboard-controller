@@ -66,7 +66,10 @@ class InteractionLogger(LogManager):
     def add_log_group(self, name, *args, kf=False, **kwargs):
         self.groups[name] = []
         if kf:
-            dt = 1 / self.args.fps
+            # controller.py renamed --fps to --tracker-camera-rate; the follow/test
+            # controllers still pass --fps
+            fps = getattr(self.args, 'fps', None) or getattr(self.args, 'tracker_camera_rate', 100)
+            dt = 1 / fps
             self.group_kfs[name] = {
                 'x': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
                 'y': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
