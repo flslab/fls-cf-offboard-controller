@@ -194,7 +194,7 @@ class InteractionsControl:
                         translation_setting.get('acc_threshold', None)
                     )
                 ),
-                z=translation_setting['z'],
+                z=translation_setting.get('z', None),
                 fric_coe=translation_setting['friction_coefficient'],
                 base_attitude=translation_setting['base_attitude'],
                 duration=translation_setting['duration'],

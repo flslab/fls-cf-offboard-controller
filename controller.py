@@ -434,8 +434,11 @@ class Controller:
 
     def setup_blinker(self):
         if self.args.marker_id >= 0:
-            self._start_blinker_process()
-            logger.debug("blinker activated")
+            try:
+                self._start_blinker_process()
+                logger.debug("blinker activated")
+            except Exception as e:
+                logger.error(f"Failed to start blinker, skipping: {e}")
 
     def setup_sockets(self):
         if not self.args.orchestrated:

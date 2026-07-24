@@ -66,7 +66,10 @@ class InteractionLogger(LogManager):
     def add_log_group(self, name, *args, kf=False, **kwargs):
         self.groups[name] = []
         if kf:
-            dt = 1 / self.args.fps
+            # controller.py renamed --fps to --tracker-camera-rate; the follow/test
+            # controllers still pass --fps
+            fps = getattr(self.args, 'fps', None) or getattr(self.args, 'tracker_camera_rate', 100)
+            dt = 1 / fps
             self.group_kfs[name] = {
                 'x': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
                 'y': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
@@ -100,6 +103,18 @@ class InteractionLogger(LogManager):
             else:
                 latest_values[par] = None
         return latest_values
+
+    def get_latest_cf_log_data(self, group_name, param_name):
+        if self.cf_log_data is None:
+            return None
+        group = self.cf_log_data.get(group_name)
+        if group is None:
+            # interaction config names this group POS_ACC, not VEL_POS
+            group = next((g for g in self.cf_log_data.values() if param_name in g), None)
+        if group is None or param_name not in group:
+            return None
+        data = group[param_name].get("data")
+        return data[-1] if data else None
 
     def _cf_log_group_callback(self, timestamp, data, log_conf):
         cur_time = time.time()
