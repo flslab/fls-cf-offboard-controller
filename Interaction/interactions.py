@@ -1014,8 +1014,9 @@ class InteractionsControl:
                     }
                     self._log_event("User Pushing", log_data)
                     yaw_rate_cmd = max(min(-5.0 * current_yaw, 50.0), -50.0)
-                    self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2])
+                    # self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2])
 
+                    self.lo_commander.send_zdistance_setpoint(0, 0, yaw_rate_cmd, target_pos[2])
             elif status == 2:  # coasting
                 if blender_state is not None:
                     blender_state['status'] = 2
