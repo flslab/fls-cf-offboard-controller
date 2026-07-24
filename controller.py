@@ -311,14 +311,19 @@ class Controller:
             try:
                 with urllib.request.urlopen(url) as response:
                     data = response.read().decode('utf-8')
-                    self.missions.append(yaml.safe_load(data))
+                    _mission = yaml.safe_load(data)
+                    if self.args.drone_id in _mission['drones']:
+                        self.missions.append(_mission)
                 logger.info(f"  > Download successful: {filename}")
 
             except urllib.error.URLError as e:
                 logger.error(f"  > HTTP Error: {e}")
                 raise
-                
-        self.mission = self.missions[0]
+        
+        if len(self.missions) == 0:
+            raise Exception(f"No mission found for drone {self.args.drone_id}")
+        else:
+            self.mission = self.missions[0]
 
     def setup_commander(self):
         log_function = self.log_manager.add_log_entry if self.log_manager else None
