@@ -92,7 +92,7 @@ if __name__ == '__main__':
     args = ap.parse_args()
 
     led = LED(num_pixels=args.n, brightness=args.brightness, color=args.color)
-    led.show_single_color(color=(200, 230, 0))
+    led.show_single_color(color=args.color)
 
     time.sleep(args.t)
     led.stop()
