@@ -88,7 +88,7 @@ if __name__ == '__main__':
     ap.add_argument("-n", type=int, default=50, help="number of LEDs")
     ap.add_argument("-t", type=int, default=5, help="duration of test")
     ap.add_argument("--brightness", type=float, default=1.0, help="LED brightness")
-    ap.add_argument("--color", type=tuple, default=(227, 253, 255), help="LED color")
+    ap.add_argument("--color", type=float, nargs=3, default=(227, 253, 255), help="LED color (R, G, B)")
     args = ap.parse_args()
 
     led = LED(num_pixels=args.n, brightness=args.brightness, color=args.color)
