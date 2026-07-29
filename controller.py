@@ -521,14 +521,14 @@ class Controller:
 
         if self.init_coord and None not in [current_x, current_y, current_z]:
             initial_x, initial_y, _ = self.init_coord
-            dist = ((initial_x - current_x) ** 2 + (initial_y - current_y) ** 2 + current_z ** 2) ** 0.5
+            dist = ((initial_x - current_x) ** 2 + (initial_y - current_y) ** 2) ** 0.5
             dt = 2 * dist + 0.1
 
             self.hl_commander.go_to(initial_x, initial_y, current_z, self.args.init_yaw, dt, relative=False)
             time.sleep(dt + 0.5)
 
         if self.flying:
-            dt = z * 6
+            dt = current_z * 6
             self.hl_commander.land(0.10, dt)
             time.sleep(dt + 1)
             self.hl_commander.stop()
