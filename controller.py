@@ -155,6 +155,7 @@ class Controller:
         self.init_coord = None
         self.mocap_frames = []
         self.use_flowdeck = self.args.check_deck is not None and self.args.check_deck == "bcFlow2"
+        self.send_vicon_to_cf = True
 
         self._safe_sleep: Callable[[float], None]
         if self.args.orchestrated:
@@ -1235,12 +1236,10 @@ class Controller:
                     localization_method = self.do_tracker_relative_localization 
 
                 if relative_anchor["method"] == "ekf":
-                    self._set_ignore_external_z()
-                    # self._set_ignore_flowdeck_xy()
+                    # self._set_ignore_external_z()
                     self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
                     self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
                     self._initialize_ekf_relative_position()
-                    # self._set_pid_values(self.cfg.PID_VALUES)
 
                     self.smooth_controller.register_group(
                         name="anchor_position",
@@ -1248,6 +1247,9 @@ class Controller:
                         callback=lambda vals: localization_method(vals, relative_anchor),
                         always_callback=True
                     )
+
+                    self.send_vicon_to_cf = False
+                    self.log_manager.add_log_entry("events", {"time": time.time(), "name": "sending_tracker_xy_vicon_z"})
                 else:
                     self.smooth_controller.register_group(
                         name="relative_position",
@@ -1257,33 +1259,35 @@ class Controller:
                     )
 
             if mission_setting.get("test"):
-                self._safe_sleep(5)
-                self._set_ignore_flowdeck_xy(1)
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "flowdeck_xy_disabled"})
-                logger.info("Ignore flowdeck xy")
-                self._safe_sleep(5)
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "start_increase_pid"})
-                logger.info("Fading PID values from flowdeck to standard PID values")
-                self._fade_pid_values(self.cfg.PID_VALUES_FLOWDECK, self.cfg.XY_PID_VALUES)
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "end_increase_pid"})
-                logger.info("New PID values set")
+                # self._safe_sleep(5)
+                # self._set_ignore_flowdeck_xy(1)
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "flowdeck_xy_disabled"})
+                # logger.info("Ignore flowdeck xy")
+                # self._safe_sleep(5)
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "start_increase_pid"})
+                # logger.info("Fading PID values from flowdeck to standard PID values")
+                # self._fade_pid_values(self.cfg.PID_VALUES_FLOWDECK, self.cfg.XY_PID_VALUES)
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "end_increase_pid"})
+                # logger.info("New PID values set")
                 self.animation_start_times[-1] = time.time()
 
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
 
             if mission_setting.get("test"):
-                self._set_ignore_flowdeck_xy(0)
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "flowdeck_xy_enabled"})
-                logger.info("enable flowdeck xy")
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "start_decrease_pid"})
-                logger.info("Fading PID values from standard to flowdeck PID values")
-                self._fade_pid_values(self.cfg.XY_PID_VALUES, self.cfg.PID_VALUES_FLOWDECK)
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "end_decrease_pid"})
-                logger.info("New PID values set")
+                self.send_vicon_to_cf = True
+                # self._set_ignore_flowdeck_xy(0)
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "flowdeck_xy_enabled"})
+                # logger.info("enable flowdeck xy")
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "start_decrease_pid"})
+                # logger.info("Fading PID values from standard to flowdeck PID values")
+                # self._fade_pid_values(self.cfg.XY_PID_VALUES, self.cfg.PID_VALUES_FLOWDECK)
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "end_decrease_pid"})
+                # logger.info("New PID values set")
 
             if relative_anchor:
                 if relative_anchor["method"] == "ekf":
                     self.smooth_controller.remove_group("anchor_position")
+                    self.log_manager.add_log_entry("events", {"time": time.time(), "name": "sending_vicon_xyz"})
                 else:
                     self.smooth_controller.remove_group("relative_position")
             self.ll_commander.send_notify_setpoint_stop()
@@ -1422,6 +1426,8 @@ class Controller:
                 self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
             return
         
+        # temp: use vicon z
+        z = self._get_latest_mocap_frame()["tvec"][2]
         # side camera
         # right, down, forward, _, _, _ = latest_pose
         # cx, cy, cz = self.args.camera_offset
@@ -1429,7 +1435,7 @@ class Controller:
         # act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
 
         # downward camera aruco
-        x, y, z = entry["pos"]
+        x, y, _ = entry["pos"]
         act_relative_position = [-x, -y, -z]
 
         # logger.info(f"gt_relative_position: {gt_relative_position}")
@@ -1881,7 +1887,8 @@ class Controller:
         self.cf.extpos.send_extpos(*frame['tvec'])
 
     def _send_position(self, frame):
-        self.cf.extpos.send_extpos(*frame['tvec'])
+        if self.send_vicon_to_cf:
+            self.cf.extpos.send_extpos(*frame['tvec'])
         self._log_mocap(frame)
 
     def _send_position_orientation(self, frame):
