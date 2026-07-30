@@ -260,6 +260,8 @@ class Controller:
             )
             
         if self.tracker_process:
+            self.smooth_controller.remove_update_callback(self.fuse_latest_imu_camera_data)
+
             try:
                 self.tracker_process.send_signal(signal.SIGINT)
                 self.tracker_process.wait(timeout=5)
@@ -430,6 +432,7 @@ class Controller:
             self._start_tracker_process()
             time.sleep(2)
             self.tracker = Tracker(self)
+            self.smooth_controller.add_update_callback(self.fuse_latest_imu_camera_data)
             logger.debug("tracker activated")
 
     def setup_blinker(self):
@@ -1350,8 +1353,8 @@ class Controller:
             else:
                 raise RuntimeError("Tracker lost frame, cannot initialize EKF relative position after retries.")
 
-        drone_pos, _, _ = self.get_latest_relative_pos()
-        x, y, z = drone_pos
+        entry = self._get_latest_relative_pos()
+        x, y, z = entry["pos"]
         self._set_initial_position(x, y, z, self.args.init_yaw)
         reset_estimator(self.cf)
         logger.info(f"Initialized EKF relative position")
@@ -1368,58 +1371,16 @@ class Controller:
         self.mocap.subscribe_point([xiv, yiv, ziv], self._send_position, name=f"{self.args.drone_id}_midflight") 
         logger.info("subscribed mocap external position and logger")
 
-    def marker_imu_fusion(self, timestamp, data, log_conf):
+    def fuse_latest_imu_camera_data(self):
         latest_pose = self.tracker.get_latest_pose()
         if not latest_pose:
-            return
+            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "marker_not_found"})
 
-        quat_x, quat_y, quat_z, quat_w = data["stateEstimate.qx"], data["stateEstimate.qy"], data["stateEstimate.qz"], data["stateEstimate.qw"]
-        camera_pos_world = imu_callback(quat_x, quat_y, quat_z, quat_w, latest_pose[:3])
-
-        self.log_manager.add_log_entry("camera_pos_world", {"time": time.time(), "pos": [camera_pos_world[0], camera_pos_world[1], camera_pos_world[2]]})
-
-    def marker_imu_fusion_quat(self, timestamp, data, log_conf):
-        latest_pose = self.tracker.get_latest_pose()
-        if not latest_pose:
-            return
-
-        quat_x, quat_y, quat_z, quat_w = data["stateEstimate.qx"], data["stateEstimate.qy"], data["stateEstimate.qz"], data["stateEstimate.qw"]
-        drone_pos, rot_w_d = imu_callback_quat(
-            quat_x, quat_y, quat_z, quat_w,
-            latest_pose[:3],
-            marker_world_pos=self.args.marker_offset,
-            camera_drone_pos=self.args.camera_offset
-        )
-
-        self.log_manager.add_log_entry("drone_pos_imu_quat", {
-            "time": time.time(),
-            "pos": drone_pos.tolist(),
-            "ori": rot_w_d.as_rotvec().tolist()
-        })
-
-    def marker_imu_fusion_euler(self, timestamp, data, log_conf):
-        latest_pose = self.tracker.get_latest_pose()
-        if not latest_pose:
-            return
-
-        roll, pitch, yaw = data["stateEstimate.roll"], data["stateEstimate.pitch"], data["stateEstimate.yaw"]
-        drone_pos, rot_w_d = imu_callback_euler(
-            roll, pitch, yaw,
-            latest_pose[:3],
-            marker_world_pos=self.args.marker_offset,
-            camera_drone_pos=self.args.camera_offset
-        )
-
-        self.log_manager.add_log_entry("drone_pos_imu_euler", {
-            "time": time.time(),
-            "pos": drone_pos.tolist(),
-            "ori": rot_w_d.as_rotvec().tolist()
-        })
-
-    def get_latest_relative_pos(self):
-        latest_pose = self.tracker.get_latest_pose()
-        if not latest_pose:
-            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "tracker_frame_not_found"})
+            self.log_manager.add_log_entry("drone_pos_imu_quat", {
+                "time": time.time(),
+                "pos": [],
+                "ori": []
+            })
             return None, None, None
 
         smaller_res, larger_res = self.log_manager.get_cf_log_data_at_timestamp("QUAT", latest_pose[6])
@@ -1432,6 +1393,11 @@ class Controller:
         
         else:
             self.log_manager.add_log_entry("events", {"time": time.time(), "name": "quat_not_found"})
+            self.log_manager.add_log_entry("drone_pos_imu_quat", {
+                "time": latest_pose[6],
+                "pos": [],
+                "ori": []
+            })
             return None, None, None
 
         drone_pos, rot_w_d = imu_callback_quat(
@@ -1441,20 +1407,20 @@ class Controller:
             camera_drone_pos=self.args.camera_offset
         )
 
-        return drone_pos, rot_w_d, latest_pose[6]
-
-    def do_tracker_relative_localization(self, gt_relative_position, config):
-        drone_pos, rot_w_d, t = self.get_latest_relative_pos()
-        if drone_pos is None:
-            if config["method"] != "ekf":
-                self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
-            return
-
         self.log_manager.add_log_entry("drone_pos_imu_quat", {
-            "time": t,
+            "time": latest_pose[6],
             "pos": drone_pos.tolist(),
             "ori": rot_w_d.as_rotvec().tolist()
         })
+
+        return drone_pos, rot_w_d, latest_pose[6]
+
+    def do_tracker_relative_localization(self, gt_relative_position, config):
+        entry = self._get_latest_relative_pos()
+        if len(entry["pos"]) == 0:
+            if config["method"] != "ekf":
+                self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
+            return
         
         # side camera
         # right, down, forward, _, _, _ = latest_pose
@@ -1463,7 +1429,7 @@ class Controller:
         # act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
 
         # downward camera aruco
-        x, y, z = drone_pos
+        x, y, z = entry["pos"]
         act_relative_position = [-x, -y, -z]
 
         # logger.info(f"gt_relative_position: {gt_relative_position}")
@@ -1927,6 +1893,9 @@ class Controller:
 
     def _get_latest_mocap_frame(self, group_name='frames'):
         return self.log_manager.groups[group_name][-1]
+
+    def _get_latest_relative_pos(self):
+        return self.log_manager.groups["drone_pos_imu_quat"][-1]
 
     def _get_latest_angles(self, window_size=5):
 
