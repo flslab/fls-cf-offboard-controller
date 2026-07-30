@@ -1862,11 +1862,18 @@ class Controller:
             params.extend([
                 "--config", "/home/fls/fls-marker-localization/build/camera_config.json",
             ])
-        if self.args.save_tracker:
+        if self.args.save_tracker_video:
             params.extend([
                 "--save-video",
                 "--video-fps", "30",
                 "--video-path", "logs/video.mp4",
+            ])
+        if self.args.save_tracker_images:
+            params.extend([
+                "--save-frames",
+                "--raw-save-frame",
+                "--save-rate", str(self.args.tracker_camera_rate),
+                "--save-frames-path", "logs"
             ])
         if self.args.stream_tracker:
             params.extend(["--stream", "--stream-rate", "10"])
@@ -1978,8 +1985,10 @@ if __name__ == '__main__':
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--track-aruco", help="Track aruco markers", action="store_true", default=False)
-    ap.add_argument("--save-tracker", action="store_true",
+    ap.add_argument("--save-tracker-video", action="store_true",
                     help="save tracker camera video, works with --tracker")
+    ap.add_argument("--save-tracker-images", action="store_true",
+                    help="save tracker camera images, works with --tracker")
     ap.add_argument("--stream-tracker", action="store_true",
                     help="stream tracker camera video, works with --tracker")
     ap.add_argument("--tracker-encoder-rate", type=int, default=50, help="id encoder rate")
