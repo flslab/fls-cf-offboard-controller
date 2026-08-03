@@ -1419,6 +1419,10 @@ class Controller:
             "ori": rot_w_d.as_rotvec().tolist()
         })
 
+        frame = {"tvec": drone_pos.tolist(), "time": time.time()}
+        # logger.info(frame)
+        self._send_position_no_log(frame)
+
         return drone_pos, rot_w_d, latest_pose[6]
 
     def do_tracker_relative_localization(self, gt_relative_position, config):
