@@ -501,7 +501,9 @@ class Controller:
 
         logger.info(f"Taking off to {self.args.takeoff_altitude}m ...")
         self.flying = True
-        t = self.args.takeoff_altitude * 2
+
+        t = self.args.takeoff_altitude / self.mission.get("takeoff_speed", 0.5)
+
         self.hl_commander.takeoff(self.args.takeoff_altitude, t)
         self._safe_sleep(t + 1)
 
