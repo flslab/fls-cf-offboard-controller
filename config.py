@@ -560,7 +560,7 @@ PID_VALUES = {
     'posCtlPid.yKd': '0.0',
     'posCtlPid.zKp': '1.9',
     'posCtlPid.zKi': '2.0',
-    'posCtlPid.zKd': '0.1',
+    'posCtlPid.zKd': '0.05',
     'posCtlPid.thrustMin': '12000',
     'posCtlPid.thrustBase': '28000',
     'velCtlPid.vxKp': '30.0',
