@@ -537,7 +537,7 @@ class Controller:
             # dt = current_z * 6
             takeoff_speed = self.mission.get("takeoff_speed", 0.5)
             dt = self.args.takeoff_altitude / takeoff_speed
-            height = 0.1 if self.vicon or self.use_flowdeck else 0.02
+            height = 0.1 if self.args.vicon or self.use_flowdeck else 0.02
             self.hl_commander.land(height, dt)
             logger.info(f"Landing duration: {dt} seconds")
             time.sleep(dt + 1)
