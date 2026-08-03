@@ -539,7 +539,8 @@ class Controller:
             dt = self.args.takeoff_altitude / takeoff_speed
             height = 0.1 if self.vicon or self.use_flowdeck else 0.02
             self.hl_commander.land(height, dt)
-            time.sleep(max(2, dt + 1))
+            logger.info(f"Landing duration: {dt} seconds")
+            time.sleep(dt + 1)
             self.hl_commander.stop()
             self.flying = False
 
@@ -1690,8 +1691,8 @@ class Controller:
     def _prepare_for_emergency_landing(self):
         self._set_safe_servo_angles()
         time.sleep(0.6)
-        if self.smooth_controller:
-            self.smooth_controller.stop()
+        # if self.smooth_controller:
+        #     self.smooth_controller.stop()
         if self.led:
             self.led.show_single_color((230, 20, 20))
         self.ll_commander.send_notify_setpoint_stop()
