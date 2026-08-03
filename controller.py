@@ -499,11 +499,11 @@ class Controller:
         if self.args.interaction:
             self.log_manager.start()
 
-        logger.info(f"Taking off to {self.args.takeoff_altitude}m ...")
+        takeoff_speed = self.mission.get("takeoff_speed", 0.5)
+        logger.info(f"Taking off to {self.args.takeoff_altitude}m at {takeoff_speed}m/s ...")
         self.flying = True
 
-        t = self.args.takeoff_altitude / self.mission.get("takeoff_speed", 0.5)
-
+        t = self.args.takeoff_altitude / takeoff_speed
         self.hl_commander.takeoff(self.args.takeoff_altitude, t)
         self._safe_sleep(t + 1)
 
