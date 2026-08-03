@@ -534,8 +534,10 @@ class Controller:
             time.sleep(dt + 0.5)
 
         if self.flying:
-            dt = current_z * 6
-            self.hl_commander.land(0.10, dt)
+            # dt = current_z * 6
+            dt = self.args.takeoff_altitude / self.args.takeoff_speed
+            height = 0.1 if self.vicon or self.use_flowdeck else 0.02
+            self.hl_commander.land(height, dt)
             time.sleep(max(2, dt + 1))
             self.hl_commander.stop()
             self.flying = False
@@ -1292,7 +1294,7 @@ class Controller:
                     self.log_manager.add_log_entry("events", {"time": time.time(), "name": "sending_vicon_xyz"})
                 else:
                     self.smooth_controller.remove_group("relative_position")
-            self.ll_commander.send_notify_setpoint_stop()
+                self.ll_commander.send_notify_setpoint_stop()
 
         self.animation_stop_times.append(time.time())
 
