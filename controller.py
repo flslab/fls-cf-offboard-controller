@@ -536,7 +536,7 @@ class Controller:
         if self.flying:
             dt = current_z * 6
             self.hl_commander.land(0.10, dt)
-            time.sleep(dt + 1)
+            time.sleep(max(2, dt + 1))
             self.hl_commander.stop()
             self.flying = False
 
