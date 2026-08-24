@@ -1,6 +1,8 @@
 import time
 import unittest
 
+import numpy as np
+
 from Interaction.interactions import InteractionsControl
 
 
@@ -101,6 +103,31 @@ class FakeOnboardLogManager:
 
 
 class WrenchInteractionLoopTests(unittest.TestCase):
+    def test_yaw_only_chirp_keeps_position_fixed_and_ramps_to_nominal(self):
+        controller = InteractionsControl.__new__(InteractionsControl)
+        controller.bounds = None
+        config = {
+            'duration_s': 24.0,
+            'translation_amplitude_m': [0.0, 0.0, 0.0],
+            'translation_frequency_hz': [0.2, 0.27, 0.33],
+            'yaw_amplitude_deg': 12.0,
+            'yaw_profile': 'chirp',
+            'yaw_chirp_start_hz': 0.08,
+            'yaw_chirp_end_hz': 0.45,
+            'yaw_ramp_s': 2.0,
+        }
+        yaws = []
+        for elapsed_s in np.linspace(0.0, 24.0, 241):
+            position, yaw = controller._calibration_excitation_reference(
+                [0.0, 0.0, 1.0], 5.0, config, elapsed_s,
+            )
+            np.testing.assert_allclose(position, [0.0, 0.0, 1.0])
+            self.assertLessEqual(abs(yaw - 5.0), 12.0 + 1e-9)
+            yaws.append(yaw)
+        self.assertAlmostEqual(yaws[0], 5.0)
+        self.assertAlmostEqual(yaws[-1], 5.0)
+        self.assertGreater(max(yaws) - min(yaws), 20.0)
+
     def test_shadow_loop_uses_full_pose_and_never_applies_proposed_response(self):
         base_time = time.time()
         logs = FakeLogManager(base_time)

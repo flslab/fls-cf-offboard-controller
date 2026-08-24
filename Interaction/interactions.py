@@ -262,6 +262,63 @@ class InteractionsControl:
             [self.bounds['x_max'], self.bounds['y_max'], self.bounds['z_max']],
         )
 
+    def _calibration_excitation_reference(
+            self, nominal_position, nominal_yaw_deg, config, elapsed_s,
+    ):
+        """Return a bounded contact-free XYZ/yaw identification reference."""
+        amplitudes = np.asarray(config['translation_amplitude_m'], dtype=float)
+        frequencies = np.asarray(config['translation_frequency_hz'], dtype=float)
+        if amplitudes.shape != (3,) or frequencies.shape != (3,):
+            raise ValueError(
+                'calibration_excitation translation amplitude/frequency '
+                'must each contain X, Y, and Z'
+            )
+        elapsed_s = float(elapsed_s)
+        duration_s = float(config['duration_s'])
+        if duration_s <= 0.0:
+            raise ValueError('calibration_excitation duration_s must be positive')
+        position = self._bounded_wrench_reference(
+            np.asarray(nominal_position, dtype=float)
+            + amplitudes * np.sin(2.0 * np.pi * frequencies * elapsed_s)
+        )
+
+        yaw_amplitude_deg = float(config['yaw_amplitude_deg'])
+        yaw_profile = config.get('yaw_profile', 'sine')
+        if yaw_profile == 'sine':
+            phase = 2.0 * np.pi * float(config['yaw_frequency_hz']) * elapsed_s
+            envelope = 1.0
+        elif yaw_profile == 'chirp':
+            start_hz = float(config['yaw_chirp_start_hz'])
+            end_hz = float(config['yaw_chirp_end_hz'])
+            if start_hz <= 0.0 or end_hz <= 0.0:
+                raise ValueError('yaw chirp frequencies must be positive')
+            sweep_rate = (end_hz - start_hz) / duration_s
+            phase = 2.0 * np.pi * (
+                start_hz * elapsed_s + 0.5 * sweep_rate * elapsed_s ** 2
+            )
+            ramp_s = min(
+                max(float(config.get('yaw_ramp_s', 1.0)), 0.0),
+                duration_s / 2.0,
+            )
+            if ramp_s > 0.0:
+                ramp_in = 0.5 * (1.0 - np.cos(
+                    np.pi * min(elapsed_s / ramp_s, 1.0)
+                ))
+                remaining_s = max(duration_s - elapsed_s, 0.0)
+                ramp_out = 0.5 * (1.0 - np.cos(
+                    np.pi * min(remaining_s / ramp_s, 1.0)
+                ))
+                envelope = min(ramp_in, ramp_out)
+            else:
+                envelope = 1.0
+        else:
+            raise ValueError(f'Unsupported yaw excitation profile: {yaw_profile}')
+        yaw_deg = (
+            float(nominal_yaw_deg)
+            + yaw_amplitude_deg * envelope * np.sin(phase)
+        )
+        return position, yaw_deg
+
     def interaction_wrench_admittance(
             self,
             duration,
@@ -459,27 +516,11 @@ class InteractionsControl:
                 excitation_duration = float(excitation_config['duration_s'])
                 if 0.0 <= excitation_time < excitation_duration:
                     excitation_active = True
-                    amplitudes = np.asarray(
-                        excitation_config['translation_amplitude_m'], dtype=float
-                    )
-                    frequencies = np.asarray(
-                        excitation_config['translation_frequency_hz'], dtype=float
-                    )
-                    if amplitudes.shape != (3,) or frequencies.shape != (3,):
-                        raise ValueError(
-                            'calibration_excitation translation amplitude/frequency '
-                            'must each contain X, Y, and Z'
+                    baseline_position, baseline_yaw = (
+                        self._calibration_excitation_reference(
+                            nominal_position, nominal_yaw_deg,
+                            excitation_config, excitation_time,
                         )
-                    baseline_position = self._bounded_wrench_reference(
-                        nominal_position
-                        + amplitudes * np.sin(2.0 * np.pi * frequencies * excitation_time)
-                    )
-                    baseline_yaw = nominal_yaw_deg + float(
-                        excitation_config['yaw_amplitude_deg']
-                    ) * np.sin(
-                        2.0 * np.pi
-                        * float(excitation_config['yaw_frequency_hz'])
-                        * excitation_time
                     )
                     if not excitation_started:
                         excitation_started = True
@@ -843,29 +884,11 @@ class InteractionsControl:
                 excitation_duration = float(excitation_config['duration_s'])
                 if 0.0 <= excitation_time < excitation_duration:
                     excitation_active = True
-                    amplitudes = np.asarray(
-                        excitation_config['translation_amplitude_m'], dtype=float
-                    )
-                    frequencies = np.asarray(
-                        excitation_config['translation_frequency_hz'], dtype=float
-                    )
-                    if amplitudes.shape != (3,) or frequencies.shape != (3,):
-                        raise ValueError(
-                            'calibration_excitation translation amplitude/frequency '
-                            'must each contain X, Y, and Z'
+                    baseline_position, baseline_yaw = (
+                        self._calibration_excitation_reference(
+                            nominal_position, nominal_yaw_deg,
+                            excitation_config, excitation_time,
                         )
-                    baseline_position = self._bounded_wrench_reference(
-                        nominal_position
-                        + amplitudes * np.sin(
-                            2.0 * np.pi * frequencies * excitation_time
-                        )
-                    )
-                    baseline_yaw = nominal_yaw_deg + float(
-                        excitation_config['yaw_amplitude_deg']
-                    ) * np.sin(
-                        2.0 * np.pi
-                        * float(excitation_config['yaw_frequency_hz'])
-                        * excitation_time
                     )
                     if not excitation_started:
                         excitation_started = True
