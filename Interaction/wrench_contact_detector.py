@@ -101,16 +101,14 @@ class ContactChannelDetector:
 class WrenchContactState:
     translation: ContactDecision
     yaw: ContactDecision
-    roll_pitch: ContactDecision
 
 
 class WrenchContactDetector:
     """Separate translational, yaw, and diagnostic roll/pitch channels."""
 
-    def __init__(self, translation: dict, yaw: dict, roll_pitch: dict):
+    def __init__(self, translation: dict, yaw: dict):
         self.translation = ContactChannelDetector(**translation)
         self.yaw = ContactChannelDetector(**yaw)
-        self.roll_pitch = ContactChannelDetector(**roll_pitch)
 
     def update(self, estimate, timestamp: float | None = None) -> WrenchContactState:
         timestamp = estimate.timestamp if timestamp is None else timestamp
@@ -120,8 +118,5 @@ class WrenchContactDetector:
             ),
             yaw=self.yaw.update(
                 estimate.external_torque[2:3], estimate.torque_covariance[2:3, 2:3], timestamp
-            ),
-            roll_pitch=self.roll_pitch.update(
-                estimate.external_torque[:2], estimate.torque_covariance[:2, :2], timestamp
             ),
         )

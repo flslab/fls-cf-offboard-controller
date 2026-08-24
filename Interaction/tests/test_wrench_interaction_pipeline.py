@@ -4,7 +4,7 @@ import numpy as np
 
 from Interaction.admittance_controller import AdmittanceController3DYaw
 from Interaction.external_wrench_observer import WrenchEstimate
-from Interaction.wrench_contact_detector import ContactChannelDetector, WrenchContactDetector
+from Interaction.wrench_contact_detector import ContactChannelDetector
 from Interaction.wrench_contact_detector import ContactDecision, WrenchContactState
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
 
@@ -33,36 +33,6 @@ class ContactDetectorTests(unittest.TestCase):
         for index in range(12, 20):
             ended |= detector.update([0, 0, 0], covariance, index * 0.01).ended
         self.assertTrue(ended)
-
-    def test_roll_pitch_is_independent_and_diagnostic(self):
-        common = dict(
-            covariance_floor=[1e-4], component_thresholds=[1e-3],
-            confidence_sigma=1.0, onset_evidence_s=0.01,
-        )
-        detector = WrenchContactDetector(
-            translation=dict(component_thresholds=[0.1] * 3, covariance_floor=[0.01] * 3),
-            yaw=common,
-            roll_pitch=dict(
-                component_thresholds=[1e-3, 1e-3], covariance_floor=[1e-4, 1e-4],
-                confidence_sigma=1.0, onset_evidence_s=0.01,
-            ),
-        )
-        estimate = WrenchEstimate(
-            timestamp=0.0,
-            position=np.zeros(3), velocity=np.zeros(3),
-            orientation_rpy=np.zeros(3), angular_velocity=np.zeros(3),
-            external_force=np.zeros(3), external_torque=np.array([0.01, 0, 0]),
-            force_covariance=np.eye(3) * 1e-5,
-            torque_covariance=np.eye(3) * 1e-8,
-            position_innovation=np.zeros(3), orientation_innovation=np.zeros(3),
-            position_nis=0, orientation_nis=0, measurement_rejected=False,
-        )
-        detector.update(estimate)
-        state = detector.update(WrenchEstimate(**{**estimate.__dict__, "timestamp": 0.02}))
-        self.assertTrue(state.roll_pitch.active)
-        self.assertFalse(state.translation.active)
-        self.assertFalse(state.yaw.active)
-
 
 class AdmittanceTests(unittest.TestCase):
     def make_controller(self):
@@ -119,23 +89,10 @@ class PipelineRoutingTests(unittest.TestCase):
             position_nis=0, orientation_nis=0, measurement_rejected=False,
         )
 
-    def test_roll_pitch_detection_never_routes_to_response(self):
-        contacts = WrenchContactState(
-            translation=self.decision(False),
-            yaw=self.decision(False),
-            roll_pitch=self.decision(True),
-        )
-        force, yaw_torque = WrenchInteractionPipeline._response_inputs(
-            self.estimate(), contacts
-        )
-        np.testing.assert_array_equal(force, np.zeros(3))
-        self.assertEqual(yaw_torque, 0.0)
-
     def test_only_xyz_force_and_yaw_torque_route_to_response(self):
         contacts = WrenchContactState(
             translation=self.decision(True),
             yaw=self.decision(True),
-            roll_pitch=self.decision(True),
         )
         force, yaw_torque = WrenchInteractionPipeline._response_inputs(
             self.estimate(), contacts
@@ -146,6 +103,12 @@ class PipelineRoutingTests(unittest.TestCase):
     def test_active_mode_requires_identified_angular_motor_model(self):
         with self.assertRaisesRegex(ValueError, 'angular_accel_scale'):
             WrenchInteractionPipeline({'shadow_mode': False})
+
+    def test_active_mode_only_requires_yaw_angular_model(self):
+        WrenchInteractionPipeline({
+            'shadow_mode': False,
+            'motor_model': {'angular_accel_scale': [0.0, 0.0, 1.0]},
+        })
 
     def test_bias_calibration_completes_before_contact_detection(self):
         pipeline = WrenchInteractionPipeline({

@@ -68,14 +68,6 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
             "release_time_s": 0.15,
             "release_ratio": 0.55,
         },
-        "roll_pitch": {
-            "component_thresholds": [0.0010, 0.0010],
-            "covariance_floor": [0.00015, 0.00015],
-            "confidence_sigma": 2.5,
-            "onset_evidence_s": 0.05,
-            "release_time_s": 0.15,
-            "release_ratio": 0.55,
-        },
     },
     "admittance": {
         "translation_mass": [0.30, 0.30, 0.45],
@@ -133,8 +125,7 @@ class WrenchInteractionPipeline:
     """Stateful model-based interaction pipeline.
 
     Translation force can drive X/Y/Z admittance and yaw torque can drive yaw
-    admittance. Roll/pitch torque is deliberately absent from `_response_inputs`:
-    it is detected and returned for diagnostics, but cannot produce a command.
+    admittance. Roll and pitch remain state inputs but are not contact channels.
     """
 
     def __init__(self, config: dict | None = None):
@@ -148,7 +139,12 @@ class WrenchInteractionPipeline:
             **observer_config,
         )
         self.motor_model = MotorWrenchModel(**self.config["motor_model"])
-        self.detector = WrenchContactDetector(**self.config["detection"])
+        # Select the supported channels explicitly so an older mission file
+        # containing the removed roll_pitch block remains launch-compatible.
+        self.detector = WrenchContactDetector(
+            translation=self.config["detection"]["translation"],
+            yaw=self.config["detection"]["yaw"],
+        )
         self.admittance = AdmittanceController3DYaw(**self.config["admittance"])
 
         self._settle_s = float(self.config["observer_settle_s"])
@@ -176,13 +172,14 @@ class WrenchInteractionPipeline:
             not self.shadow_mode
             and safety["require_calibrated_angular_model_when_active"]
             and (
-                not np.all(np.isfinite(angular_scale))
-                or np.any(np.isclose(angular_scale, 0.0))
+                angular_scale.shape != (3,)
+                or not np.isfinite(angular_scale[2])
+                or np.isclose(angular_scale[2], 0.0)
             )
         ):
             raise ValueError(
-                "active wrench interaction requires three non-zero calibrated "
-                "motor_model.angular_accel_scale values; run shadow_mode first"
+                "active yaw interaction requires a non-zero calibrated "
+                "motor_model.angular_accel_scale yaw value; run shadow_mode first"
             )
 
     @property
@@ -223,7 +220,6 @@ class WrenchInteractionPipeline:
     ) -> tuple[np.ndarray, float]:
         force = estimate.external_force if contacts.translation.active else np.zeros(3)
         yaw_torque = float(estimate.external_torque[2]) if contacts.yaw.active else 0.0
-        # contacts.roll_pitch is intentionally detect/log only.
         return force, yaw_torque
 
     def update(

@@ -300,7 +300,6 @@ class InteractionsControl:
                 'pipeline': 'external_wrench_admittance_pid',
                 'translation_response_axes': ['x', 'y', 'z'],
                 'rotation_response_axes': ['yaw'],
-                'rotation_detect_only_axes': ['roll', 'pitch'],
                 'nominal_position': nominal_position.tolist(),
                 'nominal_yaw_deg': nominal_yaw_deg,
                 'config': config,
@@ -438,7 +437,6 @@ class InteractionsControl:
                 transitions = (
                     ('Translation Contact', contacts.translation),
                     ('Yaw Contact', contacts.yaw),
-                    ('Roll Pitch Torque Detect Only', contacts.roll_pitch),
                 )
                 for event_name, decision in transitions:
                     if decision.started or decision.ended:
@@ -448,7 +446,7 @@ class InteractionsControl:
                                 'force_N': output.estimate.external_force.tolist(),
                                 'torque_Nm': output.estimate.external_torque.tolist(),
                                 'confidence_sigma': decision.confidence_sigma,
-                                'response_enabled': event_name != 'Roll Pitch Torque Detect Only',
+                                'response_enabled': True,
                             },
                         )
 
@@ -546,9 +544,6 @@ class InteractionsControl:
                     contacts.translation if contacts else None
                 ),
                 'yaw_contact': self._contact_log(contacts.yaw if contacts else None),
-                'roll_pitch_detect_only': self._contact_log(
-                    contacts.roll_pitch if contacts else None
-                ),
                 'translation_offset_m': output.admittance.translation_offset.tolist(),
                 'translation_reference_velocity_m_s': output.admittance.translation_velocity.tolist(),
                 'yaw_offset_rad': output.admittance.yaw_offset,
@@ -674,7 +669,6 @@ class InteractionsControl:
                 'state_source': 'crazyflie_state_estimate',
                 'translation_response_axes': ['x', 'y', 'z'],
                 'rotation_response_axes': ['yaw'],
-                'rotation_detect_only_axes': ['roll', 'pitch'],
                 'nominal_position': nominal_position.tolist(),
                 'nominal_yaw_deg': nominal_yaw_deg,
                 'config': config,
@@ -824,7 +818,6 @@ class InteractionsControl:
                 transitions = (
                     ('Translation Contact', contacts.translation),
                     ('Yaw Contact', contacts.yaw),
-                    ('Roll Pitch Torque Detect Only', contacts.roll_pitch),
                 )
                 for event_name, decision in transitions:
                     if decision.started or decision.ended:
@@ -834,7 +827,7 @@ class InteractionsControl:
                                 'force_N': output.estimate.external_force.tolist(),
                                 'torque_Nm': output.estimate.external_torque.tolist(),
                                 'confidence_sigma': decision.confidence_sigma,
-                                'response_enabled': event_name != 'Roll Pitch Torque Detect Only',
+                                'response_enabled': True,
                                 'state_source': 'crazyflie_state_estimate',
                             },
                         )
@@ -945,9 +938,6 @@ class InteractionsControl:
                 ),
                 'yaw_contact': self._contact_log(
                     contacts.yaw if contacts else None
-                ),
-                'roll_pitch_detect_only': self._contact_log(
-                    contacts.roll_pitch if contacts else None
                 ),
                 'translation_offset_m': output.admittance.translation_offset.tolist(),
                 'translation_reference_velocity_m_s': output.admittance.translation_velocity.tolist(),

@@ -154,7 +154,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertIn('Wrench Calibration Complete', names)
         observer_rows = [entry for group, _name, entry in logs.records if group == 'wrench_observer']
         self.assertTrue(observer_rows[-1]['shadow_mode'])
-        self.assertIn('roll_pitch_detect_only', observer_rows[-1])
+        self.assertNotIn('roll_pitch_detect_only', observer_rows[-1])
 
     def test_onboard_shadow_loop_does_not_require_full_pose_mocap(self):
         logs = FakeOnboardLogManager(time.time())
