@@ -213,6 +213,8 @@ class Controller:
             self.setup_led()
             self.setup_servo()
             self.setup_battery_watcher()
+            if self.args.interaction:
+                self.verify_onboard_wrench_logging()
             self.setup_tracker()
             if self.led:
                 self.led.show_single_color(color=(230, 180, 0))
@@ -607,7 +609,12 @@ class Controller:
             self.log_manager = InteractionLogger(controller_args=self.args)
             if not self.args.droneless:
                 self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
-            self.log_manager.add_log_group("frames", kf=True)
+            # Legacy interactions still receive Vicon-derived velocity.  The
+            # onboard wrench path consumes stateEstimate velocity directly and
+            # must not run a redundant external position Kalman filter.
+            self.log_manager.add_log_group(
+                "frames", kf=not self._uses_onboard_wrench_state()
+            )
             self.log_manager.add_log_group("events")
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("configs")
@@ -619,6 +626,63 @@ class Controller:
             raise Exception("No mode is passed. Passing either --illumination or --interaction is required.")
 
         logger.debug("logging activated")
+
+    def _uses_onboard_wrench_state(self):
+        if not self.args.interaction:
+            return False
+        wrench_config = (
+            (self.mission or {}).get('Interaction', {})
+            .get('config', {})
+            .get('wrench_interaction')
+        )
+        return (
+            wrench_config is not None
+            and wrench_config.get('state_source') == 'onboard'
+        )
+
+    def verify_onboard_wrench_logging(self):
+        """Fail before arming if required onboard-state logs are unavailable."""
+        if not self._uses_onboard_wrench_state():
+            return
+        required = {
+            'VEL_ORI': (
+                'stateEstimate.vx', 'stateEstimate.vy', 'stateEstimate.vz',
+                'stateEstimate.roll', 'stateEstimate.pitch', 'stateEstimate.yaw',
+            ),
+            'POS_ACC': (
+                'stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
+            ),
+            'RATE_EST': (
+                'stateEstimateZ.rateRoll',
+                'stateEstimateZ.ratePitch',
+                'stateEstimateZ.rateYaw',
+            ),
+            'MOT_BAT': (
+                'motor.m1', 'motor.m2', 'motor.m3', 'motor.m4', 'pm.vbat',
+            ),
+        }
+        logger.info('Verifying onboard interaction state logs...')
+        deadline = time.monotonic() + 5.0
+        missing = []
+        while time.monotonic() < deadline:
+            missing = []
+            for group_name, variable_names in required.items():
+                try:
+                    values = self.log_manager.get_latest_group_log_data(group_name)
+                except (KeyError, TypeError):
+                    values = {}
+                for variable_name in variable_names:
+                    value = values.get(variable_name)
+                    if not isinstance(value, (int, float)) or not np.isfinite(value):
+                        missing.append(f'{group_name}.{variable_name}')
+            if not missing:
+                logger.info('Onboard interaction state logs are ready')
+                return
+            time.sleep(0.05)
+        raise RuntimeError(
+            'Required onboard interaction logs did not start: '
+            + ', '.join(missing)
+        )
 
     def setup_battery_watcher(self):
         self.bat_logger = LogConfig(name='Battery', period_in_ms=1000)

@@ -469,6 +469,31 @@ VEL_ORI = {
 }
 
 
+# Compressed onboard angular-rate estimate. Values are milliradians/second in
+# the Crazyflie firmware and are converted to radians/second by the onboard
+# interaction path.
+RATE_EST = {
+    "stateEstimateZ.rateRoll": {
+        "type": "int16_t",
+        "unit": "mrad/s",
+        "scale": 0.001,
+        "data": [],
+    },
+    "stateEstimateZ.ratePitch": {
+        "type": "int16_t",
+        "unit": "mrad/s",
+        "scale": 0.001,
+        "data": [],
+    },
+    "stateEstimateZ.rateYaw": {
+        "type": "int16_t",
+        "unit": "mrad/s",
+        "scale": 0.001,
+        "data": [],
+    },
+}
+
+
 # Controller loop stage 1: Position → Velocity output, Velocity → Attitude output
 POS_VEL_CTL = {
     "posCtl.targetVX": {
@@ -639,7 +664,15 @@ CTL_I_D = {
 
 # LOG_VARS = {'POS_ORI': POS_ORI, 'VEL_ACC': VEL_ACC, 'MOT_BAT': MOT_BAT}
 # LOG_VARS = {'POS_VEL': POS_VEL}
-LOG_VARS = {'VEL_ORI': VEL_ORI, 'POS_ACC': POS_ACC, 'MOT_BAT': MOT_BAT, 'POS_CTL_I_D': CTL_I_D, 'POS_VEL_CTL': POS_VEL_CTL, 'ATT_RATE_CTL': ATT_RATE_CTL}
+LOG_VARS = {
+    'VEL_ORI': VEL_ORI,
+    'POS_ACC': POS_ACC,
+    'RATE_EST': RATE_EST,
+    'MOT_BAT': MOT_BAT,
+    'POS_CTL_I_D': CTL_I_D,
+    'POS_VEL_CTL': POS_VEL_CTL,
+    'ATT_RATE_CTL': ATT_RATE_CTL,
+}
 # PID Configurations
 PID_VALUES_PROP_2_NO_I = {
     # 'quadSysId.armLength': '0.053',

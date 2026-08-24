@@ -9,6 +9,7 @@ import zmq
 
 from Interaction.command_wrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
+from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
 
 # from Interaction.collision_avoidance.simulation import apf_velocity
@@ -193,7 +194,12 @@ class InteractionsControl:
             if wrench_config is not None:
                 target = self.mission['drones'][self.drone_id]['target']
                 nominal_yaw = target[3] if len(target) > 3 else wrench_config.get('nominal_yaw_deg', 0.0)
-                self.interaction_wrench_admittance(
+                interaction_function = (
+                    self.interaction_onboard_wrench_admittance
+                    if wrench_config.get('state_source', 'mocap') == 'onboard'
+                    else self.interaction_wrench_admittance
+                )
+                interaction_function(
                     duration=translation_setting['duration'],
                     nominal_position=target[:3],
                     nominal_yaw_deg=nominal_yaw,
@@ -559,6 +565,408 @@ class InteractionsControl:
             self._safe_sleep(dt)
 
         self._log_event('Wrench Interaction Complete')
+
+    def _get_synchronized_onboard_wrench_state(self):
+        """Return time-aligned Crazyflie state-estimate and actuator packets."""
+        state_time = self.log_manager.get_latest_group_log_time('VEL_ORI')
+        if state_time is None:
+            return None
+
+        velocity_attitude, _ = self.log_manager.get_nearest_group_log_data(
+            'VEL_ORI', state_time
+        )
+        position_acceleration, position_skew = (
+            self.log_manager.get_nearest_group_log_data('POS_ACC', state_time)
+        )
+        angular_rate, angular_rate_skew = self.log_manager.get_nearest_group_log_data(
+            'RATE_EST', state_time
+        )
+        motor_state, motor_skew = self.log_manager.get_nearest_group_log_data(
+            'MOT_BAT', state_time
+        )
+        if not all((velocity_attitude, position_acceleration, angular_rate, motor_state)):
+            return None
+
+        try:
+            position = np.asarray([
+                position_acceleration['stateEstimate.x'],
+                position_acceleration['stateEstimate.y'],
+                position_acceleration['stateEstimate.z'],
+            ], dtype=float)
+            velocity = np.asarray([
+                velocity_attitude['stateEstimate.vx'],
+                velocity_attitude['stateEstimate.vy'],
+                velocity_attitude['stateEstimate.vz'],
+            ], dtype=float)
+            attitude_rpy = np.radians(np.asarray([
+                velocity_attitude['stateEstimate.roll'],
+                velocity_attitude['stateEstimate.pitch'],
+                velocity_attitude['stateEstimate.yaw'],
+            ], dtype=float))
+            # stateEstimateZ angular rates are compressed milliradians/second.
+            angular_velocity = 0.001 * np.asarray([
+                angular_rate['stateEstimateZ.rateRoll'],
+                angular_rate['stateEstimateZ.ratePitch'],
+                angular_rate['stateEstimateZ.rateYaw'],
+            ], dtype=float)
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not all(np.all(np.isfinite(value)) for value in (
+            position, velocity, attitude_rpy, angular_velocity
+        )):
+            return None
+
+        return {
+            'time': float(state_time),
+            'position': position,
+            'velocity': velocity,
+            'attitude_rpy': attitude_rpy,
+            'angular_velocity': angular_velocity,
+            'position_skew_s': position_skew,
+            'angular_rate_skew_s': angular_rate_skew,
+            'motor_skew_s': motor_skew,
+            'motor_state': motor_state,
+        }
+
+    def interaction_onboard_wrench_admittance(
+            self,
+            duration,
+            nominal_position,
+            nominal_yaw_deg=0.0,
+            config=None,
+    ):
+        """Run wrench interaction from synchronized onboard state estimates.
+
+        This is intentionally separate from ``interaction_wrench_admittance``.
+        The original full-pose mocap/Kalman observer path remains available by
+        selecting ``state_source: mocap``.
+        """
+        pipeline = OnboardMomentumWrenchPipeline(config)
+        config = pipeline.config
+        safety = config['safety']
+        dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
+        duration = float(duration)
+        nominal_position = np.asarray(nominal_position, dtype=float)
+        if nominal_position.shape != (3,):
+            raise ValueError('nominal_position must contain X, Y, and Z')
+        nominal_position = self._bounded_wrench_reference(nominal_position)
+        nominal_yaw_deg = float(nominal_yaw_deg)
+
+        max_state_age_s = float(safety.get(
+            'max_state_age_s', safety['max_frame_age_s']
+        ))
+        max_state_group_skew_s = float(safety.get(
+            'max_state_group_skew_s', safety['max_motor_pose_skew_s']
+        ))
+        max_motor_state_skew_s = float(safety.get(
+            'max_motor_state_skew_s', safety['max_motor_pose_skew_s']
+        ))
+
+        if config.get('shadow_mode', True):
+            logger.warning(
+                'Onboard wrench interaction is in shadow mode: contacts and '
+                'proposed responses are logged, but the reference remains fixed.'
+            )
+        self.log_manager.add_log_entry(
+            'configs',
+            {
+                'pipeline': 'onboard_momentum_wrench_admittance_pid',
+                'state_source': 'crazyflie_state_estimate',
+                'translation_response_axes': ['x', 'y', 'z'],
+                'rotation_response_axes': ['yaw'],
+                'rotation_detect_only_axes': ['roll', 'pitch'],
+                'nominal_position': nominal_position.tolist(),
+                'nominal_yaw_deg': nominal_yaw_deg,
+                'config': config,
+            },
+            name='Onboard Wrench Interaction Config',
+        )
+
+        self.hl_commander.go_to(
+            nominal_position[0], nominal_position[1], nominal_position[2],
+            nominal_yaw_deg, 2.0, relative=False,
+        )
+        self._safe_sleep(2.0)
+
+        startup_deadline = time.time() + float(safety['startup_timeout_s'])
+        while True:
+            state = self._get_synchronized_onboard_wrench_state()
+            now = time.time()
+            if state is not None:
+                state_age = now - state['time']
+                state_skew = max(
+                    float(state['position_skew_s']),
+                    float(state['angular_rate_skew_s']),
+                )
+                if (
+                    -0.5 <= state_age <= max_state_age_s
+                    and state_skew <= max_state_group_skew_s
+                ):
+                    break
+            if now >= startup_deadline:
+                raise StaleLocalizationError(
+                    'No fresh synchronized onboard state received from '
+                    'VEL_ORI, POS_ACC, RATE_EST, and MOT_BAT'
+                )
+            self.lo_commander.send_position_setpoint(
+                *nominal_position, nominal_yaw_deg
+            )
+            self._safe_sleep(dt)
+
+        self._log_event('Wrench Calibration Started', {
+            'instruction': 'Do not touch the drone until calibration completes.',
+            'shadow_mode': pipeline.shadow_mode,
+            'state_source': 'crazyflie_state_estimate',
+        })
+        logger.info('Calibrating onboard momentum observer; do not touch the drone.')
+
+        last_state_time = None
+        interaction_start = None
+        calibration_announced = False
+        last_command_position = nominal_position.copy()
+        last_command_yaw = nominal_yaw_deg
+        excitation_config = config['calibration_excitation']
+        excitation_started = False
+        excitation_finished = False
+
+        while interaction_start is None or time.time() - interaction_start < duration:
+            now = time.time()
+            state = self._get_synchronized_onboard_wrench_state()
+            if state is None:
+                raise StaleLocalizationError('Onboard state packet set is incomplete')
+            state_time = state['time']
+            state_age = now - state_time
+            if state_age < -0.5 or state_age > max_state_age_s:
+                raise StaleLocalizationError(
+                    f'Onboard state is {state_age:.3f}s old '
+                    f'(limit {max_state_age_s:.3f}s)'
+                )
+            state_group_skew = max(
+                float(state['position_skew_s']),
+                float(state['angular_rate_skew_s']),
+            )
+            if state_group_skew > max_state_group_skew_s:
+                raise StaleLocalizationError(
+                    f'Onboard state-group skew is {state_group_skew:.3f}s '
+                    f'(limit {max_state_group_skew_s:.3f}s)'
+                )
+            if state_time == last_state_time:
+                self.lo_commander.send_position_setpoint(
+                    *last_command_position, last_command_yaw
+                )
+                self._safe_sleep(dt)
+                continue
+            last_state_time = state_time
+
+            position = state['position']
+            self.check_interaction_boundary(position)
+            motor_state = state['motor_state']
+            motor_pwm = [motor_state.get(f'motor.m{i}') for i in range(1, 5)]
+            if not OnboardMomentumWrenchPipeline.motor_data_available(motor_pwm):
+                motor_pwm = None
+            battery_voltage = motor_state.get('pm.vbat')
+            battery_available = (
+                isinstance(battery_voltage, (int, float))
+                and np.isfinite(battery_voltage)
+                and battery_voltage > 0
+            )
+            if not battery_available:
+                battery_voltage = None
+            motor_log_time = motor_state.get('time')
+            motor_age = None if motor_log_time is None else now - motor_log_time
+            motor_is_stale = (
+                motor_age is None
+                or motor_age < -0.5
+                or motor_age > float(safety['max_motor_age_s'])
+            )
+            motor_is_unsynchronized = (
+                state['motor_skew_s'] is None
+                or state['motor_skew_s'] > max_motor_state_skew_s
+            )
+            if safety['require_motor_data'] and (
+                motor_pwm is None
+                or battery_voltage is None
+                or motor_is_stale
+                or motor_is_unsynchronized
+            ):
+                raise RuntimeError(
+                    'Fresh, state-synchronized motor PWM and battery data are '
+                    'required for onboard wrench estimation'
+                )
+
+            output = pipeline.update(
+                position=position,
+                velocity=state['velocity'],
+                attitude_rpy=state['attitude_rpy'],
+                angular_velocity=state['angular_velocity'],
+                motor_pwm=motor_pwm,
+                battery_voltage=battery_voltage,
+                timestamp=state_time,
+            )
+
+            if output.calibrated and not calibration_announced:
+                calibration_announced = True
+                interaction_start = time.time()
+                self._log_event('Wrench Calibration Complete', {
+                    'samples': output.calibration_samples,
+                    'force_bias_N': pipeline.force_bias.tolist(),
+                    'torque_bias_Nm': pipeline.torque_bias.tolist(),
+                    'state_source': 'crazyflie_state_estimate',
+                })
+                self._log_event('Waiting For User Interaction')
+                logger.info(
+                    'Onboard momentum calibration complete; interaction '
+                    'detection is active.'
+                )
+
+            contacts = output.contacts
+            if contacts is not None:
+                transitions = (
+                    ('Translation Contact', contacts.translation),
+                    ('Yaw Contact', contacts.yaw),
+                    ('Roll Pitch Torque Detect Only', contacts.roll_pitch),
+                )
+                for event_name, decision in transitions:
+                    if decision.started or decision.ended:
+                        self._log_event(
+                            f"{event_name} {'Start' if decision.started else 'End'}",
+                            {
+                                'force_N': output.estimate.external_force.tolist(),
+                                'torque_Nm': output.estimate.external_torque.tolist(),
+                                'confidence_sigma': decision.confidence_sigma,
+                                'response_enabled': event_name != 'Roll Pitch Torque Detect Only',
+                                'state_source': 'crazyflie_state_estimate',
+                            },
+                        )
+
+            baseline_position = nominal_position.copy()
+            baseline_yaw = nominal_yaw_deg
+            excitation_active = False
+            if interaction_start is not None and excitation_config['enabled']:
+                excitation_elapsed = time.time() - interaction_start
+                excitation_time = excitation_elapsed - float(
+                    excitation_config['start_delay_s']
+                )
+                excitation_duration = float(excitation_config['duration_s'])
+                if 0.0 <= excitation_time < excitation_duration:
+                    excitation_active = True
+                    amplitudes = np.asarray(
+                        excitation_config['translation_amplitude_m'], dtype=float
+                    )
+                    frequencies = np.asarray(
+                        excitation_config['translation_frequency_hz'], dtype=float
+                    )
+                    if amplitudes.shape != (3,) or frequencies.shape != (3,):
+                        raise ValueError(
+                            'calibration_excitation translation amplitude/frequency '
+                            'must each contain X, Y, and Z'
+                        )
+                    baseline_position = self._bounded_wrench_reference(
+                        nominal_position
+                        + amplitudes * np.sin(
+                            2.0 * np.pi * frequencies * excitation_time
+                        )
+                    )
+                    baseline_yaw = nominal_yaw_deg + float(
+                        excitation_config['yaw_amplitude_deg']
+                    ) * np.sin(
+                        2.0 * np.pi
+                        * float(excitation_config['yaw_frequency_hz'])
+                        * excitation_time
+                    )
+                    if not excitation_started:
+                        excitation_started = True
+                        self._log_event('Wrench Calibration Excitation Started', {
+                            'instruction': 'Do not touch the drone during this motion.',
+                        })
+                elif excitation_started and not excitation_finished:
+                    excitation_finished = True
+                    self._log_event('Wrench Calibration Excitation Complete')
+
+            proposed_position = self._bounded_wrench_reference(
+                baseline_position + output.admittance.translation_offset
+            )
+            proposed_yaw = baseline_yaw + float(
+                np.degrees(output.admittance.yaw_offset)
+            )
+            if pipeline.shadow_mode or not output.calibrated:
+                command_position = baseline_position
+                command_yaw = baseline_yaw
+            else:
+                command_position = proposed_position
+                command_yaw = proposed_yaw
+
+            last_command_position = np.asarray(
+                command_position, dtype=float
+            ).copy()
+            last_command_yaw = float(command_yaw)
+            self.lo_commander.send_position_setpoint(
+                *last_command_position, last_command_yaw
+            )
+
+            estimate = output.estimate
+            raw = output.raw_estimate
+            self.log_manager.add_log_entry('wrench_observer', {
+                'time': now,
+                'state_source': 'crazyflie_state_estimate',
+                'state_time': state_time,
+                'state_age_s': state_age,
+                'state_group_skew_s': state_group_skew,
+                # Backward-compatible analyzer aliases.
+                'frame_time': state_time,
+                'frame_age_s': state_age,
+                'motor_pose_skew_s': state['motor_skew_s'],
+                'position_m': position.tolist(),
+                'orientation_rpy_rad': estimate.orientation_rpy.tolist(),
+                'velocity_m_s': estimate.velocity.tolist(),
+                'angular_velocity_rad_s': estimate.angular_velocity.tolist(),
+                'expected_linear_acceleration_m_s2': output.expected_linear_acceleration.tolist(),
+                'expected_angular_acceleration_rad_s2': output.expected_angular_acceleration.tolist(),
+                'raw_external_force_N': raw.external_force.tolist(),
+                'raw_external_torque_Nm': raw.external_torque.tolist(),
+                'force_bias_N': pipeline.force_bias.tolist(),
+                'torque_bias_Nm': pipeline.torque_bias.tolist(),
+                'external_force_N': estimate.external_force.tolist(),
+                'external_torque_Nm': estimate.external_torque.tolist(),
+                'force_covariance': estimate.force_covariance.tolist(),
+                'torque_covariance': estimate.torque_covariance.tolist(),
+                'linear_momentum_error_kg_m_s': raw.position_innovation.tolist(),
+                'angular_momentum_error_kg_m2_s': raw.orientation_innovation.tolist(),
+                'measurement_rejected': bool(estimate.measurement_rejected),
+                'motor_data_available': bool(output.motor_data_available),
+                'battery_data_available': bool(battery_available),
+                'motor_data_age_s': motor_age,
+                'motor_pwm': motor_pwm,
+                'battery_voltage_V': battery_voltage,
+                'calibrated': bool(output.calibrated),
+                'calibration_samples': output.calibration_samples,
+                'translation_contact': self._contact_log(
+                    contacts.translation if contacts else None
+                ),
+                'yaw_contact': self._contact_log(
+                    contacts.yaw if contacts else None
+                ),
+                'roll_pitch_detect_only': self._contact_log(
+                    contacts.roll_pitch if contacts else None
+                ),
+                'translation_offset_m': output.admittance.translation_offset.tolist(),
+                'translation_reference_velocity_m_s': output.admittance.translation_velocity.tolist(),
+                'yaw_offset_rad': output.admittance.yaw_offset,
+                'yaw_reference_rate_rad_s': output.admittance.yaw_rate,
+                'baseline_position_m': baseline_position.tolist(),
+                'baseline_yaw_deg': baseline_yaw,
+                'calibration_excitation_active': excitation_active,
+                'proposed_position_m': proposed_position.tolist(),
+                'proposed_yaw_deg': proposed_yaw,
+                'command_position_m': last_command_position.tolist(),
+                'command_yaw_deg': last_command_yaw,
+                'shadow_mode': pipeline.shadow_mode,
+            })
+            self._safe_sleep(dt)
+
+        self._log_event('Wrench Interaction Complete', {
+            'state_source': 'crazyflie_state_estimate',
+        })
 
     def _run_peer_translation(self) -> None:
         """Run symmetric peer interaction — every drone can push and follow."""
