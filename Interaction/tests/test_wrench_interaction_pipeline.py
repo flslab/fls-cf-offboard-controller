@@ -110,6 +110,19 @@ class PipelineRoutingTests(unittest.TestCase):
             'motor_model': {'angular_accel_scale': [0.0, 0.0, 1.0]},
         })
 
+    def test_active_mode_accepts_calibrated_yaw_command_model(self):
+        WrenchInteractionPipeline({
+            'shadow_mode': False,
+            'motor_model': {
+                'yaw_command_model': {
+                    'enabled': True,
+                    'accel_per_command': 0.002,
+                    'damping_per_s': 0.5,
+                    'bias_rad_s2': 0.0,
+                },
+            },
+        })
+
     def test_bias_calibration_completes_before_contact_detection(self):
         pipeline = WrenchInteractionPipeline({
             'observer_settle_s': 0.0,

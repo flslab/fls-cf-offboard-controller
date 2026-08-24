@@ -211,6 +211,7 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
             motor_pwm: Sequence[float] | None,
             battery_voltage: float | None,
             timestamp: float,
+            yaw_control_command: float | None = None,
     ) -> PipelineOutput:
         timestamp = float(timestamp)
         if self._start_timestamp is None:
@@ -227,6 +228,19 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
             motor_pwm if has_motor_data else None,
             battery_voltage,
         )
+        yaw_model = self.yaw_command_model
+        if yaw_model["enabled"]:
+            if not isinstance(yaw_control_command, (int, float)) or not np.isfinite(
+                    yaw_control_command
+            ):
+                raise ValueError(
+                    "enabled yaw_command_model requires controller.cmd_yaw"
+                )
+            expected_angular[2] = (
+                float(yaw_model["accel_per_command"]) * float(yaw_control_command)
+                - float(yaw_model["damping_per_s"]) * float(angular_velocity[2])
+                + float(yaw_model["bias_rad_s2"])
+            )
         raw = self.observer.update(
             position=position,
             velocity=velocity,

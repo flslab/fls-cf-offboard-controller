@@ -67,6 +67,25 @@ class OnboardMomentumObserverTests(unittest.TestCase):
 
 
 class OnboardMomentumPipelineTests(unittest.TestCase):
+    def test_yaw_command_model_predicts_yaw_acceleration(self):
+        pipeline = OnboardMomentumWrenchPipeline({
+            'motor_model': {
+                'yaw_command_model': {
+                    'enabled': True,
+                    'accel_per_command': 0.002,
+                    'damping_per_s': 0.5,
+                    'bias_rad_s2': 0.1,
+                },
+            },
+        })
+        output = pipeline.update(
+            position=[0, 0, 1], velocity=[0, 0, 0],
+            attitude_rpy=[0, 0, 0], angular_velocity=[0, 0, 0.2],
+            motor_pwm=[30000] * 4, battery_voltage=8.0,
+            yaw_control_command=100.0, timestamp=0.0,
+        )
+        self.assertAlmostEqual(output.expected_angular_acceleration[2], 0.2)
+
     def test_calibrates_from_onboard_state_without_mocap_quaternion(self):
         pipeline = OnboardMomentumWrenchPipeline({
             'observer_settle_s': 0.0,

@@ -494,6 +494,23 @@ RATE_EST = {
 }
 
 
+# PID yaw actuator output and the gyro rate used by the PID controller. Keep
+# these in their own small CRTP log block so the existing log groups stay below
+# the Crazyflie log-packet payload limit.
+YAW_CTL = {
+    "controller.cmd_yaw": {
+        "type": "float",
+        "unit": "controller output",
+        "data": [],
+    },
+    "controller.r_yaw": {
+        "type": "float",
+        "unit": "rad/s",
+        "data": [],
+    },
+}
+
+
 # Controller loop stage 1: Position → Velocity output, Velocity → Attitude output
 POS_VEL_CTL = {
     "posCtl.targetVX": {
@@ -668,6 +685,7 @@ LOG_VARS = {
     'VEL_ORI': VEL_ORI,
     'POS_ACC': POS_ACC,
     'RATE_EST': RATE_EST,
+    'YAW_CTL': YAW_CTL,
     'MOT_BAT': MOT_BAT,
     'POS_CTL_I_D': CTL_I_D,
     'POS_VEL_CTL': POS_VEL_CTL,

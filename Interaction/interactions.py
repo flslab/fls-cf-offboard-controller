@@ -617,10 +617,16 @@ class InteractionsControl:
         angular_rate, angular_rate_skew = self.log_manager.get_nearest_group_log_data(
             'RATE_EST', state_time
         )
+        yaw_control, yaw_control_skew = self.log_manager.get_nearest_group_log_data(
+            'YAW_CTL', state_time
+        )
         motor_state, motor_skew = self.log_manager.get_nearest_group_log_data(
             'MOT_BAT', state_time
         )
-        if not all((velocity_attitude, position_acceleration, angular_rate, motor_state)):
+        if not all((
+                velocity_attitude, position_acceleration, angular_rate,
+                yaw_control, motor_state,
+        )):
             return None
 
         try:
@@ -645,10 +651,13 @@ class InteractionsControl:
                 angular_rate['stateEstimateZ.ratePitch'],
                 angular_rate['stateEstimateZ.rateYaw'],
             ], dtype=float)
+            yaw_control_command = float(yaw_control['controller.cmd_yaw'])
+            controller_yaw_rate = float(yaw_control['controller.r_yaw'])
         except (KeyError, TypeError, ValueError):
             return None
         if not all(np.all(np.isfinite(value)) for value in (
-            position, velocity, attitude_rpy, angular_velocity
+            position, velocity, attitude_rpy, angular_velocity,
+            yaw_control_command, controller_yaw_rate,
         )):
             return None
 
@@ -660,6 +669,9 @@ class InteractionsControl:
             'angular_velocity': angular_velocity,
             'position_skew_s': position_skew,
             'angular_rate_skew_s': angular_rate_skew,
+            'yaw_control_skew_s': yaw_control_skew,
+            'yaw_control_command': yaw_control_command,
+            'controller_yaw_rate': controller_yaw_rate,
             'motor_skew_s': motor_skew,
             'motor_state': motor_state,
         }
@@ -732,6 +744,7 @@ class InteractionsControl:
                 state_skew = max(
                     float(state['position_skew_s']),
                     float(state['angular_rate_skew_s']),
+                    float(state['yaw_control_skew_s']),
                 )
                 if (
                     -0.5 <= state_age <= max_state_age_s
@@ -741,7 +754,7 @@ class InteractionsControl:
             if now >= startup_deadline:
                 raise StaleLocalizationError(
                     'No fresh synchronized onboard state received from '
-                    'VEL_ORI, POS_ACC, RATE_EST, and MOT_BAT'
+                    'VEL_ORI, POS_ACC, RATE_EST, YAW_CTL, and MOT_BAT'
                 )
             self.lo_commander.send_position_setpoint(
                 *nominal_position, nominal_yaw_deg
@@ -779,6 +792,7 @@ class InteractionsControl:
             state_group_skew = max(
                 float(state['position_skew_s']),
                 float(state['angular_rate_skew_s']),
+                float(state['yaw_control_skew_s']),
             )
             if state_group_skew > max_state_group_skew_s:
                 raise StaleLocalizationError(
@@ -837,6 +851,7 @@ class InteractionsControl:
                 motor_pwm=motor_pwm,
                 battery_voltage=battery_voltage,
                 timestamp=state_time,
+                yaw_control_command=state['yaw_control_command'],
             )
 
             if output.calibrated and not calibration_announced:
@@ -936,6 +951,9 @@ class InteractionsControl:
                 'orientation_rpy_rad': estimate.orientation_rpy.tolist(),
                 'velocity_m_s': estimate.velocity.tolist(),
                 'angular_velocity_rad_s': estimate.angular_velocity.tolist(),
+                'controller_yaw_command': state['yaw_control_command'],
+                'controller_yaw_rate_rad_s': state['controller_yaw_rate'],
+                'controller_yaw_skew_s': state['yaw_control_skew_s'],
                 'expected_linear_acceleration_m_s2': output.expected_linear_acceleration.tolist(),
                 'expected_angular_acceleration_rad_s2': output.expected_angular_acceleration.tolist(),
                 'raw_external_force_N': raw.external_force.tolist(),

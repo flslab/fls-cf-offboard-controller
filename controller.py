@@ -657,6 +657,10 @@ class Controller:
                 'stateEstimateZ.ratePitch',
                 'stateEstimateZ.rateYaw',
             ),
+            'YAW_CTL': (
+                'controller.cmd_yaw',
+                'controller.r_yaw',
+            ),
             'MOT_BAT': (
                 'motor.m1', 'motor.m2', 'motor.m3', 'motor.m4', 'pm.vbat',
             ),

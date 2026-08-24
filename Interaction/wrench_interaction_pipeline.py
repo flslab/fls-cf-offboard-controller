@@ -50,6 +50,14 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # Must be identified for reliable rotation detection while the vehicle
         # is deliberately rotating. Zero is suitable only for shadow trials.
         "angular_accel_scale": [0.0, 0.0, 0.0],
+        # Preferred onboard yaw model driven by the PID actuator output. It is
+        # deliberately disabled until a contact-free chirp fit generalizes.
+        "yaw_command_model": {
+            "enabled": False,
+            "accel_per_command": 0.0,
+            "damping_per_s": 0.0,
+            "bias_rad_s2": 0.0,
+        },
     },
     "detection": {
         "translation": {
@@ -138,7 +146,9 @@ class WrenchInteractionPipeline:
             inertia=self.config["inertia"],
             **observer_config,
         )
-        self.motor_model = MotorWrenchModel(**self.config["motor_model"])
+        motor_model_config = dict(self.config["motor_model"])
+        self.yaw_command_model = motor_model_config.pop("yaw_command_model")
+        self.motor_model = MotorWrenchModel(**motor_model_config)
         # Select the supported channels explicitly so an older mission file
         # containing the removed roll_pitch block remains launch-compatible.
         self.detector = WrenchContactDetector(
@@ -168,18 +178,28 @@ class WrenchInteractionPipeline:
         if excitation["enabled"] and not self.shadow_mode:
             raise ValueError("calibration_excitation is allowed only in shadow_mode")
         angular_scale = np.asarray(self.config["motor_model"]["angular_accel_scale"], dtype=float)
+        yaw_command_model = self.yaw_command_model
+        yaw_command_model_ready = (
+            bool(yaw_command_model["enabled"])
+            and np.isfinite(float(yaw_command_model["accel_per_command"]))
+            and not np.isclose(float(yaw_command_model["accel_per_command"]), 0.0)
+            and np.isfinite(float(yaw_command_model["damping_per_s"]))
+            and float(yaw_command_model["damping_per_s"]) >= 0.0
+            and np.isfinite(float(yaw_command_model["bias_rad_s2"]))
+        )
+        legacy_yaw_model_ready = (
+            angular_scale.shape == (3,)
+            and np.isfinite(angular_scale[2])
+            and not np.isclose(angular_scale[2], 0.0)
+        )
         if (
             not self.shadow_mode
             and safety["require_calibrated_angular_model_when_active"]
-            and (
-                angular_scale.shape != (3,)
-                or not np.isfinite(angular_scale[2])
-                or np.isclose(angular_scale[2], 0.0)
-            )
+            and not (yaw_command_model_ready or legacy_yaw_model_ready)
         ):
             raise ValueError(
-                "active yaw interaction requires a non-zero calibrated "
-                "motor_model.angular_accel_scale yaw value; run shadow_mode first"
+                "active yaw interaction requires a calibrated yaw_command_model "
+                "or legacy angular_accel_scale yaw value; run shadow_mode first"
             )
 
     @property

@@ -88,6 +88,10 @@ class FakeOnboardLogManager:
                 'stateEstimateZ.ratePitch': 0,
                 'stateEstimateZ.rateYaw': 0,
             },
+            'YAW_CTL': {
+                'controller.cmd_yaw': 0.0,
+                'controller.r_yaw': 0.0,
+            },
             'MOT_BAT': {
                 'motor.m1': 30000,
                 'motor.m2': 30000,
