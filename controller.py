@@ -601,6 +601,7 @@ class Controller:
             self.log_manager.add_log_group("events")
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("configs")
+            self.log_manager.add_log_group("wrench_observer")
             self.log_manager.add_log_group("git")
 
 

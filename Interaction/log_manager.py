@@ -1,8 +1,10 @@
 import copy
+import collections
 import json
 import os
 import re
 import subprocess
+import threading
 
 from Interaction.Kalman_Filter import VelocityKalmanFilter
 from Interaction.live_logger import LiveLogger
@@ -20,6 +22,11 @@ class InteractionLogger(LogManager):
         self.cf_var_logger = None
         self.cf_log_times = []
         self.cf_log_data = None
+        self.cf_log_group_times = {}
+        self.cf_log_group_packets = collections.defaultdict(
+            lambda: collections.deque(maxlen=1000)
+        )
+        self.cf_log_packet_lock = threading.Lock()
         self.args = kwargs.get('controller_args', False)
         self.verbose = self.args.verbose
 
@@ -104,6 +111,22 @@ class InteractionLogger(LogManager):
                 latest_values[par] = None
         return latest_values
 
+    def get_latest_group_log_time(self, log_group):
+        """Return host receipt time of the latest Crazyflie log packet."""
+        return self.cf_log_group_times.get(log_group)
+
+    def get_nearest_group_log_data(self, log_group, timestamp):
+        """Return the packet nearest a host-clock timestamp and its time skew."""
+        packets = self.cf_log_group_packets.get(log_group)
+        if not packets:
+            return None, None
+        with self.cf_log_packet_lock:
+            snapshot = list(packets)
+        if not snapshot:
+            return None, None
+        packet = min(snapshot, key=lambda candidate: abs(candidate['time'] - timestamp))
+        return packet.copy(), abs(packet['time'] - timestamp)
+
     def get_latest_cf_log_data(self, group_name, param_name):
         if self.cf_log_data is None:
             return None
@@ -119,7 +142,10 @@ class InteractionLogger(LogManager):
     def _cf_log_group_callback(self, timestamp, data, log_conf):
         cur_time = time.time()
         group_name = log_conf.name
+        self.cf_log_group_times[group_name] = cur_time
         data['time'] = cur_time
+        with self.cf_log_packet_lock:
+            self.cf_log_group_packets[group_name].append(data.copy())
         if group_name in self.cf_log_data.keys():
             # Append data to each variable in the group
             for var_name, var_info in self.cf_log_data[group_name].items():
