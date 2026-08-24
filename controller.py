@@ -155,6 +155,7 @@ class Controller:
         self.init_coord = None
         self.mocap_frames = []
         self.use_flowdeck = self.args.check_deck is not None and self.args.check_deck == "bcFlow2"
+        self.send_vicon_to_cf = True
 
         self._safe_sleep: Callable[[float], None]
         if self.args.orchestrated:
@@ -260,6 +261,8 @@ class Controller:
             )
             
         if self.tracker_process:
+            self.smooth_controller.remove_update_callback(self.fuse_latest_imu_camera_data)
+
             try:
                 self.tracker_process.send_signal(signal.SIGINT)
                 self.tracker_process.wait(timeout=5)
@@ -430,6 +433,7 @@ class Controller:
             self._start_tracker_process()
             time.sleep(2)
             self.tracker = Tracker(self)
+            self.smooth_controller.add_update_callback(self.fuse_latest_imu_camera_data)
             logger.debug("tracker activated")
 
     def setup_blinker(self):
@@ -495,9 +499,11 @@ class Controller:
         if self.args.interaction:
             self.log_manager.start()
 
-        logger.info(f"Taking off to {self.args.takeoff_altitude}m ...")
+        takeoff_speed = self.mission.get("takeoff_speed", 0.5)
+        logger.info(f"Taking off to {self.args.takeoff_altitude}m at {takeoff_speed}m/s ...")
         self.flying = True
-        t = self.args.takeoff_altitude * 2
+
+        t = self.args.takeoff_altitude / takeoff_speed
         self.hl_commander.takeoff(self.args.takeoff_altitude, t)
         self._safe_sleep(t + 1)
 
@@ -528,8 +534,12 @@ class Controller:
             time.sleep(dt + 0.5)
 
         if self.flying:
-            dt = z * 6
-            self.hl_commander.land(0.10, dt)
+            # dt = current_z * 6
+            takeoff_speed = self.mission.get("takeoff_speed", 0.5)
+            dt = self.args.takeoff_altitude / takeoff_speed
+            height = 0.1 if self.args.vicon or self.use_flowdeck else 0.02
+            self.hl_commander.land(height, dt)
+            logger.info(f"Landing duration: {dt} seconds")
             time.sleep(dt + 1)
             self.hl_commander.stop()
             self.flying = False
@@ -1233,12 +1243,10 @@ class Controller:
                     localization_method = self.do_tracker_relative_localization 
 
                 if relative_anchor["method"] == "ekf":
-                    self._set_ignore_external_z()
-                    # self._set_ignore_flowdeck_xy()
+                    # self._set_ignore_external_z()
                     self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
                     self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
                     self._initialize_ekf_relative_position()
-                    # self._set_pid_values(self.cfg.PID_VALUES)
 
                     self.smooth_controller.register_group(
                         name="anchor_position",
@@ -1246,6 +1254,9 @@ class Controller:
                         callback=lambda vals: localization_method(vals, relative_anchor),
                         always_callback=True
                     )
+
+                    self.send_vicon_to_cf = False
+                    self.log_manager.add_log_entry("events", {"time": time.time(), "name": "sending_tracker_xy_vicon_z"})
                 else:
                     self.smooth_controller.register_group(
                         name="relative_position",
@@ -1255,36 +1266,38 @@ class Controller:
                     )
 
             if mission_setting.get("test"):
-                self._safe_sleep(5)
-                self._set_ignore_flowdeck_xy(1)
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "flowdeck_xy_disabled"})
-                logger.info("Ignore flowdeck xy")
-                self._safe_sleep(5)
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "start_increase_pid"})
-                logger.info("Fading PID values from flowdeck to standard PID values")
-                self._fade_pid_values(self.cfg.PID_VALUES_FLOWDECK, self.cfg.XY_PID_VALUES)
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "end_increase_pid"})
-                logger.info("New PID values set")
+                # self._safe_sleep(5)
+                # self._set_ignore_flowdeck_xy(1)
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "flowdeck_xy_disabled"})
+                # logger.info("Ignore flowdeck xy")
+                # self._safe_sleep(5)
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "start_increase_pid"})
+                # logger.info("Fading PID values from flowdeck to standard PID values")
+                # self._fade_pid_values(self.cfg.PID_VALUES_FLOWDECK, self.cfg.XY_PID_VALUES)
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "end_increase_pid"})
+                # logger.info("New PID values set")
                 self.animation_start_times[-1] = time.time()
 
             self.run_control_loop(mission_index, waypoints, angles, pointers, params, delta_t, iterations, anchor_waypoints, relative=relative_anchor)
 
             if mission_setting.get("test"):
-                self._set_ignore_flowdeck_xy(0)
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "flowdeck_xy_enabled"})
-                logger.info("enable flowdeck xy")
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "start_decrease_pid"})
-                logger.info("Fading PID values from standard to flowdeck PID values")
-                self._fade_pid_values(self.cfg.XY_PID_VALUES, self.cfg.PID_VALUES_FLOWDECK)
-                self.log_manager.add_log_entry("events", {"time": time.time(), "name": "end_decrease_pid"})
-                logger.info("New PID values set")
+                self.send_vicon_to_cf = True
+                # self._set_ignore_flowdeck_xy(0)
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "flowdeck_xy_enabled"})
+                # logger.info("enable flowdeck xy")
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "start_decrease_pid"})
+                # logger.info("Fading PID values from standard to flowdeck PID values")
+                # self._fade_pid_values(self.cfg.XY_PID_VALUES, self.cfg.PID_VALUES_FLOWDECK)
+                # self.log_manager.add_log_entry("events", {"time": time.time(), "name": "end_decrease_pid"})
+                # logger.info("New PID values set")
 
             if relative_anchor:
                 if relative_anchor["method"] == "ekf":
                     self.smooth_controller.remove_group("anchor_position")
+                    self.log_manager.add_log_entry("events", {"time": time.time(), "name": "sending_vicon_xyz"})
                 else:
                     self.smooth_controller.remove_group("relative_position")
-            self.ll_commander.send_notify_setpoint_stop()
+                self.ll_commander.send_notify_setpoint_stop()
 
         self.animation_stop_times.append(time.time())
 
@@ -1351,8 +1364,8 @@ class Controller:
             else:
                 raise RuntimeError("Tracker lost frame, cannot initialize EKF relative position after retries.")
 
-        drone_pos, _, _ = self.get_latest_relative_pos()
-        x, y, z = drone_pos
+        entry = self._get_latest_relative_pos()
+        x, y, z = entry["pos"]
         self._set_initial_position(x, y, z, self.args.init_yaw)
         reset_estimator(self.cf)
         logger.info(f"Initialized EKF relative position")
@@ -1369,58 +1382,16 @@ class Controller:
         self.mocap.subscribe_point([xiv, yiv, ziv], self._send_position, name=f"{self.args.drone_id}_midflight") 
         logger.info("subscribed mocap external position and logger")
 
-    def marker_imu_fusion(self, timestamp, data, log_conf):
+    def fuse_latest_imu_camera_data(self):
         latest_pose = self.tracker.get_latest_pose()
         if not latest_pose:
-            return
+            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "marker_not_found"})
 
-        quat_x, quat_y, quat_z, quat_w = data["stateEstimate.qx"], data["stateEstimate.qy"], data["stateEstimate.qz"], data["stateEstimate.qw"]
-        camera_pos_world = imu_callback(quat_x, quat_y, quat_z, quat_w, latest_pose[:3])
-
-        self.log_manager.add_log_entry("camera_pos_world", {"time": time.time(), "pos": [camera_pos_world[0], camera_pos_world[1], camera_pos_world[2]]})
-
-    def marker_imu_fusion_quat(self, timestamp, data, log_conf):
-        latest_pose = self.tracker.get_latest_pose()
-        if not latest_pose:
-            return
-
-        quat_x, quat_y, quat_z, quat_w = data["stateEstimate.qx"], data["stateEstimate.qy"], data["stateEstimate.qz"], data["stateEstimate.qw"]
-        drone_pos, rot_w_d = imu_callback_quat(
-            quat_x, quat_y, quat_z, quat_w,
-            latest_pose[:3],
-            marker_world_pos=self.args.marker_offset,
-            camera_drone_pos=self.args.camera_offset
-        )
-
-        self.log_manager.add_log_entry("drone_pos_imu_quat", {
-            "time": time.time(),
-            "pos": drone_pos.tolist(),
-            "ori": rot_w_d.as_rotvec().tolist()
-        })
-
-    def marker_imu_fusion_euler(self, timestamp, data, log_conf):
-        latest_pose = self.tracker.get_latest_pose()
-        if not latest_pose:
-            return
-
-        roll, pitch, yaw = data["stateEstimate.roll"], data["stateEstimate.pitch"], data["stateEstimate.yaw"]
-        drone_pos, rot_w_d = imu_callback_euler(
-            roll, pitch, yaw,
-            latest_pose[:3],
-            marker_world_pos=self.args.marker_offset,
-            camera_drone_pos=self.args.camera_offset
-        )
-
-        self.log_manager.add_log_entry("drone_pos_imu_euler", {
-            "time": time.time(),
-            "pos": drone_pos.tolist(),
-            "ori": rot_w_d.as_rotvec().tolist()
-        })
-
-    def get_latest_relative_pos(self):
-        latest_pose = self.tracker.get_latest_pose()
-        if not latest_pose:
-            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "tracker_frame_not_found"})
+            self.log_manager.add_log_entry("drone_pos_imu_quat", {
+                "time": time.time(),
+                "pos": [],
+                "ori": []
+            })
             return None, None, None
 
         smaller_res, larger_res = self.log_manager.get_cf_log_data_at_timestamp("QUAT", latest_pose[6])
@@ -1433,6 +1404,11 @@ class Controller:
         
         else:
             self.log_manager.add_log_entry("events", {"time": time.time(), "name": "quat_not_found"})
+            self.log_manager.add_log_entry("drone_pos_imu_quat", {
+                "time": latest_pose[6],
+                "pos": [],
+                "ori": []
+            })
             return None, None, None
 
         drone_pos, rot_w_d = imu_callback_quat(
@@ -1442,21 +1418,27 @@ class Controller:
             camera_drone_pos=self.args.camera_offset
         )
 
-        return drone_pos, rot_w_d, latest_pose[6]
-
-    def do_tracker_relative_localization(self, gt_relative_position, config):
-        drone_pos, rot_w_d, t = self.get_latest_relative_pos()
-        if drone_pos is None:
-            if config["method"] != "ekf":
-                self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
-            return
-
         self.log_manager.add_log_entry("drone_pos_imu_quat", {
-            "time": t,
+            "time": latest_pose[6],
             "pos": drone_pos.tolist(),
             "ori": rot_w_d.as_rotvec().tolist()
         })
+
+        frame = {"tvec": drone_pos.tolist(), "time": time.time()}
+        # logger.info(frame)
+        self._send_position_no_log(frame)
+
+        return drone_pos, rot_w_d, latest_pose[6]
+
+    def do_tracker_relative_localization(self, gt_relative_position, config):
+        entry = self._get_latest_relative_pos()
+        if len(entry["pos"]) == 0:
+            if config["method"] != "ekf":
+                self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
+            return
         
+        # temp: use vicon z
+        z = self._get_latest_mocap_frame()["tvec"][2]
         # side camera
         # right, down, forward, _, _, _ = latest_pose
         # cx, cy, cz = self.args.camera_offset
@@ -1464,7 +1446,7 @@ class Controller:
         # act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
 
         # downward camera aruco
-        x, y, z = drone_pos
+        x, y, _ = entry["pos"]
         act_relative_position = [-x, -y, -z]
 
         # logger.info(f"gt_relative_position: {gt_relative_position}")
@@ -1710,8 +1692,8 @@ class Controller:
     def _prepare_for_emergency_landing(self):
         self._set_safe_servo_angles()
         time.sleep(0.6)
-        if self.smooth_controller:
-            self.smooth_controller.stop()
+        # if self.smooth_controller:
+        #     self.smooth_controller.stop()
         if self.led:
             self.led.show_single_color((230, 20, 20))
         self.ll_commander.send_notify_setpoint_stop()
@@ -1863,11 +1845,18 @@ class Controller:
             params.extend([
                 "--config", "/home/fls/fls-marker-localization/build/camera_config.json",
             ])
-        if self.args.save_tracker:
+        if self.args.save_tracker_video:
             params.extend([
                 "--save-video",
                 "--video-fps", "30",
                 "--video-path", "logs/video.mp4",
+            ])
+        if self.args.save_tracker_images:
+            params.extend([
+                "--save-frames",
+                "--raw-save-frame",
+                "--save-rate", str(self.args.tracker_camera_rate),
+                "--save-frames-path", "logs"
             ])
         if self.args.stream_tracker:
             params.extend(["--stream", "--stream-rate", "10"])
@@ -1909,7 +1898,8 @@ class Controller:
         self.cf.extpos.send_extpos(*frame['tvec'])
 
     def _send_position(self, frame):
-        self.cf.extpos.send_extpos(*frame['tvec'])
+        if self.send_vicon_to_cf:
+            self.cf.extpos.send_extpos(*frame['tvec'])
         self._log_mocap(frame)
 
     def _send_position_orientation(self, frame):
@@ -1921,6 +1911,9 @@ class Controller:
 
     def _get_latest_mocap_frame(self, group_name='frames'):
         return self.log_manager.groups[group_name][-1]
+
+    def _get_latest_relative_pos(self):
+        return self.log_manager.groups["drone_pos_imu_quat"][-1]
 
     def _get_latest_angles(self, window_size=5):
 
@@ -1979,8 +1972,10 @@ if __name__ == '__main__':
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
     ap.add_argument("--track-aruco", help="Track aruco markers", action="store_true", default=False)
-    ap.add_argument("--save-tracker", action="store_true",
+    ap.add_argument("--save-tracker-video", action="store_true",
                     help="save tracker camera video, works with --tracker")
+    ap.add_argument("--save-tracker-images", action="store_true",
+                    help="save tracker camera images, works with --tracker")
     ap.add_argument("--stream-tracker", action="store_true",
                     help="stream tracker camera video, works with --tracker")
     ap.add_argument("--tracker-encoder-rate", type=int, default=50, help="id encoder rate")
