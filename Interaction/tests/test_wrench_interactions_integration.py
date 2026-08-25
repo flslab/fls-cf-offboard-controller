@@ -3,7 +3,11 @@ import unittest
 
 import numpy as np
 
-from Interaction.interactions import GuidedTouchProtocol, InteractionsControl
+from Interaction.interactions import (
+    GuidedTouchProtocol,
+    InteractionsControl,
+    TranslationControlHandoff,
+)
 
 
 class FakeCommander:
@@ -15,6 +19,9 @@ class FakeCommander:
 
     def send_position_setpoint(self, *args):
         self.calls.append(('position', args, {}))
+
+    def send_zdistance_setpoint(self, *args):
+        self.calls.append(('zdistance', args, {}))
 
 
 class FakeLogManager:
@@ -107,6 +114,41 @@ class FakeOnboardLogManager:
 
 
 class WrenchInteractionLoopTests(unittest.TestCase):
+    def test_active_translation_switches_to_zdistance_then_holds_release_position(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=5.0,
+            shadow_mode=False,
+        )
+
+        control.send(commander)
+        self.assertTrue(control.start_contact())
+        control.send(commander)
+        self.assertTrue(control.end_contact([0.3, -0.2, 0.95]))
+        control.send(commander)
+
+        self.assertEqual(commander.calls, [
+            ('position', (0.0, 0.0, 1.0, 5.0), {}),
+            ('zdistance', (0, 0, 0, 1.0), {}),
+            ('position', (0.3, -0.2, 0.95, 5.0), {}),
+        ])
+        self.assertEqual(control.command_mode, 'position_hold')
+
+    def test_shadow_translation_never_leaves_position_hold(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=True,
+        )
+        self.assertFalse(control.start_contact())
+        control.send(commander)
+        self.assertFalse(control.end_contact([0.5, 0.0, 1.0]))
+        self.assertEqual(commander.calls, [
+            ('position', (0.0, 0.0, 1.0, 0.0), {}),
+        ])
+
     def test_guided_touch_protocol_emits_countdown_touch_and_release_once(self):
         protocol = GuidedTouchProtocol({
             'enabled': True,

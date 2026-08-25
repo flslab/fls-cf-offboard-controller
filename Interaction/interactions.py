@@ -108,6 +108,50 @@ class GuidedTouchProtocol:
         return due_events
 
 
+class TranslationControlHandoff:
+    """Switch active translation between position hold and attitude/Z hold."""
+
+    def __init__(self, initial_position, yaw_deg, shadow_mode):
+        self.hold_position = np.asarray(initial_position, dtype=float).copy()
+        if self.hold_position.shape != (3,):
+            raise ValueError('initial translation hold position must contain XYZ')
+        self.yaw_deg = float(yaw_deg)
+        self.shadow_mode = bool(shadow_mode)
+        self.attitude_mode = False
+        self.hover_z = float(self.hold_position[2])
+
+    def start_contact(self):
+        if self.shadow_mode or self.attitude_mode:
+            return False
+        self.hover_z = float(self.hold_position[2])
+        self.attitude_mode = True
+        return True
+
+    def end_contact(self, current_position):
+        if self.shadow_mode or not self.attitude_mode:
+            return False
+        position = np.asarray(current_position, dtype=float)
+        if position.shape != (3,) or not np.all(np.isfinite(position)):
+            raise ValueError('current translation hold position must be finite XYZ')
+        self.hold_position = position.copy()
+        self.attitude_mode = False
+        return True
+
+    @property
+    def command_mode(self):
+        if self.shadow_mode:
+            return 'shadow_position_hold'
+        return 'attitude_zdistance' if self.attitude_mode else 'position_hold'
+
+    def send(self, commander):
+        if self.attitude_mode and not self.shadow_mode:
+            commander.send_zdistance_setpoint(0, 0, 0, self.hover_z)
+        else:
+            commander.send_position_setpoint(
+                *self.hold_position, self.yaw_deg
+            )
+
+
 def calculate_tilt(roll, pitch, degrees=True):
     if degrees:
         roll = np.radians(roll)
@@ -494,6 +538,9 @@ class InteractionsControl:
         calibration_announced = False
         last_command_position = nominal_position.copy()
         last_command_yaw = nominal_yaw_deg
+        translation_control = TranslationControlHandoff(
+            nominal_position, nominal_yaw_deg, pipeline.shadow_mode
+        )
         excitation_config = config['calibration_excitation']
         guided_touch = GuidedTouchProtocol(config.get('guided_touch_test'))
         if guided_touch.enabled and duration < guided_touch.required_duration_s:
@@ -524,9 +571,7 @@ class InteractionsControl:
 
             frame_marker = (frame.get('frame_id'), frame_time)
             if frame_marker == last_frame_marker:
-                self.lo_commander.send_position_setpoint(
-                    *last_command_position, last_command_yaw
-                )
+                translation_control.send(self.lo_commander)
                 self._safe_sleep(dt)
                 continue
             last_frame_marker = frame_marker
@@ -605,9 +650,35 @@ class InteractionsControl:
                                 'force_N': output.estimate.external_force.tolist(),
                                 'torque_Nm': output.estimate.external_torque.tolist(),
                                 'confidence_sigma': decision.confidence_sigma,
-                                'response_enabled': True,
+                                'response_enabled': not pipeline.shadow_mode,
                             },
                         )
+                        if event_name == 'Translation Contact':
+                            if decision.started and translation_control.start_contact():
+                                pipeline.admittance.reset()
+                                self._log_event(
+                                    'Translation Attitude Control Started',
+                                    {
+                                        'zdistance_m': translation_control.hover_z,
+                                        'roll_deg': 0.0,
+                                        'pitch_deg': 0.0,
+                                        'yaw_rate_deg_s': 0.0,
+                                    },
+                                )
+                            elif decision.ended and translation_control.end_contact(
+                                    self._bounded_wrench_reference(position)):
+                                pipeline.admittance.reset()
+                                last_command_position = (
+                                    translation_control.hold_position.copy()
+                                )
+                                self._log_event(
+                                    'Translation Position Hold Resumed',
+                                    {
+                                        'hold_position_m': (
+                                            last_command_position.tolist()
+                                        ),
+                                    },
+                                )
 
             if interaction_start is not None:
                 self._emit_guided_touch_prompts(
@@ -647,15 +718,21 @@ class InteractionsControl:
             if pipeline.shadow_mode or not output.calibrated:
                 command_position = baseline_position
                 command_yaw = baseline_yaw
+                translation_control.hold_position = np.asarray(
+                    command_position, dtype=float
+                ).copy()
+                translation_control.yaw_deg = float(command_yaw)
+                translation_control.send(self.lo_commander)
+            elif translation_control.attitude_mode:
+                command_position = None
+                command_yaw = translation_control.yaw_deg
+                translation_control.send(self.lo_commander)
             else:
-                command_position = proposed_position
-                command_yaw = proposed_yaw
-
-            last_command_position = np.asarray(command_position, dtype=float).copy()
-            last_command_yaw = float(command_yaw)
-            self.lo_commander.send_position_setpoint(
-                *last_command_position, last_command_yaw
-            )
+                command_position = translation_control.hold_position.copy()
+                command_yaw = translation_control.yaw_deg
+                last_command_position = command_position.copy()
+                last_command_yaw = float(command_yaw)
+                translation_control.send(self.lo_commander)
 
             estimate = output.estimate
             raw = output.raw_estimate
@@ -703,8 +780,16 @@ class InteractionsControl:
                 'calibration_excitation_active': excitation_active,
                 'proposed_position_m': proposed_position.tolist(),
                 'proposed_yaw_deg': proposed_yaw,
-                'command_position_m': last_command_position.tolist(),
-                'command_yaw_deg': last_command_yaw,
+                'command_mode': translation_control.command_mode,
+                'command_position_m': (
+                    None if command_position is None
+                    else np.asarray(command_position, dtype=float).tolist()
+                ),
+                'command_zdistance_m': (
+                    translation_control.hover_z
+                    if translation_control.attitude_mode else None
+                ),
+                'command_yaw_deg': float(command_yaw),
                 'shadow_mode': pipeline.shadow_mode,
             })
             self._safe_sleep(dt)
@@ -885,6 +970,9 @@ class InteractionsControl:
         calibration_announced = False
         last_command_position = nominal_position.copy()
         last_command_yaw = nominal_yaw_deg
+        translation_control = TranslationControlHandoff(
+            nominal_position, nominal_yaw_deg, pipeline.shadow_mode
+        )
         excitation_config = config['calibration_excitation']
         guided_touch = GuidedTouchProtocol(config.get('guided_touch_test'))
         if guided_touch.enabled and duration < guided_touch.required_duration_s:
@@ -918,9 +1006,7 @@ class InteractionsControl:
                     f'(limit {max_state_group_skew_s:.3f}s)'
                 )
             if state_time == last_state_time:
-                self.lo_commander.send_position_setpoint(
-                    *last_command_position, last_command_yaw
-                )
+                translation_control.send(self.lo_commander)
                 self._safe_sleep(dt)
                 continue
             last_state_time = state_time
@@ -1001,10 +1087,38 @@ class InteractionsControl:
                                 'force_N': output.estimate.external_force.tolist(),
                                 'torque_Nm': output.estimate.external_torque.tolist(),
                                 'confidence_sigma': decision.confidence_sigma,
-                                'response_enabled': True,
+                                'response_enabled': not pipeline.shadow_mode,
                                 'state_source': 'crazyflie_state_estimate',
                             },
                         )
+                        if event_name == 'Translation Contact':
+                            if decision.started and translation_control.start_contact():
+                                pipeline.admittance.reset()
+                                self._log_event(
+                                    'Translation Attitude Control Started',
+                                    {
+                                        'zdistance_m': translation_control.hover_z,
+                                        'roll_deg': 0.0,
+                                        'pitch_deg': 0.0,
+                                        'yaw_rate_deg_s': 0.0,
+                                        'state_source': 'crazyflie_state_estimate',
+                                    },
+                                )
+                            elif decision.ended and translation_control.end_contact(
+                                    self._bounded_wrench_reference(position)):
+                                pipeline.admittance.reset()
+                                last_command_position = (
+                                    translation_control.hold_position.copy()
+                                )
+                                self._log_event(
+                                    'Translation Position Hold Resumed',
+                                    {
+                                        'hold_position_m': (
+                                            last_command_position.tolist()
+                                        ),
+                                        'state_source': 'crazyflie_state_estimate',
+                                    },
+                                )
 
             if interaction_start is not None:
                 self._emit_guided_touch_prompts(
@@ -1048,17 +1162,21 @@ class InteractionsControl:
             if pipeline.shadow_mode or not output.calibrated:
                 command_position = baseline_position
                 command_yaw = baseline_yaw
+                translation_control.hold_position = np.asarray(
+                    command_position, dtype=float
+                ).copy()
+                translation_control.yaw_deg = float(command_yaw)
+                translation_control.send(self.lo_commander)
+            elif translation_control.attitude_mode:
+                command_position = None
+                command_yaw = translation_control.yaw_deg
+                translation_control.send(self.lo_commander)
             else:
-                command_position = proposed_position
-                command_yaw = proposed_yaw
-
-            last_command_position = np.asarray(
-                command_position, dtype=float
-            ).copy()
-            last_command_yaw = float(command_yaw)
-            self.lo_commander.send_position_setpoint(
-                *last_command_position, last_command_yaw
-            )
+                command_position = translation_control.hold_position.copy()
+                command_yaw = translation_control.yaw_deg
+                last_command_position = command_position.copy()
+                last_command_yaw = float(command_yaw)
+                translation_control.send(self.lo_commander)
 
             estimate = output.estimate
             raw = output.raw_estimate
@@ -1114,8 +1232,16 @@ class InteractionsControl:
                 'calibration_excitation_active': excitation_active,
                 'proposed_position_m': proposed_position.tolist(),
                 'proposed_yaw_deg': proposed_yaw,
-                'command_position_m': last_command_position.tolist(),
-                'command_yaw_deg': last_command_yaw,
+                'command_mode': translation_control.command_mode,
+                'command_position_m': (
+                    None if command_position is None
+                    else np.asarray(command_position, dtype=float).tolist()
+                ),
+                'command_zdistance_m': (
+                    translation_control.hover_z
+                    if translation_control.attitude_mode else None
+                ),
+                'command_yaw_deg': float(command_yaw),
                 'shadow_mode': pipeline.shadow_mode,
             })
             self._safe_sleep(dt)
