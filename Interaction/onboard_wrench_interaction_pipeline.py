@@ -74,6 +74,11 @@ class OnboardMomentumWrenchObserver:
         self.last_timestamp: float | None = None
         self.predicted_linear_momentum = np.zeros(3)
         self.predicted_angular_momentum = np.zeros(3)
+        self.last_measured_linear_momentum: np.ndarray | None = None
+        self.last_measured_angular_momentum: np.ndarray | None = None
+        self.last_model_force: np.ndarray | None = None
+        self.last_model_torque: np.ndarray | None = None
+        self.last_gyroscopic_torque: np.ndarray | None = None
         self.force_residual = np.zeros(3)
         self.torque_residual = np.zeros(3)
 
@@ -133,10 +138,20 @@ class OnboardMomentumWrenchObserver:
 
         measured_linear_momentum = self.mass * velocity
         measured_angular_momentum = self.inertia * angular_velocity
+        model_force = self.mass * expected_linear_acceleration
+        model_torque = self.inertia * expected_angular_acceleration
+        gyroscopic_torque = np.cross(
+            angular_velocity, measured_angular_momentum
+        )
         if self.last_timestamp is None:
             self.last_timestamp = timestamp
             self.predicted_linear_momentum = measured_linear_momentum.copy()
             self.predicted_angular_momentum = measured_angular_momentum.copy()
+            self.last_measured_linear_momentum = measured_linear_momentum.copy()
+            self.last_measured_angular_momentum = measured_angular_momentum.copy()
+            self.last_model_force = model_force.copy()
+            self.last_model_torque = model_torque.copy()
+            self.last_gyroscopic_torque = gyroscopic_torque.copy()
             return self._estimate(
                 position, velocity, attitude_rpy, angular_velocity, timestamp,
                 np.zeros(3), np.zeros(3), False,
@@ -150,27 +165,44 @@ class OnboardMomentumWrenchObserver:
             self.predicted_angular_momentum = measured_angular_momentum.copy()
             self.force_residual.fill(0.0)
             self.torque_residual.fill(0.0)
+            self.last_measured_linear_momentum = measured_linear_momentum.copy()
+            self.last_measured_angular_momentum = measured_angular_momentum.copy()
+            self.last_model_force = model_force.copy()
+            self.last_model_torque = model_torque.copy()
+            self.last_gyroscopic_torque = gyroscopic_torque.copy()
             return self._estimate(
                 position, velocity, attitude_rpy, angular_velocity, timestamp,
                 np.zeros(3), np.zeros(3), True,
             )
 
-        model_force = self.mass * expected_linear_acceleration
-        model_torque = self.inertia * expected_angular_acceleration
-        gyroscopic_torque = np.cross(
-            angular_velocity, measured_angular_momentum
+        # Causal one-step prediction: the actuator state sampled at k-1 acts
+        # over [t[k-1], t[k]].  Anchor each prediction at the previous measured
+        # momentum so old model errors cannot accumulate into a false contact.
+        self.predicted_linear_momentum = (
+            self.last_measured_linear_momentum + dt * (
+                self.last_model_force + self.force_residual
+            )
         )
-        self.predicted_linear_momentum += dt * (
-            model_force + self.force_residual
-        )
-        self.predicted_angular_momentum += dt * (
-            model_torque - gyroscopic_torque + self.torque_residual
+        self.predicted_angular_momentum = (
+            self.last_measured_angular_momentum + dt * (
+                self.last_model_torque
+                - self.last_gyroscopic_torque
+                + self.torque_residual
+            )
         )
 
         linear_error = measured_linear_momentum - self.predicted_linear_momentum
         angular_error = measured_angular_momentum - self.predicted_angular_momentum
-        self.force_residual = self.linear_gain * linear_error
-        self.torque_residual = self.angular_gain * angular_error
+        # Innovation feedback estimates the unmodelled wrench.  This is the
+        # disturbance-observer state update, not a second filter on velocity.
+        self.force_residual += self.linear_gain * linear_error
+        self.torque_residual += self.angular_gain * angular_error
+
+        self.last_measured_linear_momentum = measured_linear_momentum.copy()
+        self.last_measured_angular_momentum = measured_angular_momentum.copy()
+        self.last_model_force = model_force.copy()
+        self.last_model_torque = model_torque.copy()
+        self.last_gyroscopic_torque = gyroscopic_torque.copy()
 
         finite = all(np.all(np.isfinite(value)) for value in (
             linear_error,

@@ -65,6 +65,31 @@ class OnboardMomentumObserverTests(unittest.TestCase):
         self.assertTrue(estimate.measurement_rejected)
         np.testing.assert_array_equal(estimate.external_force, np.zeros(3))
 
+    def test_one_step_prediction_uses_previous_actuator_state(self):
+        mass = 0.17
+        observer = OnboardMomentumWrenchObserver(
+            mass=mass, inertia=[0.002, 0.002, 0.003]
+        )
+        zero = [0.0, 0.0, 0.0]
+
+        observer.update(
+            zero, zero, zero, zero,
+            [2.0, 0.0, 0.0], zero, 0.0,
+        )
+        first = observer.update(
+            zero, [0.02, 0.0, 0.0], zero, zero,
+            [-1.0, 0.0, 0.0], zero, 0.01,
+        )
+        second = observer.update(
+            zero, [0.01, 0.0, 0.0], zero, zero,
+            zero, zero, 0.02,
+        )
+
+        np.testing.assert_allclose(first.position_innovation, zero, atol=1e-12)
+        np.testing.assert_allclose(second.position_innovation, zero, atol=1e-12)
+        np.testing.assert_allclose(first.external_force, zero, atol=1e-12)
+        np.testing.assert_allclose(second.external_force, zero, atol=1e-12)
+
 
 class OnboardMomentumPipelineTests(unittest.TestCase):
     def test_yaw_command_model_predicts_yaw_acceleration(self):

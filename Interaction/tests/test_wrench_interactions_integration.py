@@ -23,6 +23,9 @@ class FakeCommander:
     def send_zdistance_setpoint(self, *args):
         self.calls.append(('zdistance', args, {}))
 
+    def send_hover_setpoint(self, *args):
+        self.calls.append(('hover', args, {}))
+
 
 class FakeLogManager:
     def __init__(self, base_time):
@@ -114,7 +117,7 @@ class FakeOnboardLogManager:
 
 
 class WrenchInteractionLoopTests(unittest.TestCase):
-    def test_active_translation_switches_to_zdistance_then_holds_release_position(self):
+    def test_active_translation_brakes_before_holding_release_position(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -125,13 +128,25 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         control.send(commander)
         self.assertTrue(control.start_contact())
         control.send(commander)
-        self.assertTrue(control.end_contact([0.3, -0.2, 0.95]))
+        self.assertTrue(control.end_contact())
+        self.assertFalse(control.start_contact())
+        control.send(commander)
+        self.assertFalse(control.update_braking(
+            [0.3, -0.2, 0.95], [0.2, 0.0, 0.0], 1.0
+        ))
+        self.assertFalse(control.update_braking(
+            [0.32, -0.2, 0.95], [0.05, 0.0, 0.0], 1.1
+        ))
+        self.assertTrue(control.update_braking(
+            [0.33, -0.2, 0.95], [0.04, 0.0, 0.0], 1.36
+        ))
         control.send(commander)
 
         self.assertEqual(commander.calls, [
             ('position', (0.0, 0.0, 1.0, 5.0), {}),
             ('zdistance', (0, 0, 0, 1.0), {}),
-            ('position', (0.3, -0.2, 0.95, 5.0), {}),
+            ('hover', (0, 0, 0, 1.0), {}),
+            ('position', (0.33, -0.2, 0.95, 5.0), {}),
         ])
         self.assertEqual(control.command_mode, 'position_hold')
 
@@ -144,7 +159,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         self.assertFalse(control.start_contact())
         control.send(commander)
-        self.assertFalse(control.end_contact([0.5, 0.0, 1.0]))
+        self.assertFalse(control.end_contact())
         self.assertEqual(commander.calls, [
             ('position', (0.0, 0.0, 1.0, 0.0), {}),
         ])

@@ -34,6 +34,10 @@ class ContactDetectorTests(unittest.TestCase):
             ended |= detector.update([0, 0, 0], covariance, index * 0.01).ended
         self.assertTrue(ended)
 
+        detector.reset(0.20)
+        self.assertFalse(detector.active)
+        self.assertEqual(detector.evidence, 0.0)
+
     def test_disabled_channel_never_starts(self):
         detector = ContactChannelDetector(
             component_thresholds=[0.05],

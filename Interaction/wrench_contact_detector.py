@@ -51,6 +51,13 @@ class ContactChannelDetector:
         self._release_elapsed = 0.0
         self._last_timestamp: float | None = None
 
+    def reset(self, timestamp: float | None = None) -> None:
+        """Clear contact evidence after a controller-mode handoff."""
+        self.active = False
+        self.evidence = 0.0
+        self._release_elapsed = 0.0
+        self._last_timestamp = None if timestamp is None else float(timestamp)
+
     def update(self, value: Sequence[float], covariance: np.ndarray, timestamp: float) -> ContactDecision:
         value = np.asarray(value, dtype=float)
         covariance = np.asarray(covariance, dtype=float)

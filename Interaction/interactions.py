@@ -109,47 +109,103 @@ class GuidedTouchProtocol:
 
 
 class TranslationControlHandoff:
-    """Switch active translation between position hold and attitude/Z hold."""
+    """Switch translation through contact, braking, and position-hold modes."""
 
-    def __init__(self, initial_position, yaw_deg, shadow_mode):
+    POSITION_HOLD = 'position_hold'
+    CONTACT_ZDISTANCE = 'attitude_zdistance'
+    VELOCITY_BRAKING = 'velocity_braking'
+
+    def __init__(
+            self,
+            initial_position,
+            yaw_deg,
+            shadow_mode,
+            brake_xy_speed_m_s=0.08,
+            brake_settle_s=0.25,
+    ):
         self.hold_position = np.asarray(initial_position, dtype=float).copy()
         if self.hold_position.shape != (3,):
             raise ValueError('initial translation hold position must contain XYZ')
         self.yaw_deg = float(yaw_deg)
         self.shadow_mode = bool(shadow_mode)
-        self.attitude_mode = False
+        self.brake_xy_speed_m_s = float(brake_xy_speed_m_s)
+        self.brake_settle_s = float(brake_settle_s)
+        if self.brake_xy_speed_m_s <= 0 or self.brake_settle_s <= 0:
+            raise ValueError('translation braking speed and settle time must be positive')
+        self.mode = self.POSITION_HOLD
+        self._brake_settled_since = None
         self.hover_z = float(self.hold_position[2])
 
     def start_contact(self):
-        if self.shadow_mode or self.attitude_mode:
+        # Detector residuals during braking are expected controller/model
+        # transients. Do not let them chatter the command mode.
+        if self.shadow_mode or self.mode != self.POSITION_HOLD:
             return False
         self.hover_z = float(self.hold_position[2])
-        self.attitude_mode = True
+        self.mode = self.CONTACT_ZDISTANCE
         return True
 
-    def end_contact(self, current_position):
-        if self.shadow_mode or not self.attitude_mode:
+    def end_contact(self, current_position=None):
+        if self.shadow_mode or self.mode != self.CONTACT_ZDISTANCE:
+            return False
+        self.mode = self.VELOCITY_BRAKING
+        self._brake_settled_since = None
+        return True
+
+    def update_braking(self, current_position, velocity, timestamp):
+        if self.shadow_mode or self.mode != self.VELOCITY_BRAKING:
             return False
         position = np.asarray(current_position, dtype=float)
+        velocity = np.asarray(velocity, dtype=float)
         if position.shape != (3,) or not np.all(np.isfinite(position)):
             raise ValueError('current translation hold position must be finite XYZ')
+        if velocity.shape != (3,) or not np.all(np.isfinite(velocity)):
+            raise ValueError('translation braking velocity must be finite XYZ')
+        timestamp = float(timestamp)
+        if not np.isfinite(timestamp):
+            raise ValueError('translation braking timestamp must be finite')
+
+        if float(np.linalg.norm(velocity[:2])) > self.brake_xy_speed_m_s:
+            self._brake_settled_since = None
+            return False
+        if self._brake_settled_since is None:
+            self._brake_settled_since = timestamp
+            return False
+        if timestamp - self._brake_settled_since < self.brake_settle_s:
+            return False
+
         self.hold_position = position.copy()
-        self.attitude_mode = False
+        self.mode = self.POSITION_HOLD
+        self._brake_settled_since = None
         return True
+
+    @property
+    def attitude_mode(self):
+        return self.mode == self.CONTACT_ZDISTANCE
+
+    @property
+    def braking_mode(self):
+        return self.mode == self.VELOCITY_BRAKING
+
+    @property
+    def uses_position_setpoint(self):
+        return self.shadow_mode or self.mode == self.POSITION_HOLD
 
     @property
     def command_mode(self):
         if self.shadow_mode:
             return 'shadow_position_hold'
-        return 'attitude_zdistance' if self.attitude_mode else 'position_hold'
+        return self.mode
 
     def send(self, commander):
-        if self.attitude_mode and not self.shadow_mode:
-            commander.send_zdistance_setpoint(0, 0, 0, self.hover_z)
-        else:
+        if self.shadow_mode or self.mode == self.POSITION_HOLD:
             commander.send_position_setpoint(
                 *self.hold_position, self.yaw_deg
             )
+        elif self.mode == self.CONTACT_ZDISTANCE:
+            commander.send_zdistance_setpoint(0, 0, 0, self.hover_z)
+        else:
+            commander.send_hover_setpoint(0, 0, 0, self.hover_z)
 
 
 def calculate_tilt(roll, pitch, degrees=True):
@@ -539,7 +595,10 @@ class InteractionsControl:
         last_command_position = nominal_position.copy()
         last_command_yaw = nominal_yaw_deg
         translation_control = TranslationControlHandoff(
-            nominal_position, nominal_yaw_deg, pipeline.shadow_mode
+            nominal_position,
+            nominal_yaw_deg,
+            pipeline.shadow_mode,
+            **config['control_handoff'],
         )
         excitation_config = config['calibration_excitation']
         guided_touch = GuidedTouchProtocol(config.get('guided_touch_test'))
@@ -665,20 +724,34 @@ class InteractionsControl:
                                         'yaw_rate_deg_s': 0.0,
                                     },
                                 )
-                            elif decision.ended and translation_control.end_contact(
-                                    self._bounded_wrench_reference(position)):
+                            elif decision.ended and translation_control.end_contact():
                                 pipeline.admittance.reset()
-                                last_command_position = (
-                                    translation_control.hold_position.copy()
-                                )
                                 self._log_event(
-                                    'Translation Position Hold Resumed',
+                                    'Translation Velocity Braking Started',
                                     {
-                                        'hold_position_m': (
-                                            last_command_position.tolist()
-                                        ),
+                                        'xy_speed_m_s': float(np.linalg.norm(
+                                            output.estimate.velocity[:2]
+                                        )),
+                                        'target_xy_velocity_m_s': [0.0, 0.0],
+                                        'zdistance_m': translation_control.hover_z,
                                     },
                                 )
+
+            if translation_control.update_braking(
+                    self._bounded_wrench_reference(position),
+                    output.estimate.velocity,
+                    frame_time):
+                pipeline.detector.translation.reset(frame_time)
+                last_command_position = translation_control.hold_position.copy()
+                self._log_event(
+                    'Translation Position Hold Resumed',
+                    {
+                        'hold_position_m': last_command_position.tolist(),
+                        'xy_speed_m_s': float(np.linalg.norm(
+                            output.estimate.velocity[:2]
+                        )),
+                    },
+                )
 
             if interaction_start is not None:
                 self._emit_guided_touch_prompts(
@@ -723,7 +796,7 @@ class InteractionsControl:
                 ).copy()
                 translation_control.yaw_deg = float(command_yaw)
                 translation_control.send(self.lo_commander)
-            elif translation_control.attitude_mode:
+            elif not translation_control.uses_position_setpoint:
                 command_position = None
                 command_yaw = translation_control.yaw_deg
                 translation_control.send(self.lo_commander)
@@ -787,7 +860,10 @@ class InteractionsControl:
                 ),
                 'command_zdistance_m': (
                     translation_control.hover_z
-                    if translation_control.attitude_mode else None
+                    if not translation_control.uses_position_setpoint else None
+                ),
+                'command_xy_velocity_m_s': (
+                    [0.0, 0.0] if translation_control.braking_mode else None
                 ),
                 'command_yaw_deg': float(command_yaw),
                 'shadow_mode': pipeline.shadow_mode,
@@ -971,7 +1047,10 @@ class InteractionsControl:
         last_command_position = nominal_position.copy()
         last_command_yaw = nominal_yaw_deg
         translation_control = TranslationControlHandoff(
-            nominal_position, nominal_yaw_deg, pipeline.shadow_mode
+            nominal_position,
+            nominal_yaw_deg,
+            pipeline.shadow_mode,
+            **config['control_handoff'],
         )
         excitation_config = config['calibration_excitation']
         guided_touch = GuidedTouchProtocol(config.get('guided_touch_test'))
@@ -1104,21 +1183,36 @@ class InteractionsControl:
                                         'state_source': 'crazyflie_state_estimate',
                                     },
                                 )
-                            elif decision.ended and translation_control.end_contact(
-                                    self._bounded_wrench_reference(position)):
+                            elif decision.ended and translation_control.end_contact():
                                 pipeline.admittance.reset()
-                                last_command_position = (
-                                    translation_control.hold_position.copy()
-                                )
                                 self._log_event(
-                                    'Translation Position Hold Resumed',
+                                    'Translation Velocity Braking Started',
                                     {
-                                        'hold_position_m': (
-                                            last_command_position.tolist()
-                                        ),
+                                        'xy_speed_m_s': float(np.linalg.norm(
+                                            output.estimate.velocity[:2]
+                                        )),
+                                        'target_xy_velocity_m_s': [0.0, 0.0],
+                                        'zdistance_m': translation_control.hover_z,
                                         'state_source': 'crazyflie_state_estimate',
                                     },
                                 )
+
+            if translation_control.update_braking(
+                    self._bounded_wrench_reference(position),
+                    output.estimate.velocity,
+                    state_time):
+                pipeline.detector.translation.reset(state_time)
+                last_command_position = translation_control.hold_position.copy()
+                self._log_event(
+                    'Translation Position Hold Resumed',
+                    {
+                        'hold_position_m': last_command_position.tolist(),
+                        'xy_speed_m_s': float(np.linalg.norm(
+                            output.estimate.velocity[:2]
+                        )),
+                        'state_source': 'crazyflie_state_estimate',
+                    },
+                )
 
             if interaction_start is not None:
                 self._emit_guided_touch_prompts(
@@ -1167,7 +1261,7 @@ class InteractionsControl:
                 ).copy()
                 translation_control.yaw_deg = float(command_yaw)
                 translation_control.send(self.lo_commander)
-            elif translation_control.attitude_mode:
+            elif not translation_control.uses_position_setpoint:
                 command_position = None
                 command_yaw = translation_control.yaw_deg
                 translation_control.send(self.lo_commander)
@@ -1209,6 +1303,11 @@ class InteractionsControl:
                 'torque_covariance': estimate.torque_covariance.tolist(),
                 'linear_momentum_error_kg_m_s': raw.position_innovation.tolist(),
                 'angular_momentum_error_kg_m2_s': raw.orientation_innovation.tolist(),
+                'one_step_predicted_velocity_m_s': (
+                    np.asarray(state['velocity'], dtype=float)
+                    - raw.position_innovation / float(config['mass'])
+                ).tolist(),
+                'momentum_prediction_input': 'previous_actuator_state',
                 'measurement_rejected': bool(estimate.measurement_rejected),
                 'motor_data_available': bool(output.motor_data_available),
                 'battery_data_available': bool(battery_available),
@@ -1239,7 +1338,10 @@ class InteractionsControl:
                 ),
                 'command_zdistance_m': (
                     translation_control.hover_z
-                    if translation_control.attitude_mode else None
+                    if not translation_control.uses_position_setpoint else None
+                ),
+                'command_xy_velocity_m_s': (
+                    [0.0, 0.0] if translation_control.braking_mode else None
                 ),
                 'command_yaw_deg': float(command_yaw),
                 'shadow_mode': pipeline.shadow_mode,
