@@ -26,6 +26,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
     "inertia": [0.002, 0.002, 0.003],
     "observer_settle_s": 1.0,
     "bias_calibration_s": 1.0,
+    "bias_calibration_timeout_s": 12.0,
+    "calibration_max_speed_m_s": 0.06,
+    "calibration_max_angular_rate_rad_s": 0.25,
     "minimum_bias_samples": 30,
     "calibration_excitation": {
         "enabled": False,
@@ -69,6 +72,7 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
             "release_ratio": 0.55,
         },
         "yaw": {
+            "enabled": True,
             "component_thresholds": [0.0010],
             "covariance_floor": [0.00015],
             "confidence_sigma": 2.5,
@@ -159,13 +163,27 @@ class WrenchInteractionPipeline:
 
         self._settle_s = float(self.config["observer_settle_s"])
         self._calibration_s = float(self.config["bias_calibration_s"])
+        self._calibration_timeout_s = float(self.config["bias_calibration_timeout_s"])
+        self._calibration_max_speed = float(self.config["calibration_max_speed_m_s"])
+        self._calibration_max_angular_rate = float(
+            self.config["calibration_max_angular_rate_rad_s"]
+        )
         self._minimum_bias_samples = int(self.config["minimum_bias_samples"])
-        if self._settle_s < 0 or self._calibration_s <= 0 or self._minimum_bias_samples <= 0:
+        if (
+            self._settle_s < 0
+            or self._calibration_s <= 0
+            or self._calibration_timeout_s <= self._calibration_s
+            or self._calibration_max_speed <= 0
+            or self._calibration_max_angular_rate <= 0
+            or self._minimum_bias_samples <= 0
+        ):
             raise ValueError(
                 "observer_settle_s must be non-negative and bias calibration "
-                "duration/sample count must be positive"
+                "duration, timeout, stationarity limits, and sample count must "
+                "be positive; timeout must exceed the calibration duration"
             )
         self._start_timestamp: float | None = None
+        self._stationary_since: float | None = None
         self._last_timestamp: float | None = None
         self._force_samples: list[np.ndarray] = []
         self._torque_samples: list[np.ndarray] = []
@@ -194,6 +212,7 @@ class WrenchInteractionPipeline:
         )
         if (
             not self.shadow_mode
+            and bool(self.config["detection"]["yaw"].get("enabled", True))
             and safety["require_calibrated_angular_model_when_active"]
             and not (yaw_command_model_ready or legacy_yaw_model_ready)
         ):
@@ -218,9 +237,33 @@ class WrenchInteractionPipeline:
 
     def _update_bias(self, estimate: WrenchEstimate) -> None:
         elapsed = estimate.timestamp - self._start_timestamp
-        if elapsed < self._settle_s or estimate.measurement_rejected:
+        if elapsed < self._settle_s:
             return
-        if elapsed <= self._settle_s + self._calibration_s:
+
+        if elapsed > self._settle_s + self._calibration_timeout_s:
+            raise RuntimeError(
+                "wrench bias calibration timed out while waiting for "
+                f"{self._calibration_s:.2f}s of continuous stationarity "
+                f"(|v| <= {self._calibration_max_speed:.3f}m/s, "
+                f"|omega| <= {self._calibration_max_angular_rate:.3f}rad/s)"
+            )
+
+        stationary = (
+            not estimate.measurement_rejected
+            and float(np.linalg.norm(estimate.velocity)) <= self._calibration_max_speed
+            and float(np.linalg.norm(estimate.angular_velocity))
+            <= self._calibration_max_angular_rate
+        )
+        if not stationary:
+            self._stationary_since = None
+            self._force_samples.clear()
+            self._torque_samples.clear()
+            return
+
+        if self._stationary_since is None:
+            self._stationary_since = estimate.timestamp
+        stationary_elapsed = estimate.timestamp - self._stationary_since
+        if stationary_elapsed <= self._calibration_s:
             self._force_samples.append(estimate.external_force.copy())
             self._torque_samples.append(estimate.external_torque.copy())
             return

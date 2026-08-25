@@ -32,6 +32,7 @@ class ContactChannelDetector:
             release_time_s: float = 0.12,
             release_ratio: float = 0.55,
             evidence_leak: float = 1.0,
+            enabled: bool = True,
     ):
         self.thresholds = np.asarray(component_thresholds, dtype=float)
         self.covariance_floor = np.asarray(covariance_floor, dtype=float)
@@ -44,6 +45,7 @@ class ContactChannelDetector:
         self.release_time_s = float(release_time_s)
         self.release_ratio = float(release_ratio)
         self.evidence_leak = float(evidence_leak)
+        self.enabled = bool(enabled)
         self.active = False
         self.evidence = 0.0
         self._release_elapsed = 0.0
@@ -57,6 +59,20 @@ class ContactChannelDetector:
         timestamp = float(timestamp)
         dt = 0.0 if self._last_timestamp is None else min(max(timestamp - self._last_timestamp, 0.0), 0.1)
         self._last_timestamp = timestamp
+
+        if not self.enabled:
+            self.active = False
+            self.evidence = 0.0
+            self._release_elapsed = 0.0
+            return ContactDecision(
+                active=False,
+                started=False,
+                ended=False,
+                magnitude=float(np.linalg.norm(value)),
+                normalized_magnitude=0.0,
+                confidence_sigma=0.0,
+                evidence=0.0,
+            )
 
         normalized = float(np.linalg.norm(value / self.thresholds))
         effective_covariance = covariance + np.diag(np.square(self.covariance_floor))

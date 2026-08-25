@@ -27,6 +27,87 @@ class StaleLocalizationError(Exception):
     pass
 
 
+class GuidedTouchProtocol:
+    """Generate one-shot terminal/log prompts for repeatable touch trials."""
+
+    def __init__(self, config=None):
+        config = config or {}
+        self.enabled = bool(config.get('enabled', False))
+        self._next_event = 0
+        self.events = []
+        if not self.enabled:
+            return
+
+        countdown_s = int(config.get('countdown_s', 3))
+        touch_s = float(config.get('touch_s', 2.0))
+        rest_s = float(config.get('rest_s', 3.0))
+        trials = config.get('trials', ['X', 'Y', 'Z'])
+        if countdown_s <= 0 or touch_s <= 0 or rest_s < 0:
+            raise ValueError(
+                'guided_touch_test countdown/touch durations must be positive '
+                'and rest_s must be non-negative'
+            )
+        if not isinstance(trials, list) or not trials:
+            raise ValueError('guided_touch_test trials must be a non-empty list')
+
+        elapsed_s = 0.0
+        trial_count = len(trials)
+        for index, trial in enumerate(trials, start=1):
+            label = str(trial).strip()
+            if not label:
+                raise ValueError('guided_touch_test trial labels cannot be empty')
+            common = {
+                'trial_index': index,
+                'trial_count': trial_count,
+                'axis': label,
+            }
+            prefix = f'[XYZ TOUCH {index}/{trial_count} · {label}]'
+            for remaining_s in range(countdown_s, 0, -1):
+                self.events.append((
+                    elapsed_s + countdown_s - remaining_s,
+                    'Guided Touch Countdown',
+                    f'{prefix} {remaining_s}',
+                    {**common, 'countdown_s': remaining_s},
+                    False,
+                ))
+            touch_start_s = elapsed_s + countdown_s
+            self.events.append((
+                touch_start_s,
+                'Guided Touch Start Expected',
+                f'{prefix} 0 — TOUCH NOW; hold for {touch_s:.1f} s',
+                {**common, 'expected_touch_duration_s': touch_s},
+                True,
+            ))
+            self.events.append((
+                touch_start_s + touch_s,
+                'Guided Touch Release Expected',
+                f'{prefix} RELEASE NOW — hands off',
+                common,
+                True,
+            ))
+            elapsed_s += countdown_s + touch_s + rest_s
+
+        self.required_duration_s = elapsed_s
+        self.events.append((
+            elapsed_s,
+            'Guided Touch Test Complete',
+            '[XYZ TOUCH] Test sequence complete — keep hands off',
+            {'trial_count': trial_count},
+            True,
+        ))
+
+    def due(self, elapsed_s):
+        """Return prompts whose scheduled times have passed exactly once."""
+        due_events = []
+        while (
+            self._next_event < len(self.events)
+            and float(elapsed_s) >= self.events[self._next_event][0]
+        ):
+            due_events.append(self.events[self._next_event])
+            self._next_event += 1
+        return due_events
+
+
 def calculate_tilt(roll, pitch, degrees=True):
     if degrees:
         roll = np.radians(roll)
@@ -262,6 +343,18 @@ class InteractionsControl:
             [self.bounds['x_max'], self.bounds['y_max'], self.bounds['z_max']],
         )
 
+    def _emit_guided_touch_prompts(self, protocol, elapsed_s, state_source):
+        """Print and log scheduled human-touch ground-truth markers."""
+        for scheduled_s, event_name, message, data, emphasize in protocol.due(
+                elapsed_s):
+            payload = {
+                **data,
+                'scheduled_after_calibration_s': scheduled_s,
+                'state_source': state_source,
+            }
+            self._log_event(event_name, payload)
+            (logger.warning if emphasize else logger.info)(message)
+
     def _calibration_excitation_reference(
             self, nominal_position, nominal_yaw_deg, config, elapsed_s,
     ):
@@ -329,8 +422,8 @@ class InteractionsControl:
         """Estimate external wrench and generate bounded XYZ/yaw references.
 
         The Crazyflie position PID remains the flight controller. External XYZ
-        force feeds a virtual mass/damper/spring reference generator, yaw torque
-        feeds a separate yaw admittance, and roll/pitch torque is detect-only.
+        force feeds a virtual mass/damper/spring reference generator. Optional
+        yaw interaction uses a separate yaw admittance when enabled.
         """
         pipeline = WrenchInteractionPipeline(config)
         config = pipeline.config
@@ -356,7 +449,10 @@ class InteractionsControl:
             {
                 'pipeline': 'external_wrench_admittance_pid',
                 'translation_response_axes': ['x', 'y', 'z'],
-                'rotation_response_axes': ['yaw'],
+                'rotation_response_axes': (
+                    ['yaw'] if config['detection']['yaw'].get('enabled', True)
+                    else []
+                ),
                 'nominal_position': nominal_position.tolist(),
                 'nominal_yaw_deg': nominal_yaw_deg,
                 'config': config,
@@ -399,6 +495,12 @@ class InteractionsControl:
         last_command_position = nominal_position.copy()
         last_command_yaw = nominal_yaw_deg
         excitation_config = config['calibration_excitation']
+        guided_touch = GuidedTouchProtocol(config.get('guided_touch_test'))
+        if guided_touch.enabled and duration < guided_touch.required_duration_s:
+            raise ValueError(
+                f'interaction duration {duration:.1f}s is shorter than the '
+                f'guided touch sequence ({guided_touch.required_duration_s:.1f}s)'
+            )
         excitation_started = False
         excitation_finished = False
 
@@ -506,6 +608,13 @@ class InteractionsControl:
                                 'response_enabled': True,
                             },
                         )
+
+            if interaction_start is not None:
+                self._emit_guided_touch_prompts(
+                    guided_touch,
+                    time.time() - interaction_start,
+                    'mocap_full_pose',
+                )
 
             baseline_position = nominal_position.copy()
             baseline_yaw = nominal_yaw_deg
@@ -721,7 +830,10 @@ class InteractionsControl:
                 'pipeline': 'onboard_momentum_wrench_admittance_pid',
                 'state_source': 'crazyflie_state_estimate',
                 'translation_response_axes': ['x', 'y', 'z'],
-                'rotation_response_axes': ['yaw'],
+                'rotation_response_axes': (
+                    ['yaw'] if config['detection']['yaw'].get('enabled', True)
+                    else []
+                ),
                 'nominal_position': nominal_position.tolist(),
                 'nominal_yaw_deg': nominal_yaw_deg,
                 'config': config,
@@ -774,6 +886,12 @@ class InteractionsControl:
         last_command_position = nominal_position.copy()
         last_command_yaw = nominal_yaw_deg
         excitation_config = config['calibration_excitation']
+        guided_touch = GuidedTouchProtocol(config.get('guided_touch_test'))
+        if guided_touch.enabled and duration < guided_touch.required_duration_s:
+            raise ValueError(
+                f'interaction duration {duration:.1f}s is shorter than the '
+                f'guided touch sequence ({guided_touch.required_duration_s:.1f}s)'
+            )
         excitation_started = False
         excitation_finished = False
 
@@ -887,6 +1005,13 @@ class InteractionsControl:
                                 'state_source': 'crazyflie_state_estimate',
                             },
                         )
+
+            if interaction_start is not None:
+                self._emit_guided_touch_prompts(
+                    guided_touch,
+                    time.time() - interaction_start,
+                    'crazyflie_state_estimate',
+                )
 
             baseline_position = nominal_position.copy()
             baseline_yaw = nominal_yaw_deg

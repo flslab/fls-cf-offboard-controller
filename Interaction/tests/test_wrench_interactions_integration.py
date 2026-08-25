@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from Interaction.interactions import InteractionsControl
+from Interaction.interactions import GuidedTouchProtocol, InteractionsControl
 
 
 class FakeCommander:
@@ -107,6 +107,25 @@ class FakeOnboardLogManager:
 
 
 class WrenchInteractionLoopTests(unittest.TestCase):
+    def test_guided_touch_protocol_emits_countdown_touch_and_release_once(self):
+        protocol = GuidedTouchProtocol({
+            'enabled': True,
+            'countdown_s': 3,
+            'touch_s': 2.0,
+            'rest_s': 1.0,
+            'trials': ['X', 'Z'],
+        })
+        emitted = []
+        for elapsed_s in (0.0, 0.9, 1.0, 2.0, 3.0, 5.0, 6.0, 9.0, 11.0, 12.0):
+            emitted.extend(protocol.due(elapsed_s))
+        names = [event[1] for event in emitted]
+        self.assertEqual(names.count('Guided Touch Countdown'), 6)
+        self.assertEqual(names.count('Guided Touch Start Expected'), 2)
+        self.assertEqual(names.count('Guided Touch Release Expected'), 2)
+        self.assertEqual(names.count('Guided Touch Test Complete'), 1)
+        self.assertEqual(protocol.due(100.0), [])
+        self.assertEqual(protocol.required_duration_s, 12.0)
+
     def test_yaw_only_chirp_keeps_position_fixed_and_ramps_to_nominal(self):
         controller = InteractionsControl.__new__(InteractionsControl)
         controller.bounds = None

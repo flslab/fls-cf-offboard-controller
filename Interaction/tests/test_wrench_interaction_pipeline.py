@@ -34,6 +34,17 @@ class ContactDetectorTests(unittest.TestCase):
             ended |= detector.update([0, 0, 0], covariance, index * 0.01).ended
         self.assertTrue(ended)
 
+    def test_disabled_channel_never_starts(self):
+        detector = ContactChannelDetector(
+            component_thresholds=[0.05],
+            covariance_floor=[0.005],
+            enabled=False,
+        )
+        decision = detector.update([100.0], np.eye(1) * 1e-9, 0.0)
+        self.assertFalse(decision.active)
+        self.assertFalse(decision.started)
+        self.assertEqual(decision.normalized_magnitude, 0.0)
+
 class AdmittanceTests(unittest.TestCase):
     def make_controller(self):
         return AdmittanceController3DYaw(
@@ -123,6 +134,12 @@ class PipelineRoutingTests(unittest.TestCase):
             },
         })
 
+    def test_active_xyz_mode_does_not_require_yaw_model(self):
+        WrenchInteractionPipeline({
+            'shadow_mode': False,
+            'detection': {'yaw': {'enabled': False}},
+        })
+
     def test_bias_calibration_completes_before_contact_detection(self):
         pipeline = WrenchInteractionPipeline({
             'observer_settle_s': 0.0,
@@ -137,6 +154,30 @@ class PipelineRoutingTests(unittest.TestCase):
         self.assertIsNone(second.contacts)
         self.assertTrue(third.calibrated)
         self.assertIsNotNone(third.contacts)
+
+    def test_bias_calibration_restarts_after_motion(self):
+        pipeline = WrenchInteractionPipeline({
+            'observer_settle_s': 0.0,
+            'bias_calibration_s': 0.02,
+            'minimum_bias_samples': 2,
+        })
+        pipeline._start_timestamp = 0.0
+        base = self.estimate()
+
+        pipeline._update_bias(base)
+        moving = base.__class__(
+            **{**base.__dict__, 'timestamp': 0.01,
+               'velocity': np.array([0.2, 0.0, 0.0])}
+        )
+        pipeline._update_bias(moving)
+        self.assertEqual(pipeline.calibration_samples, 0)
+
+        for timestamp in (0.02, 0.03, 0.05):
+            stationary = base.__class__(
+                **{**base.__dict__, 'timestamp': timestamp}
+            )
+            pipeline._update_bias(stationary)
+        self.assertTrue(pipeline.calibrated)
 
 
 if __name__ == "__main__":
