@@ -7,7 +7,8 @@ momentum with the momentum predicted by the motor model.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from collections import deque
+from dataclasses import dataclass, replace
 from typing import Sequence
 
 import numpy as np
@@ -26,11 +27,149 @@ DEFAULT_MOMENTUM_OBSERVER_CONFIG = {
     "max_dt_s": 0.05,
 }
 
+DEFAULT_IMPULSE_ESTIMATOR_CONFIG = {
+    "window_s": 0.08,
+    "minimum_window_s": 0.05,
+    "max_dt_s": 0.05,
+}
+
 
 def _merge_momentum_config(overrides: dict | None) -> dict:
     result = dict(DEFAULT_MOMENTUM_OBSERVER_CONFIG)
     result.update(overrides or {})
     return result
+
+
+def _merge_impulse_config(overrides: dict | None) -> dict:
+    result = dict(DEFAULT_IMPULSE_ESTIMATOR_CONFIG)
+    result.update(overrides or {})
+    return result
+
+
+@dataclass(frozen=True)
+class ImpulseForceEstimate:
+    external_force: np.ndarray
+    external_impulse: np.ndarray
+    predicted_velocity: np.ndarray
+    window_s: float
+    ready: bool
+    rejected: bool
+
+
+class FiniteWindowMomentumForceEstimator:
+    """Estimate force from momentum balance under the no-contact hypothesis.
+
+    The momentum at the beginning of the window carries all existing inertia.
+    Only modeled motor/gravity force is integrated through the window; a prior
+    external-force estimate is deliberately not propagated into the prediction.
+    """
+
+    def __init__(
+            self,
+            mass: float,
+            window_s: float = 0.08,
+            minimum_window_s: float = 0.05,
+            max_dt_s: float = 0.05,
+    ):
+        self.mass = float(mass)
+        self.window_s = float(window_s)
+        self.minimum_window_s = float(minimum_window_s)
+        self.max_dt_s = float(max_dt_s)
+        if (
+            self.mass <= 0.0
+            or self.minimum_window_s <= 0.0
+            or self.window_s < self.minimum_window_s
+            or self.max_dt_s <= 0.0
+        ):
+            raise ValueError(
+                "impulse estimator mass, window, minimum window, and max dt "
+                "must be positive; window must cover the minimum window"
+            )
+        self._samples = deque()
+        self._last_timestamp: float | None = None
+
+    def _result(
+            self,
+            impulse: np.ndarray,
+            predicted_velocity: np.ndarray,
+            duration: float,
+            ready: bool,
+            rejected: bool,
+    ) -> ImpulseForceEstimate:
+        force = impulse / duration if ready else np.zeros(3)
+        if not all(np.all(np.isfinite(value)) for value in (
+            force, impulse, predicted_velocity,
+        )):
+            raise FloatingPointError("finite-window momentum estimate became non-finite")
+        return ImpulseForceEstimate(
+            external_force=force.copy(),
+            external_impulse=impulse.copy(),
+            predicted_velocity=predicted_velocity.copy(),
+            window_s=float(duration),
+            ready=bool(ready),
+            rejected=bool(rejected),
+        )
+
+    def update(
+            self,
+            velocity: Sequence[float],
+            expected_linear_acceleration: Sequence[float],
+            timestamp: float,
+    ) -> ImpulseForceEstimate:
+        velocity = _as_vector(velocity, 3, "velocity")
+        expected_linear_acceleration = _as_vector(
+            expected_linear_acceleration, 3, "expected_linear_acceleration"
+        )
+        timestamp = float(timestamp)
+        momentum = self.mass * velocity
+        model_force = self.mass * expected_linear_acceleration
+
+        discontinuity = False
+        if self._last_timestamp is not None:
+            dt = timestamp - self._last_timestamp
+            discontinuity = dt <= 0.0 or dt > self.max_dt_s
+        self._last_timestamp = timestamp
+        if discontinuity:
+            self._samples.clear()
+
+        self._samples.append((timestamp, momentum.copy(), model_force.copy()))
+        while (
+            len(self._samples) >= 3
+            and timestamp - self._samples[1][0] >= self.window_s
+        ):
+            self._samples.popleft()
+
+        if len(self._samples) < 2:
+            return self._result(
+                np.zeros(3), velocity, 0.0, False, True,
+            )
+
+        duration = timestamp - self._samples[0][0]
+        modeled_impulse = np.zeros(3)
+        samples = list(self._samples)
+        for previous, current in zip(samples, samples[1:]):
+            interval = current[0] - previous[0]
+            if interval <= 0.0 or interval > self.max_dt_s:
+                self._samples.clear()
+                self._samples.append((
+                    timestamp, momentum.copy(), model_force.copy()
+                ))
+                return self._result(
+                    np.zeros(3), velocity, 0.0, False, True,
+                )
+            modeled_impulse += previous[2] * interval
+
+        predicted_momentum = self._samples[0][1] + modeled_impulse
+        external_impulse = momentum - predicted_momentum
+        predicted_velocity = predicted_momentum / self.mass
+        ready = duration >= self.minimum_window_s and not discontinuity
+        return self._result(
+            external_impulse,
+            predicted_velocity,
+            duration,
+            ready,
+            not ready,
+        )
 
 
 class OnboardMomentumWrenchObserver:
@@ -233,6 +372,19 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
             inertia=self.config["inertia"],
             **observer_config,
         )
+        impulse_config = _merge_impulse_config(
+            self.config.get("impulse_estimator")
+        )
+        self.config["impulse_estimator"] = impulse_config
+        self.impulse_estimator = FiniteWindowMomentumForceEstimator(
+            mass=self.config["mass"],
+            **impulse_config,
+        )
+        self.last_recursive_external_force = np.zeros(3)
+        self.last_external_impulse = np.zeros(3)
+        self.last_impulse_window_s = 0.0
+        self.last_no_contact_predicted_velocity = np.zeros(3)
+        self.last_impulse_ready = False
 
     def update(
             self,
@@ -273,7 +425,7 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
                 - float(yaw_model["damping_per_s"]) * float(angular_velocity[2])
                 + float(yaw_model["bias_rad_s2"])
             )
-        raw = self.observer.update(
+        recursive_raw = self.observer.update(
             position=position,
             velocity=velocity,
             attitude_rpy=attitude_rpy,
@@ -281,6 +433,26 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
             expected_linear_acceleration=expected_linear,
             expected_angular_acceleration=expected_angular,
             timestamp=timestamp,
+        )
+        impulse = self.impulse_estimator.update(
+            velocity=velocity,
+            expected_linear_acceleration=expected_linear,
+            timestamp=timestamp,
+        )
+        self.last_recursive_external_force = recursive_raw.external_force.copy()
+        self.last_external_impulse = impulse.external_impulse.copy()
+        self.last_impulse_window_s = impulse.window_s
+        self.last_no_contact_predicted_velocity = impulse.predicted_velocity.copy()
+        self.last_impulse_ready = impulse.ready
+        # XYZ contact detection uses the finite-window no-contact innovation.
+        # Retain recursive angular momentum for the dormant yaw channel.
+        raw = replace(
+            recursive_raw,
+            external_force=impulse.external_force,
+            position_innovation=impulse.external_impulse,
+            measurement_rejected=(
+                recursive_raw.measurement_rejected or impulse.rejected
+            ),
         )
 
         if not self.calibrated:

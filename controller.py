@@ -635,8 +635,22 @@ class Controller:
             .get('config', {})
             .get('wrench_interaction')
         )
+        translation_config = (
+            (self.mission or {}).get('Interaction', {}).get('config', {})
+        )
+        detection_method = translation_config.get('detection_method')
+        if detection_method is None:
+            detection_method = (
+                (
+                    'momentum_impulse'
+                    if wrench_config.get('state_source') == 'onboard'
+                    else 'mocap_wrench'
+                )
+                if wrench_config is not None else 'velocity'
+            )
         return (
             wrench_config is not None
+            and detection_method == 'momentum_impulse'
             and wrench_config.get('state_source') == 'onboard'
         )
 

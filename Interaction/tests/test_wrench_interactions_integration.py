@@ -26,6 +26,9 @@ class FakeCommander:
     def send_hover_setpoint(self, *args):
         self.calls.append(('hover', args, {}))
 
+    def send_notify_setpoint_stop(self, *args):
+        self.calls.append(('stop', args, {}))
+
 
 class FakeLogManager:
     def __init__(self, base_time):
@@ -117,35 +120,101 @@ class FakeOnboardLogManager:
 
 
 class WrenchInteractionLoopTests(unittest.TestCase):
+    def test_task_detection_method_selects_legacy_velocity(self):
+        controller = InteractionsControl.__new__(InteractionsControl)
+        controller.drone_id = 'lb11'
+        controller.pub_socket = None
+        controller.lo_commander = FakeCommander()
+        controller.mission = {
+            'drones': {'lb11': {'target': [0.0, 0.0, 1.0]}},
+            'Interaction': {'config': {
+                'detection_method': 'velocity',
+                'duration': 10,
+                'delta_v': 0.2,
+                'z': -1,
+                'friction_coefficient': 0,
+                'base_attitude': 1,
+                'v_scalar': [10, 10, 5],
+                'wrench_interaction': {'state_source': 'onboard'},
+            }},
+        }
+        calls = []
+        controller.interaction_translation_vel = lambda **kwargs: calls.append(
+            ('velocity', kwargs)
+        )
+        controller.interaction_onboard_wrench_admittance = (
+            lambda **kwargs: calls.append(('momentum_impulse', kwargs))
+        )
+
+        controller._run_translation()
+
+        self.assertEqual([name for name, _ in calls], ['velocity'])
+        self.assertEqual(calls[0][1]['vel_threshold'], 0.2)
+
+    def test_task_detection_method_selects_momentum_impulse(self):
+        controller = InteractionsControl.__new__(InteractionsControl)
+        controller.drone_id = 'lb11'
+        controller.lo_commander = FakeCommander()
+        wrench_config = {'state_source': 'onboard'}
+        controller.mission = {
+            'drones': {'lb11': {'target': [0.1, 0.2, 1.0, 7.0]}},
+            'Interaction': {'config': {
+                'detection_method': 'momentum_impulse',
+                'duration': 12,
+                'wrench_interaction': wrench_config,
+            }},
+        }
+        calls = []
+        controller.interaction_onboard_wrench_admittance = (
+            lambda **kwargs: calls.append(kwargs)
+        )
+
+        controller._run_translation()
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]['nominal_position'], [0.1, 0.2, 1.0])
+        self.assertEqual(calls[0]['nominal_yaw_deg'], 7.0)
+        self.assertIs(calls[0]['config'], wrench_config)
+
     def test_active_translation_brakes_before_holding_release_position(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
             yaw_deg=5.0,
             shadow_mode=False,
+            brake_xy_acceleration_m_s2=1.0,
+            brake_xy_speed_m_s=0.04,
+            brake_settle_s=0.30,
         )
 
         control.send(commander)
         self.assertTrue(control.start_contact())
         control.send(commander)
-        self.assertTrue(control.end_contact())
+        self.assertTrue(control.end_contact([0.2, 0.0, 0.0], 1.0))
         self.assertFalse(control.start_contact())
         control.send(commander)
         self.assertFalse(control.update_braking(
-            [0.3, -0.2, 0.95], [0.2, 0.0, 0.0], 1.0
+            [0.3, -0.2, 0.95], [0.0, 0.0, 0.0], 1.05
         ))
+        control.send(commander)
         self.assertFalse(control.update_braking(
-            [0.32, -0.2, 0.95], [0.05, 0.0, 0.0], 1.1
+            [0.32, -0.2, 0.95], [0.03, 0.0, 0.0], 1.20
+        ))
+        control.send(commander)
+        self.assertFalse(control.update_braking(
+            [0.325, -0.2, 0.95], [0.03, 0.0, 0.0], 1.40
         ))
         self.assertTrue(control.update_braking(
-            [0.33, -0.2, 0.95], [0.04, 0.0, 0.0], 1.36
+            [0.33, -0.2, 0.95], [0.02, 0.0, 0.0], 1.51
         ))
         control.send(commander)
 
         self.assertEqual(commander.calls, [
             ('position', (0.0, 0.0, 1.0, 5.0), {}),
             ('zdistance', (0, 0, 0, 1.0), {}),
-            ('hover', (0, 0, 0, 1.0), {}),
+            ('hover', (0.2, 0.0, 0, 1.0), {}),
+            ('hover', (0.14999999999999997, 0.0, 0, 1.0), {}),
+            ('hover', (0.0, 0.0, 0, 1.0), {}),
             ('position', (0.33, -0.2, 0.95, 5.0), {}),
         ])
         self.assertEqual(control.command_mode, 'position_hold')
@@ -159,10 +228,28 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         self.assertFalse(control.start_contact())
         control.send(commander)
-        self.assertFalse(control.end_contact())
+        self.assertFalse(control.end_contact([0.0, 0.0, 0.0], 1.0))
         self.assertEqual(commander.calls, [
             ('position', (0.0, 0.0, 1.0, 0.0), {}),
         ])
+
+    def test_braking_converts_world_velocity_to_body_coordinates(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=90.0,
+            shadow_mode=False,
+        )
+        self.assertTrue(control.start_contact())
+        self.assertTrue(control.end_contact(
+            [0.4, 0.0, 0.0], 1.0, yaw_rad=np.pi / 2.0
+        ))
+        control.send(commander)
+
+        command = commander.calls[-1]
+        self.assertEqual(command[0], 'hover')
+        self.assertAlmostEqual(command[1][0], 0.0, places=12)
+        self.assertAlmostEqual(command[1][1], -0.4, places=12)
 
     def test_guided_touch_protocol_emits_countdown_touch_and_release_once(self):
         protocol = GuidedTouchProtocol({

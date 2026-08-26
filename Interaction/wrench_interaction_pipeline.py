@@ -82,10 +82,11 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         },
     },
     "control_handoff": {
-        # After contact release, command zero horizontal velocity before
-        # capturing a new position hold. This avoids a high-speed PID snapback.
-        "brake_xy_speed_m_s": 0.08,
-        "brake_settle_s": 0.25,
+        # Ramp the release velocity to zero before capturing a new position.
+        # A bounded deceleration avoids underdamped velocity-PID reversal.
+        "brake_xy_acceleration_m_s2": 0.8,
+        "brake_xy_speed_m_s": 0.04,
+        "brake_settle_s": 0.30,
     },
     "admittance": {
         "translation_mass": [0.30, 0.30, 0.45],

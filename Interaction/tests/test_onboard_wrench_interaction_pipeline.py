@@ -3,9 +3,75 @@ import unittest
 import numpy as np
 
 from Interaction.onboard_wrench_interaction_pipeline import (
+    FiniteWindowMomentumForceEstimator,
     OnboardMomentumWrenchObserver,
     OnboardMomentumWrenchPipeline,
 )
+
+
+class FiniteWindowMomentumForceEstimatorTests(unittest.TestCase):
+    def test_constant_velocity_inertia_is_not_external_force(self):
+        estimator = FiniteWindowMomentumForceEstimator(
+            mass=0.17, window_s=0.08, minimum_window_s=0.05
+        )
+        estimate = None
+        for index in range(20):
+            estimate = estimator.update(
+                velocity=[0.8, -0.3, 0.1],
+                expected_linear_acceleration=[0.0, 0.0, 0.0],
+                timestamp=index * 0.01,
+            )
+
+        self.assertTrue(estimate.ready)
+        np.testing.assert_allclose(estimate.external_force, np.zeros(3), atol=1e-12)
+        np.testing.assert_allclose(
+            estimate.predicted_velocity, [0.8, -0.3, 0.1], atol=1e-12
+        )
+
+    def test_motor_explained_acceleration_is_not_external_force(self):
+        estimator = FiniteWindowMomentumForceEstimator(
+            mass=0.17, window_s=0.08, minimum_window_s=0.05
+        )
+        acceleration = np.array([1.2, -0.4, 0.3])
+        velocity = np.zeros(3)
+        estimate = estimator.update(velocity, acceleration, 0.0)
+        for index in range(1, 20):
+            velocity += acceleration * 0.01
+            estimate = estimator.update(
+                velocity, acceleration, index * 0.01
+            )
+
+        self.assertTrue(estimate.ready)
+        np.testing.assert_allclose(estimate.external_force, np.zeros(3), atol=1e-12)
+
+    def test_release_decays_without_opposite_force_tail(self):
+        mass = 0.17
+        estimator = FiniteWindowMomentumForceEstimator(
+            mass=mass, window_s=0.08, minimum_window_s=0.05
+        )
+        applied_force = np.array([0.12, 0.0, 0.0])
+        velocity = np.zeros(3)
+        estimator.update(velocity, np.zeros(3), 0.0)
+
+        estimate = None
+        for index in range(1, 16):
+            velocity += applied_force / mass * 0.01
+            estimate = estimator.update(
+                velocity, np.zeros(3), index * 0.01
+            )
+        self.assertAlmostEqual(estimate.external_force[0], 0.12, places=10)
+
+        release_forces = []
+        for index in range(16, 31):
+            estimate = estimator.update(
+                velocity, np.zeros(3), index * 0.01
+            )
+            if estimate.ready:
+                release_forces.append(float(estimate.external_force[0]))
+
+        self.assertGreater(release_forces[0], 0.0)
+        self.assertGreaterEqual(min(release_forces), -1e-12)
+        self.assertAlmostEqual(release_forces[-1], 0.0, places=10)
 
 
 class OnboardMomentumObserverTests(unittest.TestCase):
@@ -117,6 +183,10 @@ class OnboardMomentumPipelineTests(unittest.TestCase):
             'bias_calibration_s': 0.02,
             'minimum_bias_samples': 2,
             'motor_model': {'hover_pwm': 30000, 'hover_voltage': 8.0},
+            'impulse_estimator': {
+                'window_s': 0.02,
+                'minimum_window_s': 0.01,
+            },
         })
         args = dict(
             position=[0, 0, 1],
@@ -129,10 +199,12 @@ class OnboardMomentumPipelineTests(unittest.TestCase):
         first = pipeline.update(**args, timestamp=0.0)
         second = pipeline.update(**args, timestamp=0.01)
         third = pipeline.update(**args, timestamp=0.03)
+        fourth = pipeline.update(**args, timestamp=0.04)
         self.assertFalse(first.calibrated)
         self.assertIsNone(second.contacts)
-        self.assertTrue(third.calibrated)
-        self.assertIsNotNone(third.contacts)
+        self.assertFalse(third.calibrated)
+        self.assertTrue(fourth.calibrated)
+        self.assertIsNotNone(fourth.contacts)
 
 
 if __name__ == '__main__':

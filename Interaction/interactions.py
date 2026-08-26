@@ -120,20 +120,32 @@ class TranslationControlHandoff:
             initial_position,
             yaw_deg,
             shadow_mode,
-            brake_xy_speed_m_s=0.08,
-            brake_settle_s=0.25,
+            brake_xy_acceleration_m_s2=0.8,
+            brake_xy_speed_m_s=0.04,
+            brake_settle_s=0.30,
     ):
         self.hold_position = np.asarray(initial_position, dtype=float).copy()
         if self.hold_position.shape != (3,):
             raise ValueError('initial translation hold position must contain XYZ')
         self.yaw_deg = float(yaw_deg)
         self.shadow_mode = bool(shadow_mode)
+        self.brake_xy_acceleration_m_s2 = float(brake_xy_acceleration_m_s2)
         self.brake_xy_speed_m_s = float(brake_xy_speed_m_s)
         self.brake_settle_s = float(brake_settle_s)
-        if self.brake_xy_speed_m_s <= 0 or self.brake_settle_s <= 0:
-            raise ValueError('translation braking speed and settle time must be positive')
+        if (
+            self.brake_xy_acceleration_m_s2 <= 0
+            or self.brake_xy_speed_m_s <= 0
+            or self.brake_settle_s <= 0
+        ):
+            raise ValueError(
+                'translation braking acceleration, speed, and settle time '
+                'must be positive'
+            )
         self.mode = self.POSITION_HOLD
         self._brake_settled_since = None
+        self._last_brake_timestamp = None
+        self.brake_velocity_command = np.zeros(2)
+        self._brake_yaw_rad = 0.0
         self.hover_z = float(self.hold_position[2])
 
     def start_contact(self):
@@ -145,14 +157,29 @@ class TranslationControlHandoff:
         self.mode = self.CONTACT_ZDISTANCE
         return True
 
-    def end_contact(self, current_position=None):
+    def end_contact(self, current_velocity, timestamp, yaw_rad=0.0):
         if self.shadow_mode or self.mode != self.CONTACT_ZDISTANCE:
             return False
+        velocity = np.asarray(current_velocity, dtype=float)
+        if velocity.shape != (3,) or not np.all(np.isfinite(velocity)):
+            raise ValueError('translation release velocity must be finite XYZ')
+        timestamp = float(timestamp)
+        if not np.isfinite(timestamp):
+            raise ValueError('translation release timestamp must be finite')
+        yaw_rad = float(yaw_rad)
+        if not np.isfinite(yaw_rad):
+            raise ValueError('translation release yaw must be finite')
         self.mode = self.VELOCITY_BRAKING
         self._brake_settled_since = None
+        self._last_brake_timestamp = timestamp
+        self._brake_yaw_rad = yaw_rad
+        # Start from the actual release velocity so entering hover-velocity
+        # control does not create a step command. Subsequent updates slew this
+        # vector toward zero with bounded acceleration.
+        self.brake_velocity_command = velocity[:2].copy()
         return True
 
-    def update_braking(self, current_position, velocity, timestamp):
+    def update_braking(self, current_position, velocity, timestamp, yaw_rad=0.0):
         if self.shadow_mode or self.mode != self.VELOCITY_BRAKING:
             return False
         position = np.asarray(current_position, dtype=float)
@@ -164,8 +191,29 @@ class TranslationControlHandoff:
         timestamp = float(timestamp)
         if not np.isfinite(timestamp):
             raise ValueError('translation braking timestamp must be finite')
+        yaw_rad = float(yaw_rad)
+        if not np.isfinite(yaw_rad):
+            raise ValueError('translation braking yaw must be finite')
+        self._brake_yaw_rad = yaw_rad
 
-        if float(np.linalg.norm(velocity[:2])) > self.brake_xy_speed_m_s:
+        dt = max(0.0, timestamp - self._last_brake_timestamp)
+        self._last_brake_timestamp = timestamp
+        command_speed = float(np.linalg.norm(self.brake_velocity_command))
+        speed_step = self.brake_xy_acceleration_m_s2 * dt
+        if command_speed - speed_step <= 1e-6:
+            self.brake_velocity_command.fill(0.0)
+        elif command_speed > 0.0:
+            self.brake_velocity_command *= (
+                (command_speed - speed_step) / command_speed
+            )
+
+        command_stopped = bool(np.linalg.norm(
+            self.brake_velocity_command
+        ) <= 1e-6)
+        vehicle_stopped = bool(
+            np.linalg.norm(velocity[:2]) <= self.brake_xy_speed_m_s
+        )
+        if not command_stopped or not vehicle_stopped:
             self._brake_settled_since = None
             return False
         if self._brake_settled_since is None:
@@ -177,6 +225,8 @@ class TranslationControlHandoff:
         self.hold_position = position.copy()
         self.mode = self.POSITION_HOLD
         self._brake_settled_since = None
+        self._last_brake_timestamp = None
+        self.brake_velocity_command.fill(0.0)
         return True
 
     @property
@@ -192,6 +242,17 @@ class TranslationControlHandoff:
         return self.shadow_mode or self.mode == self.POSITION_HOLD
 
     @property
+    def brake_velocity_command_body(self):
+        """Return the world-frame brake command in Crazyflie body axes."""
+        cosine = np.cos(self._brake_yaw_rad)
+        sine = np.sin(self._brake_yaw_rad)
+        vx_world, vy_world = self.brake_velocity_command
+        return np.array([
+            cosine * vx_world + sine * vy_world,
+            -sine * vx_world + cosine * vy_world,
+        ])
+
+    @property
     def command_mode(self):
         if self.shadow_mode:
             return 'shadow_position_hold'
@@ -205,7 +266,13 @@ class TranslationControlHandoff:
         elif self.mode == self.CONTACT_ZDISTANCE:
             commander.send_zdistance_setpoint(0, 0, 0, self.hover_z)
         else:
-            commander.send_hover_setpoint(0, 0, 0, self.hover_z)
+            body_velocity = self.brake_velocity_command_body
+            commander.send_hover_setpoint(
+                float(body_velocity[0]),
+                float(body_velocity[1]),
+                0,
+                self.hover_z,
+            )
 
 
 def calculate_tilt(roll, pitch, degrees=True):
@@ -372,12 +439,43 @@ class InteractionsControl:
         try:
             translation_setting = self.mission['Interaction']['config']
             wrench_config = translation_setting.get('wrench_interaction')
-            if wrench_config is not None:
+            detection_method = translation_setting.get('detection_method')
+            if detection_method is None:
+                # Preserve old missions: a wrench block selected model-based
+                # detection, while its absence selected legacy velocity mode.
+                detection_method = (
+                    (
+                        'momentum_impulse'
+                        if wrench_config.get('state_source') == 'onboard'
+                        else 'mocap_wrench'
+                    )
+                    if wrench_config is not None else 'velocity'
+                )
+            if detection_method not in (
+                    'velocity', 'momentum_impulse', 'mocap_wrench'):
+                raise ValueError(
+                    'translation detection_method must be velocity or '
+                    'momentum_impulse (mocap_wrench is retained for legacy use)'
+                )
+
+            if detection_method in ('momentum_impulse', 'mocap_wrench'):
+                if wrench_config is None:
+                    raise ValueError(
+                        f'{detection_method} detection requires '
+                        'wrench_interaction config'
+                    )
+                if (
+                    detection_method == 'momentum_impulse'
+                    and wrench_config.get('state_source', 'mocap') != 'onboard'
+                ):
+                    raise ValueError(
+                        'momentum_impulse detection requires state_source: onboard'
+                    )
                 target = self.mission['drones'][self.drone_id]['target']
                 nominal_yaw = target[3] if len(target) > 3 else wrench_config.get('nominal_yaw_deg', 0.0)
                 interaction_function = (
                     self.interaction_onboard_wrench_admittance
-                    if wrench_config.get('state_source', 'mocap') == 'onboard'
+                    if detection_method == 'momentum_impulse'
                     else self.interaction_wrench_admittance
                 )
                 interaction_function(
@@ -548,6 +646,7 @@ class InteractionsControl:
             'configs',
             {
                 'pipeline': 'external_wrench_admittance_pid',
+                'detection_method': 'mocap_wrench',
                 'translation_response_axes': ['x', 'y', 'z'],
                 'rotation_response_axes': (
                     ['yaw'] if config['detection']['yaw'].get('enabled', True)
@@ -724,7 +823,10 @@ class InteractionsControl:
                                         'yaw_rate_deg_s': 0.0,
                                     },
                                 )
-                            elif decision.ended and translation_control.end_contact():
+                            elif decision.ended and translation_control.end_contact(
+                                    output.estimate.velocity,
+                                    frame_time,
+                                    output.estimate.orientation_rpy[2]):
                                 pipeline.admittance.reset()
                                 self._log_event(
                                     'Translation Velocity Braking Started',
@@ -733,6 +835,12 @@ class InteractionsControl:
                                             output.estimate.velocity[:2]
                                         )),
                                         'target_xy_velocity_m_s': [0.0, 0.0],
+                                        'initial_xy_velocity_command_world_m_s': (
+                                            translation_control.brake_velocity_command.tolist()
+                                        ),
+                                        'max_brake_acceleration_m_s2': (
+                                            translation_control.brake_xy_acceleration_m_s2
+                                        ),
                                         'zdistance_m': translation_control.hover_z,
                                     },
                                 )
@@ -740,7 +848,8 @@ class InteractionsControl:
             if translation_control.update_braking(
                     self._bounded_wrench_reference(position),
                     output.estimate.velocity,
-                    frame_time):
+                    frame_time,
+                    output.estimate.orientation_rpy[2]):
                 pipeline.detector.translation.reset(frame_time)
                 last_command_position = translation_control.hold_position.copy()
                 self._log_event(
@@ -863,7 +972,12 @@ class InteractionsControl:
                     if not translation_control.uses_position_setpoint else None
                 ),
                 'command_xy_velocity_m_s': (
-                    [0.0, 0.0] if translation_control.braking_mode else None
+                    translation_control.brake_velocity_command_body.tolist()
+                    if translation_control.braking_mode else None
+                ),
+                'command_xy_velocity_world_m_s': (
+                    translation_control.brake_velocity_command.tolist()
+                    if translation_control.braking_mode else None
                 ),
                 'command_yaw_deg': float(command_yaw),
                 'shadow_mode': pipeline.shadow_mode,
@@ -989,6 +1103,7 @@ class InteractionsControl:
             'configs',
             {
                 'pipeline': 'onboard_momentum_wrench_admittance_pid',
+                'detection_method': 'momentum_impulse',
                 'state_source': 'crazyflie_state_estimate',
                 'translation_response_axes': ['x', 'y', 'z'],
                 'rotation_response_axes': (
@@ -1183,7 +1298,10 @@ class InteractionsControl:
                                         'state_source': 'crazyflie_state_estimate',
                                     },
                                 )
-                            elif decision.ended and translation_control.end_contact():
+                            elif decision.ended and translation_control.end_contact(
+                                    output.estimate.velocity,
+                                    state_time,
+                                    output.estimate.orientation_rpy[2]):
                                 pipeline.admittance.reset()
                                 self._log_event(
                                     'Translation Velocity Braking Started',
@@ -1192,6 +1310,12 @@ class InteractionsControl:
                                             output.estimate.velocity[:2]
                                         )),
                                         'target_xy_velocity_m_s': [0.0, 0.0],
+                                        'initial_xy_velocity_command_world_m_s': (
+                                            translation_control.brake_velocity_command.tolist()
+                                        ),
+                                        'max_brake_acceleration_m_s2': (
+                                            translation_control.brake_xy_acceleration_m_s2
+                                        ),
                                         'zdistance_m': translation_control.hover_z,
                                         'state_source': 'crazyflie_state_estimate',
                                     },
@@ -1200,7 +1324,8 @@ class InteractionsControl:
             if translation_control.update_braking(
                     self._bounded_wrench_reference(position),
                     output.estimate.velocity,
-                    state_time):
+                    state_time,
+                    output.estimate.orientation_rpy[2]):
                 pipeline.detector.translation.reset(state_time)
                 last_command_position = translation_control.hold_position.copy()
                 self._log_event(
@@ -1294,6 +1419,12 @@ class InteractionsControl:
                 'expected_linear_acceleration_m_s2': output.expected_linear_acceleration.tolist(),
                 'expected_angular_acceleration_rad_s2': output.expected_angular_acceleration.tolist(),
                 'raw_external_force_N': raw.external_force.tolist(),
+                'recursive_external_force_N': (
+                    pipeline.last_recursive_external_force.tolist()
+                ),
+                'external_impulse_N_s': pipeline.last_external_impulse.tolist(),
+                'impulse_window_s': pipeline.last_impulse_window_s,
+                'impulse_estimate_ready': pipeline.last_impulse_ready,
                 'raw_external_torque_Nm': raw.external_torque.tolist(),
                 'force_bias_N': pipeline.force_bias.tolist(),
                 'torque_bias_Nm': pipeline.torque_bias.tolist(),
@@ -1303,11 +1434,12 @@ class InteractionsControl:
                 'torque_covariance': estimate.torque_covariance.tolist(),
                 'linear_momentum_error_kg_m_s': raw.position_innovation.tolist(),
                 'angular_momentum_error_kg_m2_s': raw.orientation_innovation.tolist(),
-                'one_step_predicted_velocity_m_s': (
-                    np.asarray(state['velocity'], dtype=float)
-                    - raw.position_innovation / float(config['mass'])
-                ).tolist(),
-                'momentum_prediction_input': 'previous_actuator_state',
+                'no_contact_predicted_velocity_m_s': (
+                    pipeline.last_no_contact_predicted_velocity.tolist()
+                ),
+                'momentum_prediction_input': (
+                    'finite_window_previous_actuator_states_without_external_force'
+                ),
                 'measurement_rejected': bool(estimate.measurement_rejected),
                 'motor_data_available': bool(output.motor_data_available),
                 'battery_data_available': bool(battery_available),
@@ -1341,7 +1473,12 @@ class InteractionsControl:
                     if not translation_control.uses_position_setpoint else None
                 ),
                 'command_xy_velocity_m_s': (
-                    [0.0, 0.0] if translation_control.braking_mode else None
+                    translation_control.brake_velocity_command_body.tolist()
+                    if translation_control.braking_mode else None
+                ),
+                'command_xy_velocity_world_m_s': (
+                    translation_control.brake_velocity_command.tolist()
+                    if translation_control.braking_mode else None
                 ),
                 'command_yaw_deg': float(command_yaw),
                 'shadow_mode': pipeline.shadow_mode,
@@ -1710,7 +1847,8 @@ class InteractionsControl:
                 virtual_max_distance = None
 
         self.log_manager.add_log_entry(group_name="configs",
-                                       entry={'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt,
+                                       entry={'detection_method': 'velocity',
+                                              'delta_v': vel_threshold, 'Delta': dt, 'delta': v_scalar[0] * dt,
                                               "Orientation CMD": base_attitude, 'Grace Period': grace_time,
                                               'current_mass': current_mass, 'virtual_mass': virtual_mass,
                                               'delta_a': acc_threshold,
