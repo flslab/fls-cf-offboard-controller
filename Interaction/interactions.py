@@ -1417,6 +1417,14 @@ class InteractionsControl:
                 'controller_yaw_rate_rad_s': state['controller_yaw_rate'],
                 'controller_yaw_skew_s': state['yaw_control_skew_s'],
                 'expected_linear_acceleration_m_s2': output.expected_linear_acceleration.tolist(),
+                'aligned_expected_linear_acceleration_m_s2': (
+                    pipeline.last_aligned_expected_linear_acceleration.tolist()
+                ),
+                'model_alignment_ready': pipeline.last_model_alignment_ready,
+                'model_delay_s': pipeline.config['impulse_estimator']['model_delay_s'],
+                'model_time_constant_s': (
+                    pipeline.config['impulse_estimator']['model_time_constant_s']
+                ),
                 'expected_angular_acceleration_rad_s2': output.expected_angular_acceleration.tolist(),
                 'raw_external_force_N': raw.external_force.tolist(),
                 'recursive_external_force_N': (
@@ -1438,7 +1446,7 @@ class InteractionsControl:
                     pipeline.last_no_contact_predicted_velocity.tolist()
                 ),
                 'momentum_prediction_input': (
-                    'finite_window_previous_actuator_states_without_external_force'
+                    'finite_window_time_aligned_actuator_states_without_external_force'
                 ),
                 'measurement_rejected': bool(estimate.measurement_rejected),
                 'motor_data_available': bool(output.motor_data_available),

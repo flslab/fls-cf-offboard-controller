@@ -3,10 +3,37 @@ import unittest
 import numpy as np
 
 from Interaction.onboard_wrench_interaction_pipeline import (
+    CausalAccelerationAligner,
     FiniteWindowMomentumForceEstimator,
     OnboardMomentumWrenchObserver,
     OnboardMomentumWrenchPipeline,
 )
+
+
+class CausalAccelerationAlignerTests(unittest.TestCase):
+    def test_delays_model_acceleration_without_filtering_velocity(self):
+        aligner = CausalAccelerationAligner(model_delay_s=0.03)
+        outputs = []
+        readiness = []
+        for index in range(7):
+            value, ready = aligner.update(
+                [1.0 if index >= 1 else 0.0, 0.0, 0.0], index * 0.01
+            )
+            outputs.append(value[0])
+            readiness.append(ready)
+
+        self.assertFalse(any(readiness[:3]))
+        self.assertTrue(all(readiness[3:]))
+        self.assertAlmostEqual(outputs[3], 0.0)
+        self.assertAlmostEqual(outputs[4], 1.0)
+
+    def test_first_order_model_has_causal_exponential_response(self):
+        aligner = CausalAccelerationAligner(model_time_constant_s=0.02)
+        aligner.update([0.0, 0.0, 0.0], 0.0)
+        value, ready = aligner.update([1.0, 0.0, 0.0], 0.02)
+
+        self.assertTrue(ready)
+        self.assertAlmostEqual(value[0], 1.0 - np.exp(-1.0))
 
 
 class FiniteWindowMomentumForceEstimatorTests(unittest.TestCase):
@@ -72,6 +99,33 @@ class FiniteWindowMomentumForceEstimatorTests(unittest.TestCase):
         self.assertGreater(release_forces[0], 0.0)
         self.assertGreaterEqual(min(release_forces), -1e-12)
         self.assertAlmostEqual(release_forces[-1], 0.0, places=10)
+
+    def test_aligned_model_explains_delayed_velocity_response(self):
+        delay_s = 0.03
+        estimator = FiniteWindowMomentumForceEstimator(
+            mass=0.17,
+            window_s=0.04,
+            minimum_window_s=0.03,
+            model_delay_s=delay_s,
+        )
+        velocity = np.zeros(3)
+        previous_effective_acceleration = 0.0
+        ready_forces = []
+        for index in range(80):
+            timestamp = index * 0.01
+            if index:
+                velocity[0] += previous_effective_acceleration * 0.01
+            raw_acceleration = 1.0 if timestamp >= 0.20 else 0.0
+            previous_effective_acceleration = (
+                1.0 if timestamp >= 0.20 + delay_s else 0.0
+            )
+            estimate = estimator.update(
+                velocity, [raw_acceleration, 0.0, 0.0], timestamp
+            )
+            if estimate.ready:
+                ready_forces.append(estimate.external_force.copy())
+
+        np.testing.assert_allclose(ready_forces, 0.0, atol=1e-10)
 
 
 class OnboardMomentumObserverTests(unittest.TestCase):

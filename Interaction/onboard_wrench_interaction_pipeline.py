@@ -31,6 +31,12 @@ DEFAULT_IMPULSE_ESTIMATOR_CONFIG = {
     "window_s": 0.08,
     "minimum_window_s": 0.05,
     "max_dt_s": 0.05,
+    # stateEstimate.v* is a filtered state whose physical response can lag the
+    # motor/attitude packets even when their packet timestamps are close.  The
+    # delay is kept at zero by default and identified per vehicle from a
+    # contact-free excitation flight.
+    "model_delay_s": 0.0,
+    "model_time_constant_s": 0.0,
 }
 
 
@@ -56,6 +62,80 @@ class ImpulseForceEstimate:
     rejected: bool
 
 
+class CausalAccelerationAligner:
+    """Align actuator-model acceleration with the onboard velocity estimate.
+
+    ``model_delay_s`` represents the aggregate motor/attitude-to-velocity
+    latency observed in flight.  The optional first-order state represents
+    actuator and estimator response dynamics; it is applied to acceleration,
+    never to the measured velocity used for contact detection.
+    """
+
+    def __init__(
+            self,
+            model_delay_s: float = 0.0,
+            model_time_constant_s: float = 0.0,
+            max_dt_s: float = 0.05,
+    ):
+        self.model_delay_s = float(model_delay_s)
+        self.model_time_constant_s = float(model_time_constant_s)
+        self.max_dt_s = float(max_dt_s)
+        if self.model_delay_s < 0.0 or self.model_time_constant_s < 0.0:
+            raise ValueError("model delay and time constant cannot be negative")
+        if self.max_dt_s <= 0.0:
+            raise ValueError("max_dt_s must be positive")
+        self._history = deque()
+        self._last_timestamp: float | None = None
+        self._filtered_acceleration: np.ndarray | None = None
+
+    def reset(self) -> None:
+        self._history.clear()
+        self._last_timestamp = None
+        self._filtered_acceleration = None
+
+    def update(
+            self,
+            acceleration: Sequence[float],
+            timestamp: float,
+    ) -> tuple[np.ndarray, bool]:
+        acceleration = _as_vector(acceleration, 3, "acceleration")
+        timestamp = float(timestamp)
+        if self._last_timestamp is not None:
+            dt = timestamp - self._last_timestamp
+            if dt <= 0.0 or dt > self.max_dt_s:
+                self.reset()
+        dt = None if self._last_timestamp is None else timestamp - self._last_timestamp
+        self._last_timestamp = timestamp
+
+        if self._filtered_acceleration is None:
+            self._filtered_acceleration = acceleration.copy()
+        elif self.model_time_constant_s <= 0.0:
+            self._filtered_acceleration = acceleration.copy()
+        else:
+            alpha = 1.0 - np.exp(-dt / self.model_time_constant_s)
+            self._filtered_acceleration += alpha * (
+                acceleration - self._filtered_acceleration
+            )
+        self._history.append((timestamp, self._filtered_acceleration.copy()))
+
+        target_time = timestamp - self.model_delay_s
+        while len(self._history) >= 3 and self._history[1][0] <= target_time:
+            self._history.popleft()
+        if self._history[0][0] > target_time:
+            return self._filtered_acceleration.copy(), False
+        if len(self._history) == 1 or self._history[0][0] == target_time:
+            return self._history[0][1].copy(), True
+
+        before, after = self._history[0], self._history[1]
+        span = after[0] - before[0]
+        if span <= 0.0 or span > self.max_dt_s:
+            self.reset()
+            return acceleration.copy(), False
+        fraction = np.clip((target_time - before[0]) / span, 0.0, 1.0)
+        aligned = before[1] + fraction * (after[1] - before[1])
+        return aligned, True
+
+
 class FiniteWindowMomentumForceEstimator:
     """Estimate force from momentum balance under the no-contact hypothesis.
 
@@ -70,6 +150,8 @@ class FiniteWindowMomentumForceEstimator:
             window_s: float = 0.08,
             minimum_window_s: float = 0.05,
             max_dt_s: float = 0.05,
+            model_delay_s: float = 0.0,
+            model_time_constant_s: float = 0.0,
     ):
         self.mass = float(mass)
         self.window_s = float(window_s)
@@ -87,6 +169,13 @@ class FiniteWindowMomentumForceEstimator:
             )
         self._samples = deque()
         self._last_timestamp: float | None = None
+        self.aligner = CausalAccelerationAligner(
+            model_delay_s=model_delay_s,
+            model_time_constant_s=model_time_constant_s,
+            max_dt_s=max_dt_s,
+        )
+        self.last_aligned_acceleration = np.zeros(3)
+        self.last_alignment_ready = False
 
     def _result(
             self,
@@ -121,8 +210,13 @@ class FiniteWindowMomentumForceEstimator:
             expected_linear_acceleration, 3, "expected_linear_acceleration"
         )
         timestamp = float(timestamp)
+        aligned_acceleration, alignment_ready = self.aligner.update(
+            expected_linear_acceleration, timestamp
+        )
+        self.last_aligned_acceleration = aligned_acceleration.copy()
+        self.last_alignment_ready = alignment_ready
         momentum = self.mass * velocity
-        model_force = self.mass * expected_linear_acceleration
+        model_force = self.mass * aligned_acceleration
 
         discontinuity = False
         if self._last_timestamp is not None:
@@ -131,6 +225,12 @@ class FiniteWindowMomentumForceEstimator:
         self._last_timestamp = timestamp
         if discontinuity:
             self._samples.clear()
+
+        if not alignment_ready:
+            self._samples.clear()
+            return self._result(
+                np.zeros(3), velocity, 0.0, False, True,
+            )
 
         self._samples.append((timestamp, momentum.copy(), model_force.copy()))
         while (
@@ -385,6 +485,8 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
         self.last_impulse_window_s = 0.0
         self.last_no_contact_predicted_velocity = np.zeros(3)
         self.last_impulse_ready = False
+        self.last_aligned_expected_linear_acceleration = np.zeros(3)
+        self.last_model_alignment_ready = False
 
     def update(
             self,
@@ -438,6 +540,12 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
             velocity=velocity,
             expected_linear_acceleration=expected_linear,
             timestamp=timestamp,
+        )
+        self.last_aligned_expected_linear_acceleration = (
+            self.impulse_estimator.last_aligned_acceleration.copy()
+        )
+        self.last_model_alignment_ready = (
+            self.impulse_estimator.last_alignment_ready
         )
         self.last_recursive_external_force = recursive_raw.external_force.copy()
         self.last_external_impulse = impulse.external_impulse.copy()
