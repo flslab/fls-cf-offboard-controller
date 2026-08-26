@@ -299,7 +299,7 @@ class TranslationControlHandoff:
 
     POSITION_HOLD = 'position_hold'
     CONTACT_ZDISTANCE = 'attitude_zdistance'
-    VELOCITY_BRAKING = 'velocity_braking'
+    POSITION_BRAKING = 'position_braking'
 
     def __init__(
             self,
@@ -309,6 +309,7 @@ class TranslationControlHandoff:
             brake_xy_acceleration_m_s2=0.8,
             brake_xy_speed_m_s=0.04,
             brake_settle_s=0.30,
+            position_brake_offset_m=0.05,
     ):
         self.hold_position = np.asarray(initial_position, dtype=float).copy()
         if self.hold_position.shape != (3,):
@@ -318,20 +319,20 @@ class TranslationControlHandoff:
         self.brake_xy_acceleration_m_s2 = float(brake_xy_acceleration_m_s2)
         self.brake_xy_speed_m_s = float(brake_xy_speed_m_s)
         self.brake_settle_s = float(brake_settle_s)
+        self.position_brake_offset_m = float(position_brake_offset_m)
         if (
             self.brake_xy_acceleration_m_s2 <= 0
             or self.brake_xy_speed_m_s <= 0
             or self.brake_settle_s <= 0
+            or self.position_brake_offset_m < 0
         ):
             raise ValueError(
-                'translation braking acceleration, speed, and settle time '
-                'must be positive'
+                'translation braking acceleration, speed, and settle time must '
+                'be positive; position brake offset cannot be negative'
             )
         self.mode = self.POSITION_HOLD
         self._brake_settled_since = None
-        self._last_brake_timestamp = None
-        self.brake_velocity_command = np.zeros(2)
-        self._brake_yaw_rad = 0.0
+        self.brake_direction = np.zeros(3)
         self.hover_z = float(self.hold_position[2])
         self.contact_roll_deg = 0.0
         self.contact_pitch_deg = 0.0
@@ -357,31 +358,54 @@ class TranslationControlHandoff:
         self.contact_pitch_deg = float(values[1])
         self.contact_yaw_rate_deg_s = float(values[2])
 
-    def end_contact(self, current_velocity, timestamp, yaw_rad=0.0):
+    def end_contact(
+            self,
+            current_position,
+            current_velocity,
+            timestamp,
+            interaction_direction=None,
+    ):
         if self.shadow_mode or self.mode != self.CONTACT_ZDISTANCE:
             return False
+        position = np.asarray(current_position, dtype=float)
+        if position.shape != (3,) or not np.all(np.isfinite(position)):
+            raise ValueError('translation release position must be finite XYZ')
         velocity = np.asarray(current_velocity, dtype=float)
         if velocity.shape != (3,) or not np.all(np.isfinite(velocity)):
             raise ValueError('translation release velocity must be finite XYZ')
         timestamp = float(timestamp)
         if not np.isfinite(timestamp):
             raise ValueError('translation release timestamp must be finite')
-        yaw_rad = float(yaw_rad)
-        if not np.isfinite(yaw_rad):
-            raise ValueError('translation release yaw must be finite')
-        self.mode = self.VELOCITY_BRAKING
+        direction = (
+            np.asarray(interaction_direction, dtype=float)
+            if interaction_direction is not None
+            else np.zeros(3)
+        )
+        if direction.shape != (3,) or not np.all(np.isfinite(direction)):
+            raise ValueError('interaction direction must be finite XYZ')
+        direction[2] = 0.0
+        direction_norm = float(np.linalg.norm(direction[:2]))
+        if direction_norm <= 1e-9:
+            direction[:2] = velocity[:2]
+            direction_norm = float(np.linalg.norm(direction[:2]))
+        if direction_norm > 1e-9:
+            direction /= direction_norm
+        else:
+            direction.fill(0.0)
+
+        self.hold_position = position.copy()
+        self.hold_position[:2] += (
+            self.position_brake_offset_m * direction[:2]
+        )
+        self.brake_direction = direction.copy()
+        self.hover_z = float(position[2])
+        self.mode = self.POSITION_BRAKING
         self.set_contact_attitude(0.0, 0.0, 0.0)
         self._brake_settled_since = None
-        self._last_brake_timestamp = timestamp
-        self._brake_yaw_rad = yaw_rad
-        # Start from the actual release velocity so entering hover-velocity
-        # control does not create a step command. Subsequent updates slew this
-        # vector toward zero with bounded acceleration.
-        self.brake_velocity_command = velocity[:2].copy()
         return True
 
     def update_braking(self, current_position, velocity, timestamp, yaw_rad=0.0):
-        if self.shadow_mode or self.mode != self.VELOCITY_BRAKING:
+        if self.shadow_mode or self.mode != self.POSITION_BRAKING:
             return False
         position = np.asarray(current_position, dtype=float)
         velocity = np.asarray(velocity, dtype=float)
@@ -392,29 +416,10 @@ class TranslationControlHandoff:
         timestamp = float(timestamp)
         if not np.isfinite(timestamp):
             raise ValueError('translation braking timestamp must be finite')
-        yaw_rad = float(yaw_rad)
-        if not np.isfinite(yaw_rad):
-            raise ValueError('translation braking yaw must be finite')
-        self._brake_yaw_rad = yaw_rad
-
-        dt = max(0.0, timestamp - self._last_brake_timestamp)
-        self._last_brake_timestamp = timestamp
-        command_speed = float(np.linalg.norm(self.brake_velocity_command))
-        speed_step = self.brake_xy_acceleration_m_s2 * dt
-        if command_speed - speed_step <= 1e-6:
-            self.brake_velocity_command.fill(0.0)
-        elif command_speed > 0.0:
-            self.brake_velocity_command *= (
-                (command_speed - speed_step) / command_speed
-            )
-
-        command_stopped = bool(np.linalg.norm(
-            self.brake_velocity_command
-        ) <= 1e-6)
         vehicle_stopped = bool(
             np.linalg.norm(velocity[:2]) <= self.brake_xy_speed_m_s
         )
-        if not command_stopped or not vehicle_stopped:
+        if not vehicle_stopped:
             self._brake_settled_since = None
             return False
         if self._brake_settled_since is None:
@@ -423,11 +428,8 @@ class TranslationControlHandoff:
         if timestamp - self._brake_settled_since < self.brake_settle_s:
             return False
 
-        self.hold_position = position.copy()
         self.mode = self.POSITION_HOLD
         self._brake_settled_since = None
-        self._last_brake_timestamp = None
-        self.brake_velocity_command.fill(0.0)
         return True
 
     @property
@@ -436,22 +438,13 @@ class TranslationControlHandoff:
 
     @property
     def braking_mode(self):
-        return self.mode == self.VELOCITY_BRAKING
+        return self.mode == self.POSITION_BRAKING
 
     @property
     def uses_position_setpoint(self):
-        return self.shadow_mode or self.mode == self.POSITION_HOLD
-
-    @property
-    def brake_velocity_command_body(self):
-        """Return the world-frame brake command in Crazyflie body axes."""
-        cosine = np.cos(self._brake_yaw_rad)
-        sine = np.sin(self._brake_yaw_rad)
-        vx_world, vy_world = self.brake_velocity_command
-        return np.array([
-            cosine * vx_world + sine * vy_world,
-            -sine * vx_world + cosine * vy_world,
-        ])
+        return self.shadow_mode or self.mode in (
+            self.POSITION_HOLD, self.POSITION_BRAKING
+        )
 
     @property
     def command_mode(self):
@@ -460,7 +453,9 @@ class TranslationControlHandoff:
         return self.mode
 
     def send(self, commander):
-        if self.shadow_mode or self.mode == self.POSITION_HOLD:
+        if self.shadow_mode or self.mode in (
+            self.POSITION_HOLD, self.POSITION_BRAKING
+        ):
             commander.send_position_setpoint(
                 *self.hold_position, self.yaw_deg
             )
@@ -469,14 +464,6 @@ class TranslationControlHandoff:
                 self.contact_roll_deg,
                 self.contact_pitch_deg,
                 self.contact_yaw_rate_deg_s,
-                self.hover_z,
-            )
-        else:
-            body_velocity = self.brake_velocity_command_body
-            commander.send_hover_setpoint(
-                float(body_velocity[0]),
-                float(body_velocity[1]),
-                0,
                 self.hover_z,
             )
 
@@ -1055,24 +1042,31 @@ class InteractionsControl:
                                     },
                                 )
                             elif decision.ended and translation_control.end_contact(
+                                    self._bounded_wrench_reference(position),
                                     output.estimate.velocity,
                                     frame_time,
-                                    output.estimate.orientation_rpy[2]):
+                                    decision.release_direction):
+                                translation_control.hold_position = (
+                                    self._bounded_wrench_reference(
+                                        translation_control.hold_position
+                                    )
+                                )
                                 pipeline.admittance.reset()
                                 self._log_event(
-                                    'Translation Velocity Braking Started',
+                                    'Translation Position Braking Started',
                                     {
                                         'xy_speed_m_s': float(np.linalg.norm(
                                             output.estimate.velocity[:2]
                                         )),
-                                        'target_xy_velocity_m_s': [0.0, 0.0],
-                                        'initial_xy_velocity_command_world_m_s': (
-                                            translation_control.brake_velocity_command.tolist()
+                                        'interaction_direction': (
+                                            translation_control.brake_direction.tolist()
                                         ),
-                                        'max_brake_acceleration_m_s2': (
-                                            translation_control.brake_xy_acceleration_m_s2
+                                        'position_offset_m': (
+                                            translation_control.position_brake_offset_m
                                         ),
-                                        'zdistance_m': translation_control.hover_z,
+                                        'target_position_m': (
+                                            translation_control.hold_position.tolist()
+                                        ),
                                     },
                                 )
 
@@ -1202,14 +1196,8 @@ class InteractionsControl:
                     translation_control.hover_z
                     if not translation_control.uses_position_setpoint else None
                 ),
-                'command_xy_velocity_m_s': (
-                    translation_control.brake_velocity_command_body.tolist()
-                    if translation_control.braking_mode else None
-                ),
-                'command_xy_velocity_world_m_s': (
-                    translation_control.brake_velocity_command.tolist()
-                    if translation_control.braking_mode else None
-                ),
+                'command_xy_velocity_m_s': None,
+                'command_xy_velocity_world_m_s': None,
                 'command_yaw_deg': float(command_yaw),
                 'shadow_mode': pipeline.shadow_mode,
             })
@@ -1583,24 +1571,31 @@ class InteractionsControl:
                                     },
                                 )
                             elif decision.ended and translation_control.end_contact(
+                                    self._bounded_wrench_reference(position),
                                     output.estimate.velocity,
                                     state_time,
-                                    output.estimate.orientation_rpy[2]):
+                                    decision.release_direction):
+                                translation_control.hold_position = (
+                                    self._bounded_wrench_reference(
+                                        translation_control.hold_position
+                                    )
+                                )
                                 pipeline.admittance.reset()
                                 self._log_event(
-                                    'Translation Velocity Braking Started',
+                                    'Translation Position Braking Started',
                                     {
                                         'xy_speed_m_s': float(np.linalg.norm(
                                             output.estimate.velocity[:2]
                                         )),
-                                        'target_xy_velocity_m_s': [0.0, 0.0],
-                                        'initial_xy_velocity_command_world_m_s': (
-                                            translation_control.brake_velocity_command.tolist()
+                                        'interaction_direction': (
+                                            translation_control.brake_direction.tolist()
                                         ),
-                                        'max_brake_acceleration_m_s2': (
-                                            translation_control.brake_xy_acceleration_m_s2
+                                        'position_offset_m': (
+                                            translation_control.position_brake_offset_m
                                         ),
-                                        'zdistance_m': translation_control.hover_z,
+                                        'target_position_m': (
+                                            translation_control.hold_position.tolist()
+                                        ),
                                         'state_source': 'crazyflie_state_estimate',
                                     },
                                 )
@@ -1793,14 +1788,8 @@ class InteractionsControl:
                     translation_control.hover_z
                     if not translation_control.uses_position_setpoint else None
                 ),
-                'command_xy_velocity_m_s': (
-                    translation_control.brake_velocity_command_body.tolist()
-                    if translation_control.braking_mode else None
-                ),
-                'command_xy_velocity_world_m_s': (
-                    translation_control.brake_velocity_command.tolist()
-                    if translation_control.braking_mode else None
-                ),
+                'command_xy_velocity_m_s': None,
+                'command_xy_velocity_world_m_s': None,
                 'command_yaw_deg': float(command_yaw),
                 'force_orientation_enabled': force_orientation_enabled,
                 'force_target_roll_deg': force_target_roll,

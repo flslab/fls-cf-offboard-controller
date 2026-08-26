@@ -290,7 +290,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'orientation',
         )
 
-    def test_active_translation_brakes_before_holding_release_position(self):
+    def test_active_translation_position_brakes_ahead_of_release_position(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -299,13 +299,19 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             brake_xy_acceleration_m_s2=1.0,
             brake_xy_speed_m_s=0.04,
             brake_settle_s=0.30,
+            position_brake_offset_m=0.05,
         )
 
         control.send(commander)
         self.assertTrue(control.start_contact())
         control.set_contact_attitude(2.0, -3.0, 1.0)
         control.send(commander)
-        self.assertTrue(control.end_contact([0.2, 0.0, 0.0], 1.0))
+        self.assertTrue(control.end_contact(
+            [0.25, -0.20, 0.95],
+            [0.20, 0.0, 0.0],
+            1.0,
+            interaction_direction=[1.0, 0.0, 0.0],
+        ))
         self.assertFalse(control.start_contact())
         control.send(commander)
         self.assertFalse(control.update_braking(
@@ -316,21 +322,18 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             [0.32, -0.2, 0.95], [0.03, 0.0, 0.0], 1.20
         ))
         control.send(commander)
-        self.assertFalse(control.update_braking(
-            [0.325, -0.2, 0.95], [0.03, 0.0, 0.0], 1.40
-        ))
         self.assertTrue(control.update_braking(
-            [0.33, -0.2, 0.95], [0.02, 0.0, 0.0], 1.51
+            [0.325, -0.2, 0.95], [0.03, 0.0, 0.0], 1.40
         ))
         control.send(commander)
 
         self.assertEqual(commander.calls, [
             ('position', (0.0, 0.0, 1.0, 5.0), {}),
             ('zdistance', (2.0, -3.0, 1.0, 1.0), {}),
-            ('hover', (0.2, 0.0, 0, 1.0), {}),
-            ('hover', (0.14999999999999997, 0.0, 0, 1.0), {}),
-            ('hover', (0.0, 0.0, 0, 1.0), {}),
-            ('position', (0.33, -0.2, 0.95, 5.0), {}),
+            ('position', (0.30, -0.2, 0.95, 5.0), {}),
+            ('position', (0.30, -0.2, 0.95, 5.0), {}),
+            ('position', (0.30, -0.2, 0.95, 5.0), {}),
+            ('position', (0.30, -0.2, 0.95, 5.0), {}),
         ])
         self.assertEqual(control.command_mode, 'position_hold')
 
@@ -343,12 +346,14 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         self.assertFalse(control.start_contact())
         control.send(commander)
-        self.assertFalse(control.end_contact([0.0, 0.0, 0.0], 1.0))
+        self.assertFalse(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.0, 0.0], 1.0
+        ))
         self.assertEqual(commander.calls, [
             ('position', (0.0, 0.0, 1.0, 0.0), {}),
         ])
 
-    def test_braking_converts_world_velocity_to_body_coordinates(self):
+    def test_position_braking_uses_locked_interaction_direction(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -357,14 +362,18 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         self.assertTrue(control.start_contact())
         self.assertTrue(control.end_contact(
-            [0.4, 0.0, 0.0], 1.0, yaw_rad=np.pi / 2.0
+            [0.1, 0.2, 1.0],
+            [0.4, 0.0, 0.0],
+            1.0,
+            interaction_direction=[0.0, -1.0, 0.0],
         ))
         control.send(commander)
 
         command = commander.calls[-1]
-        self.assertEqual(command[0], 'hover')
-        self.assertAlmostEqual(command[1][0], 0.0, places=12)
-        self.assertAlmostEqual(command[1][1], -0.4, places=12)
+        self.assertEqual(command[0], 'position')
+        self.assertAlmostEqual(command[1][0], 0.1, places=12)
+        self.assertAlmostEqual(command[1][1], 0.15, places=12)
+        self.assertAlmostEqual(command[1][2], 1.0, places=12)
 
     def test_guided_touch_protocol_emits_countdown_touch_and_release_once(self):
         protocol = GuidedTouchProtocol({

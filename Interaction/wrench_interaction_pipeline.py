@@ -92,9 +92,12 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         },
     },
     "control_handoff": {
-        # Ramp the release velocity to zero before capturing a new position.
-        # A bounded deceleration avoids underdamped velocity-PID reversal.
+        # Retained for compatibility with older velocity-braking mission files;
+        # position braking does not use this acceleration value.
         "brake_xy_acceleration_m_s2": 0.8,
+        # Position braking holds a point this far ahead of Contact End along
+        # the interaction direction, then re-arms after the vehicle settles.
+        "position_brake_offset_m": 0.05,
         "brake_xy_speed_m_s": 0.04,
         "brake_settle_s": 0.30,
     },
