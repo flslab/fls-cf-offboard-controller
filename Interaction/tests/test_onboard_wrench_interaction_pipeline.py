@@ -35,6 +35,20 @@ class CausalAccelerationAlignerTests(unittest.TestCase):
         self.assertTrue(ready)
         self.assertAlmostEqual(value[0], 1.0 - np.exp(-1.0))
 
+    def test_supports_independent_axis_delays(self):
+        aligner = CausalAccelerationAligner(
+            model_delay_s=[0.01, 0.02, 0.03]
+        )
+        output = None
+        ready = False
+        for index in range(5):
+            output, ready = aligner.update(
+                [float(index)] * 3, index * 0.01
+            )
+
+        self.assertTrue(ready)
+        np.testing.assert_allclose(output, [3.0, 2.0, 1.0], atol=1e-12)
+
 
 class FiniteWindowMomentumForceEstimatorTests(unittest.TestCase):
     def test_constant_velocity_inertia_is_not_external_force(self):

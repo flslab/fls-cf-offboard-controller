@@ -29,6 +29,17 @@ class ExternalWrenchObserverTests(unittest.TestCase):
         np.testing.assert_allclose(linear, np.zeros(3), atol=1e-9)
         np.testing.assert_allclose(angular, np.zeros(3), atol=1e-9)
 
+    def test_crazyflie_pitch_sign_can_be_selected_for_world_thrust(self):
+        model = MotorWrenchModel(
+            hover_pwm=28000,
+            hover_voltage=8.0,
+            pitch_sign_for_world_thrust=-1,
+        )
+        linear, _ = model.expected_accelerations(
+            [0, math.radians(10), 0], [28000] * 4, 8.0
+        )
+        self.assertLess(linear[0], 0.0)
+
     def test_estimates_force_and_yaw_torque_from_model_residual(self):
         mass = 0.17
         inertia = [0.002, 0.002, 0.003]

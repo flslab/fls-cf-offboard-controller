@@ -80,12 +80,16 @@ class MotorWrenchModel:
             hover_voltage: float = 7.8,
             angular_accel_scale: Sequence[float] = (0.0, 0.0, 0.0),
             motor_mixer: Sequence[Sequence[float]] | None = None,
+            pitch_sign_for_world_thrust: float = 1.0,
     ):
         self.hover_pwm = float(hover_pwm)
         self.hover_voltage = float(hover_voltage)
         if self.hover_pwm <= 0 or self.hover_voltage <= 0:
             raise ValueError("hover_pwm and hover_voltage must be positive")
         self.angular_accel_scale = _as_vector(angular_accel_scale, 3, "angular_accel_scale")
+        self.pitch_sign_for_world_thrust = float(pitch_sign_for_world_thrust)
+        if self.pitch_sign_for_world_thrust not in (-1.0, 1.0):
+            raise ValueError("pitch_sign_for_world_thrust must be -1 or 1")
         self.motor_mixer = np.asarray(
             self.DEFAULT_MIXER if motor_mixer is None else motor_mixer, dtype=float
         )
@@ -99,7 +103,9 @@ class MotorWrenchModel:
             battery_voltage: float | None,
     ) -> tuple[np.ndarray, np.ndarray]:
         roll, pitch, yaw = _as_vector(attitude_rpy, 3, "attitude_rpy")
-        direction = body_z_world(roll, pitch, yaw)
+        direction = body_z_world(
+            roll, self.pitch_sign_for_world_thrust * pitch, yaw
+        )
 
         valid_motors = motor_pwm is not None and len(motor_pwm) == 4 and max(motor_pwm) > 0
         if valid_motors:

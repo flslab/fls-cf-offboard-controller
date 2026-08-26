@@ -50,6 +50,10 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # Initial collective calibration from the 2026-07-24 lb11 hover log.
         "hover_pwm": 31900.0,
         "hover_voltage": 7.8,
+        # Keep the generic mathematical convention by default. Set this to -1
+        # for Crazyflie stateEstimate.pitch when flight identification shows
+        # the reported pitch/X-thrust convention is reversed.
+        "pitch_sign_for_world_thrust": 1.0,
         # Must be identified for reliable rotation detection while the vehicle
         # is deliberately rotating. Zero is suitable only for shadow trials.
         "angular_accel_scale": [0.0, 0.0, 0.0],

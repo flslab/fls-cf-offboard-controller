@@ -73,14 +73,19 @@ class CausalAccelerationAligner:
 
     def __init__(
             self,
-            model_delay_s: float = 0.0,
-            model_time_constant_s: float = 0.0,
+            model_delay_s: Sequence[float] | float = 0.0,
+            model_time_constant_s: Sequence[float] | float = 0.0,
             max_dt_s: float = 0.05,
     ):
-        self.model_delay_s = float(model_delay_s)
-        self.model_time_constant_s = float(model_time_constant_s)
+        self.model_delay_s = _as_vector(model_delay_s, 3, "model_delay_s")
+        self.model_time_constant_s = _as_vector(
+            model_time_constant_s, 3, "model_time_constant_s"
+        )
         self.max_dt_s = float(max_dt_s)
-        if self.model_delay_s < 0.0 or self.model_time_constant_s < 0.0:
+        if (
+            np.any(self.model_delay_s < 0.0)
+            or np.any(self.model_time_constant_s < 0.0)
+        ):
             raise ValueError("model delay and time constant cannot be negative")
         if self.max_dt_s <= 0.0:
             raise ValueError("max_dt_s must be positive")
@@ -109,30 +114,46 @@ class CausalAccelerationAligner:
 
         if self._filtered_acceleration is None:
             self._filtered_acceleration = acceleration.copy()
-        elif self.model_time_constant_s <= 0.0:
-            self._filtered_acceleration = acceleration.copy()
         else:
-            alpha = 1.0 - np.exp(-dt / self.model_time_constant_s)
+            alpha = np.ones(3)
+            dynamic_axes = self.model_time_constant_s > 0.0
+            alpha[dynamic_axes] = 1.0 - np.exp(
+                -dt / self.model_time_constant_s[dynamic_axes]
+            )
             self._filtered_acceleration += alpha * (
                 acceleration - self._filtered_acceleration
             )
         self._history.append((timestamp, self._filtered_acceleration.copy()))
 
-        target_time = timestamp - self.model_delay_s
-        while len(self._history) >= 3 and self._history[1][0] <= target_time:
+        target_times = timestamp - self.model_delay_s
+        earliest_target = float(np.min(target_times))
+        while len(self._history) >= 3 and self._history[1][0] <= earliest_target:
             self._history.popleft()
-        if self._history[0][0] > target_time:
+        if self._history[0][0] > earliest_target:
             return self._filtered_acceleration.copy(), False
-        if len(self._history) == 1 or self._history[0][0] == target_time:
-            return self._history[0][1].copy(), True
 
-        before, after = self._history[0], self._history[1]
-        span = after[0] - before[0]
-        if span <= 0.0 or span > self.max_dt_s:
-            self.reset()
-            return acceleration.copy(), False
-        fraction = np.clip((target_time - before[0]) / span, 0.0, 1.0)
-        aligned = before[1] + fraction * (after[1] - before[1])
+        history = list(self._history)
+        aligned = np.zeros(3)
+        for axis, target_time in enumerate(target_times):
+            if target_time >= history[-1][0]:
+                aligned[axis] = history[-1][1][axis]
+                continue
+            after_index = next(
+                index for index, sample in enumerate(history)
+                if sample[0] >= target_time
+            )
+            if history[after_index][0] == target_time:
+                aligned[axis] = history[after_index][1][axis]
+                continue
+            before, after = history[after_index - 1], history[after_index]
+            span = after[0] - before[0]
+            if span <= 0.0 or span > self.max_dt_s:
+                self.reset()
+                return acceleration.copy(), False
+            fraction = (target_time - before[0]) / span
+            aligned[axis] = before[1][axis] + fraction * (
+                after[1][axis] - before[1][axis]
+            )
         return aligned, True
 
 
@@ -150,8 +171,8 @@ class FiniteWindowMomentumForceEstimator:
             window_s: float = 0.08,
             minimum_window_s: float = 0.05,
             max_dt_s: float = 0.05,
-            model_delay_s: float = 0.0,
-            model_time_constant_s: float = 0.0,
+            model_delay_s: Sequence[float] | float = 0.0,
+            model_time_constant_s: Sequence[float] | float = 0.0,
     ):
         self.mass = float(mass)
         self.window_s = float(window_s)
