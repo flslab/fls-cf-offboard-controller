@@ -160,6 +160,49 @@ def heavy_inertia_attitude(
     return pitch, roll
 
 
+def force_inertia_attitude(
+        external_force_xy,
+        yaw_deg,
+        current_mass,
+        virtual_mass,
+        max_attitude_deg=20.0,
+):
+    """Convert estimated external force into heavy-inertia counter-tilt.
+
+    For a desired virtual acceleration F/m_virtual, the flight controller must
+    oppose the remaining fraction ``1 - m_current/m_virtual`` of the applied
+    force.  The sign convention matches ``heavy_inertia_attitude`` and the
+    existing Crazyflie ``send_zdistance_setpoint`` path.
+    """
+    external_force_xy = np.asarray(external_force_xy, dtype=float)
+    if external_force_xy.shape != (2,):
+        raise ValueError('external_force_xy must contain X and Y')
+    current_mass = float(current_mass)
+    virtual_mass = float(virtual_mass)
+    max_attitude_deg = abs(float(max_attitude_deg))
+    if current_mass <= 0.0 or virtual_mass <= current_mass:
+        raise ValueError('force inertia attitude requires a heavier virtual mass')
+    if max_attitude_deg <= 0.0:
+        raise ValueError('max_attitude_deg must be positive')
+
+    force_body = world_to_body_xy(external_force_xy, yaw_deg)
+    counter_force_body = (
+        1.0 - current_mass / virtual_mass
+    ) * force_body
+    force_norm = float(np.linalg.norm(counter_force_body))
+    if force_norm <= 0.0:
+        return 0.0, 0.0, 0.0, False
+
+    raw_tilt_deg = float(np.degrees(np.arctan2(
+        force_norm, current_mass * 9.81
+    )))
+    applied_tilt_deg = min(raw_tilt_deg, max_attitude_deg)
+    tilt_direction = counter_force_body / force_norm
+    pitch = applied_tilt_deg * float(tilt_direction[0])
+    roll = applied_tilt_deg * float(tilt_direction[1])
+    return pitch, roll, raw_tilt_deg, raw_tilt_deg > max_attitude_deg
+
+
 class BoundaryExceededError(Exception):
     """Exception raised when the drone leaves the defined interaction space."""
     pass
@@ -290,6 +333,9 @@ class TranslationControlHandoff:
         self.brake_velocity_command = np.zeros(2)
         self._brake_yaw_rad = 0.0
         self.hover_z = float(self.hold_position[2])
+        self.contact_roll_deg = 0.0
+        self.contact_pitch_deg = 0.0
+        self.contact_yaw_rate_deg_s = 0.0
 
     def start_contact(self):
         # Detector residuals during braking are expected controller/model
@@ -297,8 +343,19 @@ class TranslationControlHandoff:
         if self.shadow_mode or self.mode != self.POSITION_HOLD:
             return False
         self.hover_z = float(self.hold_position[2])
+        self.set_contact_attitude(0.0, 0.0, 0.0)
         self.mode = self.CONTACT_ZDISTANCE
         return True
+
+    def set_contact_attitude(self, roll_deg, pitch_deg, yaw_rate_deg_s=0.0):
+        values = np.asarray(
+            [roll_deg, pitch_deg, yaw_rate_deg_s], dtype=float
+        )
+        if values.shape != (3,) or not np.all(np.isfinite(values)):
+            raise ValueError('contact attitude command must be finite')
+        self.contact_roll_deg = float(values[0])
+        self.contact_pitch_deg = float(values[1])
+        self.contact_yaw_rate_deg_s = float(values[2])
 
     def end_contact(self, current_velocity, timestamp, yaw_rad=0.0):
         if self.shadow_mode or self.mode != self.CONTACT_ZDISTANCE:
@@ -313,6 +370,7 @@ class TranslationControlHandoff:
         if not np.isfinite(yaw_rad):
             raise ValueError('translation release yaw must be finite')
         self.mode = self.VELOCITY_BRAKING
+        self.set_contact_attitude(0.0, 0.0, 0.0)
         self._brake_settled_since = None
         self._last_brake_timestamp = timestamp
         self._brake_yaw_rad = yaw_rad
@@ -407,7 +465,12 @@ class TranslationControlHandoff:
                 *self.hold_position, self.yaw_deg
             )
         elif self.mode == self.CONTACT_ZDISTANCE:
-            commander.send_zdistance_setpoint(0, 0, 0, self.hover_z)
+            commander.send_zdistance_setpoint(
+                self.contact_roll_deg,
+                self.contact_pitch_deg,
+                self.contact_yaw_rate_deg_s,
+                self.hover_z,
+            )
         else:
             body_velocity = self.brake_velocity_command_body
             commander.send_hover_setpoint(
@@ -626,6 +689,10 @@ class InteractionsControl:
                     nominal_position=target[:3],
                     nominal_yaw_deg=nominal_yaw,
                     config=wrench_config,
+                    virtual_object_config=(
+                        translation_setting.get('virtual_object')
+                        if detection_method == 'momentum_impulse' else None
+                    ),
                 )
                 return
 
@@ -759,6 +826,7 @@ class InteractionsControl:
             nominal_position,
             nominal_yaw_deg=0.0,
             config=None,
+            virtual_object_config=None,
     ):
         """Estimate external wrench and generate bounded XYZ/yaw references.
 
@@ -1209,6 +1277,7 @@ class InteractionsControl:
             nominal_position,
             nominal_yaw_deg=0.0,
             config=None,
+            virtual_object_config=None,
     ):
         """Run wrench interaction from synchronized onboard state estimates.
 
@@ -1226,6 +1295,35 @@ class InteractionsControl:
             raise ValueError('nominal_position must contain X, Y, and Z')
         nominal_position = self._bounded_wrench_reference(nominal_position)
         nominal_yaw_deg = float(nominal_yaw_deg)
+
+        virtual_object_config = virtual_object_config or {}
+        force_orientation_enabled = False
+        force_current_mass = float(config['mass'])
+        force_virtual_mass = force_current_mass
+        force_max_attitude_deg = 20.0
+        if virtual_object_config:
+            force_current_mass = float(virtual_object_config.get(
+                'current_mass', config['mass']
+            ))
+            force_virtual_mass = float(virtual_object_config.get(
+                'mass', force_current_mass
+            ))
+            mass_class = velocity_inertia_mass_class(
+                force_current_mass, force_virtual_mass
+            )
+            requested_mode = inertia_command_mode(
+                mass_class, virtual_object_config.get('inertia_command')
+            )
+            force_orientation_enabled = requested_mode == 'orientation'
+            force_max_attitude_deg = float(
+                virtual_object_config.get('max_attitude_deg', 20.0)
+            )
+        if force_orientation_enabled and not np.isclose(
+                force_current_mass, float(config['mass'])):
+            raise ValueError(
+                'virtual_object.current_mass must match wrench_interaction.mass '
+                'for force-based orientation inertia'
+            )
 
         max_state_age_s = float(safety.get(
             'max_state_age_s', safety['max_frame_age_s']
@@ -1248,6 +1346,19 @@ class InteractionsControl:
                 'pipeline': 'onboard_momentum_wrench_admittance_pid',
                 'detection_method': 'momentum_impulse',
                 'state_source': 'crazyflie_state_estimate',
+                'orientation_feedback_source': (
+                    'estimated_external_force'
+                    if force_orientation_enabled else 'none'
+                ),
+                'virtual_object': (
+                    {
+                        'current_mass': force_current_mass,
+                        'mass': force_virtual_mass,
+                        'inertia_command': 'orientation',
+                        'max_attitude_deg': force_max_attitude_deg,
+                    }
+                    if force_orientation_enabled else None
+                ),
                 'translation_response_axes': ['x', 'y', 'z'],
                 'rotation_response_axes': (
                     ['yaw'] if config['detection']['yaw'].get('enabled', True)
@@ -1464,6 +1575,35 @@ class InteractionsControl:
                                     },
                                 )
 
+            force_target_pitch = 0.0
+            force_target_roll = 0.0
+            force_raw_tilt_deg = 0.0
+            force_attitude_saturated = False
+            if (
+                force_orientation_enabled
+                and output.calibrated
+                and contacts is not None
+                and contacts.translation.active
+                and translation_control.attitude_mode
+                and not output.estimate.measurement_rejected
+            ):
+                (
+                    force_target_pitch,
+                    force_target_roll,
+                    force_raw_tilt_deg,
+                    force_attitude_saturated,
+                ) = force_inertia_attitude(
+                    output.estimate.external_force[:2],
+                    np.degrees(output.estimate.orientation_rpy[2]),
+                    force_current_mass,
+                    force_virtual_mass,
+                    force_max_attitude_deg,
+                )
+            if translation_control.attitude_mode:
+                translation_control.set_contact_attitude(
+                    force_target_roll, force_target_pitch, 0.0
+                )
+
             if translation_control.update_braking(
                     self._bounded_wrench_reference(position),
                     output.estimate.velocity,
@@ -1632,6 +1772,11 @@ class InteractionsControl:
                     if translation_control.braking_mode else None
                 ),
                 'command_yaw_deg': float(command_yaw),
+                'force_orientation_enabled': force_orientation_enabled,
+                'force_target_roll_deg': force_target_roll,
+                'force_target_pitch_deg': force_target_pitch,
+                'force_raw_tilt_deg': force_raw_tilt_deg,
+                'force_attitude_saturated': force_attitude_saturated,
                 'shadow_mode': pipeline.shadow_mode,
             })
             self._safe_sleep(dt)

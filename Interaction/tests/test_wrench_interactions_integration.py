@@ -7,6 +7,7 @@ from Interaction.interactions import (
     GuidedTouchProtocol,
     InteractionsControl,
     TranslationControlHandoff,
+    force_inertia_attitude,
     heavy_inertia_attitude,
     inertia_command_mode,
     inertia_position_target,
@@ -202,6 +203,26 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         self.assertEqual(pitch, 8.0)
         self.assertEqual(roll, 8.0)
 
+    def test_estimated_force_generates_mass_scaled_counter_tilt(self):
+        pitch, roll, raw_tilt, saturated = force_inertia_attitude(
+            [0.5, 0.0], yaw_deg=0.0,
+            current_mass=0.17, virtual_mass=2.0,
+            max_attitude_deg=5.0,
+        )
+        self.assertEqual(pitch, 5.0)
+        self.assertEqual(roll, 0.0)
+        self.assertGreater(raw_tilt, 5.0)
+        self.assertTrue(saturated)
+
+        pitch, roll, _raw_tilt, saturated = force_inertia_attitude(
+            [0.0, 0.05], yaw_deg=0.0,
+            current_mass=0.17, virtual_mass=2.0,
+            max_attitude_deg=5.0,
+        )
+        self.assertEqual(pitch, 0.0)
+        self.assertGreater(roll, 0.0)
+        self.assertFalse(saturated)
+
 
 class WrenchInteractionLoopTests(unittest.TestCase):
     def test_task_detection_method_selects_legacy_velocity(self):
@@ -246,6 +267,11 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                 'detection_method': 'momentum_impulse',
                 'duration': 12,
                 'wrench_interaction': wrench_config,
+                'virtual_object': {
+                    'current_mass': 0.17,
+                    'mass': 2.0,
+                    'inertia_command': 'orientation',
+                },
             }},
         }
         calls = []
@@ -259,6 +285,10 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(calls[0]['nominal_position'], [0.1, 0.2, 1.0])
         self.assertEqual(calls[0]['nominal_yaw_deg'], 7.0)
         self.assertIs(calls[0]['config'], wrench_config)
+        self.assertEqual(
+            calls[0]['virtual_object_config']['inertia_command'],
+            'orientation',
+        )
 
     def test_active_translation_brakes_before_holding_release_position(self):
         commander = FakeCommander()
@@ -273,6 +303,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
 
         control.send(commander)
         self.assertTrue(control.start_contact())
+        control.set_contact_attitude(2.0, -3.0, 1.0)
         control.send(commander)
         self.assertTrue(control.end_contact([0.2, 0.0, 0.0], 1.0))
         self.assertFalse(control.start_contact())
@@ -295,7 +326,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
 
         self.assertEqual(commander.calls, [
             ('position', (0.0, 0.0, 1.0, 5.0), {}),
-            ('zdistance', (0, 0, 0, 1.0), {}),
+            ('zdistance', (2.0, -3.0, 1.0, 1.0), {}),
             ('hover', (0.2, 0.0, 0, 1.0), {}),
             ('hover', (0.14999999999999997, 0.0, 0, 1.0), {}),
             ('hover', (0.0, 0.0, 0, 1.0), {}),
