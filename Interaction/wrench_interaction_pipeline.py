@@ -74,6 +74,10 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
             "onset_evidence_s": 0.05,
             "release_time_s": 0.15,
             "release_ratio": 0.55,
+            # Keep onset XYZ-based, then lock the Contact Start XY motion
+            # direction and use only signed force along it for release.
+            "release_projection_axes": None,
+            "release_direction_min_norm": 0.02,
         },
         "yaw": {
             "enabled": True,

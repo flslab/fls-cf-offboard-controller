@@ -49,6 +49,104 @@ class ContactDetectorTests(unittest.TestCase):
         self.assertFalse(decision.started)
         self.assertEqual(decision.normalized_magnitude, 0.0)
 
+    def test_projected_release_ignores_side_and_vertical_force(self):
+        detector = ContactChannelDetector(
+            component_thresholds=[0.08, 0.08, 0.12],
+            covariance_floor=[0.005, 0.005, 0.008],
+            confidence_sigma=2.0,
+            onset_evidence_s=0.01,
+            release_time_s=0.15,
+            release_ratio=0.55,
+            release_projection_axes=[0, 1],
+            release_direction_min_norm=0.02,
+        )
+        covariance = np.eye(3) * 1e-6
+        decision = None
+        for index in range(4):
+            decision = detector.update(
+                [0.0, 0.20, 0.0],
+                covariance,
+                index * 0.01,
+                release_direction_candidate=[0.0, 0.10, 0.08],
+            )
+        self.assertTrue(decision.active)
+        self.assertEqual(decision.release_direction, (0.0, 1.0, 0.0))
+        self.assertEqual(decision.release_direction_source, "velocity")
+
+        ended_decision = None
+        for index in range(4, 21):
+            # Large X and Z force remains, but force along locked +Y is zero.
+            decision = detector.update(
+                [0.20, 0.0, 0.20],
+                covariance,
+                index * 0.01,
+                release_direction_candidate=[0.10, 0.0, 0.0],
+            )
+            if decision.ended:
+                ended_decision = decision
+                break
+        self.assertIsNotNone(ended_decision)
+        self.assertAlmostEqual(ended_decision.release_projected_value, 0.0)
+        self.assertAlmostEqual(
+            ended_decision.release_projection_normalized, 0.0
+        )
+
+        # Large residual feedback must not immediately retrigger XYZ onset.
+        for index in range(21, 35):
+            decision = detector.update(
+                [0.20, -0.20, 0.20],
+                covariance,
+                index * 0.01,
+                release_direction_candidate=[0.10, -0.10, 0.0],
+            )
+            self.assertFalse(decision.active)
+            self.assertFalse(decision.started)
+
+        # A quiet sample alone does not re-arm while braking is in progress.
+        detector.update([0.0, 0.0, 0.0], covariance, 0.35)
+        decision = detector.update(
+            [0.20, 0.0, 0.0],
+            covariance,
+            0.36,
+            release_direction_candidate=[0.10, 0.0, 0.0],
+        )
+        self.assertFalse(decision.active)
+
+        # The controller handoff explicitly resets after braking completes.
+        detector.reset(0.36)
+        restarted = False
+        for index in range(37, 43):
+            decision = detector.update(
+                [0.20, 0.0, 0.0],
+                covariance,
+                index * 0.01,
+                release_direction_candidate=[0.10, 0.0, 0.0],
+            )
+            restarted |= decision.started
+        self.assertTrue(restarted)
+
+    def test_projected_release_uses_force_when_start_velocity_is_too_small(self):
+        detector = ContactChannelDetector(
+            component_thresholds=[0.08, 0.08, 0.12],
+            covariance_floor=[0.005, 0.005, 0.008],
+            confidence_sigma=2.0,
+            onset_evidence_s=0.01,
+            release_projection_axes=[0, 1],
+            release_direction_min_norm=0.02,
+        )
+        covariance = np.eye(3) * 1e-6
+        decision = None
+        for index in range(4):
+            decision = detector.update(
+                [0.0, -0.20, 0.0],
+                covariance,
+                index * 0.01,
+                release_direction_candidate=[0.001, 0.0, 0.0],
+            )
+        self.assertTrue(decision.active)
+        self.assertEqual(decision.release_direction, (0.0, -1.0, 0.0))
+        self.assertEqual(decision.release_direction_source, "force_fallback")
+
 class AdmittanceTests(unittest.TestCase):
     def make_controller(self):
         return AdmittanceController3DYaw(

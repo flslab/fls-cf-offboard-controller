@@ -739,6 +739,16 @@ class InteractionsControl:
             'normalized_magnitude': float(decision.normalized_magnitude),
             'confidence_sigma': float(decision.confidence_sigma),
             'evidence': float(decision.evidence),
+            'release_projected_force_N': decision.release_projected_value,
+            'release_projection_normalized': (
+                decision.release_projection_normalized
+            ),
+            'release_direction': (
+                None
+                if decision.release_direction is None
+                else list(decision.release_direction)
+            ),
+            'release_direction_source': decision.release_direction_source,
         }
 
     def _bounded_wrench_reference(self, position):
@@ -1019,6 +1029,16 @@ class InteractionsControl:
                                 'force_N': output.estimate.external_force.tolist(),
                                 'torque_Nm': output.estimate.external_torque.tolist(),
                                 'confidence_sigma': decision.confidence_sigma,
+                                'release_projected_force_N': (
+                                    decision.release_projected_value
+                                ),
+                                'release_projection_normalized': (
+                                    decision.release_projection_normalized
+                                ),
+                                'release_direction': decision.release_direction,
+                                'release_direction_source': (
+                                    decision.release_direction_source
+                                ),
                                 'response_enabled': not pipeline.shadow_mode,
                             },
                         )
@@ -1535,6 +1555,16 @@ class InteractionsControl:
                                 'force_N': output.estimate.external_force.tolist(),
                                 'torque_Nm': output.estimate.external_torque.tolist(),
                                 'confidence_sigma': decision.confidence_sigma,
+                                'release_projected_force_N': (
+                                    decision.release_projected_value
+                                ),
+                                'release_projection_normalized': (
+                                    decision.release_projection_normalized
+                                ),
+                                'release_direction': decision.release_direction,
+                                'release_direction_source': (
+                                    decision.release_direction_source
+                                ),
                                 'response_enabled': not pipeline.shadow_mode,
                                 'state_source': 'crazyflie_state_estimate',
                             },

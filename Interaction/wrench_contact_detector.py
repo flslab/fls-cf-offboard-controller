@@ -18,6 +18,10 @@ class ContactDecision:
     normalized_magnitude: float
     confidence_sigma: float
     evidence: float
+    release_projected_value: float | None = None
+    release_projection_normalized: float | None = None
+    release_direction: tuple[float, ...] | None = None
+    release_direction_source: str | None = None
 
 
 class ContactChannelDetector:
@@ -33,6 +37,8 @@ class ContactChannelDetector:
             release_ratio: float = 0.55,
             evidence_leak: float = 1.0,
             enabled: bool = True,
+            release_projection_axes: Sequence[int] | None = None,
+            release_direction_min_norm: float = 0.02,
     ):
         self.thresholds = np.asarray(component_thresholds, dtype=float)
         self.covariance_floor = np.asarray(covariance_floor, dtype=float)
@@ -46,10 +52,32 @@ class ContactChannelDetector:
         self.release_ratio = float(release_ratio)
         self.evidence_leak = float(evidence_leak)
         self.enabled = bool(enabled)
+        self.release_projection_axes = (
+            None
+            if release_projection_axes is None
+            else tuple(int(axis) for axis in release_projection_axes)
+        )
+        self.release_direction_min_norm = float(release_direction_min_norm)
+        if self.release_projection_axes is not None:
+            if (
+                not self.release_projection_axes
+                or len(set(self.release_projection_axes))
+                != len(self.release_projection_axes)
+                or min(self.release_projection_axes) < 0
+                or max(self.release_projection_axes) >= len(self.thresholds)
+            ):
+                raise ValueError(
+                    "release_projection_axes must contain unique valid axes"
+                )
+            if self.release_direction_min_norm <= 0.0:
+                raise ValueError("release_direction_min_norm must be positive")
         self.active = False
         self.evidence = 0.0
         self._release_elapsed = 0.0
         self._last_timestamp: float | None = None
+        self._release_direction: np.ndarray | None = None
+        self._release_direction_source: str | None = None
+        self._projection_rearm_blocked = False
 
     def reset(self, timestamp: float | None = None) -> None:
         """Clear contact evidence after a controller-mode handoff."""
@@ -57,8 +85,62 @@ class ContactChannelDetector:
         self.evidence = 0.0
         self._release_elapsed = 0.0
         self._last_timestamp = None if timestamp is None else float(timestamp)
+        self._release_direction = None
+        self._release_direction_source = None
+        self._projection_rearm_blocked = False
 
-    def update(self, value: Sequence[float], covariance: np.ndarray, timestamp: float) -> ContactDecision:
+    def _lock_release_direction(
+            self,
+            value: np.ndarray,
+            direction_candidate: Sequence[float] | None,
+    ) -> None:
+        if self.release_projection_axes is None:
+            return
+        axes = np.asarray(self.release_projection_axes, dtype=int)
+        candidates = (
+            (direction_candidate, "velocity"),
+            (value, "force_fallback"),
+        )
+        for candidate, source in candidates:
+            if candidate is None:
+                continue
+            candidate = np.asarray(candidate, dtype=float)
+            if candidate.shape != value.shape or not np.all(np.isfinite(candidate)):
+                continue
+            norm = float(np.linalg.norm(candidate[axes]))
+            minimum_norm = (
+                self.release_direction_min_norm if source == "velocity" else 1e-12
+            )
+            if norm < minimum_norm:
+                continue
+            direction = np.zeros_like(value)
+            direction[axes] = candidate[axes] / norm
+            self._release_direction = direction
+            self._release_direction_source = source
+            return
+
+    def _release_projection(
+            self,
+            value: np.ndarray,
+    ) -> tuple[float | None, float | None]:
+        if self._release_direction is None:
+            return None, None
+        projected_value = float(value @ self._release_direction)
+        scaled_direction_norm = float(np.linalg.norm(
+            self._release_direction / self.thresholds
+        ))
+        if scaled_direction_norm <= 0.0:
+            return projected_value, None
+        directional_threshold = 1.0 / scaled_direction_norm
+        return projected_value, projected_value / directional_threshold
+
+    def update(
+            self,
+            value: Sequence[float],
+            covariance: np.ndarray,
+            timestamp: float,
+            release_direction_candidate: Sequence[float] | None = None,
+    ) -> ContactDecision:
         value = np.asarray(value, dtype=float)
         covariance = np.asarray(covariance, dtype=float)
         if value.shape != self.thresholds.shape or covariance.shape != (len(value), len(value)):
@@ -89,25 +171,56 @@ class ContactChannelDetector:
         ended = False
 
         if not self.active:
-            if significant:
-                strength = min(normalized, confidence / max(self.required_sigma, 1e-6))
-                self.evidence += dt * max(strength - self.evidence_leak, 0.25)
+            if self._projection_rearm_blocked:
+                # A signed projected release may occur while controller
+                # feedback still creates a large opposite or lateral force.
+                # Do not reinterpret that residual as a new XYZ onset.  A
+                # controller-handoff reset re-arms the next interaction after
+                # braking has completed.
+                self.evidence = 0.0
             else:
-                self.evidence = max(0.0, self.evidence - dt * self.evidence_leak)
-            if self.evidence >= self.onset_evidence_s:
-                self.active = True
-                started = True
-                self._release_elapsed = 0.0
+                if significant:
+                    strength = min(
+                        normalized,
+                        confidence / max(self.required_sigma, 1e-6),
+                    )
+                    self.evidence += dt * max(
+                        strength - self.evidence_leak, 0.25
+                    )
+                else:
+                    self.evidence = max(
+                        0.0, self.evidence - dt * self.evidence_leak
+                    )
+                if self.evidence >= self.onset_evidence_s:
+                    self.active = True
+                    started = True
+                    self._release_elapsed = 0.0
+                    self._lock_release_direction(
+                        value, release_direction_candidate
+                    )
         else:
-            if normalized <= self.release_ratio:
+            _, release_projection_normalized = self._release_projection(value)
+            release_value = (
+                normalized
+                if release_projection_normalized is None
+                else release_projection_normalized
+            )
+            if release_value <= self.release_ratio:
                 self._release_elapsed += dt
                 if self._release_elapsed >= self.release_time_s:
                     self.active = False
                     ended = True
                     self.evidence = 0.0
                     self._release_elapsed = 0.0
+                    self._projection_rearm_blocked = (
+                        release_projection_normalized is not None
+                    )
             else:
                 self._release_elapsed = 0.0
+
+        release_projected_value, release_projection_normalized = (
+            self._release_projection(value)
+        )
 
         return ContactDecision(
             active=self.active,
@@ -117,6 +230,14 @@ class ContactChannelDetector:
             normalized_magnitude=normalized,
             confidence_sigma=confidence,
             evidence=self.evidence,
+            release_projected_value=release_projected_value,
+            release_projection_normalized=release_projection_normalized,
+            release_direction=(
+                None
+                if self._release_direction is None
+                else tuple(float(component) for component in self._release_direction)
+            ),
+            release_direction_source=self._release_direction_source,
         )
 
 
@@ -137,7 +258,10 @@ class WrenchContactDetector:
         timestamp = estimate.timestamp if timestamp is None else timestamp
         return WrenchContactState(
             translation=self.translation.update(
-                estimate.external_force, estimate.force_covariance, timestamp
+                estimate.external_force,
+                estimate.force_covariance,
+                timestamp,
+                release_direction_candidate=estimate.velocity,
             ),
             yaw=self.yaw.update(
                 estimate.external_torque[2:3], estimate.torque_covariance[2:3, 2:3], timestamp
