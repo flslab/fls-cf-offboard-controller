@@ -172,8 +172,8 @@ class ContactChannelDetector:
 
         if not self.active:
             if self._projection_rearm_blocked:
-                # A signed projected release may occur while controller
-                # feedback still creates a large opposite or lateral force.
+                # A projected release may occur while controller feedback
+                # still creates a large lateral force.
                 # Do not reinterpret that residual as a new XYZ onset.  A
                 # controller-handoff reset re-arms the next interaction after
                 # braking has completed.
@@ -203,7 +203,7 @@ class ContactChannelDetector:
             release_value = (
                 normalized
                 if release_projection_normalized is None
-                else release_projection_normalized
+                else abs(release_projection_normalized)
             )
             if release_value <= self.release_ratio:
                 self._release_elapsed += dt

@@ -40,6 +40,17 @@ class ExternalWrenchObserverTests(unittest.TestCase):
         )
         self.assertLess(linear[0], 0.0)
 
+    def test_crazyflie_roll_sign_can_be_selected_for_world_thrust(self):
+        model = MotorWrenchModel(
+            hover_pwm=28000,
+            hover_voltage=8.0,
+            roll_sign_for_world_thrust=-1,
+        )
+        linear, _ = model.expected_accelerations(
+            [math.radians(10), 0, 0], [28000] * 4, 8.0
+        )
+        self.assertGreater(linear[1], 0.0)
+
     def test_estimates_force_and_yaw_torque_from_model_residual(self):
         mass = 0.17
         inertia = [0.002, 0.002, 0.003]

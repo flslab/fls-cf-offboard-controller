@@ -50,9 +50,10 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # Initial collective calibration from the 2026-07-24 lb11 hover log.
         "hover_pwm": 31900.0,
         "hover_voltage": 7.8,
-        # Keep the generic mathematical convention by default. Set this to -1
-        # for Crazyflie stateEstimate.pitch when flight identification shows
-        # the reported pitch/X-thrust convention is reversed.
+        # Keep the generic mathematical convention by default. Set either sign
+        # to -1 when flight identification shows that the corresponding
+        # Crazyflie stateEstimate attitude/thrust convention is reversed.
+        "roll_sign_for_world_thrust": 1.0,
         "pitch_sign_for_world_thrust": 1.0,
         # Must be identified for reliable rotation detection while the vehicle
         # is deliberately rotating. Zero is suitable only for shadow trials.
@@ -75,7 +76,8 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
             "release_time_s": 0.15,
             "release_ratio": 0.55,
             # Keep onset XYZ-based, then lock the Contact Start XY motion
-            # direction and use only signed force along it for release.
+            # direction and release only inside a zero-centered projected-force
+            # deadband. The signed projection remains available for logging.
             "release_projection_axes": None,
             "release_direction_min_norm": 0.02,
         },
