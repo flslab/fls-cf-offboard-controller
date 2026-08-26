@@ -58,6 +58,26 @@ def kinetic_energy_velocity(
     )
 
 
+def inertia_position_target(interaction_origin, measured_position, energy_gain):
+    """Map measured displacement to an equal-energy virtual displacement.
+
+    Anchoring the reference at contact onset makes a heavy target lag behind
+    the hand-driven vehicle and a light target lead it.  Computing the mapped
+    displacement directly also avoids integrating the same stale mocap
+    velocity more than once.
+    """
+    interaction_origin = np.asarray(interaction_origin, dtype=float)
+    measured_position = np.asarray(measured_position, dtype=float)
+    if interaction_origin.shape != (3,) or measured_position.shape != (3,):
+        raise ValueError('interaction origin and position must contain XYZ')
+    energy_gain = float(energy_gain)
+    if energy_gain <= 0.0:
+        raise ValueError('energy_gain must be positive')
+    return interaction_origin + energy_gain * (
+        measured_position - interaction_origin
+    )
+
+
 def inertia_command_mode(mass_class, requested_mode=None):
     """Validate and normalize the selectable inertia-rendering technique."""
     aliases = {
@@ -2086,12 +2106,13 @@ class InteractionsControl:
             hover_pos = [last_pos[0], last_pos[1], last_pos[2]]
 
         self.hl_commander.go_to(hover_pos[0], hover_pos[1], hover_pos[2], 0, 2)
-        self._safe_sleep(2)
+        self._safe_sleep(5)
 
         logger.info("Starting Force Feedback Interaction mode...")
         self._log_event('Waiting For User Interaction')
 
         interaction_heading = np.zeros(3)
+        interaction_origin = np.asarray(hover_pos, dtype=float)
         v_virtual = np.zeros(3)  # virtual-object velocity, integrated from F/m_virtual
         prev_interact_vel = np.zeros(3)  # previous tick's interact_vel, for differentiation
 
@@ -2317,6 +2338,7 @@ class InteractionsControl:
                         self.set_color([0, 255, 0])
                     status = 1
                     interaction_heading = vel
+                    interaction_origin = pos.copy()
 
                     v_virtual = np.zeros(3)
                     prev_interact_vel = vel.copy()
@@ -2352,9 +2374,16 @@ class InteractionsControl:
                     max_energy_gain,
                 )
                 prev_interact_vel = interact_vel.copy()
-                target_pos = self._bounded_wrench_reference(
-                    pos + v_virtual * dt * v_scalar
-                )
+                if command_mode == 'position':
+                    target_pos = self._bounded_wrench_reference(
+                        inertia_position_target(
+                            interaction_origin, pos, applied_energy_gain
+                        )
+                    )
+                else:
+                    target_pos = self._bounded_wrench_reference(
+                        pos + v_virtual * dt * v_scalar
+                    )
 
                 if detect_user_disengage(speed, acceleration):
                     v_virtual = np.zeros(3)
@@ -2367,7 +2396,11 @@ class InteractionsControl:
                         continue
                     else:
                         logger.info(f"Switching to Grace Hover From {status}.")
-                        status = 4
+                        if command_mode == 'position':
+                            hover_pos = target_pos.copy()
+                            status = 3
+                        else:
+                            status = 4
 
                         self.cf.param.set_value("posCtlPid.resetI", "1")
                         self.cf.param.set_value("velCtlPid.resetI", "1")
@@ -2382,6 +2415,14 @@ class InteractionsControl:
                         if self.set_color:
                             self.set_color([255, 255, 0])
                         self._log_event("User Disengage", log_data)
+
+                        if command_mode == 'position':
+                            self._log_event("Hover Calculated", {
+                                "stopping_distance": 0.0,
+                                "Target": [round(x, 3) for x in hover_pos],
+                                "Grace Period": grace_time,
+                                "source": "virtual_position_target_at_disengage",
+                            })
 
                         continue
 
@@ -2401,6 +2442,9 @@ class InteractionsControl:
                         "acceleration": round(acceleration, 3),
                         "vel": [round(x, 3) for x in vel],
                         "heading": [round(x, 3) for x in interaction_heading],
+                        "Interaction Origin": [
+                            round(x, 3) for x in interaction_origin
+                        ],
                         "Pos": [round(x, 3) for x in pos],
                         "Target": [round(x, 3) for x in target_pos]
                     }

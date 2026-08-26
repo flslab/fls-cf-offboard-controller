@@ -9,6 +9,7 @@ from Interaction.interactions import (
     TranslationControlHandoff,
     heavy_inertia_attitude,
     inertia_command_mode,
+    inertia_position_target,
     kinetic_energy_velocity,
     velocity_inertia_mass_class,
     world_to_body_xy,
@@ -169,6 +170,16 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         self.assertEqual(applied_gain, 4.0)
         self.assertTrue(saturated)
         np.testing.assert_allclose(velocity, [0.80, 0.0, 0.0])
+
+    def test_position_target_is_anchored_at_contact_origin(self):
+        origin = [1.0, 2.0, 1.0]
+        measured = [1.10, 1.80, 1.0]
+
+        heavy_target = inertia_position_target(origin, measured, 0.25)
+        np.testing.assert_allclose(heavy_target, [1.025, 1.95, 1.0])
+
+        light_target = inertia_position_target(origin, measured, 2.0)
+        np.testing.assert_allclose(light_target, [1.20, 1.60, 1.0])
 
     def test_velocity_command_is_rotated_from_world_to_body(self):
         np.testing.assert_allclose(world_to_body_xy([1.0, 0.0], 0.0), [1, 0])
