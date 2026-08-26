@@ -98,9 +98,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "position_brake_offset_m": 0.05,
         "brake_settle_s": 0.30,
         # At Contact End command the opposite of measured roll/pitch. Switch to
-        # position hold when signed speed along the Contact-End velocity
-        # direction is near zero/reversed. Timeout prevents a stale attitude
-        # command persisting.
+        # position hold when signed speed along the interaction direction
+        # locked at Contact Start is near zero/reversed. Timeout prevents a
+        # stale attitude command persisting.
         "brake_xy_speed_m_s": 0.04,
         "brake_max_attitude_deg": 20.0,
         "brake_timeout_s": 1.0,

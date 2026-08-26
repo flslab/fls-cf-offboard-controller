@@ -465,14 +465,14 @@ class TranslationControlHandoff:
             or not np.all(np.isfinite(interaction_direction))
         ):
             raise ValueError('interaction direction must be finite XYZ')
-        direction = np.zeros(3)
-        release_speed = float(np.linalg.norm(velocity[:2]))
-        if release_speed > 1e-9:
-            direction[:2] = velocity[:2]
-            self.brake_direction_source = 'release_velocity'
+        direction = interaction_direction.copy()
+        direction[2] = 0.0
+        interaction_direction_norm = float(np.linalg.norm(direction[:2]))
+        if interaction_direction_norm > 1e-9:
+            self.brake_direction_source = 'locked_interaction_direction'
         else:
-            direction[:] = interaction_direction
-            self.brake_direction_source = 'interaction_direction_fallback'
+            direction[:2] = velocity[:2]
+            self.brake_direction_source = 'release_velocity_fallback'
         direction[2] = 0.0
         direction_norm = float(np.linalg.norm(direction[:2]))
         if direction_norm <= 1e-9:

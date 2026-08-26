@@ -404,7 +404,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             ('position', (0.0, 0.0, 1.0, 0.0), {}),
         ])
 
-    def test_attitude_braking_uses_release_velocity_direction(self):
+    def test_attitude_braking_uses_locked_interaction_direction(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -425,12 +425,14 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(command[0], 'zdistance')
         self.assertAlmostEqual(command[1][0], -20.0, places=12)
         self.assertAlmostEqual(command[1][1], 4.0, places=12)
-        np.testing.assert_allclose(control.brake_direction, [0.0, -1.0, 0.0])
-        self.assertEqual(control.brake_direction_source, 'release_velocity')
+        np.testing.assert_allclose(control.brake_direction, [1.0, 0.0, 0.0])
+        self.assertEqual(
+            control.brake_direction_source, 'locked_interaction_direction'
+        )
         # Large transverse X speed does not delay handoff after velocity along
-        # the locked Contact-End travel direction reverses.
+        # the locked interaction direction reverses.
         self.assertTrue(control.update_braking(
-            [0.3, 0.25, 1.0], [0.8, 0.01, 0.0], 1.1
+            [0.3, 0.25, 1.0], [-0.01, -0.8, 0.0], 1.1
         ))
         np.testing.assert_allclose(control.hold_position, [0.3, 0.25, 1.0])
 
