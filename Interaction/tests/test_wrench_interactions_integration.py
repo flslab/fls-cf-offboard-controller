@@ -7,6 +7,11 @@ from Interaction.interactions import (
     GuidedTouchProtocol,
     InteractionsControl,
     TranslationControlHandoff,
+    heavy_inertia_attitude,
+    inertia_command_mode,
+    kinetic_energy_velocity,
+    velocity_inertia_mass_class,
+    world_to_body_xy,
 )
 
 
@@ -117,6 +122,74 @@ class FakeOnboardLogManager:
         if packet is None:
             return None, None
         return {**packet, 'time': self.packet_time}, abs(self.packet_time - timestamp)
+
+
+class VelocityInertiaRenderingTests(unittest.TestCase):
+    def test_mass_classification_and_five_supported_conditions(self):
+        self.assertEqual(velocity_inertia_mass_class(0.17, 0.05), 'light')
+        self.assertEqual(velocity_inertia_mass_class(0.17, 0.17), 'matched')
+        self.assertEqual(velocity_inertia_mass_class(0.17, 0.50), 'heavy')
+
+        self.assertEqual(inertia_command_mode('light', 'position'), 'position')
+        self.assertEqual(inertia_command_mode('light', 'velocity'), 'velocity')
+        self.assertEqual(inertia_command_mode('heavy', 'position'), 'position')
+        self.assertEqual(inertia_command_mode('heavy', 'velocity'), 'velocity')
+        self.assertEqual(
+            inertia_command_mode('heavy', 'orientation'), 'orientation'
+        )
+        with self.assertRaisesRegex(ValueError, 'only supported for a heavier'):
+            inertia_command_mode('light', 'orientation')
+
+    def test_equal_energy_mapping_uses_square_root_mass_ratio(self):
+        velocity, raw_gain, applied_gain, saturated = kinetic_energy_velocity(
+            [0.20, 0.0, 0.0], current_mass=0.17, virtual_mass=0.085,
+        )
+        expected_gain = np.sqrt(2.0)
+        self.assertAlmostEqual(raw_gain, expected_gain)
+        self.assertAlmostEqual(applied_gain, expected_gain)
+        self.assertFalse(saturated)
+        np.testing.assert_allclose(velocity, [0.20 * expected_gain, 0.0, 0.0])
+
+        heavy_velocity, raw_gain, applied_gain, saturated = (
+            kinetic_energy_velocity(
+                [0.20, 0.0, 0.0], current_mass=0.17, virtual_mass=0.68,
+            )
+        )
+        self.assertEqual(raw_gain, 0.5)
+        self.assertEqual(applied_gain, 0.5)
+        self.assertFalse(saturated)
+        np.testing.assert_allclose(heavy_velocity, [0.10, 0.0, 0.0])
+
+    def test_energy_gain_is_capped_for_extreme_light_objects(self):
+        velocity, raw_gain, applied_gain, saturated = kinetic_energy_velocity(
+            [0.20, 0.0, 0.0], current_mass=0.17, virtual_mass=0.001,
+            max_energy_gain=4.0,
+        )
+        self.assertAlmostEqual(raw_gain, np.sqrt(170.0))
+        self.assertEqual(applied_gain, 4.0)
+        self.assertTrue(saturated)
+        np.testing.assert_allclose(velocity, [0.80, 0.0, 0.0])
+
+    def test_velocity_command_is_rotated_from_world_to_body(self):
+        np.testing.assert_allclose(world_to_body_xy([1.0, 0.0], 0.0), [1, 0])
+        np.testing.assert_allclose(
+            world_to_body_xy([1.0, 0.0], 90.0), [0, -1], atol=1e-12
+        )
+
+    def test_heavy_mass_generates_and_limits_attitude_feedback(self):
+        pitch, roll = heavy_inertia_attitude(
+            [0.02, 0.0], dt=0.01, yaw_deg=0.0,
+            current_mass=0.17, virtual_mass=0.34, max_attitude_deg=20.0,
+        )
+        self.assertGreater(pitch, 0.0)
+        self.assertEqual(roll, 0.0)
+
+        pitch, roll = heavy_inertia_attitude(
+            [1.0, 1.0], dt=0.01, yaw_deg=0.0,
+            current_mass=0.17, virtual_mass=2.0, max_attitude_deg=8.0,
+        )
+        self.assertEqual(pitch, 8.0)
+        self.assertEqual(roll, 8.0)
 
 
 class WrenchInteractionLoopTests(unittest.TestCase):

@@ -17,6 +17,129 @@ from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
 logger = logging.getLogger(__name__)
 
 
+def velocity_inertia_mass_class(current_mass, virtual_mass, mass_tolerance=1e-6):
+    """Classify a virtual mass relative to the physical LightBender mass."""
+    current_mass = float(current_mass)
+    virtual_mass = float(virtual_mass)
+    mass_tolerance = abs(float(mass_tolerance))
+    if current_mass <= 0.0 or virtual_mass <= 0.0:
+        raise ValueError('current_mass and virtual_mass must be positive')
+    if virtual_mass < current_mass - mass_tolerance:
+        return 'light'
+    if virtual_mass > current_mass + mass_tolerance:
+        return 'heavy'
+    return 'matched'
+
+
+def kinetic_energy_velocity(
+        measured_velocity,
+        current_mass,
+        virtual_mass,
+        max_energy_gain=4.0,
+):
+    """Map velocity by equal kinetic energy: v_virtual=sqrt(m/m_v)*v."""
+    measured_velocity = np.asarray(measured_velocity, dtype=float)
+    if measured_velocity.shape != (3,):
+        raise ValueError('measured_velocity must contain XYZ')
+    current_mass = float(current_mass)
+    virtual_mass = float(virtual_mass)
+    max_energy_gain = float(max_energy_gain)
+    if current_mass <= 0.0 or virtual_mass <= 0.0:
+        raise ValueError('current_mass and virtual_mass must be positive')
+    if max_energy_gain < 1.0:
+        raise ValueError('max_energy_gain must be at least 1')
+    raw_gain = float(np.sqrt(current_mass / virtual_mass))
+    applied_gain = min(raw_gain, max_energy_gain)
+    return (
+        measured_velocity * applied_gain,
+        raw_gain,
+        applied_gain,
+        applied_gain < raw_gain,
+    )
+
+
+def inertia_command_mode(mass_class, requested_mode=None):
+    """Validate and normalize the selectable inertia-rendering technique."""
+    aliases = {
+        'pos': 'position',
+        'position': 'position',
+        'vel': 'velocity',
+        'velocity': 'velocity',
+        'ori': 'orientation',
+        'attitude': 'orientation',
+        'orientation': 'orientation',
+    }
+    if requested_mode is None:
+        return 'orientation' if mass_class == 'heavy' else 'position'
+    normalized = aliases.get(str(requested_mode).strip().lower())
+    if normalized is None:
+        raise ValueError(
+            'inertia_command must be position, velocity, or orientation'
+        )
+    if mass_class != 'heavy' and normalized == 'orientation':
+        raise ValueError(
+            'orientation inertia feedback is only supported for a heavier '
+            'virtual mass; use position or velocity for light/matched mass'
+        )
+    return normalized
+
+
+def world_to_body_xy(world_velocity_xy, yaw_deg):
+    """Convert an XY velocity command into send_hover_setpoint body axes."""
+    world_velocity_xy = np.asarray(world_velocity_xy, dtype=float)
+    if world_velocity_xy.shape != (2,):
+        raise ValueError('world_velocity_xy must contain X and Y')
+    yaw_rad = np.radians(float(yaw_deg))
+    cos_y = np.cos(yaw_rad)
+    sin_y = np.sin(yaw_rad)
+    return np.array([
+        world_velocity_xy[0] * cos_y + world_velocity_xy[1] * sin_y,
+        -world_velocity_xy[0] * sin_y + world_velocity_xy[1] * cos_y,
+    ])
+
+
+def heavy_inertia_attitude(
+        delta_velocity_xy,
+        dt,
+        yaw_deg,
+        current_mass,
+        virtual_mass,
+        max_attitude_deg=20.0,
+):
+    """Return pitch/roll feedback that opposes acceleration of a heavy object.
+
+    The sign mapping follows the existing Crazyflie interaction convention.
+    Verify the signs in a restrained flight test whenever the body-frame
+    convention changes.
+    """
+    delta_velocity_xy = np.asarray(delta_velocity_xy, dtype=float)
+    if delta_velocity_xy.shape != (2,):
+        raise ValueError('delta_velocity_xy must contain X and Y')
+    dt = float(dt)
+    current_mass = float(current_mass)
+    virtual_mass = float(virtual_mass)
+    max_attitude_deg = abs(float(max_attitude_deg))
+    if dt <= 0.0:
+        raise ValueError('dt must be positive')
+    if current_mass <= 0.0 or virtual_mass <= 0.0:
+        raise ValueError('current_mass and virtual_mass must be positive')
+
+    yaw_rad = np.radians(float(yaw_deg))
+    cos_y = np.cos(yaw_rad)
+    sin_y = np.sin(yaw_rad)
+    body_dv_x = delta_velocity_xy[0] * cos_y + delta_velocity_xy[1] * sin_y
+    body_dv_y = -delta_velocity_xy[0] * sin_y + delta_velocity_xy[1] * cos_y
+
+    mass_ratio = max(virtual_mass / current_mass, 1.0)
+    sin_pitch = -(1.0 - mass_ratio) * body_dv_x / (9.81 * dt)
+    sin_roll = -(1.0 - mass_ratio) * body_dv_y / (9.81 * dt)
+    pitch = np.degrees(np.arcsin(np.clip(sin_pitch, -1.0, 1.0)))
+    roll = np.degrees(np.arcsin(np.clip(sin_roll, -1.0, 1.0)))
+    pitch = float(np.clip(pitch, -max_attitude_deg, max_attitude_deg))
+    roll = float(np.clip(roll, -max_attitude_deg, max_attitude_deg))
+    return pitch, roll
+
+
 class BoundaryExceededError(Exception):
     """Exception raised when the drone leaves the defined interaction space."""
     pass
@@ -1853,6 +1976,24 @@ class InteractionsControl:
             except (TypeError, ValueError):
                 logger.error(f"Invalid virtual object config max_stopping_distance: {virtual_max_distance}")
                 virtual_max_distance = None
+        max_energy_gain = get_virtual_config_float(
+            'max_energy_gain',
+            virtual_object_config.get('max_light_inertia_gain', 4.0),
+        )
+        max_attitude_deg = get_virtual_config_float('max_attitude_deg', 20.0)
+        max_velocity_command = get_virtual_config_float(
+            'max_velocity_command_m_s', 1.0
+        )
+        if max_energy_gain < 1.0:
+            raise ValueError('max_energy_gain must be at least 1')
+        if max_attitude_deg <= 0.0:
+            raise ValueError('max_attitude_deg must be positive')
+        if max_velocity_command <= 0.0:
+            raise ValueError('max_velocity_command_m_s must be positive')
+        mass_class = velocity_inertia_mass_class(current_mass, virtual_mass)
+        command_mode = inertia_command_mode(
+            mass_class, virtual_object_config.get('inertia_command')
+        )
 
         self.log_manager.add_log_entry(group_name="configs",
                                        entry={'detection_method': 'velocity',
@@ -1870,6 +2011,12 @@ class InteractionsControl:
                                                   'air_density': virtual_air_density,
                                                   'fallback_stopping_distance': virtual_fallback_distance,
                                                   'max_stopping_distance': virtual_max_distance,
+                                                  'mass_class': mass_class,
+                                                  'inertia_command': command_mode,
+                                                  'energy_model': 'equal_kinetic_energy',
+                                                  'max_energy_gain': max_energy_gain,
+                                                  'max_attitude_deg': max_attitude_deg,
+                                                  'max_velocity_command_m_s': max_velocity_command,
                                               }},
                                        name='Translation Config')
 
@@ -1920,45 +2067,6 @@ class InteractionsControl:
             else:
                 stopping_distance = initial_speed * dt
                 return cur_pos + heading / heading_norm * stopping_distance, stopping_distance, None
-
-        _G = 9.81  # m/s²
-
-        virtual_to_current_mass = virtual_mass / current_mass if current_mass != 0 and virtual_mass > current_mass else 1.0
-        def calculate_braking_angles(dv_x, dv_y, yaw_deg=0.0, max_attitude=20.0):
-            """Compute pitch/roll to emulate a virtual mass, considering global yaw.
-
-            The change in velocity is caused by external force minus resistance generated by the drone:
-              m_lb * a = F_ext - F_res
-            To emulate m_virtual, the user should feel F_ext = m_virtual * a.
-            Thus, F_res = (m_virtual - m_lb) * a.
-            The drone generates aerodynamic force F_aero = -F_res = (m_lb - m_virtual) * a.
-
-            Assuming thrust along body Z equals the drone's weight (T = m_lb * g),
-            the horizontal force is T * sin(angle).
-
-              F_aero_x = m_lb * g * sin(pitch) = (m_lb - m_virtual) * (dv_x / dt)
-              sin(pitch) = (1 - m_virtual / m_lb) * (dv_x / (g * dt))
-
-            Sign convention (Crazyflie):
-              +pitch tilts nose up  → force in +Xsi
-              +roll  tilts left     → force in −Y
-            """
-            # Rotate global dv to body frame based on yaw
-            yaw_rad = np.radians(yaw_deg)
-            cos_y = np.cos(yaw_rad)
-            sin_y = np.sin(yaw_rad)
-            body_dv_x = dv_x * cos_y + dv_y * sin_y
-            body_dv_y = -dv_x * sin_y + dv_y * cos_y
-
-            sin_pitch = -(1 - virtual_to_current_mass) * body_dv_x / (_G * dt)
-            sin_roll = -(1 - virtual_to_current_mass) * body_dv_y / (_G * dt)
-
-            pitch = np.degrees(np.arcsin(np.clip(sin_pitch, -1.0, 1.0)))
-            roll = np.degrees(np.arcsin(np.clip(sin_roll, -1.0, 1.0)))
-
-            pitch = max(min(pitch, max_attitude), -max_attitude)
-            roll = max(min(roll, max_attitude), -max_attitude)
-            return pitch, roll
 
         if init_hover:
             last_pos = init_hover
@@ -2232,10 +2340,21 @@ class InteractionsControl:
                     acceleration = np.dot(dv_lb / dt, interaction_heading / interaction_heading_norm)
                 else:
                     acceleration = 0.0
-                current_to_virtual_mass = current_mass / virtual_mass if virtual_mass != 0 else 1.0
-                v_virtual = interact_vel + dv_lb * (current_to_virtual_mass - 1)
+                (
+                    v_virtual,
+                    raw_energy_gain,
+                    applied_energy_gain,
+                    energy_gain_saturated,
+                ) = kinetic_energy_velocity(
+                    interact_vel,
+                    current_mass,
+                    virtual_mass,
+                    max_energy_gain,
+                )
                 prev_interact_vel = interact_vel.copy()
-                target_pos = pos + v_virtual * dt * v_scalar
+                target_pos = self._bounded_wrench_reference(
+                    pos + v_virtual * dt * v_scalar
+                )
 
                 if detect_user_disengage(speed, acceleration):
                     v_virtual = np.zeros(3)
@@ -2266,8 +2385,18 @@ class InteractionsControl:
 
                         continue
 
-                if base_attitude < 0:
+                common_inertia_log = {
+                    "mass_class": mass_class,
+                    "inertia_command": command_mode,
+                    "raw_energy_gain": round(raw_energy_gain, 4),
+                    "applied_energy_gain": round(applied_energy_gain, 4),
+                    "energy_gain_saturated": bool(energy_gain_saturated),
+                    "virtual_velocity": [round(x, 3) for x in v_virtual],
+                }
+
+                if command_mode == 'position':
                     log_data = {
+                        **common_inertia_log,
                         "speed": round(speed, 3),
                         "acceleration": round(acceleration, 3),
                         "vel": [round(x, 3) for x in vel],
@@ -2277,18 +2406,50 @@ class InteractionsControl:
                     }
                     self._log_event("User Pushing", log_data)
                     self.lo_commander.send_position_setpoint(target_pos[0], target_pos[1], target_pos[2], 0)
+                elif command_mode == 'velocity':
+                    velocity_xy = v_virtual[:2].copy()
+                    velocity_norm = float(np.linalg.norm(velocity_xy))
+                    velocity_saturated = velocity_norm > max_velocity_command
+                    if velocity_saturated:
+                        velocity_xy *= max_velocity_command / velocity_norm
+                    body_velocity = world_to_body_xy(velocity_xy, current_yaw)
+                    yaw_rate_cmd = max(min(-5.0 * current_yaw, 50.0), -50.0)
+                    log_data = {
+                        **common_inertia_log,
+                        "speed": round(speed, 3),
+                        "acceleration": round(acceleration, 3),
+                        "vel": [round(x, 3) for x in vel],
+                        "Pos": [round(x, 3) for x in pos],
+                        "body_velocity_command": [
+                            round(float(x), 3) for x in body_velocity
+                        ],
+                        "velocity_command_saturated": velocity_saturated,
+                    }
+                    self._log_event("User Pushing", log_data)
+                    self.lo_commander.send_hover_setpoint(
+                        body_velocity[0], body_velocity[1],
+                        yaw_rate_cmd, target_pos[2]
+                    )
                 else:
                     is_decelerating = np.dot(dv_lb, interact_vel) < 0
                     if is_decelerating:
                         # When decelerating, output a given value (defaulting to 0.0)
                         given_decel_value = 0.0
                         target_pitch, target_roll = given_decel_value, given_decel_value
-                    elif base_attitude > 0:
-                        target_pitch, target_roll = calculate_braking_angles(*dv_lb[:2], yaw_deg=current_yaw)
+                    elif base_attitude != 0:
+                        target_pitch, target_roll = heavy_inertia_attitude(
+                            dv_lb[:2],
+                            dt,
+                            current_yaw,
+                            current_mass,
+                            virtual_mass,
+                            max_attitude_deg,
+                        )
                     else:
                         target_pitch, target_roll = 0, 0
 
                     log_data = {
+                        **common_inertia_log,
                         "speed": round(speed, 3),
                         "acceleration": round(acceleration, 3),
                         "vel": [round(x, 3) for x in vel],
@@ -2298,9 +2459,9 @@ class InteractionsControl:
                     }
                     self._log_event("User Pushing", log_data)
                     yaw_rate_cmd = max(min(-5.0 * current_yaw, 50.0), -50.0)
-                    # self.lo_commander.send_zdistance_setpoint(target_roll, target_pitch, yaw_rate_cmd, target_pos[2])
-
-                    self.lo_commander.send_zdistance_setpoint(0, 0, yaw_rate_cmd, target_pos[2])
+                    self.lo_commander.send_zdistance_setpoint(
+                        target_roll, target_pitch, yaw_rate_cmd, target_pos[2]
+                    )
             elif status == 2:  # coasting
                 if blender_state is not None:
                     blender_state['status'] = 2
