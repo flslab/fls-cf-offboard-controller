@@ -363,6 +363,7 @@ class TranslationControlHandoff:
     POSITION_HOLD = 'position_hold'
     CONTACT_ZDISTANCE = 'attitude_zdistance'
     ATTITUDE_BRAKING = 'attitude_braking'
+    ATTITUDE_LEVELING = 'attitude_leveling'
 
     def __init__(
             self,
@@ -374,7 +375,10 @@ class TranslationControlHandoff:
             brake_settle_s=0.30,
             position_brake_offset_m=0.05,
             brake_max_attitude_deg=20.0,
-            brake_timeout_s=1.0,
+            brake_timeout_s=1.5,
+            brake_velocity_gain_s=2.0,
+            brake_level_attitude_deg=1.0,
+            brake_level_timeout_s=0.35,
     ):
         self.hold_position = np.asarray(initial_position, dtype=float).copy()
         if self.hold_position.shape != (3,):
@@ -387,6 +391,9 @@ class TranslationControlHandoff:
         self.position_brake_offset_m = float(position_brake_offset_m)
         self.brake_max_attitude_deg = float(brake_max_attitude_deg)
         self.brake_timeout_s = float(brake_timeout_s)
+        self.brake_velocity_gain_s = float(brake_velocity_gain_s)
+        self.brake_level_attitude_deg = float(brake_level_attitude_deg)
+        self.brake_level_timeout_s = float(brake_level_timeout_s)
         if (
             self.brake_xy_acceleration_m_s2 <= 0
             or self.brake_xy_speed_m_s <= 0
@@ -394,6 +401,9 @@ class TranslationControlHandoff:
             or self.position_brake_offset_m < 0
             or self.brake_max_attitude_deg <= 0
             or self.brake_timeout_s <= 0
+            or self.brake_velocity_gain_s <= 0
+            or self.brake_level_attitude_deg <= 0
+            or self.brake_level_timeout_s <= 0
         ):
             raise ValueError(
                 'translation braking limits must be positive; legacy settle '
@@ -401,10 +411,12 @@ class TranslationControlHandoff:
             )
         self.mode = self.POSITION_HOLD
         self._brake_started_at = None
+        self._level_started_at = None
         self.brake_direction = np.zeros(3)
         self.brake_direction_source = None
         self.brake_projected_speed_m_s = 0.0
         self.brake_completion_reason = None
+        self.brake_command_tilt_deg = 0.0
         self.hover_z = float(self.hold_position[2])
         self.contact_roll_deg = 0.0
         self.contact_pitch_deg = 0.0
@@ -429,6 +441,23 @@ class TranslationControlHandoff:
         self.contact_roll_deg = float(values[0])
         self.contact_pitch_deg = float(values[1])
         self.contact_yaw_rate_deg_s = float(values[2])
+
+    def _set_velocity_brake_attitude(self, projected_speed, yaw_rad):
+        desired_deceleration = (
+            self.brake_velocity_gain_s * max(float(projected_speed), 0.0)
+        )
+        self.brake_command_tilt_deg = min(
+            float(np.degrees(np.arctan2(desired_deceleration, 9.81))),
+            self.brake_max_attitude_deg,
+        )
+        direction_body = world_to_body_xy(
+            self.brake_direction[:2], np.degrees(float(yaw_rad))
+        )
+        self.set_contact_attitude(
+            self.brake_command_tilt_deg * float(direction_body[1]),
+            self.brake_command_tilt_deg * float(direction_body[0]),
+            0.0,
+        )
 
     def end_contact(
             self,
@@ -490,23 +519,24 @@ class TranslationControlHandoff:
         )
         self.hover_z = float(position[2])
         self.mode = self.ATTITUDE_BRAKING
-        # Cancel the measured release attitude directly.  Keeping this command
-        # fixed avoids feeding position-controller lag into the braking phase.
-        release_roll_pitch_deg = np.degrees(orientation_rpy[:2])
-        brake_roll_pitch_deg = np.clip(
-            -release_roll_pitch_deg,
-            -self.brake_max_attitude_deg,
-            self.brake_max_attitude_deg,
-        )
-        self.set_contact_attitude(
-            brake_roll_pitch_deg[0], brake_roll_pitch_deg[1], 0.0
+        # Render velocity damping rather than a fixed braking tilt. The command
+        # shrinks with projected speed, preventing the counter-force attitude
+        # from carrying the vehicle back toward the user after it stops.
+        self._set_velocity_brake_attitude(
+            self.brake_projected_speed_m_s, orientation_rpy[2]
         )
         self._brake_started_at = timestamp
+        self._level_started_at = None
         self.brake_completion_reason = None
         return True
 
-    def update_braking(self, current_position, velocity, timestamp, yaw_rad=0.0):
-        if self.shadow_mode or self.mode != self.ATTITUDE_BRAKING:
+    def update_braking(
+            self, current_position, velocity, timestamp,
+            current_orientation_rpy=None,
+    ):
+        if self.shadow_mode or self.mode not in (
+            self.ATTITUDE_BRAKING, self.ATTITUDE_LEVELING
+        ):
             return False
         position = np.asarray(current_position, dtype=float)
         velocity = np.asarray(velocity, dtype=float)
@@ -517,27 +547,58 @@ class TranslationControlHandoff:
         timestamp = float(timestamp)
         if not np.isfinite(timestamp):
             raise ValueError('translation braking timestamp must be finite')
+        orientation_rpy = np.asarray(
+            [0.0, 0.0, 0.0]
+            if current_orientation_rpy is None else current_orientation_rpy,
+            dtype=float,
+        )
+        if orientation_rpy.shape != (3,) or not np.all(np.isfinite(orientation_rpy)):
+            raise ValueError('translation braking orientation must be finite RPY')
         projected_speed = float(velocity[:2] @ self.brake_direction[:2])
         self.brake_projected_speed_m_s = projected_speed
-        stopped_or_reversed = bool(
-            projected_speed <= self.brake_xy_speed_m_s
-        )
         timed_out = bool(
             self._brake_started_at is not None
             and timestamp - self._brake_started_at >= self.brake_timeout_s
         )
-        if not stopped_or_reversed and not timed_out:
+
+        if self.mode == self.ATTITUDE_BRAKING:
+            stopped_or_reversed = bool(
+                projected_speed <= self.brake_xy_speed_m_s
+            )
+            if not stopped_or_reversed and not timed_out:
+                self._set_velocity_brake_attitude(
+                    projected_speed, orientation_rpy[2]
+                )
+                return False
+            self.mode = self.ATTITUDE_LEVELING
+            self.set_contact_attitude(0.0, 0.0, 0.0)
+            self.brake_command_tilt_deg = 0.0
+            self._level_started_at = timestamp
+            self.brake_completion_reason = (
+                'projected_velocity_zero_or_reversed'
+                if stopped_or_reversed else 'braking_timeout'
+            )
             return False
 
-        # Position control starts only after attitude braking, and captures the
-        # measured switch position so there is no stale point to fly back to.
+        actual_tilt_deg = calculate_tilt(
+            *np.degrees(orientation_rpy[:2])
+        )
+        level_timed_out = bool(
+            self._level_started_at is not None
+            and timestamp - self._level_started_at >= self.brake_level_timeout_s
+        )
+        if actual_tilt_deg > self.brake_level_attitude_deg and not level_timed_out:
+            return False
+
+        # Position control starts only after a zero-attitude phase, and captures
+        # the measured switch position so there is no stale point to fly back to.
         self.hold_position = position.copy()
         self.mode = self.POSITION_HOLD
         self.set_contact_attitude(0.0, 0.0, 0.0)
         self._brake_started_at = None
-        self.brake_completion_reason = (
-            'projected_velocity_zero_or_reversed'
-            if stopped_or_reversed else 'timeout'
+        self._level_started_at = None
+        self.brake_completion_reason += (
+            '_then_level_timeout' if level_timed_out else '_then_level'
         )
         return True
 
@@ -547,7 +608,7 @@ class TranslationControlHandoff:
 
     @property
     def braking_mode(self):
-        return self.mode == self.ATTITUDE_BRAKING
+        return self.mode in (self.ATTITUDE_BRAKING, self.ATTITUDE_LEVELING)
 
     @property
     def uses_position_setpoint(self):
@@ -564,7 +625,11 @@ class TranslationControlHandoff:
             commander.send_position_setpoint(
                 *self.hold_position, self.yaw_deg
             )
-        elif self.mode in (self.CONTACT_ZDISTANCE, self.ATTITUDE_BRAKING):
+        elif self.mode in (
+            self.CONTACT_ZDISTANCE,
+            self.ATTITUDE_BRAKING,
+            self.ATTITUDE_LEVELING,
+        ):
             commander.send_zdistance_setpoint(
                 self.contact_roll_deg,
                 self.contact_pitch_deg,
@@ -1180,6 +1245,12 @@ class InteractionsControl:
                                         'brake_timeout_s': (
                                             translation_control.brake_timeout_s
                                         ),
+                                        'brake_velocity_gain_s': (
+                                            translation_control.brake_velocity_gain_s
+                                        ),
+                                        'brake_command_tilt_deg': (
+                                            translation_control.brake_command_tilt_deg
+                                        ),
                                     },
                                 )
 
@@ -1187,7 +1258,7 @@ class InteractionsControl:
                     self._bounded_wrench_reference(position),
                     output.estimate.velocity,
                     frame_time,
-                    output.estimate.orientation_rpy[2]):
+                    output.estimate.orientation_rpy):
                 pipeline.detector.translation.reset(frame_time)
                 last_command_position = translation_control.hold_position.copy()
                 self._log_event(
@@ -1322,6 +1393,14 @@ class InteractionsControl:
                 'command_pitch_deg': (
                     translation_control.contact_pitch_deg
                     if not translation_control.uses_position_setpoint else None
+                ),
+                'brake_projected_speed_m_s': (
+                    translation_control.brake_projected_speed_m_s
+                    if translation_control.braking_mode else None
+                ),
+                'brake_command_tilt_deg': (
+                    translation_control.brake_command_tilt_deg
+                    if translation_control.braking_mode else None
                 ),
                 'command_xy_velocity_m_s': None,
                 'command_xy_velocity_world_m_s': None,
@@ -1780,6 +1859,12 @@ class InteractionsControl:
                                         'brake_timeout_s': (
                                             translation_control.brake_timeout_s
                                         ),
+                                        'brake_velocity_gain_s': (
+                                            translation_control.brake_velocity_gain_s
+                                        ),
+                                        'brake_command_tilt_deg': (
+                                            translation_control.brake_command_tilt_deg
+                                        ),
                                         'state_source': 'crazyflie_state_estimate',
                                     },
                                 )
@@ -1834,7 +1919,7 @@ class InteractionsControl:
                     self._bounded_wrench_reference(position),
                     output.estimate.velocity,
                     state_time,
-                    output.estimate.orientation_rpy[2]):
+                    output.estimate.orientation_rpy):
                 pipeline.detector.translation.reset(state_time)
                 last_command_position = translation_control.hold_position.copy()
                 self._log_event(
@@ -2002,6 +2087,14 @@ class InteractionsControl:
                 'command_pitch_deg': (
                     translation_control.contact_pitch_deg
                     if not translation_control.uses_position_setpoint else None
+                ),
+                'brake_projected_speed_m_s': (
+                    translation_control.brake_projected_speed_m_s
+                    if translation_control.braking_mode else None
+                ),
+                'brake_command_tilt_deg': (
+                    translation_control.brake_command_tilt_deg
+                    if translation_control.braking_mode else None
                 ),
                 'command_xy_velocity_m_s': None,
                 'command_xy_velocity_world_m_s': None,

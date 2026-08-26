@@ -336,7 +336,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'orientation',
         )
 
-    def test_active_translation_brakes_with_opposite_attitude_then_holds_current_position(self):
+    def test_active_translation_aims_release_tilt_along_braking_direction_then_holds(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -357,7 +357,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             [0.20, 0.0, 0.0],
             1.0,
             interaction_direction=[1.0, 0.0, 0.0],
-            current_orientation_rpy=np.radians([4.0, -6.0, 2.0]),
+            current_orientation_rpy=np.radians([4.0, -6.0, 0.0]),
         ))
         self.assertFalse(control.start_contact())
         control.send(commander)
@@ -365,27 +365,38 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             [0.30, -0.2, 0.95], [0.10, 0.20, 0.0], 1.05
         ))
         control.send(commander)
-        self.assertTrue(control.update_braking(
+        self.assertFalse(control.update_braking(
             [0.325, -0.18, 0.95], [0.03, 0.20, 0.0], 1.10
+        ))
+        control.send(commander)
+        self.assertTrue(control.update_braking(
+            [0.326, -0.179, 0.95], [0.01, 0.20, 0.0], 1.11,
+            current_orientation_rpy=[0.0, 0.0, 0.0],
         ))
         control.send(commander)
 
         self.assertEqual([call[0] for call in commander.calls], [
-            'position', 'zdistance', 'zdistance', 'zdistance', 'position'
+            'position', 'zdistance', 'zdistance', 'zdistance', 'zdistance',
+            'position'
         ])
+        expected_release_tilt = np.degrees(np.arctan2(2.0 * 0.20, 9.81))
         np.testing.assert_allclose(
-            commander.calls[2][1], [-4.0, 6.0, 0.0, 0.95]
+            commander.calls[2][1], [0.0, expected_release_tilt, 0.0, 0.95]
+        )
+        expected_updated_tilt = np.degrees(np.arctan2(2.0 * 0.10, 9.81))
+        np.testing.assert_allclose(
+            commander.calls[3][1], [0.0, expected_updated_tilt, 0.0, 0.95]
         )
         np.testing.assert_allclose(
-            commander.calls[3][1], [-4.0, 6.0, 0.0, 0.95]
+            commander.calls[4][1], [0.0, 0.0, 0.0, 0.95]
         )
         np.testing.assert_allclose(
-            commander.calls[4][1], [0.325, -0.18, 0.95, 5.0]
+            commander.calls[5][1], [0.326, -0.179, 0.95, 5.0]
         )
         self.assertEqual(control.command_mode, 'position_hold')
         self.assertEqual(
             control.brake_completion_reason,
-            'projected_velocity_zero_or_reversed',
+            'projected_velocity_zero_or_reversed_then_level',
         )
 
     def test_shadow_translation_never_leaves_position_hold(self):
@@ -414,7 +425,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertTrue(control.start_contact())
         self.assertTrue(control.end_contact(
             [0.1, 0.2, 1.0],
-            [0.0, -0.4, 0.0],
+            [0.4, -0.4, 0.0],
             1.0,
             interaction_direction=[1.0, 0.0, 0.0],
             current_orientation_rpy=np.radians([30.0, -4.0, 0.0]),
@@ -423,16 +434,24 @@ class WrenchInteractionLoopTests(unittest.TestCase):
 
         command = commander.calls[-1]
         self.assertEqual(command[0], 'zdistance')
-        self.assertAlmostEqual(command[1][0], -20.0, places=12)
-        self.assertAlmostEqual(command[1][1], 4.0, places=12)
+        self.assertAlmostEqual(command[1][0], 0.0, places=12)
+        self.assertAlmostEqual(
+            command[1][1], np.degrees(np.arctan2(2.0 * 0.4, 9.81)),
+            places=12,
+        )
         np.testing.assert_allclose(control.brake_direction, [1.0, 0.0, 0.0])
         self.assertEqual(
             control.brake_direction_source, 'locked_interaction_direction'
         )
         # Large transverse X speed does not delay handoff after velocity along
         # the locked interaction direction reverses.
-        self.assertTrue(control.update_braking(
+        self.assertFalse(control.update_braking(
             [0.3, 0.25, 1.0], [-0.01, -0.8, 0.0], 1.1
+        ))
+        self.assertEqual(control.command_mode, 'attitude_leveling')
+        self.assertTrue(control.update_braking(
+            [0.3, 0.25, 1.0], [-0.01, -0.8, 0.0], 1.11,
+            current_orientation_rpy=[0.0, 0.0, 0.0],
         ))
         np.testing.assert_allclose(control.hold_position, [0.3, 0.25, 1.0])
 
@@ -451,11 +470,18 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             interaction_direction=[1.0, 0.0, 0.0],
             current_orientation_rpy=np.radians([0.0, -5.0, 0.0]),
         ))
-        self.assertTrue(control.update_braking(
+        self.assertFalse(control.update_braking(
             [0.4, 0.1, 1.0], [0.2, 0.0, 0.0], 1.5
         ))
-        self.assertEqual(control.brake_completion_reason, 'timeout')
-        np.testing.assert_allclose(control.hold_position, [0.4, 0.1, 1.0])
+        self.assertEqual(control.command_mode, 'attitude_leveling')
+        self.assertTrue(control.update_braking(
+            [0.41, 0.1, 1.0], [0.2, 0.0, 0.0], 1.51,
+            current_orientation_rpy=[0.0, 0.0, 0.0],
+        ))
+        self.assertEqual(
+            control.brake_completion_reason, 'braking_timeout_then_level'
+        )
+        np.testing.assert_allclose(control.hold_position, [0.41, 0.1, 1.0])
 
     def test_guided_touch_protocol_emits_countdown_touch_and_release_once(self):
         protocol = GuidedTouchProtocol({
