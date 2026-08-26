@@ -160,12 +160,59 @@ def heavy_inertia_attitude(
     return pitch, roll
 
 
+def virtual_resistance_force(
+        velocity_xy,
+        virtual_mass,
+        kinetic_friction_coefficient=0.0,
+        drag_coefficient=0.0,
+        frontal_area=0.019,
+        air_density=1.225,
+        friction_min_speed_m_s=0.02,
+):
+    """Return virtual friction/drag force magnitudes and motion direction.
+
+    The returned vector points along velocity.  The attitude command convention
+    turns this requested counter-force vector into physical force opposite the
+    motion direction.
+    """
+    velocity_xy = np.asarray(velocity_xy, dtype=float)
+    if velocity_xy.shape != (2,) or not np.all(np.isfinite(velocity_xy)):
+        raise ValueError('virtual resistance velocity must be finite XY')
+    values = np.asarray([
+        virtual_mass,
+        kinetic_friction_coefficient,
+        drag_coefficient,
+        frontal_area,
+        air_density,
+        friction_min_speed_m_s,
+    ], dtype=float)
+    if not np.all(np.isfinite(values)) or values[0] <= 0.0:
+        raise ValueError('virtual resistance mass must be positive and finite')
+    if np.any(values[1:] < 0.0):
+        raise ValueError('virtual resistance parameters cannot be negative')
+
+    speed = float(np.linalg.norm(velocity_xy))
+    if speed <= 1e-9:
+        return np.zeros(2), 0.0, 0.0
+    direction = velocity_xy / speed
+    friction_force = (
+        float(kinetic_friction_coefficient) * float(virtual_mass) * 9.81
+        if speed >= float(friction_min_speed_m_s) else 0.0
+    )
+    drag_force = (
+        0.5 * float(air_density) * float(drag_coefficient)
+        * float(frontal_area) * speed ** 2
+    )
+    return direction * (friction_force + drag_force), friction_force, drag_force
+
+
 def force_inertia_attitude(
         external_force_xy,
         yaw_deg,
         current_mass,
         virtual_mass,
         max_attitude_deg=20.0,
+        virtual_resistance_force_xy=None,
 ):
     """Convert estimated external force into heavy-inertia counter-tilt.
 
@@ -186,9 +233,25 @@ def force_inertia_attitude(
         raise ValueError('max_attitude_deg must be positive')
 
     force_body = world_to_body_xy(external_force_xy, yaw_deg)
+    resistance_force_xy = np.asarray(
+        [0.0, 0.0]
+        if virtual_resistance_force_xy is None
+        else virtual_resistance_force_xy,
+        dtype=float,
+    )
+    if (
+        resistance_force_xy.shape != (2,)
+        or not np.all(np.isfinite(resistance_force_xy))
+    ):
+        raise ValueError('virtual resistance force must be finite XY')
+    resistance_force_body = world_to_body_xy(
+        resistance_force_xy, yaw_deg
+    )
     counter_force_body = (
         1.0 - current_mass / virtual_mass
-    ) * force_body
+    ) * force_body + (
+        current_mass / virtual_mass
+    ) * resistance_force_body
     force_norm = float(np.linalg.norm(counter_force_body))
     if force_norm <= 0.0:
         return 0.0, 0.0, 0.0, False
@@ -299,7 +362,7 @@ class TranslationControlHandoff:
 
     POSITION_HOLD = 'position_hold'
     CONTACT_ZDISTANCE = 'attitude_zdistance'
-    POSITION_BRAKING = 'position_braking'
+    ATTITUDE_BRAKING = 'attitude_braking'
 
     def __init__(
             self,
@@ -310,6 +373,8 @@ class TranslationControlHandoff:
             brake_xy_speed_m_s=0.04,
             brake_settle_s=0.30,
             position_brake_offset_m=0.05,
+            brake_max_attitude_deg=20.0,
+            brake_timeout_s=1.0,
     ):
         self.hold_position = np.asarray(initial_position, dtype=float).copy()
         if self.hold_position.shape != (3,):
@@ -320,19 +385,26 @@ class TranslationControlHandoff:
         self.brake_xy_speed_m_s = float(brake_xy_speed_m_s)
         self.brake_settle_s = float(brake_settle_s)
         self.position_brake_offset_m = float(position_brake_offset_m)
+        self.brake_max_attitude_deg = float(brake_max_attitude_deg)
+        self.brake_timeout_s = float(brake_timeout_s)
         if (
             self.brake_xy_acceleration_m_s2 <= 0
             or self.brake_xy_speed_m_s <= 0
-            or self.brake_settle_s <= 0
+            or self.brake_settle_s < 0
             or self.position_brake_offset_m < 0
+            or self.brake_max_attitude_deg <= 0
+            or self.brake_timeout_s <= 0
         ):
             raise ValueError(
-                'translation braking acceleration, speed, and settle time must '
-                'be positive; position brake offset cannot be negative'
+                'translation braking limits must be positive; legacy settle '
+                'time and position offset cannot be negative'
             )
         self.mode = self.POSITION_HOLD
-        self._brake_settled_since = None
+        self._brake_started_at = None
         self.brake_direction = np.zeros(3)
+        self.brake_direction_source = None
+        self.brake_projected_speed_m_s = 0.0
+        self.brake_completion_reason = None
         self.hover_z = float(self.hold_position[2])
         self.contact_roll_deg = 0.0
         self.contact_pitch_deg = 0.0
@@ -364,6 +436,7 @@ class TranslationControlHandoff:
             current_velocity,
             timestamp,
             interaction_direction=None,
+            current_orientation_rpy=None,
     ):
         if self.shadow_mode or self.mode != self.CONTACT_ZDISTANCE:
             return False
@@ -376,13 +449,30 @@ class TranslationControlHandoff:
         timestamp = float(timestamp)
         if not np.isfinite(timestamp):
             raise ValueError('translation release timestamp must be finite')
-        direction = (
-            np.asarray(interaction_direction, dtype=float)
-            if interaction_direction is not None
-            else np.zeros(3)
+        orientation_rpy = np.asarray(
+            [0.0, 0.0, 0.0]
+            if current_orientation_rpy is None else current_orientation_rpy,
+            dtype=float,
         )
-        if direction.shape != (3,) or not np.all(np.isfinite(direction)):
+        if orientation_rpy.shape != (3,) or not np.all(np.isfinite(orientation_rpy)):
+            raise ValueError('translation release orientation must be finite RPY')
+        interaction_direction = (
+            np.asarray(interaction_direction, dtype=float)
+            if interaction_direction is not None else np.zeros(3)
+        )
+        if (
+            interaction_direction.shape != (3,)
+            or not np.all(np.isfinite(interaction_direction))
+        ):
             raise ValueError('interaction direction must be finite XYZ')
+        direction = np.zeros(3)
+        release_speed = float(np.linalg.norm(velocity[:2]))
+        if release_speed > 1e-9:
+            direction[:2] = velocity[:2]
+            self.brake_direction_source = 'release_velocity'
+        else:
+            direction[:] = interaction_direction
+            self.brake_direction_source = 'interaction_direction_fallback'
         direction[2] = 0.0
         direction_norm = float(np.linalg.norm(direction[:2]))
         if direction_norm <= 1e-9:
@@ -394,18 +484,29 @@ class TranslationControlHandoff:
             direction.fill(0.0)
 
         self.hold_position = position.copy()
-        self.hold_position[:2] += (
-            self.position_brake_offset_m * direction[:2]
-        )
         self.brake_direction = direction.copy()
+        self.brake_projected_speed_m_s = float(
+            velocity[:2] @ self.brake_direction[:2]
+        )
         self.hover_z = float(position[2])
-        self.mode = self.POSITION_BRAKING
-        self.set_contact_attitude(0.0, 0.0, 0.0)
-        self._brake_settled_since = None
+        self.mode = self.ATTITUDE_BRAKING
+        # Cancel the measured release attitude directly.  Keeping this command
+        # fixed avoids feeding position-controller lag into the braking phase.
+        release_roll_pitch_deg = np.degrees(orientation_rpy[:2])
+        brake_roll_pitch_deg = np.clip(
+            -release_roll_pitch_deg,
+            -self.brake_max_attitude_deg,
+            self.brake_max_attitude_deg,
+        )
+        self.set_contact_attitude(
+            brake_roll_pitch_deg[0], brake_roll_pitch_deg[1], 0.0
+        )
+        self._brake_started_at = timestamp
+        self.brake_completion_reason = None
         return True
 
     def update_braking(self, current_position, velocity, timestamp, yaw_rad=0.0):
-        if self.shadow_mode or self.mode != self.POSITION_BRAKING:
+        if self.shadow_mode or self.mode != self.ATTITUDE_BRAKING:
             return False
         position = np.asarray(current_position, dtype=float)
         velocity = np.asarray(velocity, dtype=float)
@@ -416,20 +517,28 @@ class TranslationControlHandoff:
         timestamp = float(timestamp)
         if not np.isfinite(timestamp):
             raise ValueError('translation braking timestamp must be finite')
-        vehicle_stopped = bool(
-            np.linalg.norm(velocity[:2]) <= self.brake_xy_speed_m_s
+        projected_speed = float(velocity[:2] @ self.brake_direction[:2])
+        self.brake_projected_speed_m_s = projected_speed
+        stopped_or_reversed = bool(
+            projected_speed <= self.brake_xy_speed_m_s
         )
-        if not vehicle_stopped:
-            self._brake_settled_since = None
-            return False
-        if self._brake_settled_since is None:
-            self._brake_settled_since = timestamp
-            return False
-        if timestamp - self._brake_settled_since < self.brake_settle_s:
+        timed_out = bool(
+            self._brake_started_at is not None
+            and timestamp - self._brake_started_at >= self.brake_timeout_s
+        )
+        if not stopped_or_reversed and not timed_out:
             return False
 
+        # Position control starts only after attitude braking, and captures the
+        # measured switch position so there is no stale point to fly back to.
+        self.hold_position = position.copy()
         self.mode = self.POSITION_HOLD
-        self._brake_settled_since = None
+        self.set_contact_attitude(0.0, 0.0, 0.0)
+        self._brake_started_at = None
+        self.brake_completion_reason = (
+            'projected_velocity_zero_or_reversed'
+            if stopped_or_reversed else 'timeout'
+        )
         return True
 
     @property
@@ -438,13 +547,11 @@ class TranslationControlHandoff:
 
     @property
     def braking_mode(self):
-        return self.mode == self.POSITION_BRAKING
+        return self.mode == self.ATTITUDE_BRAKING
 
     @property
     def uses_position_setpoint(self):
-        return self.shadow_mode or self.mode in (
-            self.POSITION_HOLD, self.POSITION_BRAKING
-        )
+        return self.shadow_mode or self.mode == self.POSITION_HOLD
 
     @property
     def command_mode(self):
@@ -453,13 +560,11 @@ class TranslationControlHandoff:
         return self.mode
 
     def send(self, commander):
-        if self.shadow_mode or self.mode in (
-            self.POSITION_HOLD, self.POSITION_BRAKING
-        ):
+        if self.shadow_mode or self.mode == self.POSITION_HOLD:
             commander.send_position_setpoint(
                 *self.hold_position, self.yaw_deg
             )
-        elif self.mode == self.CONTACT_ZDISTANCE:
+        elif self.mode in (self.CONTACT_ZDISTANCE, self.ATTITUDE_BRAKING):
             commander.send_zdistance_setpoint(
                 self.contact_roll_deg,
                 self.contact_pitch_deg,
@@ -1045,27 +1150,35 @@ class InteractionsControl:
                                     self._bounded_wrench_reference(position),
                                     output.estimate.velocity,
                                     frame_time,
-                                    decision.release_direction):
-                                translation_control.hold_position = (
-                                    self._bounded_wrench_reference(
-                                        translation_control.hold_position
-                                    )
-                                )
+                                    decision.release_direction,
+                                    output.estimate.orientation_rpy):
                                 pipeline.admittance.reset()
                                 self._log_event(
-                                    'Translation Position Braking Started',
+                                    'Translation Attitude Braking Started',
                                     {
                                         'xy_speed_m_s': float(np.linalg.norm(
                                             output.estimate.velocity[:2]
                                         )),
+                                        'projected_speed_m_s': (
+                                            translation_control.brake_projected_speed_m_s
+                                        ),
                                         'interaction_direction': (
+                                            decision.release_direction
+                                        ),
+                                        'brake_direction': (
                                             translation_control.brake_direction.tolist()
                                         ),
-                                        'position_offset_m': (
-                                            translation_control.position_brake_offset_m
+                                        'brake_direction_source': (
+                                            translation_control.brake_direction_source
                                         ),
-                                        'target_position_m': (
-                                            translation_control.hold_position.tolist()
+                                        'brake_roll_deg': (
+                                            translation_control.contact_roll_deg
+                                        ),
+                                        'brake_pitch_deg': (
+                                            translation_control.contact_pitch_deg
+                                        ),
+                                        'brake_timeout_s': (
+                                            translation_control.brake_timeout_s
                                         ),
                                     },
                                 )
@@ -1084,6 +1197,12 @@ class InteractionsControl:
                         'xy_speed_m_s': float(np.linalg.norm(
                             output.estimate.velocity[:2]
                         )),
+                        'projected_speed_m_s': (
+                            translation_control.brake_projected_speed_m_s
+                        ),
+                        'brake_completion_reason': (
+                            translation_control.brake_completion_reason
+                        ),
                     },
                 )
 
@@ -1194,6 +1313,14 @@ class InteractionsControl:
                 ),
                 'command_zdistance_m': (
                     translation_control.hover_z
+                    if not translation_control.uses_position_setpoint else None
+                ),
+                'command_roll_deg': (
+                    translation_control.contact_roll_deg
+                    if not translation_control.uses_position_setpoint else None
+                ),
+                'command_pitch_deg': (
+                    translation_control.contact_pitch_deg
                     if not translation_control.uses_position_setpoint else None
                 ),
                 'command_xy_velocity_m_s': None,
@@ -1309,6 +1436,11 @@ class InteractionsControl:
         force_current_mass = float(config['mass'])
         force_virtual_mass = force_current_mass
         force_max_attitude_deg = 20.0
+        force_kinetic_friction_coefficient = 0.0
+        force_drag_coefficient = 0.0
+        force_frontal_area = 0.019
+        force_air_density = 1.225
+        force_friction_min_speed_m_s = 0.02
         if virtual_object_config:
             force_current_mass = float(virtual_object_config.get(
                 'current_mass', config['mass']
@@ -1325,6 +1457,41 @@ class InteractionsControl:
             force_orientation_enabled = requested_mode == 'orientation'
             force_max_attitude_deg = float(
                 virtual_object_config.get('max_attitude_deg', 20.0)
+            )
+            force_kinetic_friction_coefficient = float(
+                virtual_object_config.get(
+                    'kinetic_friction_coefficient',
+                    virtual_object_config.get('friction_coefficient', 0.0),
+                )
+            )
+            force_drag_coefficient = float(
+                virtual_object_config.get('drag_coefficient', 0.0)
+            )
+            force_frontal_area = float(
+                virtual_object_config.get('frontal_area', 0.019)
+            )
+            force_air_density = float(
+                virtual_object_config.get('air_density', 1.225)
+            )
+            force_friction_min_speed_m_s = float(
+                virtual_object_config.get(
+                    'friction_min_speed_m_s', 0.02
+                )
+            )
+        resistance_parameters = np.asarray([
+            force_kinetic_friction_coefficient,
+            force_drag_coefficient,
+            force_frontal_area,
+            force_air_density,
+            force_friction_min_speed_m_s,
+        ])
+        if (
+            not np.all(np.isfinite(resistance_parameters))
+            or np.any(resistance_parameters < 0.0)
+        ):
+            raise ValueError(
+                'virtual-object friction and air-drag parameters must be '
+                'finite and non-negative'
             )
         if force_orientation_enabled and not np.isclose(
                 force_current_mass, float(config['mass'])):
@@ -1364,6 +1531,15 @@ class InteractionsControl:
                         'mass': force_virtual_mass,
                         'inertia_command': 'orientation',
                         'max_attitude_deg': force_max_attitude_deg,
+                        'kinetic_friction_coefficient': (
+                            force_kinetic_friction_coefficient
+                        ),
+                        'drag_coefficient': force_drag_coefficient,
+                        'frontal_area': force_frontal_area,
+                        'air_density': force_air_density,
+                        'friction_min_speed_m_s': (
+                            force_friction_min_speed_m_s
+                        ),
                     }
                     if force_orientation_enabled else None
                 ),
@@ -1574,27 +1750,35 @@ class InteractionsControl:
                                     self._bounded_wrench_reference(position),
                                     output.estimate.velocity,
                                     state_time,
-                                    decision.release_direction):
-                                translation_control.hold_position = (
-                                    self._bounded_wrench_reference(
-                                        translation_control.hold_position
-                                    )
-                                )
+                                    decision.release_direction,
+                                    output.estimate.orientation_rpy):
                                 pipeline.admittance.reset()
                                 self._log_event(
-                                    'Translation Position Braking Started',
+                                    'Translation Attitude Braking Started',
                                     {
                                         'xy_speed_m_s': float(np.linalg.norm(
                                             output.estimate.velocity[:2]
                                         )),
+                                        'projected_speed_m_s': (
+                                            translation_control.brake_projected_speed_m_s
+                                        ),
                                         'interaction_direction': (
+                                            decision.release_direction
+                                        ),
+                                        'brake_direction': (
                                             translation_control.brake_direction.tolist()
                                         ),
-                                        'position_offset_m': (
-                                            translation_control.position_brake_offset_m
+                                        'brake_direction_source': (
+                                            translation_control.brake_direction_source
                                         ),
-                                        'target_position_m': (
-                                            translation_control.hold_position.tolist()
+                                        'brake_roll_deg': (
+                                            translation_control.contact_roll_deg
+                                        ),
+                                        'brake_pitch_deg': (
+                                            translation_control.contact_pitch_deg
+                                        ),
+                                        'brake_timeout_s': (
+                                            translation_control.brake_timeout_s
                                         ),
                                         'state_source': 'crazyflie_state_estimate',
                                     },
@@ -1604,6 +1788,9 @@ class InteractionsControl:
             force_target_roll = 0.0
             force_raw_tilt_deg = 0.0
             force_attitude_saturated = False
+            force_virtual_friction_N = 0.0
+            force_virtual_drag_N = 0.0
+            force_virtual_resistance_xy = np.zeros(2)
             if (
                 force_orientation_enabled
                 and output.calibrated
@@ -1612,6 +1799,19 @@ class InteractionsControl:
                 and translation_control.attitude_mode
                 and not output.estimate.measurement_rejected
             ):
+                (
+                    force_virtual_resistance_xy,
+                    force_virtual_friction_N,
+                    force_virtual_drag_N,
+                ) = virtual_resistance_force(
+                    output.estimate.velocity[:2],
+                    force_virtual_mass,
+                    force_kinetic_friction_coefficient,
+                    force_drag_coefficient,
+                    force_frontal_area,
+                    force_air_density,
+                    force_friction_min_speed_m_s,
+                )
                 (
                     force_target_pitch,
                     force_target_roll,
@@ -1623,6 +1823,7 @@ class InteractionsControl:
                     force_current_mass,
                     force_virtual_mass,
                     force_max_attitude_deg,
+                    force_virtual_resistance_xy,
                 )
             if translation_control.attitude_mode:
                 translation_control.set_contact_attitude(
@@ -1643,6 +1844,12 @@ class InteractionsControl:
                         'xy_speed_m_s': float(np.linalg.norm(
                             output.estimate.velocity[:2]
                         )),
+                        'projected_speed_m_s': (
+                            translation_control.brake_projected_speed_m_s
+                        ),
+                        'brake_completion_reason': (
+                            translation_control.brake_completion_reason
+                        ),
                         'state_source': 'crazyflie_state_estimate',
                     },
                 )
@@ -1788,6 +1995,14 @@ class InteractionsControl:
                     translation_control.hover_z
                     if not translation_control.uses_position_setpoint else None
                 ),
+                'command_roll_deg': (
+                    translation_control.contact_roll_deg
+                    if not translation_control.uses_position_setpoint else None
+                ),
+                'command_pitch_deg': (
+                    translation_control.contact_pitch_deg
+                    if not translation_control.uses_position_setpoint else None
+                ),
                 'command_xy_velocity_m_s': None,
                 'command_xy_velocity_world_m_s': None,
                 'command_yaw_deg': float(command_yaw),
@@ -1796,6 +2011,16 @@ class InteractionsControl:
                 'force_target_pitch_deg': force_target_pitch,
                 'force_raw_tilt_deg': force_raw_tilt_deg,
                 'force_attitude_saturated': force_attitude_saturated,
+                'virtual_friction_force_N': force_virtual_friction_N,
+                'virtual_air_drag_force_N': force_virtual_drag_N,
+                'virtual_resistance_force_xy_N': (
+                    force_virtual_resistance_xy.tolist()
+                ),
+                'applied_resistance_counter_force_xy_N': (
+                    (
+                        force_current_mass / force_virtual_mass
+                    ) * force_virtual_resistance_xy
+                ).tolist(),
                 'shadow_mode': pipeline.shadow_mode,
             })
             self._safe_sleep(dt)

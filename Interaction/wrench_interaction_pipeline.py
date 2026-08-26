@@ -92,14 +92,18 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         },
     },
     "control_handoff": {
-        # Retained for compatibility with older velocity-braking mission files;
-        # position braking does not use this acceleration value.
+        # The two legacy fields remain accepted by TranslationControlHandoff so
+        # archived mission files still load; attitude braking does not use them.
         "brake_xy_acceleration_m_s2": 0.8,
-        # Position braking holds a point this far ahead of Contact End along
-        # the interaction direction, then re-arms after the vehicle settles.
         "position_brake_offset_m": 0.05,
-        "brake_xy_speed_m_s": 0.04,
         "brake_settle_s": 0.30,
+        # At Contact End command the opposite of measured roll/pitch. Switch to
+        # position hold when signed speed along the Contact-End velocity
+        # direction is near zero/reversed. Timeout prevents a stale attitude
+        # command persisting.
+        "brake_xy_speed_m_s": 0.04,
+        "brake_max_attitude_deg": 20.0,
+        "brake_timeout_s": 1.0,
     },
     "admittance": {
         "translation_mass": [0.30, 0.30, 0.45],
