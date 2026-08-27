@@ -599,6 +599,38 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertAlmostEqual(yaws[-1], 5.0)
         self.assertGreater(max(yaws) - min(yaws), 20.0)
 
+    def test_sequential_translation_chirp_excites_only_one_axis_at_a_time(self):
+        controller = InteractionsControl.__new__(InteractionsControl)
+        controller.bounds = None
+        config = {
+            'duration_s': 24.0,
+            'translation_amplitude_m': [0.10, 0.10, 0.06],
+            'translation_frequency_hz': [0.35, 0.35, 0.25],
+            'translation_profile': 'sequential_chirp',
+            'translation_chirp_end_hz': [1.30, 1.30, 0.85],
+            'translation_axis_rest_s': 1.0,
+            'translation_ramp_s': 0.6,
+            'yaw_amplitude_deg': 0.0,
+            'yaw_profile': 'sine',
+            'yaw_frequency_hz': 0.2,
+        }
+        nominal = np.array([0.2, -0.1, 1.0])
+        active_axes = []
+        for elapsed_s in np.linspace(0.0, 24.0, 481):
+            position, _ = controller._calibration_excitation_reference(
+                nominal, 0.0, config, elapsed_s,
+            )
+            offset = position - nominal
+            self.assertLessEqual(np.count_nonzero(np.abs(offset) > 1e-12), 1)
+            self.assertTrue(np.all(np.abs(offset) <= [0.10, 0.10, 0.06]))
+            active_axes.extend(np.flatnonzero(np.abs(offset) > 1e-5).tolist())
+
+        self.assertEqual(set(active_axes), {0, 1, 2})
+        rest_position, _ = controller._calibration_excitation_reference(
+            nominal, 0.0, config, 7.8,
+        )
+        np.testing.assert_allclose(rest_position, nominal)
+
     def test_shadow_loop_uses_full_pose_and_never_applies_proposed_response(self):
         base_time = time.time()
         logs = FakeLogManager(base_time)

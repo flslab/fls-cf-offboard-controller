@@ -887,7 +887,7 @@ class InteractionsControl:
                     excitation = wrench_config['calibration_excitation']
                     interaction_duration = (
                         float(excitation.get('start_delay_s', 1.0))
-                        + float(excitation.get('duration_s', 24.0))
+                        + float(excitation.get('duration_s', 30.0))
                         + 1.0
                     )
                 else:
@@ -1025,6 +1025,7 @@ class InteractionsControl:
         translation_profile = config.get('translation_profile', 'sine')
         if translation_profile == 'sine':
             translation_phase = 2.0 * np.pi * frequencies * elapsed_s
+            translation_offset = amplitudes * np.sin(translation_phase)
         elif translation_profile == 'chirp':
             end_frequencies = np.asarray(
                 config['translation_chirp_end_hz'], dtype=float
@@ -1038,13 +1039,51 @@ class InteractionsControl:
                 frequencies * elapsed_s
                 + 0.5 * sweep_rates * elapsed_s ** 2
             )
+            translation_offset = amplitudes * np.sin(translation_phase)
+        elif translation_profile == 'sequential_chirp':
+            end_frequencies = np.asarray(
+                config['translation_chirp_end_hz'], dtype=float
+            )
+            rest_s = float(config.get('translation_axis_rest_s', 1.0))
+            ramp_s = float(config.get('translation_ramp_s', 0.6))
+            segment_s = (duration_s - 2.0 * rest_s) / 3.0
+            if (
+                end_frequencies.shape != (3,)
+                or np.any(end_frequencies <= 0.0)
+                or rest_s < 0.0
+                or ramp_s < 0.0
+                or segment_s <= 2.0 * ramp_s
+            ):
+                raise ValueError(
+                    'sequential chirp requires positive XYZ end frequencies '
+                    'and enough duration for three ramped axis segments'
+                )
+            translation_offset = np.zeros(3)
+            block_s = segment_s + rest_s
+            axis = min(int(elapsed_s // block_s), 2)
+            local_s = elapsed_s - axis * block_s
+            if 0.0 <= local_s < segment_s:
+                sweep_rate = (
+                    end_frequencies[axis] - frequencies[axis]
+                ) / segment_s
+                phase = 2.0 * np.pi * (
+                    frequencies[axis] * local_s
+                    + 0.5 * sweep_rate * local_s ** 2
+                )
+                envelope = (
+                    min(local_s / ramp_s, (segment_s - local_s) / ramp_s, 1.0)
+                    if ramp_s > 0.0 else 1.0
+                )
+                translation_offset[axis] = (
+                    amplitudes[axis] * max(envelope, 0.0) * np.sin(phase)
+                )
         else:
             raise ValueError(
                 f'Unsupported translation excitation profile: {translation_profile}'
             )
         position = self._bounded_wrench_reference(
             np.asarray(nominal_position, dtype=float)
-            + amplitudes * np.sin(translation_phase)
+            + translation_offset
         )
 
         yaw_amplitude_deg = float(config['yaw_amplitude_deg'])
