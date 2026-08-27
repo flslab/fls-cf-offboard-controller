@@ -85,6 +85,26 @@ class FiniteWindowMomentumForceEstimatorTests(unittest.TestCase):
         self.assertTrue(estimate.ready)
         np.testing.assert_allclose(estimate.external_force, np.zeros(3), atol=1e-12)
 
+    def test_axis_acceleration_scale_corrects_motor_model_gain(self):
+        estimator = FiniteWindowMomentumForceEstimator(
+            mass=0.17,
+            window_s=0.08,
+            minimum_window_s=0.05,
+            model_acceleration_scale=[1.5, 0.5, 2.0],
+        )
+        model_acceleration = np.array([1.0, 2.0, 0.5])
+        actual_acceleration = np.array([1.5, 1.0, 1.0])
+        velocity = np.zeros(3)
+        estimate = estimator.update(velocity, model_acceleration, 0.0)
+        for index in range(1, 20):
+            velocity += actual_acceleration * 0.01
+            estimate = estimator.update(
+                velocity, model_acceleration, index * 0.01
+            )
+
+        self.assertTrue(estimate.ready)
+        np.testing.assert_allclose(estimate.external_force, 0.0, atol=1e-12)
+
     def test_release_decays_without_opposite_force_tail(self):
         mass = 0.17
         estimator = FiniteWindowMomentumForceEstimator(

@@ -11,7 +11,7 @@ of flight. It changes only the position/yaw reference sent to that PID.
 2. Two augmented Kalman observers estimate unmodelled linear and angular
    acceleration. The observer converts these to external force and torque with
    the configured vehicle mass and inertia.
-3. A stationary startup interval estimates the residual model bias. Do not
+3. A stationary startup interval estimates the per-flight residual bias. Do not
    touch the vehicle between the `Wrench Calibration Started` and
    `Wrench Calibration Complete` events.
 4. Separate uncertainty-aware detectors require a physical wrench threshold,
@@ -41,13 +41,27 @@ detectors, and proposed admittance references run and are logged, but the actual
 command ignores contact response. It remains at the nominal XYZ/yaw reference
 unless the explicitly configured calibration excitation is enabled.
 
+## Model calibration
+
+Run a dedicated contact-free calibration before interaction:
+
+```text
+python3 orchestrator/orchestrator.py --calibrate
+```
+
+`--calibrate` forces shadow mode, commands a bounded XYZ chirp, identifies an
+independent actuator-to-velocity delay, first-order time constant, and
+acceleration scale for X/Y/Z, then atomically saves the result on each drone as
+`Interaction/wrench_calibration.json` under that controller checkout. Entries
+are keyed by drone ID. `--interaction` disables calibration excitation and
+automatically loads that drone's saved values. The short stationary bias
+calibration still runs at the start of every flight because that bias can vary
+between flights.
+
 Before setting `shadow_mode: false`:
 
 1. Fly several untouched hover trials.
-2. In a clear flight volume, enable `calibration_excitation` for a separate
-   shadow trial and do not touch the drone. It commands small bounded XYZ/yaw
-   sine motions so the applied-input model can be identified and motion-only
-   false positives can be measured.
+2. In a clear flight volume, run `--calibrate` and do not touch the drone.
 3. Fit all three `motor_model.angular_accel_scale` values from motor-mixer
    differential versus measured angular acceleration. Active mode refuses a
    missing/zero scale on any rotational axis.

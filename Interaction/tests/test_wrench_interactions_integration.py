@@ -312,6 +312,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'Interaction': {'config': {
                 'detection_method': 'momentum_impulse',
                 'duration': 12,
+                'grace_time': 2.0,
                 'wrench_interaction': wrench_config,
                 'virtual_object': {
                     'current_mass': 0.17,
@@ -330,10 +331,56 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]['nominal_position'], [0.1, 0.2, 1.0])
         self.assertEqual(calls[0]['nominal_yaw_deg'], 7.0)
-        self.assertIs(calls[0]['config'], wrench_config)
+        self.assertIsNot(calls[0]['config'], wrench_config)
+        self.assertFalse(
+            calls[0]['config']['calibration_excitation']['enabled']
+        )
+        self.assertEqual(calls[0]['rearm_delay_s'], 2.0)
         self.assertEqual(
             calls[0]['virtual_object_config']['inertia_command'],
             'orientation',
+        )
+
+    def test_calibration_forces_shadow_excitation_and_uses_its_duration(self):
+        controller = InteractionsControl.__new__(InteractionsControl)
+        controller.drone_id = 'lb11'
+        controller.lo_commander = FakeCommander()
+        controller.mission = {
+            'drones': {'lb11': {'target': [0.1, 0.2, 1.0, 7.0]}},
+            'Interaction': {
+                'action': 'translation',
+                'config': {
+                    'detection_method': 'momentum_impulse',
+                    'duration': 60,
+                    'wrench_calibration_file': '/tmp/test-calibration.json',
+                    'wrench_interaction': {
+                        'state_source': 'onboard',
+                        'shadow_mode': False,
+                        'calibration_excitation': {
+                            'enabled': False,
+                            'start_delay_s': 2.0,
+                            'duration_s': 10.0,
+                        },
+                    },
+                },
+            },
+        }
+        calls = []
+        controller.interaction_onboard_wrench_admittance = (
+            lambda **kwargs: calls.append(kwargs)
+        )
+
+        controller.run_calibration()
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]['duration'], 13.0)
+        self.assertTrue(calls[0]['calibration_mode'])
+        self.assertTrue(
+            calls[0]['config']['calibration_excitation']['enabled']
+        )
+        self.assertTrue(calls[0]['config']['shadow_mode'])
+        self.assertEqual(
+            calls[0]['calibration_path'], '/tmp/test-calibration.json'
         )
 
     def test_active_translation_aims_release_tilt_along_braking_direction_then_holds(self):
@@ -377,7 +424,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         np.testing.assert_allclose(
             commander.calls[2][1], [0.0, expected_release_tilt, 0.0, 0.95]
         )
-        expected_updated_tilt = 3.0
+        expected_updated_tilt = 3.0 * (0.10 - 0.04) / (0.15 - 0.04)
         np.testing.assert_allclose(
             commander.calls[3][1], [0.0, expected_updated_tilt, 0.0, 0.95]
         )
@@ -389,6 +436,27 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.brake_completion_reason,
             'projected_velocity_zero_or_reversed',
         )
+
+    def test_detector_rearm_waits_for_post_braking_grace_time(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            rearm_delay_s=2.0,
+        )
+        self.assertTrue(control.start_contact())
+        self.assertTrue(control.end_contact(
+            [0.1, 0.0, 1.0],
+            [0.2, 0.0, 0.0],
+            1.0,
+            interaction_direction=[1.0, 0.0, 0.0],
+        ))
+        self.assertTrue(control.update_braking(
+            [0.11, 0.0, 1.0], [0.03, 0.0, 0.0], 1.1
+        ))
+        self.assertFalse(control.consume_detector_rearm(3.099))
+        self.assertTrue(control.consume_detector_rearm(3.1))
+        self.assertFalse(control.consume_detector_rearm(3.2))
 
     def test_shadow_translation_never_leaves_position_hold(self):
         commander = FakeCommander()

@@ -2,6 +2,7 @@ import logging
 import threading
 import time
 import traceback
+from copy import deepcopy
 
 import cflib.crazyflie
 import numpy as np
@@ -11,6 +12,12 @@ from Interaction.command_wrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
+from Interaction.wrench_model_calibration import (
+    DEFAULT_CALIBRATION_PATH,
+    apply_drone_calibration,
+    identify_xyz_alignment,
+    save_drone_calibration,
+)
 
 # from Interaction.collision_avoidance.simulation import apf_velocity
 
@@ -377,6 +384,8 @@ class TranslationControlHandoff:
             brake_max_attitude_deg=20.0,
             brake_timeout_s=1.5,
             brake_velocity_gain_s=2.0,
+            brake_min_attitude_taper_speed_m_s=0.15,
+            rearm_delay_s=0.0,
     ):
         self.hold_position = np.asarray(initial_position, dtype=float).copy()
         if self.hold_position.shape != (3,):
@@ -391,6 +400,10 @@ class TranslationControlHandoff:
         self.brake_max_attitude_deg = float(brake_max_attitude_deg)
         self.brake_timeout_s = float(brake_timeout_s)
         self.brake_velocity_gain_s = float(brake_velocity_gain_s)
+        self.brake_min_attitude_taper_speed_m_s = float(
+            brake_min_attitude_taper_speed_m_s
+        )
+        self.rearm_delay_s = float(rearm_delay_s)
         if (
             self.brake_xy_acceleration_m_s2 <= 0
             or self.brake_xy_speed_m_s <= 0
@@ -401,6 +414,9 @@ class TranslationControlHandoff:
             or self.brake_min_attitude_deg > self.brake_max_attitude_deg
             or self.brake_timeout_s <= 0
             or self.brake_velocity_gain_s <= 0
+            or self.brake_min_attitude_taper_speed_m_s
+            <= self.brake_xy_speed_m_s
+            or self.rearm_delay_s < 0
         ):
             raise ValueError(
                 'translation braking limits must be positive; legacy settle '
@@ -408,6 +424,7 @@ class TranslationControlHandoff:
             )
         self.mode = self.POSITION_HOLD
         self._brake_started_at = None
+        self._detector_rearm_at = None
         self.brake_direction = np.zeros(3)
         self.brake_direction_source = None
         self.brake_projected_speed_m_s = 0.0
@@ -453,13 +470,25 @@ class TranslationControlHandoff:
         raw_tilt_deg = float(np.degrees(np.arctan2(
             desired_deceleration, 9.81
         )))
-        self.brake_command_tilt_deg = (
-            min(
-                max(raw_tilt_deg, self.brake_min_attitude_deg),
+        if projected_speed > self.brake_xy_speed_m_s:
+            taper_fraction = min(max(
+                (
+                    float(projected_speed) - self.brake_xy_speed_m_s
+                ) / (
+                    self.brake_min_attitude_taper_speed_m_s
+                    - self.brake_xy_speed_m_s
+                ),
+                0.0,
+            ), 1.0)
+            tapered_min_tilt_deg = (
+                self.brake_min_attitude_deg * taper_fraction
+            )
+            self.brake_command_tilt_deg = min(
+                max(raw_tilt_deg, tapered_min_tilt_deg),
                 self.brake_max_attitude_deg,
             )
-            if projected_speed > self.brake_xy_speed_m_s else 0.0
-        )
+        else:
+            self.brake_command_tilt_deg = 0.0
         direction_body = world_to_body_xy(
             self.brake_direction[:2], np.degrees(float(yaw_rad))
         )
@@ -583,11 +612,26 @@ class TranslationControlHandoff:
         self.set_contact_attitude(0.0, 0.0, 0.0)
         self.brake_command_tilt_deg = 0.0
         self._brake_started_at = None
+        self._detector_rearm_at = timestamp + self.rearm_delay_s
         self.brake_completion_reason = (
             'projected_velocity_zero_or_reversed'
             if stopped_or_reversed else 'braking_timeout'
         )
         self._transition_mode(self.POSITION_HOLD)
+        return True
+
+    def consume_detector_rearm(self, timestamp):
+        """Return true once when the post-braking detector delay expires."""
+        timestamp = float(timestamp)
+        if not np.isfinite(timestamp):
+            raise ValueError('detector rearm timestamp must be finite')
+        if (
+            self.mode != self.POSITION_HOLD
+            or self._detector_rearm_at is None
+            or timestamp < self._detector_rearm_at
+        ):
+            return False
+        self._detector_rearm_at = None
         return True
 
     @property
@@ -685,6 +729,12 @@ class InteractionsControl:
             self._run_rotation_limit()
         elif action == 'translation':
             self._run_translation()
+
+    def run_calibration(self) -> None:
+        """Run contact-free XYZ model identification for translation mode."""
+        if self.mission.get('Interaction', {}).get('action') != 'translation':
+            raise ValueError('--calibrate requires Interaction.action: translation')
+        self._run_translation(calibration_mode=True)
 
     def check_interaction_boundary(self, pos=None):
         if self.bounds is None:
@@ -784,7 +834,7 @@ class InteractionsControl:
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
-    def _run_translation(self) -> None:
+    def _run_translation(self, calibration_mode=False) -> None:
         """Run model-based interaction, with a legacy velocity-mode fallback."""
         try:
             translation_setting = self.mission['Interaction']['config']
@@ -807,6 +857,10 @@ class InteractionsControl:
                     'translation detection_method must be velocity or '
                     'momentum_impulse (mocap_wrench is retained for legacy use)'
                 )
+            if calibration_mode and detection_method != 'momentum_impulse':
+                raise ValueError(
+                    '--calibrate requires detection_method: momentum_impulse'
+                )
 
             if detection_method in ('momentum_impulse', 'mocap_wrench'):
                 if wrench_config is None:
@@ -821,6 +875,37 @@ class InteractionsControl:
                     raise ValueError(
                         'momentum_impulse detection requires state_source: onboard'
                     )
+                calibration_path = translation_setting.get(
+                    'wrench_calibration_file', str(DEFAULT_CALIBRATION_PATH)
+                )
+                if calibration_mode:
+                    wrench_config = deepcopy(wrench_config)
+                    wrench_config['shadow_mode'] = True
+                    wrench_config.setdefault('calibration_excitation', {})[
+                        'enabled'
+                    ] = True
+                    excitation = wrench_config['calibration_excitation']
+                    interaction_duration = (
+                        float(excitation.get('start_delay_s', 1.0))
+                        + float(excitation.get('duration_s', 24.0))
+                        + 1.0
+                    )
+                else:
+                    wrench_config, saved_calibration = apply_drone_calibration(
+                        wrench_config, self.drone_id, calibration_path
+                    )
+                    wrench_config.setdefault('calibration_excitation', {})[
+                        'enabled'
+                    ] = False
+                    interaction_duration = translation_setting['duration']
+                    if saved_calibration is None:
+                        logger.warning(
+                            'No saved wrench model calibration for %s at %s; '
+                            'using mission/default alignment parameters.',
+                            self.drone_id, calibration_path,
+                        )
+                    else:
+                        logger.info('Loaded wrench calibration: %s', calibration_path)
                 target = self.mission['drones'][self.drone_id]['target']
                 nominal_yaw = target[3] if len(target) > 3 else wrench_config.get('nominal_yaw_deg', 0.0)
                 interaction_function = (
@@ -829,7 +914,7 @@ class InteractionsControl:
                     else self.interaction_wrench_admittance
                 )
                 interaction_function(
-                    duration=translation_setting['duration'],
+                    duration=interaction_duration,
                     nominal_position=target[:3],
                     nominal_yaw_deg=nominal_yaw,
                     config=wrench_config,
@@ -837,6 +922,9 @@ class InteractionsControl:
                         translation_setting.get('virtual_object')
                         if detection_method == 'momentum_impulse' else None
                     ),
+                    rearm_delay_s=translation_setting.get('grace_time', 0),
+                    calibration_mode=calibration_mode,
+                    calibration_path=calibration_path,
                 )
                 return
 
@@ -868,6 +956,8 @@ class InteractionsControl:
         except Exception as e:
             tb_info = traceback.format_exc()
             logging.error(f"Translation Error: {e}\nTraceback:\n{tb_info}")
+            if calibration_mode:
+                raise
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
@@ -932,9 +1022,29 @@ class InteractionsControl:
         duration_s = float(config['duration_s'])
         if duration_s <= 0.0:
             raise ValueError('calibration_excitation duration_s must be positive')
+        translation_profile = config.get('translation_profile', 'sine')
+        if translation_profile == 'sine':
+            translation_phase = 2.0 * np.pi * frequencies * elapsed_s
+        elif translation_profile == 'chirp':
+            end_frequencies = np.asarray(
+                config['translation_chirp_end_hz'], dtype=float
+            )
+            if end_frequencies.shape != (3,) or np.any(end_frequencies <= 0.0):
+                raise ValueError(
+                    'translation_chirp_end_hz must contain positive XYZ values'
+                )
+            sweep_rates = (end_frequencies - frequencies) / duration_s
+            translation_phase = 2.0 * np.pi * (
+                frequencies * elapsed_s
+                + 0.5 * sweep_rates * elapsed_s ** 2
+            )
+        else:
+            raise ValueError(
+                f'Unsupported translation excitation profile: {translation_profile}'
+            )
         position = self._bounded_wrench_reference(
             np.asarray(nominal_position, dtype=float)
-            + amplitudes * np.sin(2.0 * np.pi * frequencies * elapsed_s)
+            + amplitudes * np.sin(translation_phase)
         )
 
         yaw_amplitude_deg = float(config['yaw_amplitude_deg'])
@@ -981,6 +1091,9 @@ class InteractionsControl:
             nominal_yaw_deg=0.0,
             config=None,
             virtual_object_config=None,
+            rearm_delay_s=0.0,
+            calibration_mode=False,
+            calibration_path=DEFAULT_CALIBRATION_PATH,
     ):
         """Estimate external wrench and generate bounded XYZ/yaw references.
 
@@ -1019,6 +1132,7 @@ class InteractionsControl:
                 ),
                 'nominal_position': nominal_position.tolist(),
                 'nominal_yaw_deg': nominal_yaw_deg,
+                'translation_rearm_delay_s': float(rearm_delay_s),
                 'config': config,
             },
             name='Wrench Interaction Config',
@@ -1062,6 +1176,7 @@ class InteractionsControl:
             nominal_position,
             nominal_yaw_deg,
             pipeline.shadow_mode,
+            rearm_delay_s=rearm_delay_s,
             **config['control_handoff'],
         )
         excitation_config = config['calibration_excitation']
@@ -1249,7 +1364,6 @@ class InteractionsControl:
                     output.estimate.velocity,
                     frame_time,
                     output.estimate.orientation_rpy):
-                pipeline.detector.translation.reset(frame_time)
                 last_command_position = translation_control.hold_position.copy()
                 self._log_event(
                     'Translation Position Hold Resumed',
@@ -1264,7 +1378,17 @@ class InteractionsControl:
                         'brake_completion_reason': (
                             translation_control.brake_completion_reason
                         ),
+                        'detector_rearm_delay_s': (
+                            translation_control.rearm_delay_s
+                        ),
                     },
+                )
+
+            if translation_control.consume_detector_rearm(frame_time):
+                pipeline.detector.translation.reset(frame_time)
+                self._log_event(
+                    'Translation Contact Detector Rearmed',
+                    {'rearm_delay_s': translation_control.rearm_delay_s},
                 )
 
             if interaction_start is not None:
@@ -1482,6 +1606,9 @@ class InteractionsControl:
             nominal_yaw_deg=0.0,
             config=None,
             virtual_object_config=None,
+            rearm_delay_s=0.0,
+            calibration_mode=False,
+            calibration_path=DEFAULT_CALIBRATION_PATH,
     ):
         """Run wrench interaction from synchronized onboard state estimates.
 
@@ -1619,6 +1746,7 @@ class InteractionsControl:
                 ),
                 'nominal_position': nominal_position.tolist(),
                 'nominal_yaw_deg': nominal_yaw_deg,
+                'translation_rearm_delay_s': float(rearm_delay_s),
                 'config': config,
             },
             name='Onboard Wrench Interaction Config',
@@ -1672,6 +1800,7 @@ class InteractionsControl:
             nominal_position,
             nominal_yaw_deg,
             pipeline.shadow_mode,
+            rearm_delay_s=rearm_delay_s,
             **config['control_handoff'],
         )
         excitation_config = config['calibration_excitation']
@@ -1683,6 +1812,7 @@ class InteractionsControl:
             )
         excitation_started = False
         excitation_finished = False
+        model_calibration_samples = []
 
         while interaction_start is None or time.time() - interaction_start < duration:
             now = time.time()
@@ -1913,7 +2043,6 @@ class InteractionsControl:
                     output.estimate.velocity,
                     state_time,
                     output.estimate.orientation_rpy):
-                pipeline.detector.translation.reset(state_time)
                 last_command_position = translation_control.hold_position.copy()
                 self._log_event(
                     'Translation Position Hold Resumed',
@@ -1928,6 +2057,19 @@ class InteractionsControl:
                         'brake_completion_reason': (
                             translation_control.brake_completion_reason
                         ),
+                        'detector_rearm_delay_s': (
+                            translation_control.rearm_delay_s
+                        ),
+                        'state_source': 'crazyflie_state_estimate',
+                    },
+                )
+
+            if translation_control.consume_detector_rearm(state_time):
+                pipeline.detector.translation.reset(state_time)
+                self._log_event(
+                    'Translation Contact Detector Rearmed',
+                    {
+                        'rearm_delay_s': translation_control.rearm_delay_s,
                         'state_source': 'crazyflie_state_estimate',
                     },
                 )
@@ -1964,6 +2106,13 @@ class InteractionsControl:
                 elif excitation_started and not excitation_finished:
                     excitation_finished = True
                     self._log_event('Wrench Calibration Excitation Complete')
+
+            if calibration_mode and excitation_active:
+                model_calibration_samples.append((
+                    float(state_time),
+                    output.expected_linear_acceleration.copy(),
+                    output.estimate.velocity.copy(),
+                ))
 
             proposed_position = self._bounded_wrench_reference(
                 baseline_position + output.admittance.translation_offset
@@ -2017,6 +2166,11 @@ class InteractionsControl:
                 'model_delay_s': pipeline.config['impulse_estimator']['model_delay_s'],
                 'model_time_constant_s': (
                     pipeline.config['impulse_estimator']['model_time_constant_s']
+                ),
+                'model_acceleration_scale': (
+                    pipeline.config['impulse_estimator'][
+                        'model_acceleration_scale'
+                    ]
                 ),
                 'expected_angular_acceleration_rad_s2': output.expected_angular_acceleration.tolist(),
                 'raw_external_force_N': raw.external_force.tolist(),
@@ -2111,9 +2265,28 @@ class InteractionsControl:
             })
             self._safe_sleep(dt)
 
-        self._log_event('Wrench Interaction Complete', {
-            'state_source': 'crazyflie_state_estimate',
-        })
+        if calibration_mode:
+            fit = identify_xyz_alignment(
+                model_calibration_samples,
+                window_s=float(config['impulse_estimator']['window_s']),
+            )
+            saved_path, saved_entry = save_drone_calibration(
+                self.drone_id,
+                fit,
+                config['motor_model'],
+                calibration_path,
+            )
+            self._log_event('Wrench Model Calibration Saved', {
+                'state_source': 'crazyflie_state_estimate',
+                'path': str(saved_path),
+                'impulse_estimator': saved_entry['impulse_estimator'],
+                'fit': fit,
+            })
+            logger.info('CALIBRATED %s', saved_path)
+        else:
+            self._log_event('Wrench Interaction Complete', {
+                'state_source': 'crazyflie_state_estimate',
+            })
 
     def _run_peer_translation(self) -> None:
         """Run symmetric peer interaction — every drone can push and follow."""

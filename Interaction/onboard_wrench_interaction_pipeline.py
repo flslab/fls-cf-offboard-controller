@@ -37,6 +37,7 @@ DEFAULT_IMPULSE_ESTIMATOR_CONFIG = {
     # contact-free excitation flight.
     "model_delay_s": 0.0,
     "model_time_constant_s": 0.0,
+    "model_acceleration_scale": 1.0,
 }
 
 
@@ -173,16 +174,21 @@ class FiniteWindowMomentumForceEstimator:
             max_dt_s: float = 0.05,
             model_delay_s: Sequence[float] | float = 0.0,
             model_time_constant_s: Sequence[float] | float = 0.0,
+            model_acceleration_scale: Sequence[float] | float = 1.0,
     ):
         self.mass = float(mass)
         self.window_s = float(window_s)
         self.minimum_window_s = float(minimum_window_s)
         self.max_dt_s = float(max_dt_s)
+        self.model_acceleration_scale = _as_vector(
+            model_acceleration_scale, 3, "model_acceleration_scale"
+        )
         if (
             self.mass <= 0.0
             or self.minimum_window_s <= 0.0
             or self.window_s < self.minimum_window_s
             or self.max_dt_s <= 0.0
+            or np.any(self.model_acceleration_scale <= 0.0)
         ):
             raise ValueError(
                 "impulse estimator mass, window, minimum window, and max dt "
@@ -229,6 +235,9 @@ class FiniteWindowMomentumForceEstimator:
         velocity = _as_vector(velocity, 3, "velocity")
         expected_linear_acceleration = _as_vector(
             expected_linear_acceleration, 3, "expected_linear_acceleration"
+        )
+        expected_linear_acceleration = (
+            expected_linear_acceleration * self.model_acceleration_scale
         )
         timestamp = float(timestamp)
         aligned_acceleration, alignment_ready = self.aligner.update(

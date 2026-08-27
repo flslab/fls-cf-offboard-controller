@@ -16,6 +16,7 @@ import subprocess
 import signal
 from threading import Event
 import time
+import traceback
 import urllib.request
 import urllib.error
 import zmq
@@ -104,7 +105,7 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
 class Controller:
     def __init__(self, args):
         self.args = args
-        if getattr(self.args, 'interaction', False):
+        if self._is_interaction_application():
             import Interaction.config as cfg
             self.cfg = cfg
         else:
@@ -163,6 +164,12 @@ class Controller:
         else:
             self._safe_sleep = self._safe_sleep_standalone
 
+    def _is_interaction_application(self):
+        return bool(
+            getattr(self.args, 'interaction', False)
+            or getattr(self.args, 'calibrate', False)
+        )
+
     def __enter__(self):
         if self.args.radio:
             import cflib.crtp
@@ -213,7 +220,7 @@ class Controller:
             self.setup_led()
             self.setup_servo()
             self.setup_battery_watcher()
-            if self.args.interaction:
+            if self._is_interaction_application():
                 self.verify_onboard_wrench_logging()
             self.setup_tracker()
             if self.led:
@@ -498,7 +505,7 @@ class Controller:
         if self.args.skip_takeoff:
             self.flying = True
             return
-        if self.args.interaction:
+        if self._is_interaction_application():
             self.log_manager.start()
 
         takeoff_speed = self.mission.get("takeoff_speed", 0.5)
@@ -604,7 +611,7 @@ class Controller:
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("events")
 
-        elif self.args.interaction:
+        elif self._is_interaction_application():
             from Interaction.log_manager import InteractionLogger
             self.log_manager = InteractionLogger(controller_args=self.args)
             if not self.args.droneless:
@@ -623,12 +630,15 @@ class Controller:
 
 
         else:
-            raise Exception("No mode is passed. Passing either --illumination or --interaction is required.")
+            raise Exception(
+                "No mode is passed. Passing --illumination, --interaction, "
+                "or --calibrate is required."
+            )
 
         logger.debug("logging activated")
 
     def _uses_onboard_wrench_state(self):
-        if not self.args.interaction:
+        if not self._is_interaction_application():
             return False
         wrench_config = (
             (self.mission or {}).get('Interaction', {})
@@ -764,6 +774,8 @@ class Controller:
             self.z_tune_pattern()
         elif self.args.trajectory:
             self.fly_trajectory(self.args.trajectory)
+        elif getattr(self.args, 'calibrate', False):
+            self.calibration_switch()
         elif self.args.orchestrated:
             if self.args.illumination:
                 self.run_multiple_orchestrated_missions()
@@ -1166,6 +1178,34 @@ class Controller:
 
         except Exception as e:
             logging.error(f"Interaction Error: {e}\n")
+        finally:
+            self.ll_commander.send_notify_setpoint_stop()
+
+    def calibration_switch(self):
+        """Run one standalone no-contact wrench-model calibration flight."""
+        try:
+            if self.args.ground_test:
+                self._safe_sleep(1)
+                return
+            controller = InteractionsControl(
+                self.cf,
+                self._safe_sleep,
+                self.log_manager,
+                self.mission,
+                self.args.smooth_controller_rate,
+                drone_id=self.args.drone_id,
+                orchestrator_ip=(
+                    self.manifest['controller']['ip'] if self.manifest else None
+                ),
+            )
+            controller.run_calibration()
+        except Exception as error:
+            logging.error(
+                "Calibration Error: %s\nTraceback:\n%s",
+                error,
+                traceback.format_exc(),
+            )
+            raise
         finally:
             self.ll_commander.send_notify_setpoint_stop()
 
@@ -2036,6 +2076,10 @@ if __name__ == '__main__':
     ap.add_argument("--orchestrated", action="store_true", help="orchestrated by orchestrator")
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
+    ap.add_argument(
+        "--calibrate", action="store_true",
+        help="record contact-free excitation and save wrench model calibration",
+    )
     ap.add_argument("--intractable-illumination", action="store_true", help="interaction application with illumination")
     ap.add_argument("--morphing", action="store_true", help="illumination application with morphing emulator")
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=None, type=float)
@@ -2099,6 +2143,8 @@ if __name__ == '__main__':
     ap.add_argument("--autotune", action="store_true", help="run automatic pid tuner")
 
     args = ap.parse_args()
+    if args.interaction and args.calibrate:
+        ap.error('--interaction and --calibrate are mutually exclusive')
 
     with Controller(args) as c:
         try:

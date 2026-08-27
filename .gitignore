@@ -2,6 +2,7 @@ cache/
 metrics/
 .idea/
 .codex_tmp/
+Interaction/wrench_calibration.json
 
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python

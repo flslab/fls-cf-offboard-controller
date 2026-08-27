@@ -33,9 +33,11 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
     "calibration_excitation": {
         "enabled": False,
         "start_delay_s": 1.0,
-        "duration_s": 15.0,
-        "translation_amplitude_m": [0.05, 0.05, 0.03],
-        "translation_frequency_hz": [0.20, 0.27, 0.33],
+        "duration_s": 24.0,
+        "translation_amplitude_m": [0.06, 0.06, 0.035],
+        "translation_frequency_hz": [0.20, 0.23, 0.18],
+        "translation_profile": "chirp",
+        "translation_chirp_end_hz": [1.00, 1.10, 0.70],
         "yaw_amplitude_deg": 10.0,
         "yaw_frequency_hz": 0.23,
     },
@@ -101,9 +103,10 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # locked interaction direction, then capture current-position hold near
         # zero projected speed/reversal.
         "brake_xy_speed_m_s": 0.04,
-        # Apply the minimum to total tilt, not independently to roll/pitch, so
-        # diagonal braking preserves the locked interaction direction.
+        # Apply the minimum to total tilt, not independently to roll/pitch. It
+        # tapers toward zero near the braking completion speed.
         "brake_min_attitude_deg": 3.0,
+        "brake_min_attitude_taper_speed_m_s": 0.15,
         "brake_max_attitude_deg": 20.0,
         "brake_timeout_s": 1.5,
         "brake_velocity_gain_s": 2.0,
