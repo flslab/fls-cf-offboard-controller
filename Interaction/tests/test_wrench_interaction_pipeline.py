@@ -147,7 +147,7 @@ class ContactDetectorTests(unittest.TestCase):
         self.assertEqual(decision.release_direction, (0.0, -1.0, 0.0))
         self.assertEqual(decision.release_direction_source, "force_fallback")
 
-    def test_large_opposite_projection_does_not_count_as_release(self):
+    def test_large_opposite_projection_counts_as_release_after_dwell(self):
         detector = ContactChannelDetector(
             component_thresholds=[0.08, 0.08, 0.12],
             covariance_floor=[0.005, 0.005, 0.008],
@@ -168,6 +168,7 @@ class ContactDetectorTests(unittest.TestCase):
             )
         self.assertTrue(decision.active)
 
+        ended_decision = None
         for index in range(4, 24):
             decision = detector.update(
                 [0.0, -0.20, 0.0],
@@ -175,9 +176,14 @@ class ContactDetectorTests(unittest.TestCase):
                 index * 0.01,
                 release_direction_candidate=[0.0, -0.10, 0.0],
             )
-            self.assertFalse(decision.ended)
-            self.assertTrue(decision.active)
-            self.assertLess(decision.release_projection_normalized, 0.0)
+            if decision.ended:
+                ended_decision = decision
+                break
+        self.assertIsNotNone(ended_decision)
+        self.assertFalse(ended_decision.active)
+        self.assertLess(
+            ended_decision.release_projection_normalized, 0.0
+        )
 
 class AdmittanceTests(unittest.TestCase):
     def make_controller(self):

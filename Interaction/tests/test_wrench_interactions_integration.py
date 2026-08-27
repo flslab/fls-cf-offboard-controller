@@ -365,19 +365,13 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             [0.30, -0.2, 0.95], [0.10, 0.20, 0.0], 1.05
         ))
         control.send(commander)
-        self.assertFalse(control.update_braking(
-            [0.325, -0.18, 0.95], [0.03, 0.20, 0.0], 1.10
-        ))
-        control.send(commander)
         self.assertTrue(control.update_braking(
-            [0.326, -0.179, 0.95], [0.01, 0.20, 0.0], 1.11,
-            current_orientation_rpy=[0.0, 0.0, 0.0],
+            [0.325, -0.18, 0.95], [0.03, 0.20, 0.0], 1.10
         ))
         control.send(commander)
 
         self.assertEqual([call[0] for call in commander.calls], [
-            'position', 'zdistance', 'zdistance', 'zdistance', 'zdistance',
-            'position'
+            'position', 'zdistance', 'zdistance', 'zdistance', 'position'
         ])
         expected_release_tilt = np.degrees(np.arctan2(2.0 * 0.20, 9.81))
         np.testing.assert_allclose(
@@ -388,15 +382,12 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             commander.calls[3][1], [0.0, expected_updated_tilt, 0.0, 0.95]
         )
         np.testing.assert_allclose(
-            commander.calls[4][1], [0.0, 0.0, 0.0, 0.95]
-        )
-        np.testing.assert_allclose(
-            commander.calls[5][1], [0.326, -0.179, 0.95, 5.0]
+            commander.calls[4][1], [0.325, -0.18, 0.95, 5.0]
         )
         self.assertEqual(control.command_mode, 'position_hold')
         self.assertEqual(
             control.brake_completion_reason,
-            'projected_velocity_zero_or_reversed_then_level',
+            'projected_velocity_zero_or_reversed',
         )
 
     def test_shadow_translation_never_leaves_position_hold(self):
@@ -445,13 +436,8 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         # Large transverse X speed does not delay handoff after velocity along
         # the locked interaction direction reverses.
-        self.assertFalse(control.update_braking(
-            [0.3, 0.25, 1.0], [-0.01, -0.8, 0.0], 1.1
-        ))
-        self.assertEqual(control.command_mode, 'attitude_leveling')
         self.assertTrue(control.update_braking(
-            [0.3, 0.25, 1.0], [-0.01, -0.8, 0.0], 1.11,
-            current_orientation_rpy=[0.0, 0.0, 0.0],
+            [0.3, 0.25, 1.0], [-0.01, -0.8, 0.0], 1.1
         ))
         np.testing.assert_allclose(control.hold_position, [0.3, 0.25, 1.0])
 
@@ -470,18 +456,36 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             interaction_direction=[1.0, 0.0, 0.0],
             current_orientation_rpy=np.radians([0.0, -5.0, 0.0]),
         ))
-        self.assertFalse(control.update_braking(
+        self.assertTrue(control.update_braking(
             [0.4, 0.1, 1.0], [0.2, 0.0, 0.0], 1.5
         ))
-        self.assertEqual(control.command_mode, 'attitude_leveling')
-        self.assertTrue(control.update_braking(
-            [0.41, 0.1, 1.0], [0.2, 0.0, 0.0], 1.51,
-            current_orientation_rpy=[0.0, 0.0, 0.0],
-        ))
-        self.assertEqual(
-            control.brake_completion_reason, 'braking_timeout_then_level'
+        self.assertEqual(control.brake_completion_reason, 'braking_timeout')
+        np.testing.assert_allclose(control.hold_position, [0.4, 0.1, 1.0])
+
+    def test_translation_state_transitions_are_logged_at_info(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
         )
-        np.testing.assert_allclose(control.hold_position, [0.41, 0.1, 1.0])
+        with self.assertLogs('Interaction.interactions', level='INFO') as logs:
+            self.assertTrue(control.start_contact())
+            self.assertTrue(control.end_contact(
+                [0.1, 0.0, 1.0],
+                [0.2, 0.0, 0.0],
+                1.0,
+                interaction_direction=[1.0, 0.0, 0.0],
+                current_orientation_rpy=[0.0, 0.0, 0.0],
+            ))
+            self.assertTrue(control.update_braking(
+                [0.11, 0.0, 1.0], [0.03, 0.0, 0.0], 1.1,
+                current_orientation_rpy=[0.0, 0.0, 0.0],
+            ))
+
+        output = '\n'.join(logs.output)
+        self.assertIn('HANDLING INTERACTION', output)
+        self.assertIn('BRAKING', output)
+        self.assertIn('HOVER', output)
 
     def test_guided_touch_protocol_emits_countdown_touch_and_release_once(self):
         protocol = GuidedTouchProtocol({

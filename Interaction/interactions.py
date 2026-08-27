@@ -363,7 +363,6 @@ class TranslationControlHandoff:
     POSITION_HOLD = 'position_hold'
     CONTACT_ZDISTANCE = 'attitude_zdistance'
     ATTITUDE_BRAKING = 'attitude_braking'
-    ATTITUDE_LEVELING = 'attitude_leveling'
 
     def __init__(
             self,
@@ -377,8 +376,6 @@ class TranslationControlHandoff:
             brake_max_attitude_deg=20.0,
             brake_timeout_s=1.5,
             brake_velocity_gain_s=2.0,
-            brake_level_attitude_deg=1.0,
-            brake_level_timeout_s=0.35,
     ):
         self.hold_position = np.asarray(initial_position, dtype=float).copy()
         if self.hold_position.shape != (3,):
@@ -392,8 +389,6 @@ class TranslationControlHandoff:
         self.brake_max_attitude_deg = float(brake_max_attitude_deg)
         self.brake_timeout_s = float(brake_timeout_s)
         self.brake_velocity_gain_s = float(brake_velocity_gain_s)
-        self.brake_level_attitude_deg = float(brake_level_attitude_deg)
-        self.brake_level_timeout_s = float(brake_level_timeout_s)
         if (
             self.brake_xy_acceleration_m_s2 <= 0
             or self.brake_xy_speed_m_s <= 0
@@ -402,8 +397,6 @@ class TranslationControlHandoff:
             or self.brake_max_attitude_deg <= 0
             or self.brake_timeout_s <= 0
             or self.brake_velocity_gain_s <= 0
-            or self.brake_level_attitude_deg <= 0
-            or self.brake_level_timeout_s <= 0
         ):
             raise ValueError(
                 'translation braking limits must be positive; legacy settle '
@@ -411,7 +404,6 @@ class TranslationControlHandoff:
             )
         self.mode = self.POSITION_HOLD
         self._brake_started_at = None
-        self._level_started_at = None
         self.brake_direction = np.zeros(3)
         self.brake_direction_source = None
         self.brake_projected_speed_m_s = 0.0
@@ -422,6 +414,14 @@ class TranslationControlHandoff:
         self.contact_pitch_deg = 0.0
         self.contact_yaw_rate_deg_s = 0.0
 
+    def _transition_mode(self, new_mode):
+        self.mode = new_mode
+        logger.info({
+            self.CONTACT_ZDISTANCE: 'HANDLING INTERACTION',
+            self.ATTITUDE_BRAKING: 'BRAKING',
+            self.POSITION_HOLD: 'HOVER',
+        }[new_mode])
+
     def start_contact(self):
         # Detector residuals during braking are expected controller/model
         # transients. Do not let them chatter the command mode.
@@ -429,7 +429,7 @@ class TranslationControlHandoff:
             return False
         self.hover_z = float(self.hold_position[2])
         self.set_contact_attitude(0.0, 0.0, 0.0)
-        self.mode = self.CONTACT_ZDISTANCE
+        self._transition_mode(self.CONTACT_ZDISTANCE)
         return True
 
     def set_contact_attitude(self, roll_deg, pitch_deg, yaw_rate_deg_s=0.0):
@@ -518,7 +518,6 @@ class TranslationControlHandoff:
             velocity[:2] @ self.brake_direction[:2]
         )
         self.hover_z = float(position[2])
-        self.mode = self.ATTITUDE_BRAKING
         # Render velocity damping rather than a fixed braking tilt. The command
         # shrinks with projected speed, preventing the counter-force attitude
         # from carrying the vehicle back toward the user after it stops.
@@ -526,17 +525,15 @@ class TranslationControlHandoff:
             self.brake_projected_speed_m_s, orientation_rpy[2]
         )
         self._brake_started_at = timestamp
-        self._level_started_at = None
         self.brake_completion_reason = None
+        self._transition_mode(self.ATTITUDE_BRAKING)
         return True
 
     def update_braking(
             self, current_position, velocity, timestamp,
             current_orientation_rpy=None,
     ):
-        if self.shadow_mode or self.mode not in (
-            self.ATTITUDE_BRAKING, self.ATTITUDE_LEVELING
-        ):
+        if self.shadow_mode or self.mode != self.ATTITUDE_BRAKING:
             return False
         position = np.asarray(current_position, dtype=float)
         velocity = np.asarray(velocity, dtype=float)
@@ -561,45 +558,26 @@ class TranslationControlHandoff:
             and timestamp - self._brake_started_at >= self.brake_timeout_s
         )
 
-        if self.mode == self.ATTITUDE_BRAKING:
-            stopped_or_reversed = bool(
-                projected_speed <= self.brake_xy_speed_m_s
-            )
-            if not stopped_or_reversed and not timed_out:
-                self._set_velocity_brake_attitude(
-                    projected_speed, orientation_rpy[2]
-                )
-                return False
-            self.mode = self.ATTITUDE_LEVELING
-            self.set_contact_attitude(0.0, 0.0, 0.0)
-            self.brake_command_tilt_deg = 0.0
-            self._level_started_at = timestamp
-            self.brake_completion_reason = (
-                'projected_velocity_zero_or_reversed'
-                if stopped_or_reversed else 'braking_timeout'
+        stopped_or_reversed = bool(
+            projected_speed <= self.brake_xy_speed_m_s
+        )
+        if not stopped_or_reversed and not timed_out:
+            self._set_velocity_brake_attitude(
+                projected_speed, orientation_rpy[2]
             )
             return False
 
-        actual_tilt_deg = calculate_tilt(
-            *np.degrees(orientation_rpy[:2])
-        )
-        level_timed_out = bool(
-            self._level_started_at is not None
-            and timestamp - self._level_started_at >= self.brake_level_timeout_s
-        )
-        if actual_tilt_deg > self.brake_level_attitude_deg and not level_timed_out:
-            return False
-
-        # Position control starts only after a zero-attitude phase, and captures
-        # the measured switch position so there is no stale point to fly back to.
+        # Capture the measured switch position so there is no stale point to
+        # fly back to when position control resumes.
         self.hold_position = position.copy()
-        self.mode = self.POSITION_HOLD
         self.set_contact_attitude(0.0, 0.0, 0.0)
+        self.brake_command_tilt_deg = 0.0
         self._brake_started_at = None
-        self._level_started_at = None
-        self.brake_completion_reason += (
-            '_then_level_timeout' if level_timed_out else '_then_level'
+        self.brake_completion_reason = (
+            'projected_velocity_zero_or_reversed'
+            if stopped_or_reversed else 'braking_timeout'
         )
+        self._transition_mode(self.POSITION_HOLD)
         return True
 
     @property
@@ -608,7 +586,7 @@ class TranslationControlHandoff:
 
     @property
     def braking_mode(self):
-        return self.mode in (self.ATTITUDE_BRAKING, self.ATTITUDE_LEVELING)
+        return self.mode == self.ATTITUDE_BRAKING
 
     @property
     def uses_position_setpoint(self):
@@ -628,7 +606,6 @@ class TranslationControlHandoff:
         elif self.mode in (
             self.CONTACT_ZDISTANCE,
             self.ATTITUDE_BRAKING,
-            self.ATTITUDE_LEVELING,
         ):
             commander.send_zdistance_setpoint(
                 self.contact_roll_deg,

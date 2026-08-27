@@ -203,7 +203,7 @@ class ContactChannelDetector:
             release_value = (
                 normalized
                 if release_projection_normalized is None
-                else abs(release_projection_normalized)
+                else release_projection_normalized
             )
             if release_value <= self.release_ratio:
                 self._release_elapsed += dt
