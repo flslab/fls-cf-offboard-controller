@@ -24,6 +24,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
     "shadow_mode": True,
     "mass": 0.17,
     "inertia": [0.002, 0.002, 0.003],
+    # Normal interaction runs can skip the per-flight zero-bias collection.
+    # Dedicated model calibration still forces this on before excitation.
+    "startup_bias_calibration_enabled": True,
     "observer_settle_s": 1.0,
     "bias_calibration_s": 1.0,
     "bias_calibration_timeout_s": 12.0,
@@ -193,6 +196,9 @@ class WrenchInteractionPipeline:
         )
         self.admittance = AdmittanceController3DYaw(**self.config["admittance"])
 
+        self._bias_calibration_enabled = bool(
+            self.config["startup_bias_calibration_enabled"]
+        )
         self._settle_s = float(self.config["observer_settle_s"])
         self._calibration_s = float(self.config["bias_calibration_s"])
         self._calibration_timeout_s = float(self.config["bias_calibration_timeout_s"])
@@ -221,7 +227,7 @@ class WrenchInteractionPipeline:
         self._torque_samples: list[np.ndarray] = []
         self.force_bias = np.zeros(3)
         self.torque_bias = np.zeros(3)
-        self.calibrated = False
+        self.calibrated = not self._bias_calibration_enabled
 
         safety = self.config["safety"]
         excitation = self.config["calibration_excitation"]

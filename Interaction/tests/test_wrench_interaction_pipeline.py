@@ -255,6 +255,16 @@ class PipelineRoutingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'angular_accel_scale'):
             WrenchInteractionPipeline({'shadow_mode': False})
 
+    def test_startup_bias_calibration_can_be_skipped(self):
+        pipeline = WrenchInteractionPipeline({
+            'startup_bias_calibration_enabled': False,
+        })
+
+        self.assertTrue(pipeline.calibrated)
+        self.assertEqual(pipeline.calibration_samples, 0)
+        np.testing.assert_array_equal(pipeline.force_bias, np.zeros(3))
+        np.testing.assert_array_equal(pipeline.torque_bias, np.zeros(3))
+
     def test_active_mode_only_requires_yaw_angular_model(self):
         WrenchInteractionPipeline({
             'shadow_mode': False,

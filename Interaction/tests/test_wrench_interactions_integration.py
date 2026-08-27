@@ -423,6 +423,9 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertFalse(
             calls[0]['config']['calibration_excitation']['enabled']
         )
+        self.assertFalse(
+            calls[0]['config']['startup_bias_calibration_enabled']
+        )
         self.assertEqual(calls[0]['rearm_delay_s'], 2.0)
         self.assertEqual(
             calls[0]['virtual_object_config']['inertia_command'],
@@ -465,6 +468,9 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertTrue(calls[0]['calibration_mode'])
         self.assertTrue(
             calls[0]['config']['calibration_excitation']['enabled']
+        )
+        self.assertTrue(
+            calls[0]['config']['startup_bias_calibration_enabled']
         )
         self.assertTrue(calls[0]['config']['shadow_mode'])
         self.assertEqual(

@@ -1112,6 +1112,7 @@ class InteractionsControl:
                 if calibration_mode:
                     wrench_config = deepcopy(wrench_config)
                     wrench_config['shadow_mode'] = True
+                    wrench_config['startup_bias_calibration_enabled'] = True
                     wrench_config.setdefault('calibration_excitation', {})[
                         'enabled'
                     ] = True
@@ -1125,6 +1126,9 @@ class InteractionsControl:
                     wrench_config, saved_calibration = apply_drone_calibration(
                         wrench_config, self.drone_id, calibration_path
                     )
+                    # A normal interaction starts immediately. The dedicated
+                    # --calibrate flow retains stationary bias collection.
+                    wrench_config['startup_bias_calibration_enabled'] = False
                     wrench_config.setdefault('calibration_excitation', {})[
                         'enabled'
                     ] = False
@@ -1431,11 +1435,17 @@ class InteractionsControl:
             )
             self._safe_sleep(dt)
 
-        self._log_event('Wrench Calibration Started', {
-            'instruction': 'Do not touch the drone until calibration completes.',
-            'shadow_mode': pipeline.shadow_mode,
-        })
-        logger.info('Calibrating the external-wrench observer; do not touch the drone.')
+        bias_calibration_enabled = bool(
+            config['startup_bias_calibration_enabled']
+        )
+        if bias_calibration_enabled:
+            self._log_event('Wrench Calibration Started', {
+                'instruction': 'Do not touch the drone until calibration completes.',
+                'shadow_mode': pipeline.shadow_mode,
+            })
+            logger.info(
+                'Calibrating the external-wrench observer; do not touch the drone.'
+            )
 
         last_frame_marker = None
         interaction_start = None
@@ -1536,13 +1546,14 @@ class InteractionsControl:
             if output.calibrated and not calibration_announced:
                 calibration_announced = True
                 interaction_start = time.time()
-                self._log_event('Wrench Calibration Complete', {
-                    'samples': output.calibration_samples,
-                    'force_bias_N': pipeline.force_bias.tolist(),
-                    'torque_bias_Nm': pipeline.torque_bias.tolist(),
-                })
+                if bias_calibration_enabled:
+                    self._log_event('Wrench Calibration Complete', {
+                        'samples': output.calibration_samples,
+                        'force_bias_N': pipeline.force_bias.tolist(),
+                        'torque_bias_Nm': pipeline.torque_bias.tolist(),
+                    })
                 self._log_event('Waiting For User Interaction')
-                logger.info('Wrench calibration complete; interaction detection is active.')
+                logger.info('Interaction detection is active.')
 
             contacts = output.contacts
             if contacts is not None:
@@ -2088,12 +2099,18 @@ class InteractionsControl:
             )
             self._safe_sleep(dt)
 
-        self._log_event('Wrench Calibration Started', {
-            'instruction': 'Do not touch the drone until calibration completes.',
-            'shadow_mode': pipeline.shadow_mode,
-            'state_source': 'crazyflie_state_estimate',
-        })
-        logger.info('Calibrating onboard momentum observer; do not touch the drone.')
+        bias_calibration_enabled = bool(
+            config['startup_bias_calibration_enabled']
+        )
+        if bias_calibration_enabled:
+            self._log_event('Wrench Calibration Started', {
+                'instruction': 'Do not touch the drone until calibration completes.',
+                'shadow_mode': pipeline.shadow_mode,
+                'state_source': 'crazyflie_state_estimate',
+            })
+            logger.info(
+                'Calibrating onboard momentum observer; do not touch the drone.'
+            )
 
         last_state_time = None
         interaction_start = None
@@ -2215,17 +2232,15 @@ class InteractionsControl:
             if output.calibrated and not calibration_announced:
                 calibration_announced = True
                 interaction_start = time.time()
-                self._log_event('Wrench Calibration Complete', {
-                    'samples': output.calibration_samples,
-                    'force_bias_N': pipeline.force_bias.tolist(),
-                    'torque_bias_Nm': pipeline.torque_bias.tolist(),
-                    'state_source': 'crazyflie_state_estimate',
-                })
+                if bias_calibration_enabled:
+                    self._log_event('Wrench Calibration Complete', {
+                        'samples': output.calibration_samples,
+                        'force_bias_N': pipeline.force_bias.tolist(),
+                        'torque_bias_Nm': pipeline.torque_bias.tolist(),
+                        'state_source': 'crazyflie_state_estimate',
+                    })
                 self._log_event('Waiting For User Interaction')
-                logger.info(
-                    'Onboard momentum calibration complete; interaction '
-                    'detection is active.'
-                )
+                logger.info('Interaction detection is active.')
 
             contacts = output.contacts
             if contacts is not None:
