@@ -185,6 +185,33 @@ class ContactDetectorTests(unittest.TestCase):
             ended_decision.release_projection_normalized, 0.0
         )
 
+    def test_release_candidate_starts_immediately_and_can_be_cancelled(self):
+        detector = ContactChannelDetector(
+            component_thresholds=[0.08, 0.08, 0.12],
+            covariance_floor=[0.005, 0.005, 0.008],
+            confidence_sigma=2.0,
+            onset_evidence_s=0.01,
+            release_time_s=0.15,
+            release_ratio=0.55,
+            release_projection_axes=[0, 1],
+        )
+        covariance = np.eye(3) * 1e-6
+        for index in range(4):
+            decision = detector.update(
+                [0.20, 0.0, 0.0], covariance, index * 0.01
+            )
+        self.assertTrue(decision.active)
+
+        candidate = detector.update([0.0, 0.0, 0.0], covariance, 0.04)
+        self.assertTrue(candidate.release_candidate_started)
+        self.assertTrue(candidate.release_candidate_active)
+        self.assertFalse(candidate.ended)
+
+        resumed = detector.update([0.20, 0.0, 0.0], covariance, 0.05)
+        self.assertTrue(resumed.release_candidate_cancelled)
+        self.assertFalse(resumed.release_candidate_active)
+        self.assertTrue(resumed.active)
+
 class AdmittanceTests(unittest.TestCase):
     def make_controller(self):
         return AdmittanceController3DYaw(

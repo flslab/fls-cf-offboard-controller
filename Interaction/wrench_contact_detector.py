@@ -22,6 +22,10 @@ class ContactDecision:
     release_projection_normalized: float | None = None
     release_direction: tuple[float, ...] | None = None
     release_direction_source: str | None = None
+    release_candidate_active: bool = False
+    release_candidate_started: bool = False
+    release_candidate_cancelled: bool = False
+    release_elapsed_s: float = 0.0
 
 
 class ContactChannelDetector:
@@ -78,6 +82,7 @@ class ContactChannelDetector:
         self._release_direction: np.ndarray | None = None
         self._release_direction_source: str | None = None
         self._projection_rearm_blocked = False
+        self._release_candidate_active = False
 
     def reset(self, timestamp: float | None = None) -> None:
         """Clear contact evidence after a controller-mode handoff."""
@@ -88,6 +93,7 @@ class ContactChannelDetector:
         self._release_direction = None
         self._release_direction_source = None
         self._projection_rearm_blocked = False
+        self._release_candidate_active = False
 
     def _lock_release_direction(
             self,
@@ -154,6 +160,7 @@ class ContactChannelDetector:
             self.active = False
             self.evidence = 0.0
             self._release_elapsed = 0.0
+            self._release_candidate_active = False
             return ContactDecision(
                 active=False,
                 started=False,
@@ -170,6 +177,8 @@ class ContactChannelDetector:
         significant = normalized >= 1.0 and confidence >= self.required_sigma
         started = False
         ended = False
+        release_candidate_started = False
+        release_candidate_cancelled = False
 
         if not self.active:
             if self._projection_rearm_blocked:
@@ -196,6 +205,7 @@ class ContactChannelDetector:
                     self.active = True
                     started = True
                     self._release_elapsed = 0.0
+                    self._release_candidate_active = False
                     self._lock_release_direction(
                         value, release_direction_candidate
                     )
@@ -207,16 +217,23 @@ class ContactChannelDetector:
                 else release_projection_normalized
             )
             if release_value <= self.release_ratio:
+                if not self._release_candidate_active:
+                    self._release_candidate_active = True
+                    release_candidate_started = True
                 self._release_elapsed += dt
                 if self._release_elapsed >= self.release_time_s:
                     self.active = False
                     ended = True
                     self.evidence = 0.0
                     self._release_elapsed = 0.0
+                    self._release_candidate_active = False
                     self._projection_rearm_blocked = (
                         release_projection_normalized is not None
                     )
             else:
+                if self._release_candidate_active:
+                    release_candidate_cancelled = True
+                self._release_candidate_active = False
                 self._release_elapsed = 0.0
 
         release_projected_value, release_projection_normalized = (
@@ -239,6 +256,10 @@ class ContactChannelDetector:
                 else tuple(float(component) for component in self._release_direction)
             ),
             release_direction_source=self._release_direction_source,
+            release_candidate_active=self._release_candidate_active,
+            release_candidate_started=release_candidate_started,
+            release_candidate_cancelled=release_candidate_cancelled,
+            release_elapsed_s=float(self._release_elapsed),
         )
 
 

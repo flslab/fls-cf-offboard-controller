@@ -531,7 +531,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'projected_velocity_zero_or_reversed',
         )
 
-    def test_position_rendering_coasts_then_uses_common_hover_handoff(self):
+    def test_position_rendering_uses_measured_velocity_attitude_braking(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -550,23 +550,38 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             [0.12, 0.0, 1.0], [0.20, 0.0, 0.0], 1.0,
             interaction_direction=[1.0, 0.0, 0.0],
         ))
-        self.assertEqual(control.command_mode, 'position_coast')
+        self.assertEqual(control.command_mode, 'attitude_braking')
+        control.send(commander)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
         self.assertFalse(control.update_braking(
             [0.13, 0.0, 1.0], [0.18, 0.0, 0.0], 1.1,
-            coast_position=[0.17, 0.0, 1.0],
-            coast_velocity=[0.10, 0.0, 0.0],
         ))
         control.send(commander)
-        np.testing.assert_allclose(
-            commander.calls[-1][1], [0.17, 0.0, 1.0, 0.0]
-        )
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
         self.assertTrue(control.update_braking(
             [0.16, 0.0, 1.0], [0.03, 0.0, 0.0], 1.2,
-            coast_position=[0.175, 0.0, 1.0],
-            coast_velocity=[0.03, 0.0, 0.0],
         ))
         self.assertEqual(control.command_mode, 'position_hold')
-        np.testing.assert_allclose(control.hold_position, [0.175, 0.0, 1.0])
+        np.testing.assert_allclose(control.hold_position, [0.16, 0.0, 1.0])
+
+    def test_cancelled_release_candidate_resumes_original_render_mode(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+        )
+        self.assertTrue(control.start_contact(
+            'position', [0.1, 0.0, 1.0]
+        ))
+        self.assertTrue(control.end_contact(
+            [0.12, 0.0, 1.0], [0.20, 0.0, 0.0], 1.0,
+            interaction_direction=[1.0, 0.0, 0.0],
+        ))
+        self.assertEqual(control.command_mode, 'attitude_braking')
+
+        self.assertTrue(control.cancel_release_candidate([0.13, 0.0, 1.0]))
+        self.assertEqual(control.command_mode, 'position_interaction')
+        self.assertFalse(control.braking_mode)
 
     def test_detector_rearm_waits_for_post_braking_grace_time(self):
         control = TranslationControlHandoff(

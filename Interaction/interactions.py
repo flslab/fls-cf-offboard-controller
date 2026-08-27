@@ -607,6 +607,7 @@ class TranslationControlHandoff:
         self.contact_roll_deg = 0.0
         self.contact_pitch_deg = 0.0
         self.contact_yaw_rate_deg_s = 0.0
+        self._release_candidate_mode = None
 
     def _transition_mode(self, new_mode):
         self.mode = new_mode
@@ -632,6 +633,7 @@ class TranslationControlHandoff:
             self.hold_position = position.copy()
         self.hover_z = float(self.hold_position[2])
         self.set_contact_attitude(0.0, 0.0, 0.0)
+        self._release_candidate_mode = None
         self._transition_mode(
             self.CONTACT_POSITION
             if render_mode == 'position' else self.CONTACT_ZDISTANCE
@@ -701,6 +703,9 @@ class TranslationControlHandoff:
                 self.CONTACT_POSITION, self.CONTACT_ZDISTANCE):
             return False
         released_from_position = self.mode == self.CONTACT_POSITION
+        self._release_candidate_mode = (
+            'position' if released_from_position else 'orientation'
+        )
         position = np.asarray(current_position, dtype=float)
         if position.shape != (3,) or not np.all(np.isfinite(position)):
             raise ValueError('translation release position must be finite XYZ')
@@ -750,20 +755,44 @@ class TranslationControlHandoff:
             velocity[:2] @ self.brake_direction[:2]
         )
         self.hover_z = float(position[2])
-        if not released_from_position:
-            # Render velocity damping rather than a fixed braking tilt. The
-            # command shrinks with projected speed, preventing the
-            # counter-force attitude from carrying the vehicle back after stop.
-            self._set_velocity_brake_attitude(
-                self.brake_projected_speed_m_s, orientation_rpy[2]
-            )
+        # Both render modes use the measured vehicle velocity for release
+        # braking. Virtual-object coast velocity is not the physical vehicle
+        # momentum and can fall to zero immediately under high friction.
+        self._set_velocity_brake_attitude(
+            self.brake_projected_speed_m_s, orientation_rpy[2]
+        )
         self._brake_started_at = timestamp
         self.brake_completion_reason = None
+        self._transition_mode(self.ATTITUDE_BRAKING)
+        return True
+
+    def cancel_release_candidate(self, current_position) -> bool:
+        """Resume the interrupted interaction after a transient force dip."""
+        if self.shadow_mode or self._release_candidate_mode is None:
+            return False
+        if self.mode not in (self.ATTITUDE_BRAKING, self.POSITION_HOLD):
+            return False
+        position = np.asarray(current_position, dtype=float)
+        if position.shape != (3,) or not np.all(np.isfinite(position)):
+            raise ValueError('release-cancel position must be finite XYZ')
+        render_mode = self._release_candidate_mode
+        self._release_candidate_mode = None
+        self._brake_started_at = None
+        self._detector_rearm_at = None
+        self.brake_completion_reason = None
+        self.brake_command_tilt_deg = 0.0
+        self.hold_position = position.copy()
+        self.hover_z = float(position[2])
+        self.set_contact_attitude(0.0, 0.0, 0.0)
         self._transition_mode(
-            self.POSITION_COAST
-            if released_from_position else self.ATTITUDE_BRAKING
+            self.CONTACT_POSITION
+            if render_mode == 'position' else self.CONTACT_ZDISTANCE
         )
         return True
+
+    def confirm_release_candidate(self) -> None:
+        """Make an early release handoff permanent after detector dwell."""
+        self._release_candidate_mode = None
 
     def update_braking(
             self, current_position, velocity, timestamp,
@@ -1218,6 +1247,16 @@ class InteractionsControl:
                 else list(decision.release_direction)
             ),
             'release_direction_source': decision.release_direction_source,
+            'release_candidate_active': bool(
+                decision.release_candidate_active
+            ),
+            'release_candidate_started': bool(
+                decision.release_candidate_started
+            ),
+            'release_candidate_cancelled': bool(
+                decision.release_candidate_cancelled
+            ),
+            'release_elapsed_s': float(decision.release_elapsed_s),
         }
 
     def _bounded_wrench_reference(self, position):
@@ -2249,27 +2288,42 @@ class InteractionsControl:
                     ('Yaw Contact', contacts.yaw),
                 )
                 for event_name, decision in transitions:
-                    if decision.started or decision.ended:
-                        self._log_event(
-                            f"{event_name} {'Start' if decision.started else 'End'}",
-                            {
-                                'force_N': output.estimate.external_force.tolist(),
-                                'torque_Nm': output.estimate.external_torque.tolist(),
-                                'confidence_sigma': decision.confidence_sigma,
-                                'release_projected_force_N': (
-                                    decision.release_projected_value
-                                ),
-                                'release_projection_normalized': (
-                                    decision.release_projection_normalized
-                                ),
-                                'release_direction': decision.release_direction,
-                                'release_direction_source': (
-                                    decision.release_direction_source
-                                ),
-                                'response_enabled': not pipeline.shadow_mode,
-                                'state_source': 'crazyflie_state_estimate',
-                            },
-                        )
+                    if (
+                        decision.started
+                        or decision.ended
+                        or decision.release_candidate_started
+                        or decision.release_candidate_cancelled
+                    ):
+                        if decision.started or decision.ended:
+                            self._log_event(
+                                f"{event_name} "
+                                f"{'Start' if decision.started else 'End'}",
+                                {
+                                    'force_N': (
+                                        output.estimate.external_force.tolist()
+                                    ),
+                                    'torque_Nm': (
+                                        output.estimate.external_torque.tolist()
+                                    ),
+                                    'confidence_sigma': (
+                                        decision.confidence_sigma
+                                    ),
+                                    'release_projected_force_N': (
+                                        decision.release_projected_value
+                                    ),
+                                    'release_projection_normalized': (
+                                        decision.release_projection_normalized
+                                    ),
+                                    'release_direction': (
+                                        decision.release_direction
+                                    ),
+                                    'release_direction_source': (
+                                        decision.release_direction_source
+                                    ),
+                                    'response_enabled': not pipeline.shadow_mode,
+                                    'state_source': 'crazyflie_state_estimate',
+                                },
+                            )
                         if event_name == 'Translation Contact':
                             if decision.started:
                                 selection_resistance, _, _ = (
@@ -2324,12 +2378,32 @@ class InteractionsControl:
                                             ),
                                         },
                                     )
-                            elif decision.ended and translation_control.end_contact(
+                            if decision.release_candidate_started:
+                                self._log_event(
+                                    'Translation Release Candidate',
+                                    {
+                                        'release_projected_force_N': (
+                                            decision.release_projected_value
+                                        ),
+                                        'release_projection_normalized': (
+                                            decision.release_projection_normalized
+                                        ),
+                                        'confirmation_dwell_s': (
+                                            pipeline.detector.translation.release_time_s
+                                        ),
+                                        'state_source': 'crazyflie_state_estimate',
+                                    },
+                                )
+                            if (
+                                decision.release_candidate_started
+                                and translation_control.end_contact(
                                     self._bounded_wrench_reference(position),
                                     output.estimate.velocity,
                                     state_time,
                                     decision.release_direction,
-                                    output.estimate.orientation_rpy):
+                                    output.estimate.orientation_rpy
+                                )
+                            ):
                                 pipeline.admittance.reset()
                                 self._log_event(
                                     'Translation Braking Started',
@@ -2371,6 +2445,40 @@ class InteractionsControl:
                                         'state_source': 'crazyflie_state_estimate',
                                     },
                                 )
+                            if decision.release_candidate_cancelled:
+                                self._log_event(
+                                    'Translation Release Candidate Cancelled',
+                                    {
+                                        'release_projected_force_N': (
+                                            decision.release_projected_value
+                                        ),
+                                        'release_projection_normalized': (
+                                            decision.release_projection_normalized
+                                        ),
+                                        'state_source': 'crazyflie_state_estimate',
+                                    },
+                                )
+                                if translation_control.cancel_release_candidate(
+                                        self._bounded_wrench_reference(position)):
+                                    pipeline.admittance.reset()
+                                    self._log_event(
+                                        'Translation Rendering Resumed',
+                                        {
+                                            'selected_mode': selected_render_mode,
+                                            'motion_relation': render_relation,
+                                            'state_source': (
+                                                'crazyflie_state_estimate'
+                                            ),
+                                        },
+                                    )
+                            if decision.ended:
+                                translation_control.confirm_release_candidate()
+                                if (
+                                    translation_control.mode
+                                    == translation_control.POSITION_HOLD
+                                ):
+                                    selected_render_mode = None
+                                    render_relation = None
 
             force_target_pitch = 0.0
             force_target_roll = 0.0
@@ -2469,8 +2577,12 @@ class InteractionsControl:
                 last_command_position = translation_control.hold_position.copy()
                 completed_render_mode = selected_render_mode
                 completed_render_relation = render_relation
-                selected_render_mode = None
-                render_relation = None
+                release_confirmed = bool(
+                    contacts is None or not contacts.translation.active
+                )
+                if release_confirmed:
+                    selected_render_mode = None
+                    render_relation = None
                 self._log_event(
                     'Translation Position Hold Resumed',
                     {
@@ -2493,7 +2605,10 @@ class InteractionsControl:
                     },
                 )
 
-            if translation_control.consume_detector_rearm(state_time):
+            if (
+                (contacts is None or not contacts.translation.active)
+                and translation_control.consume_detector_rearm(state_time)
+            ):
                 pipeline.detector.translation.reset(state_time)
                 self._log_event(
                     'Translation Contact Detector Rearmed',
