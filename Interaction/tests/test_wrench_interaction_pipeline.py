@@ -71,7 +71,7 @@ class ContactDetectorTests(unittest.TestCase):
             )
         self.assertTrue(decision.active)
         self.assertEqual(decision.release_direction, (0.0, 1.0, 0.0))
-        self.assertEqual(decision.release_direction_source, "velocity")
+        self.assertEqual(decision.release_direction_source, "force")
 
         ended_decision = None
         for index in range(4, 21):
@@ -125,7 +125,7 @@ class ContactDetectorTests(unittest.TestCase):
             restarted |= decision.started
         self.assertTrue(restarted)
 
-    def test_projected_release_uses_force_when_start_velocity_is_too_small(self):
+    def test_projected_release_prefers_force_over_start_velocity(self):
         detector = ContactChannelDetector(
             component_thresholds=[0.08, 0.08, 0.12],
             covariance_floor=[0.005, 0.005, 0.008],
@@ -141,11 +141,11 @@ class ContactDetectorTests(unittest.TestCase):
                 [0.0, -0.20, 0.0],
                 covariance,
                 index * 0.01,
-                release_direction_candidate=[0.001, 0.0, 0.0],
+                release_direction_candidate=[0.10, 0.0, 0.0],
             )
         self.assertTrue(decision.active)
         self.assertEqual(decision.release_direction, (0.0, -1.0, 0.0))
-        self.assertEqual(decision.release_direction_source, "force_fallback")
+        self.assertEqual(decision.release_direction_source, "force")
 
     def test_large_opposite_projection_counts_as_release_after_dwell(self):
         detector = ContactChannelDetector(

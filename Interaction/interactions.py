@@ -373,6 +373,7 @@ class TranslationControlHandoff:
             brake_xy_speed_m_s=0.04,
             brake_settle_s=0.30,
             position_brake_offset_m=0.05,
+            brake_min_attitude_deg=3.0,
             brake_max_attitude_deg=20.0,
             brake_timeout_s=1.5,
             brake_velocity_gain_s=2.0,
@@ -386,6 +387,7 @@ class TranslationControlHandoff:
         self.brake_xy_speed_m_s = float(brake_xy_speed_m_s)
         self.brake_settle_s = float(brake_settle_s)
         self.position_brake_offset_m = float(position_brake_offset_m)
+        self.brake_min_attitude_deg = float(brake_min_attitude_deg)
         self.brake_max_attitude_deg = float(brake_max_attitude_deg)
         self.brake_timeout_s = float(brake_timeout_s)
         self.brake_velocity_gain_s = float(brake_velocity_gain_s)
@@ -394,7 +396,9 @@ class TranslationControlHandoff:
             or self.brake_xy_speed_m_s <= 0
             or self.brake_settle_s < 0
             or self.position_brake_offset_m < 0
+            or self.brake_min_attitude_deg < 0
             or self.brake_max_attitude_deg <= 0
+            or self.brake_min_attitude_deg > self.brake_max_attitude_deg
             or self.brake_timeout_s <= 0
             or self.brake_velocity_gain_s <= 0
         ):
@@ -446,9 +450,15 @@ class TranslationControlHandoff:
         desired_deceleration = (
             self.brake_velocity_gain_s * max(float(projected_speed), 0.0)
         )
-        self.brake_command_tilt_deg = min(
-            float(np.degrees(np.arctan2(desired_deceleration, 9.81))),
-            self.brake_max_attitude_deg,
+        raw_tilt_deg = float(np.degrees(np.arctan2(
+            desired_deceleration, 9.81
+        )))
+        self.brake_command_tilt_deg = (
+            min(
+                max(raw_tilt_deg, self.brake_min_attitude_deg),
+                self.brake_max_attitude_deg,
+            )
+            if projected_speed > self.brake_xy_speed_m_s else 0.0
         )
         direction_body = world_to_body_xy(
             self.brake_direction[:2], np.degrees(float(yaw_rad))
@@ -1225,6 +1235,9 @@ class InteractionsControl:
                                         'brake_velocity_gain_s': (
                                             translation_control.brake_velocity_gain_s
                                         ),
+                                        'brake_min_attitude_deg': (
+                                            translation_control.brake_min_attitude_deg
+                                        ),
                                         'brake_command_tilt_deg': (
                                             translation_control.brake_command_tilt_deg
                                         ),
@@ -1838,6 +1851,9 @@ class InteractionsControl:
                                         ),
                                         'brake_velocity_gain_s': (
                                             translation_control.brake_velocity_gain_s
+                                        ),
+                                        'brake_min_attitude_deg': (
+                                            translation_control.brake_min_attitude_deg
                                         ),
                                         'brake_command_tilt_deg': (
                                             translation_control.brake_command_tilt_deg

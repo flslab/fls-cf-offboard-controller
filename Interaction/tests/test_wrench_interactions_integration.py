@@ -373,11 +373,11 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual([call[0] for call in commander.calls], [
             'position', 'zdistance', 'zdistance', 'zdistance', 'position'
         ])
-        expected_release_tilt = np.degrees(np.arctan2(2.0 * 0.20, 9.81))
+        expected_release_tilt = 3.0
         np.testing.assert_allclose(
             commander.calls[2][1], [0.0, expected_release_tilt, 0.0, 0.95]
         )
-        expected_updated_tilt = np.degrees(np.arctan2(2.0 * 0.10, 9.81))
+        expected_updated_tilt = 3.0
         np.testing.assert_allclose(
             commander.calls[3][1], [0.0, expected_updated_tilt, 0.0, 0.95]
         )

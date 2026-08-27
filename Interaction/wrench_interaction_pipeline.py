@@ -101,6 +101,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # locked interaction direction, then capture current-position hold near
         # zero projected speed/reversal.
         "brake_xy_speed_m_s": 0.04,
+        # Apply the minimum to total tilt, not independently to roll/pitch, so
+        # diagonal braking preserves the locked interaction direction.
+        "brake_min_attitude_deg": 3.0,
         "brake_max_attitude_deg": 20.0,
         "brake_timeout_s": 1.5,
         "brake_velocity_gain_s": 2.0,

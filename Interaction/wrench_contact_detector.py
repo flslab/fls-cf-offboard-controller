@@ -98,8 +98,8 @@ class ContactChannelDetector:
             return
         axes = np.asarray(self.release_projection_axes, dtype=int)
         candidates = (
-            (direction_candidate, "velocity"),
-            (value, "force_fallback"),
+            (value, "force"),
+            (direction_candidate, "velocity_fallback"),
         )
         for candidate, source in candidates:
             if candidate is None:
@@ -109,7 +109,8 @@ class ContactChannelDetector:
                 continue
             norm = float(np.linalg.norm(candidate[axes]))
             minimum_norm = (
-                self.release_direction_min_norm if source == "velocity" else 1e-12
+                self.release_direction_min_norm
+                if source == "velocity_fallback" else 1e-12
             )
             if norm < minimum_norm:
                 continue
