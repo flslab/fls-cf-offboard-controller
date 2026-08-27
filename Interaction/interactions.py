@@ -103,10 +103,10 @@ def inertia_command_mode(mass_class, requested_mode=None):
         raise ValueError(
             'inertia_command must be position, velocity, or orientation'
         )
-    if mass_class != 'heavy' and normalized == 'orientation':
+    if mass_class == 'light' and normalized == 'orientation':
         raise ValueError(
-            'orientation inertia feedback is only supported for a heavier '
-            'virtual mass; use position or velocity for light/matched mass'
+            'orientation inertia feedback is not supported for a lighter '
+            'virtual mass; use position or velocity for light mass'
         )
     return normalized
 
@@ -221,12 +221,14 @@ def force_inertia_attitude(
         max_attitude_deg=20.0,
         virtual_resistance_force_xy=None,
 ):
-    """Convert estimated external force into heavy-inertia counter-tilt.
+    """Convert estimated external force/resistance into counter-tilt.
 
     For a desired virtual acceleration F/m_virtual, the flight controller must
     oppose the remaining fraction ``1 - m_current/m_virtual`` of the applied
-    force.  The sign convention matches ``heavy_inertia_attitude`` and the
-    existing Crazyflie ``send_zdistance_setpoint`` path.
+    force. A matched virtual mass therefore removes the inertia term while
+    retaining configured friction/drag. The sign convention matches
+    ``heavy_inertia_attitude`` and the existing Crazyflie
+    ``send_zdistance_setpoint`` path.
     """
     external_force_xy = np.asarray(external_force_xy, dtype=float)
     if external_force_xy.shape != (2,):
@@ -234,8 +236,10 @@ def force_inertia_attitude(
     current_mass = float(current_mass)
     virtual_mass = float(virtual_mass)
     max_attitude_deg = abs(float(max_attitude_deg))
-    if current_mass <= 0.0 or virtual_mass <= current_mass:
-        raise ValueError('force inertia attitude requires a heavier virtual mass')
+    if current_mass <= 0.0 or virtual_mass < current_mass:
+        raise ValueError(
+            'force inertia attitude requires a matched or heavier virtual mass'
+        )
     if max_attitude_deg <= 0.0:
         raise ValueError('max_attitude_deg must be positive')
 

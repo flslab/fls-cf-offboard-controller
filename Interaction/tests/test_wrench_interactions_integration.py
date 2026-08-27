@@ -140,7 +140,10 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         self.assertEqual(
             inertia_command_mode('heavy', 'orientation'), 'orientation'
         )
-        with self.assertRaisesRegex(ValueError, 'only supported for a heavier'):
+        self.assertEqual(
+            inertia_command_mode('matched', 'orientation'), 'orientation'
+        )
+        with self.assertRaisesRegex(ValueError, 'not supported for a lighter'):
             inertia_command_mode('light', 'orientation')
 
     def test_equal_energy_mapping_uses_square_root_mass_ratio(self):
@@ -265,6 +268,28 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
             virtual_resistance_force_xy=virtual_friction,
         )
         self.assertAlmostEqual(raw_tilt, np.degrees(np.arctan(0.10)))
+        self.assertAlmostEqual(pitch, raw_tilt)
+        self.assertEqual(roll, 0.0)
+        self.assertFalse(saturated)
+
+    def test_matched_mass_renders_kinetic_friction_without_inertia_feedback(self):
+        virtual_friction, friction, drag = virtual_resistance_force(
+            [0.20, 0.0],
+            virtual_mass=0.17,
+            kinetic_friction_coefficient=0.30,
+            drag_coefficient=0.0,
+        )
+        pitch, roll, raw_tilt, saturated = force_inertia_attitude(
+            [0.50, 0.0],
+            yaw_deg=0.0,
+            current_mass=0.17,
+            virtual_mass=0.17,
+            max_attitude_deg=20.0,
+            virtual_resistance_force_xy=virtual_friction,
+        )
+        self.assertAlmostEqual(friction, 0.30 * 0.17 * 9.81)
+        self.assertEqual(drag, 0.0)
+        self.assertAlmostEqual(raw_tilt, np.degrees(np.arctan(0.30)))
         self.assertAlmostEqual(pitch, raw_tilt)
         self.assertEqual(roll, 0.0)
         self.assertFalse(saturated)
