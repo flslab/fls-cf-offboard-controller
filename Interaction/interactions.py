@@ -86,7 +86,7 @@ def inertia_position_target(interaction_origin, measured_position, energy_gain):
 
 
 def inertia_command_mode(mass_class, requested_mode=None):
-    """Validate and normalize the selectable inertia-rendering technique."""
+    """Validate and normalize the preferred slow-response rendering mode."""
     aliases = {
         'pos': 'position',
         'position': 'position',
@@ -102,11 +102,6 @@ def inertia_command_mode(mass_class, requested_mode=None):
     if normalized is None:
         raise ValueError(
             'inertia_command must be position, velocity, or orientation'
-        )
-    if mass_class == 'light' and normalized == 'orientation':
-        raise ValueError(
-            'orientation inertia feedback is not supported for a lighter '
-            'virtual mass; use position or velocity for light mass'
         )
     return normalized
 
@@ -175,6 +170,8 @@ def virtual_resistance_force(
         frontal_area=0.019,
         air_density=1.225,
         friction_min_speed_m_s=0.02,
+        static_friction_coefficient=0.0,
+        external_force_xy=None,
 ):
     """Return virtual friction/drag force magnitudes and motion direction.
 
@@ -188,6 +185,7 @@ def virtual_resistance_force(
     values = np.asarray([
         virtual_mass,
         kinetic_friction_coefficient,
+        static_friction_coefficient,
         drag_coefficient,
         frontal_area,
         air_density,
@@ -199,8 +197,25 @@ def virtual_resistance_force(
         raise ValueError('virtual resistance parameters cannot be negative')
 
     speed = float(np.linalg.norm(velocity_xy))
-    if speed <= 1e-9:
-        return np.zeros(2), 0.0, 0.0
+    if speed < float(friction_min_speed_m_s):
+        external_force = np.asarray(
+            [0.0, 0.0] if external_force_xy is None else external_force_xy,
+            dtype=float,
+        )
+        if external_force.shape != (2,) or not np.all(np.isfinite(external_force)):
+            raise ValueError('external force for static friction must be finite XY')
+        force_norm = float(np.linalg.norm(external_force))
+        static_limit = (
+            float(static_friction_coefficient) * float(virtual_mass) * 9.81
+        )
+        if force_norm <= 1e-9 or static_limit <= 0.0:
+            return np.zeros(2), 0.0, 0.0
+        static_force = min(force_norm, static_limit)
+        return (
+            external_force / force_norm * static_force,
+            static_force,
+            0.0,
+        )
     direction = velocity_xy / speed
     friction_force = (
         float(kinetic_friction_coefficient) * float(virtual_mass) * 9.81
@@ -211,6 +226,160 @@ def virtual_resistance_force(
         * float(frontal_area) * speed ** 2
     )
     return direction * (friction_force + drag_force), friction_force, drag_force
+
+
+def select_inertia_render_mode(
+        external_force_xy,
+        velocity_xy,
+        current_mass,
+        virtual_mass,
+        preferred_mode,
+        virtual_resistance_force_xy=None,
+        acceleration_tolerance_m_s2=0.02,
+):
+    """Choose position for faster virtual motion, otherwise honor priority.
+
+    ``external_force_xy / current_mass`` is the measured native-drone baseline;
+    it already contains forces arising in the real flight environment.  The
+    virtual acceleration additionally accounts for configured resistance.
+    The decision is projected onto the interaction/force direction so an
+    unrelated transverse component cannot switch the rendering technique.
+    """
+    external_force_xy = np.asarray(external_force_xy, dtype=float)
+    velocity_xy = np.asarray(velocity_xy, dtype=float)
+    resistance = np.asarray(
+        [0.0, 0.0]
+        if virtual_resistance_force_xy is None
+        else virtual_resistance_force_xy,
+        dtype=float,
+    )
+    if any(value.shape != (2,) for value in (
+            external_force_xy, velocity_xy, resistance)):
+        raise ValueError('force, velocity, and resistance must contain XY')
+    current_mass = float(current_mass)
+    virtual_mass = float(virtual_mass)
+    tolerance = abs(float(acceleration_tolerance_m_s2))
+    if current_mass <= 0.0 or virtual_mass <= 0.0:
+        raise ValueError('current and virtual mass must be positive')
+    preferred_mode = inertia_command_mode('matched', preferred_mode)
+    if preferred_mode == 'velocity':
+        raise ValueError(
+            'momentum force rendering priority must be position or orientation'
+        )
+
+    direction = external_force_xy.copy()
+    if np.linalg.norm(direction) <= 1e-9:
+        direction = velocity_xy.copy()
+    direction_norm = float(np.linalg.norm(direction))
+    if direction_norm > 1e-9:
+        direction /= direction_norm
+    else:
+        direction = np.zeros(2)
+
+    native_acceleration = external_force_xy / current_mass
+    virtual_acceleration = (external_force_xy - resistance) / virtual_mass
+    native_projected = float(native_acceleration @ direction)
+    virtual_projected = float(virtual_acceleration @ direction)
+    faster = virtual_projected > native_projected + tolerance
+    return {
+        'mode': 'position' if faster else preferred_mode,
+        'relation': 'faster' if faster else 'slower_or_equal',
+        'direction': direction,
+        'native_acceleration': native_acceleration,
+        'virtual_acceleration': virtual_acceleration,
+        'native_projected_acceleration': native_projected,
+        'virtual_projected_acceleration': virtual_projected,
+    }
+
+
+class VirtualObjectPlanarMotion:
+    """Bounded XY virtual dynamics used by position rendering and coast."""
+
+    def __init__(
+            self,
+            mass,
+            max_velocity_m_s,
+            max_offset_xy,
+            kinetic_friction_coefficient=0.0,
+            static_friction_coefficient=0.0,
+            drag_coefficient=0.0,
+            frontal_area=0.019,
+            air_density=1.225,
+            friction_min_speed_m_s=0.02,
+    ):
+        self.mass = float(mass)
+        self.max_velocity_m_s = abs(float(max_velocity_m_s))
+        self.max_offset_xy = np.abs(np.asarray(max_offset_xy, dtype=float))
+        if self.mass <= 0.0 or self.max_velocity_m_s <= 0.0:
+            raise ValueError('virtual mass and max velocity must be positive')
+        if self.max_offset_xy.shape != (2,) or np.any(self.max_offset_xy <= 0.0):
+            raise ValueError('virtual max offset must contain positive XY')
+        self.resistance_config = {
+            'virtual_mass': self.mass,
+            'kinetic_friction_coefficient': float(
+                kinetic_friction_coefficient
+            ),
+            'static_friction_coefficient': float(
+                static_friction_coefficient
+            ),
+            'drag_coefficient': float(drag_coefficient),
+            'frontal_area': float(frontal_area),
+            'air_density': float(air_density),
+            'friction_min_speed_m_s': float(friction_min_speed_m_s),
+        }
+        self.origin = np.zeros(2)
+        self.position = np.zeros(2)
+        self.velocity = np.zeros(2)
+
+    def reset(self, position_xy, velocity_xy):
+        self.origin = np.asarray(position_xy, dtype=float).copy()
+        self.position = self.origin.copy()
+        self.velocity = np.asarray(velocity_xy, dtype=float).copy()
+        if self.origin.shape != (2,) or self.velocity.shape != (2,):
+            raise ValueError('virtual reset position and velocity must contain XY')
+
+    def resistance(self, external_force_xy=None):
+        return virtual_resistance_force(
+            self.velocity,
+            external_force_xy=external_force_xy,
+            **self.resistance_config,
+        )
+
+    def step(self, external_force_xy, dt):
+        force = np.asarray(external_force_xy, dtype=float)
+        if force.shape != (2,) or not np.all(np.isfinite(force)):
+            raise ValueError('virtual external force must be finite XY')
+        dt = min(max(float(dt), 1e-4), 0.05)
+        resistance, friction, drag = self.resistance(force)
+        acceleration = (force - resistance) / self.mass
+        previous_velocity = self.velocity.copy()
+        proposed_velocity = previous_velocity + acceleration * dt
+        # Coulomb friction may stop motion, but must never reverse it by itself.
+        if np.linalg.norm(force) <= 1e-9:
+            for axis in range(2):
+                if previous_velocity[axis] * proposed_velocity[axis] < 0.0:
+                    proposed_velocity[axis] = 0.0
+        speed = float(np.linalg.norm(proposed_velocity))
+        if speed > self.max_velocity_m_s:
+            proposed_velocity *= self.max_velocity_m_s / speed
+        proposed_position = self.position + proposed_velocity * dt
+        offset = np.clip(
+            proposed_position - self.origin,
+            -self.max_offset_xy,
+            self.max_offset_xy,
+        )
+        clipped = proposed_position != self.origin + offset
+        proposed_velocity[clipped] = 0.0
+        self.position = self.origin + offset
+        self.velocity = proposed_velocity
+        return {
+            'position': self.position.copy(),
+            'velocity': self.velocity.copy(),
+            'acceleration': acceleration.copy(),
+            'resistance': resistance.copy(),
+            'friction_force_N': float(friction),
+            'drag_force_N': float(drag),
+        }
 
 
 def force_inertia_attitude(
@@ -236,10 +405,8 @@ def force_inertia_attitude(
     current_mass = float(current_mass)
     virtual_mass = float(virtual_mass)
     max_attitude_deg = abs(float(max_attitude_deg))
-    if current_mass <= 0.0 or virtual_mass < current_mass:
-        raise ValueError(
-            'force inertia attitude requires a matched or heavier virtual mass'
-        )
+    if current_mass <= 0.0 or virtual_mass <= 0.0:
+        raise ValueError('force inertia attitude masses must be positive')
     if max_attitude_deg <= 0.0:
         raise ValueError('max_attitude_deg must be positive')
 
@@ -372,7 +539,9 @@ class TranslationControlHandoff:
     """Switch translation through contact, braking, and position-hold modes."""
 
     POSITION_HOLD = 'position_hold'
+    CONTACT_POSITION = 'position_interaction'
     CONTACT_ZDISTANCE = 'attitude_zdistance'
+    POSITION_COAST = 'position_coast'
     ATTITUDE_BRAKING = 'attitude_braking'
 
     def __init__(
@@ -442,20 +611,38 @@ class TranslationControlHandoff:
     def _transition_mode(self, new_mode):
         self.mode = new_mode
         logger.info({
+            self.CONTACT_POSITION: 'HANDLING INTERACTION',
             self.CONTACT_ZDISTANCE: 'HANDLING INTERACTION',
+            self.POSITION_COAST: 'BRAKING',
             self.ATTITUDE_BRAKING: 'BRAKING',
             self.POSITION_HOLD: 'HOVER',
         }[new_mode])
 
-    def start_contact(self):
+    def start_contact(self, render_mode='orientation', current_position=None):
         # Detector residuals during braking are expected controller/model
         # transients. Do not let them chatter the command mode.
         if self.shadow_mode or self.mode != self.POSITION_HOLD:
             return False
+        if render_mode not in ('position', 'orientation'):
+            raise ValueError('contact render mode must be position or orientation')
+        if current_position is not None:
+            position = np.asarray(current_position, dtype=float)
+            if position.shape != (3,) or not np.all(np.isfinite(position)):
+                raise ValueError('contact position must be finite XYZ')
+            self.hold_position = position.copy()
         self.hover_z = float(self.hold_position[2])
         self.set_contact_attitude(0.0, 0.0, 0.0)
-        self._transition_mode(self.CONTACT_ZDISTANCE)
+        self._transition_mode(
+            self.CONTACT_POSITION
+            if render_mode == 'position' else self.CONTACT_ZDISTANCE
+        )
         return True
+
+    def set_contact_position(self, position):
+        position = np.asarray(position, dtype=float)
+        if position.shape != (3,) or not np.all(np.isfinite(position)):
+            raise ValueError('contact position command must be finite XYZ')
+        self.hold_position = position.copy()
 
     def set_contact_attitude(self, roll_deg, pitch_deg, yaw_rate_deg_s=0.0):
         values = np.asarray(
@@ -510,8 +697,10 @@ class TranslationControlHandoff:
             interaction_direction=None,
             current_orientation_rpy=None,
     ):
-        if self.shadow_mode or self.mode != self.CONTACT_ZDISTANCE:
+        if self.shadow_mode or self.mode not in (
+                self.CONTACT_POSITION, self.CONTACT_ZDISTANCE):
             return False
+        released_from_position = self.mode == self.CONTACT_POSITION
         position = np.asarray(current_position, dtype=float)
         if position.shape != (3,) or not np.all(np.isfinite(position)):
             raise ValueError('translation release position must be finite XYZ')
@@ -561,23 +750,30 @@ class TranslationControlHandoff:
             velocity[:2] @ self.brake_direction[:2]
         )
         self.hover_z = float(position[2])
-        # Render velocity damping rather than a fixed braking tilt. The command
-        # shrinks with projected speed, preventing the counter-force attitude
-        # from carrying the vehicle back toward the user after it stops.
-        self._set_velocity_brake_attitude(
-            self.brake_projected_speed_m_s, orientation_rpy[2]
-        )
+        if not released_from_position:
+            # Render velocity damping rather than a fixed braking tilt. The
+            # command shrinks with projected speed, preventing the
+            # counter-force attitude from carrying the vehicle back after stop.
+            self._set_velocity_brake_attitude(
+                self.brake_projected_speed_m_s, orientation_rpy[2]
+            )
         self._brake_started_at = timestamp
         self.brake_completion_reason = None
-        self._transition_mode(self.ATTITUDE_BRAKING)
+        self._transition_mode(
+            self.POSITION_COAST
+            if released_from_position else self.ATTITUDE_BRAKING
+        )
         return True
 
     def update_braking(
             self, current_position, velocity, timestamp,
-            current_orientation_rpy=None,
+            current_orientation_rpy=None, coast_position=None,
+            coast_velocity=None,
     ):
-        if self.shadow_mode or self.mode != self.ATTITUDE_BRAKING:
+        if self.shadow_mode or self.mode not in (
+                self.POSITION_COAST, self.ATTITUDE_BRAKING):
             return False
+        position_coast = self.mode == self.POSITION_COAST
         position = np.asarray(current_position, dtype=float)
         velocity = np.asarray(velocity, dtype=float)
         if position.shape != (3,) or not np.all(np.isfinite(position)):
@@ -594,7 +790,24 @@ class TranslationControlHandoff:
         )
         if orientation_rpy.shape != (3,) or not np.all(np.isfinite(orientation_rpy)):
             raise ValueError('translation braking orientation must be finite RPY')
-        projected_speed = float(velocity[:2] @ self.brake_direction[:2])
+        braking_velocity = velocity
+        if position_coast:
+            coast_position = np.asarray(coast_position, dtype=float)
+            coast_velocity = np.asarray(coast_velocity, dtype=float)
+            if (
+                coast_position.shape != (3,)
+                or coast_velocity.shape != (3,)
+                or not np.all(np.isfinite(coast_position))
+                or not np.all(np.isfinite(coast_velocity))
+            ):
+                raise ValueError(
+                    'position coast requires finite XYZ position and velocity'
+                )
+            self.set_contact_position(coast_position)
+            braking_velocity = coast_velocity
+        projected_speed = float(
+            braking_velocity[:2] @ self.brake_direction[:2]
+        )
         self.brake_projected_speed_m_s = projected_speed
         timed_out = bool(
             self._brake_started_at is not None
@@ -604,15 +817,18 @@ class TranslationControlHandoff:
         stopped_or_reversed = bool(
             projected_speed <= self.brake_xy_speed_m_s
         )
-        if not stopped_or_reversed and not timed_out:
+        if not stopped_or_reversed and not timed_out and not position_coast:
             self._set_velocity_brake_attitude(
                 projected_speed, orientation_rpy[2]
             )
             return False
+        if not stopped_or_reversed and not timed_out:
+            return False
 
-        # Capture the measured switch position so there is no stale point to
-        # fly back to when position control resumes.
-        self.hold_position = position.copy()
+        # Attitude braking captures the measured switch position. Position
+        # coast retains its continuously integrated final visual target.
+        if not position_coast:
+            self.hold_position = position.copy()
         self.set_contact_attitude(0.0, 0.0, 0.0)
         self.brake_command_tilt_deg = 0.0
         self._brake_started_at = None
@@ -643,12 +859,20 @@ class TranslationControlHandoff:
         return self.mode == self.CONTACT_ZDISTANCE
 
     @property
+    def position_interaction_mode(self):
+        return self.mode == self.CONTACT_POSITION
+
+    @property
     def braking_mode(self):
-        return self.mode == self.ATTITUDE_BRAKING
+        return self.mode in (self.POSITION_COAST, self.ATTITUDE_BRAKING)
 
     @property
     def uses_position_setpoint(self):
-        return self.shadow_mode or self.mode == self.POSITION_HOLD
+        return self.shadow_mode or self.mode in (
+            self.POSITION_HOLD,
+            self.CONTACT_POSITION,
+            self.POSITION_COAST,
+        )
 
     @property
     def command_mode(self):
@@ -657,7 +881,10 @@ class TranslationControlHandoff:
         return self.mode
 
     def send(self, commander):
-        if self.shadow_mode or self.mode == self.POSITION_HOLD:
+        if self.shadow_mode or self.mode in (
+                self.POSITION_HOLD,
+                self.CONTACT_POSITION,
+                self.POSITION_COAST):
             commander.send_position_setpoint(
                 *self.hold_position, self.yaw_deg
             )
@@ -1671,15 +1898,18 @@ class InteractionsControl:
         nominal_yaw_deg = float(nominal_yaw_deg)
 
         virtual_object_config = virtual_object_config or {}
-        force_orientation_enabled = False
+        preferred_render_mode = 'position'
         force_current_mass = float(config['mass'])
         force_virtual_mass = force_current_mass
         force_max_attitude_deg = 20.0
         force_kinetic_friction_coefficient = 0.0
+        force_static_friction_coefficient = 0.0
         force_drag_coefficient = 0.0
         force_frontal_area = 0.019
         force_air_density = 1.225
         force_friction_min_speed_m_s = 0.02
+        render_acceleration_tolerance_m_s2 = 0.02
+        virtual_max_velocity_m_s = 0.60
         if virtual_object_config:
             force_current_mass = float(virtual_object_config.get(
                 'current_mass', config['mass']
@@ -1693,7 +1923,12 @@ class InteractionsControl:
             requested_mode = inertia_command_mode(
                 mass_class, virtual_object_config.get('inertia_command')
             )
-            force_orientation_enabled = requested_mode == 'orientation'
+            preferred_render_mode = requested_mode
+            if preferred_render_mode not in ('position', 'orientation'):
+                raise ValueError(
+                    'momentum force rendering inertia_command must be '
+                    'position or orientation'
+                )
             force_max_attitude_deg = float(
                 virtual_object_config.get('max_attitude_deg', 20.0)
             )
@@ -1701,6 +1936,11 @@ class InteractionsControl:
                 virtual_object_config.get(
                     'kinetic_friction_coefficient',
                     virtual_object_config.get('friction_coefficient', 0.0),
+                )
+            )
+            force_static_friction_coefficient = float(
+                virtual_object_config.get(
+                    'static_friction_coefficient', 0.0
                 )
             )
             force_drag_coefficient = float(
@@ -1717,22 +1957,37 @@ class InteractionsControl:
                     'friction_min_speed_m_s', 0.02
                 )
             )
+            render_acceleration_tolerance_m_s2 = float(
+                virtual_object_config.get(
+                    'render_acceleration_tolerance_m_s2', 0.02
+                )
+            )
+            virtual_max_velocity_m_s = float(
+                virtual_object_config.get(
+                    'max_velocity_command_m_s', 0.60
+                )
+            )
         resistance_parameters = np.asarray([
             force_kinetic_friction_coefficient,
+            force_static_friction_coefficient,
             force_drag_coefficient,
             force_frontal_area,
             force_air_density,
             force_friction_min_speed_m_s,
+            render_acceleration_tolerance_m_s2,
+            virtual_max_velocity_m_s,
         ])
         if (
             not np.all(np.isfinite(resistance_parameters))
             or np.any(resistance_parameters < 0.0)
         ):
             raise ValueError(
-                'virtual-object friction and air-drag parameters must be '
-                'finite and non-negative'
+                'virtual-object resistance/render parameters must be finite '
+                'and non-negative'
             )
-        if force_orientation_enabled and not np.isclose(
+        if virtual_max_velocity_m_s <= 0.0:
+            raise ValueError('virtual max velocity must be positive')
+        if preferred_render_mode == 'orientation' and not np.isclose(
                 force_current_mass, float(config['mass'])):
             raise ValueError(
                 'virtual_object.current_mass must match wrench_interaction.mass '
@@ -1762,16 +2017,24 @@ class InteractionsControl:
                 'state_source': 'crazyflie_state_estimate',
                 'orientation_feedback_source': (
                     'estimated_external_force'
-                    if force_orientation_enabled else 'none'
+                    if preferred_render_mode == 'orientation' else 'none'
                 ),
-                'virtual_object': (
-                    {
+                'virtual_object': {
                         'current_mass': force_current_mass,
                         'mass': force_virtual_mass,
-                        'inertia_command': 'orientation',
+                        'inertia_command': preferred_render_mode,
+                        'render_policy': (
+                            'position_when_faster_otherwise_priority'
+                        ),
+                        'render_acceleration_tolerance_m_s2': (
+                            render_acceleration_tolerance_m_s2
+                        ),
                         'max_attitude_deg': force_max_attitude_deg,
                         'kinetic_friction_coefficient': (
                             force_kinetic_friction_coefficient
+                        ),
+                        'static_friction_coefficient': (
+                            force_static_friction_coefficient
                         ),
                         'drag_coefficient': force_drag_coefficient,
                         'frontal_area': force_frontal_area,
@@ -1779,9 +2042,7 @@ class InteractionsControl:
                         'friction_min_speed_m_s': (
                             force_friction_min_speed_m_s
                         ),
-                    }
-                    if force_orientation_enabled else None
-                ),
+                    },
                 'translation_response_axes': ['x', 'y', 'z'],
                 'rotation_response_axes': (
                     ['yaw'] if config['detection']['yaw'].get('enabled', True)
@@ -1846,6 +2107,25 @@ class InteractionsControl:
             rearm_delay_s=rearm_delay_s,
             **config['control_handoff'],
         )
+        virtual_motion = VirtualObjectPlanarMotion(
+            mass=force_virtual_mass,
+            max_velocity_m_s=virtual_max_velocity_m_s,
+            max_offset_xy=config['admittance']['max_offset'][:2],
+            kinetic_friction_coefficient=(
+                force_kinetic_friction_coefficient
+            ),
+            static_friction_coefficient=(
+                force_static_friction_coefficient
+            ),
+            drag_coefficient=force_drag_coefficient,
+            frontal_area=force_frontal_area,
+            air_density=force_air_density,
+            friction_min_speed_m_s=force_friction_min_speed_m_s,
+        )
+        selected_render_mode = None
+        render_relation = None
+        render_selection = None
+        virtual_motion_state = None
         excitation_config = config['calibration_excitation']
         guided_touch = GuidedTouchProtocol(config.get('guided_touch_test'))
         if guided_touch.enabled and duration < guided_touch.required_duration_s:
@@ -1976,18 +2256,59 @@ class InteractionsControl:
                             },
                         )
                         if event_name == 'Translation Contact':
-                            if decision.started and translation_control.start_contact():
-                                pipeline.admittance.reset()
-                                self._log_event(
-                                    'Translation Attitude Control Started',
-                                    {
-                                        'zdistance_m': translation_control.hover_z,
-                                        'roll_deg': 0.0,
-                                        'pitch_deg': 0.0,
-                                        'yaw_rate_deg_s': 0.0,
-                                        'state_source': 'crazyflie_state_estimate',
-                                    },
+                            if decision.started:
+                                selection_resistance, _, _ = (
+                                    virtual_resistance_force(
+                                        output.estimate.velocity[:2],
+                                        force_virtual_mass,
+                                        force_kinetic_friction_coefficient,
+                                        force_drag_coefficient,
+                                        force_frontal_area,
+                                        force_air_density,
+                                        force_friction_min_speed_m_s,
+                                        force_static_friction_coefficient,
+                                        output.estimate.external_force[:2],
+                                    )
                                 )
+                                render_selection = select_inertia_render_mode(
+                                    output.estimate.external_force[:2],
+                                    output.estimate.velocity[:2],
+                                    force_current_mass,
+                                    force_virtual_mass,
+                                    preferred_render_mode,
+                                    selection_resistance,
+                                    render_acceleration_tolerance_m_s2,
+                                )
+                                selected_render_mode = render_selection['mode']
+                                render_relation = render_selection['relation']
+                                virtual_motion.reset(
+                                    position[:2], output.estimate.velocity[:2]
+                                )
+                                if translation_control.start_contact(
+                                        selected_render_mode,
+                                        self._bounded_wrench_reference(position)):
+                                    pipeline.admittance.reset()
+                                    self._log_event(
+                                        'Translation Rendering Started',
+                                        {
+                                            'selected_mode': selected_render_mode,
+                                            'preferred_mode': preferred_render_mode,
+                                            'motion_relation': render_relation,
+                                            'native_projected_acceleration_m_s2': (
+                                                render_selection[
+                                                    'native_projected_acceleration'
+                                                ]
+                                            ),
+                                            'virtual_projected_acceleration_m_s2': (
+                                                render_selection[
+                                                    'virtual_projected_acceleration'
+                                                ]
+                                            ),
+                                            'state_source': (
+                                                'crazyflie_state_estimate'
+                                            ),
+                                        },
+                                    )
                             elif decision.ended and translation_control.end_contact(
                                     self._bounded_wrench_reference(position),
                                     output.estimate.velocity,
@@ -1996,8 +2317,9 @@ class InteractionsControl:
                                     output.estimate.orientation_rpy):
                                 pipeline.admittance.reset()
                                 self._log_event(
-                                    'Translation Attitude Braking Started',
+                                    'Translation Braking Started',
                                     {
+                                        'render_mode': selected_render_mode,
                                         'xy_speed_m_s': float(np.linalg.norm(
                                             output.estimate.velocity[:2]
                                         )),
@@ -2039,15 +2361,18 @@ class InteractionsControl:
             force_target_roll = 0.0
             force_raw_tilt_deg = 0.0
             force_attitude_saturated = False
+            virtual_motion_state = None
             force_virtual_friction_N = 0.0
             force_virtual_drag_N = 0.0
             force_virtual_resistance_xy = np.zeros(2)
             if (
-                force_orientation_enabled
-                and output.calibrated
+                output.calibrated
                 and contacts is not None
                 and contacts.translation.active
-                and translation_control.attitude_mode
+                and (
+                    translation_control.attitude_mode
+                    or translation_control.position_interaction_mode
+                )
                 and not output.estimate.measurement_rejected
             ):
                 (
@@ -2062,34 +2387,80 @@ class InteractionsControl:
                     force_frontal_area,
                     force_air_density,
                     force_friction_min_speed_m_s,
-                )
-                (
-                    force_target_pitch,
-                    force_target_roll,
-                    force_raw_tilt_deg,
-                    force_attitude_saturated,
-                ) = force_inertia_attitude(
+                    force_static_friction_coefficient,
                     output.estimate.external_force[:2],
-                    np.degrees(output.estimate.orientation_rpy[2]),
-                    force_current_mass,
-                    force_virtual_mass,
-                    force_max_attitude_deg,
-                    force_virtual_resistance_xy,
                 )
+                if translation_control.attitude_mode:
+                    (
+                        force_target_pitch,
+                        force_target_roll,
+                        force_raw_tilt_deg,
+                        force_attitude_saturated,
+                    ) = force_inertia_attitude(
+                        output.estimate.external_force[:2],
+                        np.degrees(output.estimate.orientation_rpy[2]),
+                        force_current_mass,
+                        force_virtual_mass,
+                        force_max_attitude_deg,
+                        force_virtual_resistance_xy,
+                    )
+                else:
+                    virtual_motion_state = virtual_motion.step(
+                        output.estimate.external_force[:2], dt
+                    )
+                    position_target = np.array([
+                        virtual_motion_state['position'][0],
+                        virtual_motion_state['position'][1],
+                        translation_control.hover_z,
+                    ])
+                    translation_control.set_contact_position(
+                        self._bounded_wrench_reference(position_target)
+                    )
             if translation_control.attitude_mode:
                 translation_control.set_contact_attitude(
                     force_target_roll, force_target_pitch, 0.0
                 )
 
+            braking_kwargs = {}
+            if translation_control.mode == translation_control.POSITION_COAST:
+                virtual_motion_state = virtual_motion.step(np.zeros(2), dt)
+                coast_position = self._bounded_wrench_reference(np.array([
+                    virtual_motion_state['position'][0],
+                    virtual_motion_state['position'][1],
+                    translation_control.hover_z,
+                ]))
+                braking_kwargs = {
+                    'coast_position': coast_position,
+                    'coast_velocity': np.array([
+                        virtual_motion_state['velocity'][0],
+                        virtual_motion_state['velocity'][1],
+                        0.0,
+                    ]),
+                }
+                force_virtual_resistance_xy = (
+                    virtual_motion_state['resistance']
+                )
+                force_virtual_friction_N = (
+                    virtual_motion_state['friction_force_N']
+                )
+                force_virtual_drag_N = virtual_motion_state['drag_force_N']
+
             if translation_control.update_braking(
                     self._bounded_wrench_reference(position),
                     output.estimate.velocity,
                     state_time,
-                    output.estimate.orientation_rpy):
+                    output.estimate.orientation_rpy,
+                    **braking_kwargs):
                 last_command_position = translation_control.hold_position.copy()
+                completed_render_mode = selected_render_mode
+                completed_render_relation = render_relation
+                selected_render_mode = None
+                render_relation = None
                 self._log_event(
                     'Translation Position Hold Resumed',
                     {
+                        'render_mode': completed_render_mode,
+                        'motion_relation': completed_render_relation,
                         'hold_position_m': last_command_position.tolist(),
                         'xy_speed_m_s': float(np.linalg.norm(
                             output.estimate.velocity[:2]
@@ -2289,7 +2660,12 @@ class InteractionsControl:
                 'command_xy_velocity_m_s': None,
                 'command_xy_velocity_world_m_s': None,
                 'command_yaw_deg': float(command_yaw),
-                'force_orientation_enabled': force_orientation_enabled,
+                'preferred_render_mode': preferred_render_mode,
+                'selected_render_mode': selected_render_mode,
+                'virtual_motion_relation': render_relation,
+                'force_orientation_enabled': (
+                    translation_control.attitude_mode
+                ),
                 'force_target_roll_deg': force_target_roll,
                 'force_target_pitch_deg': force_target_pitch,
                 'force_raw_tilt_deg': force_raw_tilt_deg,
@@ -2304,6 +2680,20 @@ class InteractionsControl:
                         force_current_mass / force_virtual_mass
                     ) * force_virtual_resistance_xy
                 ).tolist(),
+                'virtual_position_m': (
+                    None if virtual_motion_state is None else [
+                        float(virtual_motion_state['position'][0]),
+                        float(virtual_motion_state['position'][1]),
+                        float(translation_control.hover_z),
+                    ]
+                ),
+                'virtual_velocity_m_s': (
+                    None if virtual_motion_state is None else [
+                        float(virtual_motion_state['velocity'][0]),
+                        float(virtual_motion_state['velocity'][1]),
+                        0.0,
+                    ]
+                ),
                 'shadow_mode': pipeline.shadow_mode,
             })
             self._safe_sleep(dt)

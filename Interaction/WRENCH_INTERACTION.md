@@ -27,6 +27,28 @@ The channel routing is fixed in code:
 | Yaw torque | yes | yaw |
 | Roll/pitch torque | yes | none (log only) |
 
+## Position/orientation rendering policy
+
+For onboard momentum interaction, `virtual_object.inertia_command` is the
+priority used when the configured virtual object accelerates no faster than
+the native vehicle. The comparison projects the native acceleration
+`F_external / current_mass` and the virtual acceleration
+`(F_external - F_friction - F_drag) / virtual_mass` onto the interaction
+direction at contact onset.
+
+- Faster virtual response always selects position rendering for visual motion.
+- Slower/equal response selects the configured `position` or `orientation`
+  priority.
+- Position rendering integrates the virtual dynamics and continues a bounded
+  zero-input friction/drag coast after release.
+- Position coast and orientation braking use the same stop-speed, timeout,
+  position-hold, and detector-rearm conditions.
+
+Static friction may be configured separately. Below
+`friction_min_speed_m_s`, it balances the applied force up to
+`static_friction_coefficient * mass * g`; after breakaway, the kinetic
+coefficient is used.
+
 ## Required localization
 
 The pipeline requires `--vicon-mode rigidbody --vicon-full-pose`. The

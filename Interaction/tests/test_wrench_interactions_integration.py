@@ -7,11 +7,13 @@ from Interaction.interactions import (
     GuidedTouchProtocol,
     InteractionsControl,
     TranslationControlHandoff,
+    VirtualObjectPlanarMotion,
     force_inertia_attitude,
     heavy_inertia_attitude,
     inertia_command_mode,
     inertia_position_target,
     kinetic_energy_velocity,
+    select_inertia_render_mode,
     virtual_resistance_force,
     velocity_inertia_mass_class,
     world_to_body_xy,
@@ -128,7 +130,7 @@ class FakeOnboardLogManager:
 
 
 class VelocityInertiaRenderingTests(unittest.TestCase):
-    def test_mass_classification_and_five_supported_conditions(self):
+    def test_mass_classification_and_render_mode_aliases(self):
         self.assertEqual(velocity_inertia_mass_class(0.17, 0.05), 'light')
         self.assertEqual(velocity_inertia_mass_class(0.17, 0.17), 'matched')
         self.assertEqual(velocity_inertia_mass_class(0.17, 0.50), 'heavy')
@@ -143,8 +145,9 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         self.assertEqual(
             inertia_command_mode('matched', 'orientation'), 'orientation'
         )
-        with self.assertRaisesRegex(ValueError, 'not supported for a lighter'):
-            inertia_command_mode('light', 'orientation')
+        self.assertEqual(
+            inertia_command_mode('light', 'orientation'), 'orientation'
+        )
 
     def test_equal_energy_mapping_uses_square_root_mass_ratio(self):
         velocity, raw_gain, applied_gain, saturated = kinetic_energy_velocity(
@@ -252,6 +255,17 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         self.assertEqual(friction, 0.0)
         self.assertEqual(drag, 0.0)
 
+        static_resistance, friction, drag = virtual_resistance_force(
+            [0.0, 0.0],
+            virtual_mass=0.17,
+            kinetic_friction_coefficient=0.30,
+            static_friction_coefficient=0.50,
+            external_force_xy=[0.20, 0.0],
+        )
+        np.testing.assert_allclose(static_resistance, [0.20, 0.0])
+        self.assertEqual(friction, 0.20)
+        self.assertEqual(drag, 0.0)
+
     def test_virtual_resistance_adds_mass_scaled_counter_tilt(self):
         virtual_friction, _, _ = virtual_resistance_force(
             [0.20, 0.0],
@@ -293,6 +307,55 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         self.assertAlmostEqual(pitch, raw_tilt)
         self.assertEqual(roll, 0.0)
         self.assertFalse(saturated)
+
+    def test_faster_virtual_motion_forces_position_rendering(self):
+        selection = select_inertia_render_mode(
+            [0.20, 0.0], [0.10, 0.0],
+            current_mass=0.17, virtual_mass=0.05,
+            preferred_mode='orientation',
+        )
+        self.assertEqual(selection['relation'], 'faster')
+        self.assertEqual(selection['mode'], 'position')
+
+    def test_slower_virtual_motion_honors_render_priority(self):
+        friction, _, _ = virtual_resistance_force(
+            [0.10, 0.0], virtual_mass=0.17,
+            kinetic_friction_coefficient=0.30,
+        )
+        orientation = select_inertia_render_mode(
+            [0.20, 0.0], [0.10, 0.0],
+            current_mass=0.17, virtual_mass=0.17,
+            preferred_mode='orientation',
+            virtual_resistance_force_xy=friction,
+        )
+        position = select_inertia_render_mode(
+            [0.20, 0.0], [0.10, 0.0],
+            current_mass=0.17, virtual_mass=0.17,
+            preferred_mode='position',
+            virtual_resistance_force_xy=friction,
+        )
+        self.assertEqual(orientation['relation'], 'slower_or_equal')
+        self.assertEqual(orientation['mode'], 'orientation')
+        self.assertEqual(position['mode'], 'position')
+
+    def test_position_motion_coasts_under_friction_without_reversing(self):
+        motion = VirtualObjectPlanarMotion(
+            mass=0.17,
+            max_velocity_m_s=0.60,
+            max_offset_xy=[0.5, 0.5],
+            kinetic_friction_coefficient=0.30,
+        )
+        motion.reset([0.0, 0.0], [0.20, 0.0])
+        positions = []
+        for _ in range(20):
+            state = motion.step([0.0, 0.0], 0.01)
+            positions.append(state['position'][0])
+        self.assertGreater(positions[-1], 0.0)
+        self.assertTrue(all(
+            later >= earlier
+            for earlier, later in zip(positions, positions[1:])
+        ))
+        self.assertEqual(state['velocity'][0], 0.0)
 
 
 class WrenchInteractionLoopTests(unittest.TestCase):
@@ -461,6 +524,43 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.brake_completion_reason,
             'projected_velocity_zero_or_reversed',
         )
+
+    def test_position_rendering_coasts_then_uses_common_hover_handoff(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            brake_xy_speed_m_s=0.04,
+            brake_timeout_s=1.0,
+        )
+        self.assertTrue(control.start_contact(
+            'position', [0.1, 0.0, 1.0]
+        ))
+        control.set_contact_position([0.15, 0.0, 1.0])
+        control.send(commander)
+        self.assertEqual(commander.calls[-1][0], 'position')
+        self.assertTrue(control.end_contact(
+            [0.12, 0.0, 1.0], [0.20, 0.0, 0.0], 1.0,
+            interaction_direction=[1.0, 0.0, 0.0],
+        ))
+        self.assertEqual(control.command_mode, 'position_coast')
+        self.assertFalse(control.update_braking(
+            [0.13, 0.0, 1.0], [0.18, 0.0, 0.0], 1.1,
+            coast_position=[0.17, 0.0, 1.0],
+            coast_velocity=[0.10, 0.0, 0.0],
+        ))
+        control.send(commander)
+        np.testing.assert_allclose(
+            commander.calls[-1][1], [0.17, 0.0, 1.0, 0.0]
+        )
+        self.assertTrue(control.update_braking(
+            [0.16, 0.0, 1.0], [0.03, 0.0, 0.0], 1.2,
+            coast_position=[0.175, 0.0, 1.0],
+            coast_velocity=[0.03, 0.0, 0.0],
+        ))
+        self.assertEqual(control.command_mode, 'position_hold')
+        np.testing.assert_allclose(control.hold_position, [0.175, 0.0, 1.0])
 
     def test_detector_rearm_waits_for_post_braking_grace_time(self):
         control = TranslationControlHandoff(
