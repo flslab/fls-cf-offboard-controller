@@ -133,6 +133,7 @@ class Controller:
         self.servo = None
         self.led = None
         self.tracker = None
+        self.force_sensor = None
         self.log_manager = None
         self.bat_logger = None
         self.sub_socket = None
@@ -168,6 +169,7 @@ class Controller:
         return bool(
             getattr(self.args, 'interaction', False)
             or getattr(self.args, 'calibrate', False)
+            or getattr(self.args, 'sense', False)
         )
 
     def __enter__(self):
@@ -212,6 +214,7 @@ class Controller:
         self.setup_sockets()
         self.download_mission_config()
         self.setup_logging()
+        self.setup_force_sensor()
         self.setup_commander()
         self.setup_motion_capture()
         self.setup_blinker()
@@ -255,6 +258,9 @@ class Controller:
 
         if self.mocap:
             self.mocap.stop()
+
+        if self.force_sensor:
+            self.force_sensor.stop()
 
         if self.log_manager:
             self.log_manager.stop(
@@ -637,6 +643,29 @@ class Controller:
 
         logger.debug("logging activated")
 
+    def setup_force_sensor(self):
+        """Start the Arduino potentiometer reader for ``--sense`` runs."""
+        if not getattr(self.args, 'sense', False):
+            return
+
+        from Interaction.potentiometer_force_sensor import (
+            PotentiometerForceSensor,
+        )
+
+        self.force_sensor = PotentiometerForceSensor(
+            port=self.args.sense_port,
+            baud=self.args.sense_baud,
+            spring_constant_n_per_mm=self.args.sense_spring_constant,
+        )
+        self.force_sensor.start(startup_timeout_s=self.args.sense_startup_timeout)
+        sample = self.force_sensor.latest()
+        logger.info(
+            "Potentiometer force sensor ready on %s: %.3f mm, %.3f N",
+            self.args.sense_port,
+            sample.distance_mm,
+            sample.force_n,
+        )
+
     def _uses_onboard_wrench_state(self):
         if not self._is_interaction_application():
             return False
@@ -779,7 +808,7 @@ class Controller:
         elif self.args.orchestrated:
             if self.args.illumination:
                 self.run_multiple_orchestrated_missions()
-            elif self.args.interaction:
+            elif self.args.interaction or self.args.sense:
                 self.interation_switch()
 
         else:
@@ -958,7 +987,11 @@ class Controller:
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id,
                                      pub_socket=interact_pub, sub_socket=interact_sub, execute=execution, set_color=self.led.show_single_color,
-                                     orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                     orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                     force_sensor=self.force_sensor,
+                                     sense_axis=self.args.sense_axis,
+                                     sense_sign=self.args.sense_sign,
+                                     sense_max_age_s=self.args.sense_max_age)
             IC.run()
             interact_pub.close()
             interact_sub.close()
@@ -1000,7 +1033,11 @@ class Controller:
 
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow, execute=execution,
-                                     orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                     orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                     force_sensor=self.force_sensor,
+                                     sense_axis=self.args.sense_axis,
+                                     sense_sign=self.args.sense_sign,
+                                     sense_max_age_s=self.args.sense_max_age)
             IC.run()
             self.mocap.unsubscribe_point(leader_id)
             self.ll_commander.send_notify_setpoint_stop()
@@ -1035,7 +1072,11 @@ class Controller:
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id,
                                      pub_socket=interact_pub, sub_socket=interact_sub, set_color=self.led.show_single_color,
-                                     execute=execution, orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                     execute=execution, orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                     force_sensor=self.force_sensor,
+                                     sense_axis=self.args.sense_axis,
+                                     sense_sign=self.args.sense_sign,
+                                     sense_max_age_s=self.args.sense_max_age)
             IC.run()
             if interact_pub is not None:
                 interact_pub.close()
@@ -1073,7 +1114,11 @@ class Controller:
                                      self.args.smooth_controller_rate,
                                      drone_id=self.args.drone_id,
                                      pub_socket=interact_pub, sub_socket=interact_sub,
-                                     execute=execution, orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                     execute=execution, orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                     force_sensor=self.force_sensor,
+                                     sense_axis=self.args.sense_axis,
+                                     sense_sign=self.args.sense_sign,
+                                     sense_max_age_s=self.args.sense_max_age)
             IC.run_passive_avoidance()
             if interact_pub is not None:
                 interact_pub.close()
@@ -1129,7 +1174,11 @@ class Controller:
                             self.cf, self._safe_sleep,
                             self.log_manager, self.mission,
                             self.args.smooth_controller_rate, drone_id=self.args.drone_id,
-                            orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None
+                            orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                            force_sensor=self.force_sensor,
+                            sense_axis=self.args.sense_axis,
+                            sense_sign=self.args.sense_sign,
+                            sense_max_age_s=self.args.sense_max_age,
                         )
                         IC.run_recap(file_path)
             elif self.mission.get('Interaction', {}).get('action') == 'peer_latency_test':
@@ -1143,7 +1192,11 @@ class Controller:
                 IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                          self.args.smooth_controller_rate, drone_id=self.args.drone_id,
                                          pub_socket=interact_pub, sub_socket=interact_sub,
-                                         orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                         orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                         force_sensor=self.force_sensor,
+                                         sense_axis=self.args.sense_axis,
+                                         sense_sign=self.args.sense_sign,
+                                         sense_max_age_s=self.args.sense_max_age)
                 IC.run()
                 interact_pub.close()
                 interact_sub.close()
@@ -1173,7 +1226,11 @@ class Controller:
 
                     IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                              self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow,
-                                             orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                             orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                             force_sensor=self.force_sensor,
+                                             sense_axis=self.args.sense_axis,
+                                             sense_sign=self.args.sense_sign,
+                                             sense_max_age_s=self.args.sense_max_age)
                     IC.run()
 
         except Exception as e:
@@ -1197,6 +1254,10 @@ class Controller:
                 orchestrator_ip=(
                     self.manifest['controller']['ip'] if self.manifest else None
                 ),
+                force_sensor=self.force_sensor,
+                sense_axis=self.args.sense_axis,
+                sense_sign=self.args.sense_sign,
+                sense_max_age_s=self.args.sense_max_age,
             )
             controller.run_calibration()
         except Exception as error:
@@ -2077,6 +2138,41 @@ if __name__ == '__main__':
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
     ap.add_argument(
+        "--sense", action="store_true",
+        help=(
+            "use Arduino potentiometer spring force for translation interaction "
+            "and record it alongside the external wrench estimate"
+        ),
+    )
+    ap.add_argument(
+        "--sense-port", default="/dev/serial0",
+        help="Arduino UART device used by --sense (default: /dev/serial0)",
+    )
+    ap.add_argument(
+        "--sense-baud", type=int, default=115200,
+        help="Arduino UART baud rate used by --sense",
+    )
+    ap.add_argument(
+        "--sense-spring-constant", type=float, default=0.16,
+        help="force-sensor spring constant in N/mm",
+    )
+    ap.add_argument(
+        "--sense-axis", choices=["x", "y", "z"], default="y",
+        help="body-frame sensor axis compared with the external-force estimate",
+    )
+    ap.add_argument(
+        "--sense-sign", choices=[-1, 1], default=1, type=int,
+        help="sensor-axis direction: +1 or -1",
+    )
+    ap.add_argument(
+        "--sense-max-age", type=float, default=0.25,
+        help="maximum sensor sample age in seconds before it is marked stale",
+    )
+    ap.add_argument(
+        "--sense-startup-timeout", type=float, default=3.0,
+        help="seconds to wait for the first valid Arduino sample",
+    )
+    ap.add_argument(
         "--calibrate", action="store_true",
         help="record contact-free excitation and save wrench model calibration",
     )
@@ -2145,6 +2241,12 @@ if __name__ == '__main__':
     args = ap.parse_args()
     if args.interaction and args.calibrate:
         ap.error('--interaction and --calibrate are mutually exclusive')
+    if args.sense and not args.log:
+        ap.error('--sense requires --log so sensor and estimate data are recorded')
+    if args.sense_spring_constant <= 0.0:
+        ap.error('--sense-spring-constant must be positive')
+    if args.sense_max_age <= 0.0 or args.sense_startup_timeout <= 0.0:
+        ap.error('--sense timing values must be positive')
 
     with Controller(args) as c:
         try:

@@ -564,6 +564,48 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(control.command_mode, 'position_hold')
         np.testing.assert_allclose(control.hold_position, [0.16, 0.0, 1.0])
 
+    def test_release_records_force_momentum_then_captures_actual_stop_position(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            brake_xy_acceleration_m_s2=0.8,
+            brake_xy_speed_m_s=0.04,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.10, 0.20, 1.0],
+            [0.30, 0.10, 0.0],
+            1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_force=[0.0, 0.12, 0.0],
+            current_mass_kg=0.06,
+        ))
+
+        np.testing.assert_allclose(control.release_force_N, [0.0, 0.12, 0.0])
+        np.testing.assert_allclose(
+            control.release_momentum_kg_m_s, [0.018, 0.006, 0.0]
+        )
+        np.testing.assert_allclose(control.release_position_m, [0.10, 0.20, 1.0])
+        self.assertIsNone(control.stopping_position_m)
+        self.assertAlmostEqual(
+            control.brake_force_feedforward_acceleration_m_s2, 2.0
+        )
+
+        self.assertTrue(control.update_braking(
+            [0.11, 0.24, 1.0],
+            [0.20, 0.03, 0.0],
+            1.1,
+            current_force=[0.0, 0.02, 0.0],
+            current_mass_kg=0.06,
+        ))
+        np.testing.assert_allclose(
+            control.stopping_position_m, [0.11, 0.24, 1.0]
+        )
+        np.testing.assert_allclose(
+            control.hold_position, control.stopping_position_m
+        )
+
     def test_cancelled_release_candidate_resumes_original_render_mode(self):
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],

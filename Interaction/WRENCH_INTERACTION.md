@@ -109,3 +109,40 @@ bias-corrected wrench, covariance, innovation/NIS, contact states, proposed
 reference, actual command, frame age, and motor-data age. Stale mocap or stale
 motor telemetry terminates the interaction loop and sends the normal setpoint
 stop notification; there is no attitude-recovery escalation.
+
+## Potentiometer force control and comparison
+
+Use `--sense --log` (or add `--sense` to an `--interaction --log` run) to
+record the spring-backed potentiometer as an independent force reference. The Arduino must emit
+`time_ms,raw,filtered,voltage,distance_mm` at 115200 baud on `/dev/serial0`.
+The default spring constant is 0.16 N/mm, so the recorded compression force is
+`distance_mm * 0.16`.
+
+```text
+--sense --sense-axis y --sense-sign 1
+```
+
+Change the axis to `y` or `z`, or use `--sense-sign -1`, to match the physical
+sensor orientation in the drone body frame. Each sample is rotated into the
+world frame using the observer attitude before logging/comparison.
+`--sense-port`, `--sense-baud`,
+`--sense-spring-constant`, and `--sense-max-age` override the hardware and
+freshness defaults.
+
+In a normal onboard momentum-interaction run, the potentiometer controls the
+translation interaction while the wrench observer continues running and is
+recorded for comparison. Rising spring force starts contact. A sustained force
+drop starts bounded attitude braking immediately. The release snapshot records
+the measured force, vehicle momentum (`mass * velocity`), and position; the
+controller records and holds the actual stopping position only after velocity
+along the release direction reaches zero/reverses (or the braking timeout is
+reached). Yaw contact continues to use the wrench observer.
+
+Each `wrench_observer` record includes both `external_force_N` (the observer)
+and `control_external_force_N` (the potentiometer-derived force), plus the
+calibrated distance, force rate, sample freshness, release force/momentum/
+position, braking feed-forward acceleration, stopping position, and
+observer-minus-sensor error. A stale sensor sample is treated as zero force so
+an active contact fails safely into the braking/hold sequence. During the
+dedicated calibration run, the sensor remains comparison-only so it cannot
+alter the excitation trajectory.

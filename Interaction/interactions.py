@@ -11,6 +11,8 @@ import zmq
 from Interaction.command_wrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
+from Interaction.potentiometer_force_sensor import SpringForceTrendDetector
+from Interaction.wrench_contact_detector import WrenchContactState
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH,
@@ -603,6 +605,12 @@ class TranslationControlHandoff:
         self.brake_projected_speed_m_s = 0.0
         self.brake_completion_reason = None
         self.brake_command_tilt_deg = 0.0
+        self.brake_force_feedforward_acceleration_m_s2 = 0.0
+        self.release_force_N = np.zeros(3)
+        self.release_momentum_kg_m_s = None
+        self.release_position_m = None
+        self.stopping_position_m = None
+        self.release_mass_kg = None
         self.hover_z = float(self.hold_position[2])
         self.contact_roll_deg = 0.0
         self.contact_pitch_deg = 0.0
@@ -656,9 +664,21 @@ class TranslationControlHandoff:
         self.contact_pitch_deg = float(values[1])
         self.contact_yaw_rate_deg_s = float(values[2])
 
-    def _set_velocity_brake_attitude(self, projected_speed, yaw_rad):
-        desired_deceleration = (
+    def _set_velocity_brake_attitude(
+            self, projected_speed, yaw_rad,
+            projected_force_n=0.0, current_mass_kg=None,
+    ):
+        force_feedforward = 0.0
+        if current_mass_kg is not None:
+            mass = float(current_mass_kg)
+            if not np.isfinite(mass) or mass <= 0.0:
+                raise ValueError('braking mass must be finite and positive')
+            force_feedforward = max(float(projected_force_n), 0.0) / mass
+        self.brake_force_feedforward_acceleration_m_s2 = force_feedforward
+        desired_deceleration = min(
             self.brake_velocity_gain_s * max(float(projected_speed), 0.0)
+            + force_feedforward,
+            self.brake_xy_acceleration_m_s2,
         )
         raw_tilt_deg = float(np.degrees(np.arctan2(
             desired_deceleration, 9.81
@@ -698,6 +718,8 @@ class TranslationControlHandoff:
             timestamp,
             interaction_direction=None,
             current_orientation_rpy=None,
+            current_force=None,
+            current_mass_kg=None,
     ):
         if self.shadow_mode or self.mode not in (
                 self.CONTACT_POSITION, self.CONTACT_ZDISTANCE):
@@ -722,6 +744,15 @@ class TranslationControlHandoff:
         )
         if orientation_rpy.shape != (3,) or not np.all(np.isfinite(orientation_rpy)):
             raise ValueError('translation release orientation must be finite RPY')
+        force = np.asarray(
+            np.zeros(3) if current_force is None else current_force,
+            dtype=float,
+        )
+        if force.shape != (3,) or not np.all(np.isfinite(force)):
+            raise ValueError('translation release force must be finite XYZ')
+        mass = None if current_mass_kg is None else float(current_mass_kg)
+        if mass is not None and (not np.isfinite(mass) or mass <= 0.0):
+            raise ValueError('translation release mass must be positive')
         interaction_direction = (
             np.asarray(interaction_direction, dtype=float)
             if interaction_direction is not None else np.zeros(3)
@@ -750,6 +781,13 @@ class TranslationControlHandoff:
             direction.fill(0.0)
 
         self.hold_position = position.copy()
+        self.release_position_m = position.copy()
+        self.stopping_position_m = None
+        self.release_force_N = force.copy()
+        self.release_mass_kg = mass
+        self.release_momentum_kg_m_s = (
+            None if mass is None else mass * velocity.copy()
+        )
         self.brake_direction = direction.copy()
         self.brake_projected_speed_m_s = float(
             velocity[:2] @ self.brake_direction[:2]
@@ -759,7 +797,10 @@ class TranslationControlHandoff:
         # braking. Virtual-object coast velocity is not the physical vehicle
         # momentum and can fall to zero immediately under high friction.
         self._set_velocity_brake_attitude(
-            self.brake_projected_speed_m_s, orientation_rpy[2]
+            self.brake_projected_speed_m_s,
+            orientation_rpy[2],
+            projected_force_n=float(force[:2] @ self.brake_direction[:2]),
+            current_mass_kg=mass,
         )
         self._brake_started_at = timestamp
         self.brake_completion_reason = None
@@ -781,6 +822,7 @@ class TranslationControlHandoff:
         self._detector_rearm_at = None
         self.brake_completion_reason = None
         self.brake_command_tilt_deg = 0.0
+        self.brake_force_feedforward_acceleration_m_s2 = 0.0
         self.hold_position = position.copy()
         self.hover_z = float(position[2])
         self.set_contact_attitude(0.0, 0.0, 0.0)
@@ -798,6 +840,7 @@ class TranslationControlHandoff:
             self, current_position, velocity, timestamp,
             current_orientation_rpy=None, coast_position=None,
             coast_velocity=None,
+            current_force=None, current_mass_kg=None,
     ):
         if self.shadow_mode or self.mode not in (
                 self.POSITION_COAST, self.ATTITUDE_BRAKING):
@@ -819,6 +862,15 @@ class TranslationControlHandoff:
         )
         if orientation_rpy.shape != (3,) or not np.all(np.isfinite(orientation_rpy)):
             raise ValueError('translation braking orientation must be finite RPY')
+        force = np.asarray(
+            np.zeros(3) if current_force is None else current_force,
+            dtype=float,
+        )
+        if force.shape != (3,) or not np.all(np.isfinite(force)):
+            raise ValueError('translation braking force must be finite XYZ')
+        mass = self.release_mass_kg if current_mass_kg is None else float(current_mass_kg)
+        if mass is not None and (not np.isfinite(mass) or mass <= 0.0):
+            raise ValueError('translation braking mass must be positive')
         braking_velocity = velocity
         if position_coast:
             coast_position = np.asarray(coast_position, dtype=float)
@@ -848,7 +900,12 @@ class TranslationControlHandoff:
         )
         if not stopped_or_reversed and not timed_out and not position_coast:
             self._set_velocity_brake_attitude(
-                projected_speed, orientation_rpy[2]
+                projected_speed,
+                orientation_rpy[2],
+                projected_force_n=float(
+                    force[:2] @ self.brake_direction[:2]
+                ),
+                current_mass_kg=mass,
             )
             return False
         if not stopped_or_reversed and not timed_out:
@@ -858,6 +915,7 @@ class TranslationControlHandoff:
         # coast retains its continuously integrated final visual target.
         if not position_coast:
             self.hold_position = position.copy()
+        self.stopping_position_m = self.hold_position.copy()
         self.set_contact_attitude(0.0, 0.0, 0.0)
         self.brake_command_tilt_deg = 0.0
         self._brake_started_at = None
@@ -945,7 +1003,8 @@ class InteractionsControl:
 
     def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True,
                  leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, set_color=None,
-                 orchestrator_ip=None, *args, **kwargs):
+                 orchestrator_ip=None, force_sensor=None, sense_axis='x',
+                 sense_sign=1, sense_max_age_s=0.25, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
@@ -955,6 +1014,17 @@ class InteractionsControl:
         self.drone_id = drone_id
         self.set_color = set_color
         self.orchestrator_ip = orchestrator_ip
+        self.force_sensor = force_sensor
+        self.sense_axis = str(sense_axis).lower()
+        if self.sense_axis not in ('x', 'y', 'z'):
+            raise ValueError('sense_axis must be x, y, or z')
+        self.sense_axis_index = {'x': 0, 'y': 1, 'z': 2}[self.sense_axis]
+        self.sense_sign = int(sense_sign)
+        if self.sense_sign not in (-1, 1):
+            raise ValueError('sense_sign must be +1 or -1')
+        self.sense_max_age_s = float(sense_max_age_s)
+        if self.sense_max_age_s <= 0.0:
+            raise ValueError('sense_max_age_s must be positive')
         # Network followers use their own 'frames' position, not the leader's mocap group
         self.pos_group_name = 'frames' if (leader_info is None or sub_socket is not None) else f"{leader_info['id']}"
 
@@ -965,6 +1035,97 @@ class InteractionsControl:
         self.lo_commander = CommandWrapper(self.cf.commander, log_function=log_function, execute=execute, offset=offset)
         self._safe_sleep = sleep_function
         self.bounds = self.mission.get('boundary_limits', None)
+
+    def _force_sensor_log_fields(self, estimate, now):
+        """Return time-aligned potentiometer/observer comparison fields."""
+        sensor = getattr(self, 'force_sensor', None)
+        if sensor is None:
+            return {}
+
+        axis = getattr(self, 'sense_axis', 'x')
+        axis_index = getattr(
+            self, 'sense_axis_index', {'x': 0, 'y': 1, 'z': 2}[axis]
+        )
+        sign = getattr(self, 'sense_sign', 1)
+        max_age_s = getattr(self, 'sense_max_age_s', 0.25)
+        sample = sensor.latest()
+        if sample is None:
+            return {
+                'force_sensor_fresh': False,
+                'force_sensor_axis': axis,
+                'force_sensor_sign': sign,
+            }
+
+        age_s = float(now) - float(sample.host_time)
+        fresh = -0.5 <= age_s <= max_age_s
+        signed_force_n = sign * float(sample.force_n)
+        force_body = np.zeros(3)
+        force_body[axis_index] = signed_force_n
+        roll, pitch, yaw = np.asarray(
+            getattr(estimate, 'orientation_rpy', np.zeros(3)), dtype=float
+        )
+        cr, sr = np.cos(roll), np.sin(roll)
+        cp, sp = np.cos(pitch), np.sin(pitch)
+        cy, sy = np.cos(yaw), np.sin(yaw)
+        body_to_world = np.array([
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ])
+        force_world = body_to_world @ force_body
+        estimated_force_body = (
+            body_to_world.T @ np.asarray(estimate.external_force, dtype=float)
+        )
+        estimated_axis_force = float(estimated_force_body[axis_index])
+        return {
+            'force_sensor_fresh': bool(fresh),
+            'force_sensor_axis': axis,
+            'force_sensor_sign': sign,
+            'force_sensor_sample_time': float(sample.host_time),
+            'force_sensor_sample_age_s': age_s,
+            'force_sensor_arduino_time_ms': int(sample.arduino_time_ms),
+            'force_sensor_raw': int(sample.raw),
+            'force_sensor_filtered_raw': float(sample.filtered_raw),
+            'force_sensor_voltage_V': float(sample.voltage_v),
+            'force_sensor_distance_mm': float(sample.distance_mm),
+            'force_sensor_compression_force_N': float(sample.force_n),
+            'force_sensor_external_force_body_N': force_body.tolist(),
+            'force_sensor_external_force_N': force_world.tolist(),
+            'estimated_external_force_along_sensor_N': estimated_axis_force,
+            'force_sensor_estimate_error_N': (
+                estimated_axis_force - signed_force_n if fresh else None
+            ),
+        }
+
+    def _force_sensor_axis_world(self, estimate):
+        """Return the signed unit sensor axis in the world frame."""
+        axis_body = np.zeros(3)
+        axis_body[self.sense_axis_index] = self.sense_sign
+        roll, pitch, yaw = np.asarray(estimate.orientation_rpy, dtype=float)
+        cr, sr = np.cos(roll), np.sin(roll)
+        cp, sp = np.cos(pitch), np.sin(pitch)
+        cy, sy = np.cos(yaw), np.sin(yaw)
+        return np.array([
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ]) @ axis_body
+
+    def _force_sensor_config(self):
+        sensor = getattr(self, 'force_sensor', None)
+        return {
+            'enabled': sensor is not None,
+            'axis': getattr(self, 'sense_axis', 'x'),
+            'sign': getattr(self, 'sense_sign', 1),
+            'max_sample_age_s': getattr(self, 'sense_max_age_s', 0.25),
+            'control_source': (
+                'potentiometer_force_sensor'
+                if sensor is not None else 'wrench_observer'
+            ),
+            'spring_constant_n_per_mm': (
+                sensor.spring_constant_n_per_mm if sensor is not None else None
+            ),
+        }
 
     def run(self) -> None:
 
@@ -1120,6 +1281,15 @@ class InteractionsControl:
             if calibration_mode and detection_method != 'momentum_impulse':
                 raise ValueError(
                     '--calibrate requires detection_method: momentum_impulse'
+                )
+            if (
+                getattr(self, 'force_sensor', None) is not None
+                and not calibration_mode
+                and detection_method != 'momentum_impulse'
+            ):
+                raise ValueError(
+                    '--sense force control requires detection_method: '
+                    'momentum_impulse with state_source: onboard'
                 )
 
             if detection_method in ('momentum_impulse', 'mocap_wrench'):
@@ -1439,6 +1609,7 @@ class InteractionsControl:
                 'pipeline': 'external_wrench_admittance_pid',
                 'detection_method': 'mocap_wrench',
                 'translation_response_axes': ['x', 'y', 'z'],
+                'force_sensor_comparison': self._force_sensor_config(),
                 'rotation_response_axes': (
                     ['yaw'] if config['detection']['yaw'].get('enabled', True)
                     else []
@@ -1782,6 +1953,7 @@ class InteractionsControl:
                 'force_bias_N': pipeline.force_bias.tolist(),
                 'torque_bias_Nm': pipeline.torque_bias.tolist(),
                 'external_force_N': estimate.external_force.tolist(),
+                **self._force_sensor_log_fields(estimate, now),
                 'external_torque_Nm': estimate.external_torque.tolist(),
                 'force_covariance': estimate.force_covariance.tolist(),
                 'torque_covariance': estimate.torque_covariance.tolist(),
@@ -1938,6 +2110,14 @@ class InteractionsControl:
         """
         pipeline = OnboardMomentumWrenchPipeline(config)
         config = pipeline.config
+        sensor_controls_translation = bool(
+            getattr(self, 'force_sensor', None) is not None
+            and not calibration_mode
+        )
+        sensor_detector = (
+            SpringForceTrendDetector()
+            if sensor_controls_translation else None
+        )
         safety = config['safety']
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
         duration = float(duration)
@@ -2094,6 +2274,17 @@ class InteractionsControl:
                         ),
                     },
                 'translation_response_axes': ['x', 'y', 'z'],
+                'force_sensor_comparison': {
+                    **self._force_sensor_config(),
+                    'control_source': (
+                        'potentiometer_force_sensor'
+                        if sensor_controls_translation else 'wrench_observer'
+                    ),
+                    'controls_translation': sensor_controls_translation,
+                    'observer_recorded_for_comparison': (
+                        getattr(self, 'force_sensor', None) is not None
+                    ),
+                },
                 'rotation_response_axes': (
                     ['yaw'] if config['detection']['yaw'].get('enabled', True)
                     else []
@@ -2268,6 +2459,45 @@ class InteractionsControl:
                 yaw_control_command=state['yaw_control_command'],
             )
 
+            sensor_fields = self._force_sensor_log_fields(output.estimate, now)
+            control_force_world = output.estimate.external_force.copy()
+            force_control_source = 'wrench_observer'
+            if sensor_controls_translation:
+                sensor_fresh = bool(sensor_fields.get('force_sensor_fresh'))
+                if sensor_fresh:
+                    control_force_world = np.asarray(
+                        sensor_fields['force_sensor_external_force_N'],
+                        dtype=float,
+                    )
+                    sensor_force_n = float(
+                        sensor_fields['force_sensor_compression_force_N']
+                    )
+                    sensor_detection_time = float(
+                        sensor_fields['force_sensor_sample_time']
+                    )
+                else:
+                    # A stale UART sample must not leave the controller in a
+                    # permanent contact state. Treat it as zero force so an
+                    # active interaction transitions into bounded braking.
+                    control_force_world = np.zeros(3)
+                    sensor_force_n = 0.0
+                    sensor_detection_time = now
+                force_control_source = 'potentiometer_force_sensor'
+                sensor_decision = sensor_detector.update(
+                    sensor_force_n,
+                    sensor_detection_time,
+                    self._force_sensor_axis_world(output.estimate),
+                )
+                if output.contacts is not None:
+                    contacts = WrenchContactState(
+                        translation=sensor_decision,
+                        yaw=output.contacts.yaw,
+                    )
+                else:
+                    contacts = None
+            else:
+                contacts = output.contacts
+
             if output.calibrated and not calibration_announced:
                 calibration_announced = True
                 interaction_start = time.time()
@@ -2281,7 +2511,6 @@ class InteractionsControl:
                 self._log_event('Waiting For User Interaction')
                 logger.info('Interaction detection is active.')
 
-            contacts = output.contacts
             if contacts is not None:
                 transitions = (
                     ('Translation Contact', contacts.translation),
@@ -2299,9 +2528,11 @@ class InteractionsControl:
                                 f"{event_name} "
                                 f"{'Start' if decision.started else 'End'}",
                                 {
-                                    'force_N': (
+                                    'force_N': control_force_world.tolist(),
+                                    'estimated_force_N': (
                                         output.estimate.external_force.tolist()
                                     ),
+                                    'force_control_source': force_control_source,
                                     'torque_Nm': (
                                         output.estimate.external_torque.tolist()
                                     ),
@@ -2336,11 +2567,11 @@ class InteractionsControl:
                                         force_air_density,
                                         force_friction_min_speed_m_s,
                                         force_static_friction_coefficient,
-                                        output.estimate.external_force[:2],
+                                        control_force_world[:2],
                                     )
                                 )
                                 render_selection = select_inertia_render_mode(
-                                    output.estimate.external_force[:2],
+                                    control_force_world[:2],
                                     output.estimate.velocity[:2],
                                     force_current_mass,
                                     force_virtual_mass,
@@ -2389,7 +2620,9 @@ class InteractionsControl:
                                             decision.release_projection_normalized
                                         ),
                                         'confirmation_dwell_s': (
-                                            pipeline.detector.translation.release_time_s
+                                            sensor_detector.release_time_s
+                                            if sensor_controls_translation
+                                            else pipeline.detector.translation.release_time_s
                                         ),
                                         'state_source': 'crazyflie_state_estimate',
                                     },
@@ -2401,7 +2634,9 @@ class InteractionsControl:
                                     output.estimate.velocity,
                                     state_time,
                                     decision.release_direction,
-                                    output.estimate.orientation_rpy
+                                    output.estimate.orientation_rpy,
+                                    current_force=control_force_world,
+                                    current_mass_kg=force_current_mass,
                                 )
                             ):
                                 pipeline.admittance.reset()
@@ -2441,6 +2676,18 @@ class InteractionsControl:
                                         ),
                                         'brake_command_tilt_deg': (
                                             translation_control.brake_command_tilt_deg
+                                        ),
+                                        'release_force_N': (
+                                            translation_control.release_force_N.tolist()
+                                        ),
+                                        'release_momentum_kg_m_s': (
+                                            translation_control.release_momentum_kg_m_s.tolist()
+                                        ),
+                                        'release_position_m': (
+                                            translation_control.release_position_m.tolist()
+                                        ),
+                                        'force_feedforward_acceleration_m_s2': (
+                                            translation_control.brake_force_feedforward_acceleration_m_s2
                                         ),
                                         'state_source': 'crazyflie_state_estimate',
                                     },
@@ -2496,7 +2743,10 @@ class InteractionsControl:
                     translation_control.attitude_mode
                     or translation_control.position_interaction_mode
                 )
-                and not output.estimate.measurement_rejected
+                and (
+                    sensor_controls_translation
+                    or not output.estimate.measurement_rejected
+                )
             ):
                 (
                     force_virtual_resistance_xy,
@@ -2511,7 +2761,7 @@ class InteractionsControl:
                     force_air_density,
                     force_friction_min_speed_m_s,
                     force_static_friction_coefficient,
-                    output.estimate.external_force[:2],
+                    control_force_world[:2],
                 )
                 if translation_control.attitude_mode:
                     (
@@ -2520,7 +2770,7 @@ class InteractionsControl:
                         force_raw_tilt_deg,
                         force_attitude_saturated,
                     ) = force_inertia_attitude(
-                        output.estimate.external_force[:2],
+                        control_force_world[:2],
                         np.degrees(output.estimate.orientation_rpy[2]),
                         force_current_mass,
                         force_virtual_mass,
@@ -2529,7 +2779,7 @@ class InteractionsControl:
                     )
                 else:
                     virtual_motion_state = virtual_motion.step(
-                        output.estimate.external_force[:2], dt
+                        control_force_world[:2], dt
                     )
                     position_target = np.array([
                         virtual_motion_state['position'][0],
@@ -2573,6 +2823,8 @@ class InteractionsControl:
                     output.estimate.velocity,
                     state_time,
                     output.estimate.orientation_rpy,
+                    current_force=control_force_world,
+                    current_mass_kg=force_current_mass,
                     **braking_kwargs):
                 last_command_position = translation_control.hold_position.copy()
                 completed_render_mode = selected_render_mode
@@ -2589,6 +2841,18 @@ class InteractionsControl:
                         'render_mode': completed_render_mode,
                         'motion_relation': completed_render_relation,
                         'hold_position_m': last_command_position.tolist(),
+                        'stopping_position_m': (
+                            translation_control.stopping_position_m.tolist()
+                        ),
+                        'release_force_N': (
+                            translation_control.release_force_N.tolist()
+                        ),
+                        'release_momentum_kg_m_s': (
+                            translation_control.release_momentum_kg_m_s.tolist()
+                        ),
+                        'release_position_m': (
+                            translation_control.release_position_m.tolist()
+                        ),
                         'xy_speed_m_s': float(np.linalg.norm(
                             output.estimate.velocity[:2]
                         )),
@@ -2609,7 +2873,10 @@ class InteractionsControl:
                 (contacts is None or not contacts.translation.active)
                 and translation_control.consume_detector_rearm(state_time)
             ):
-                pipeline.detector.translation.reset(state_time)
+                if sensor_controls_translation:
+                    sensor_detector.reset(state_time)
+                else:
+                    pipeline.detector.translation.reset(state_time)
                 self._log_event(
                     'Translation Contact Detector Rearmed',
                     {
@@ -2728,6 +2995,13 @@ class InteractionsControl:
                 'force_bias_N': pipeline.force_bias.tolist(),
                 'torque_bias_Nm': pipeline.torque_bias.tolist(),
                 'external_force_N': estimate.external_force.tolist(),
+                **sensor_fields,
+                'force_control_source': force_control_source,
+                'control_external_force_N': control_force_world.tolist(),
+                'force_sensor_rate_N_s': (
+                    sensor_detector.last_rate_n_s
+                    if sensor_controls_translation else None
+                ),
                 'external_torque_Nm': estimate.external_torque.tolist(),
                 'force_covariance': estimate.force_covariance.tolist(),
                 'torque_covariance': estimate.torque_covariance.tolist(),
@@ -2786,6 +3060,29 @@ class InteractionsControl:
                 'brake_command_tilt_deg': (
                     translation_control.brake_command_tilt_deg
                     if translation_control.braking_mode else None
+                ),
+                'brake_force_feedforward_acceleration_m_s2': (
+                    translation_control.brake_force_feedforward_acceleration_m_s2
+                    if translation_control.braking_mode else None
+                ),
+                'release_force_N': (
+                    translation_control.release_force_N.tolist()
+                    if translation_control.release_position_m is not None else None
+                ),
+                'release_momentum_kg_m_s': (
+                    None
+                    if translation_control.release_momentum_kg_m_s is None
+                    else translation_control.release_momentum_kg_m_s.tolist()
+                ),
+                'release_position_m': (
+                    None
+                    if translation_control.release_position_m is None
+                    else translation_control.release_position_m.tolist()
+                ),
+                'stopping_position_m': (
+                    None
+                    if translation_control.stopping_position_m is None
+                    else translation_control.stopping_position_m.tolist()
                 ),
                 'command_xy_velocity_m_s': None,
                 'command_xy_velocity_world_m_s': None,
