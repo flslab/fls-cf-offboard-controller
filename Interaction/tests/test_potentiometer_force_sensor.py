@@ -2,11 +2,10 @@ import unittest
 from types import SimpleNamespace
 import math
 
+import numpy as np
+
 from Interaction.interactions import InteractionsControl
-from Interaction.potentiometer_force_sensor import (
-    SpringForceTrendDetector,
-    parse_potentiometer_line,
-)
+from Interaction.potentiometer_force_sensor import parse_potentiometer_line
 
 
 class PotentiometerForceSensorParsingTest(unittest.TestCase):
@@ -96,54 +95,33 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
             fields['estimated_external_force_along_sensor_N'], 1.0
         )
 
-    def test_force_trend_starts_on_rise_and_releases_on_fall(self):
-        detector = SpringForceTrendDetector(
-            contact_force_n=0.02,
-            rise_rate_n_s=0.05,
-            release_rate_n_s=0.05,
-            release_drop_n=0.01,
-            onset_time_s=0.02,
-            release_time_s=0.04,
+    def test_fresh_sensor_force_is_selected_only_for_release_braking(self):
+        estimate = SimpleNamespace(external_force=[0.3, 0.4, 0.0])
+        sensor_fields = {
+            'force_sensor_fresh': True,
+            'force_sensor_external_force_N': [0.0, 0.8, 0.0],
+        }
+
+        force, source = InteractionsControl._release_braking_force(
+            estimate, sensor_fields, sensor_enabled=True
         )
-        direction = [0.0, 1.0, 0.0]
 
-        self.assertFalse(detector.update(0.0, 0.00, direction).active)
-        contact = detector.update(0.03, 0.02, direction)
-        self.assertTrue(contact.started)
-        self.assertTrue(contact.active)
-        detector.update(0.08, 0.04, direction)
+        np.testing.assert_allclose(force, [0.0, 0.8, 0.0])
+        self.assertEqual(source, 'potentiometer_force_sensor')
 
-        release = detector.update(0.06, 0.06, direction)
-        self.assertTrue(release.release_candidate_started)
-        self.assertTrue(release.active)
-        self.assertFalse(detector.update(0.04, 0.08, direction).ended)
-        ended = detector.update(0.02, 0.10, direction)
-        self.assertTrue(ended.ended)
-        self.assertFalse(ended.active)
+    def test_stale_sensor_falls_back_to_observer_for_release_braking(self):
+        estimate = SimpleNamespace(external_force=[0.3, 0.4, 0.0])
+        sensor_fields = {
+            'force_sensor_fresh': False,
+            'force_sensor_external_force_N': [0.0, 0.8, 0.0],
+        }
 
-        # A new rise is ignored until braking completes and the controller
-        # explicitly rearms the detector.
-        self.assertFalse(detector.update(0.08, 0.12, direction).started)
-        detector.reset(0.12)
-        self.assertFalse(detector.update(0.02, 0.14, direction).started)
-        self.assertTrue(detector.update(0.05, 0.17, direction).started)
-
-    def test_force_trend_cancels_release_when_force_rises_again(self):
-        detector = SpringForceTrendDetector(
-            onset_time_s=0.02,
-            release_time_s=0.08,
+        force, source = InteractionsControl._release_braking_force(
+            estimate, sensor_fields, sensor_enabled=True
         )
-        direction = [0.0, 1.0, 0.0]
-        detector.update(0.0, 0.00, direction)
-        detector.update(0.04, 0.02, direction)
-        detector.update(0.08, 0.04, direction)
-        candidate = detector.update(0.06, 0.06, direction)
-        self.assertTrue(candidate.release_candidate_started)
 
-        cancelled = detector.update(0.075, 0.08, direction)
-        self.assertTrue(cancelled.release_candidate_cancelled)
-        self.assertTrue(cancelled.active)
-
+        np.testing.assert_allclose(force, estimate.external_force)
+        self.assertEqual(source, 'wrench_observer')
 
 if __name__ == "__main__":
     unittest.main()

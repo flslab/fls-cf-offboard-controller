@@ -11,8 +11,6 @@ import zmq
 from Interaction.command_wrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
-from Interaction.potentiometer_force_sensor import SpringForceTrendDetector
-from Interaction.wrench_contact_detector import WrenchContactState
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH,
@@ -1097,20 +1095,6 @@ class InteractionsControl:
             ),
         }
 
-    def _force_sensor_axis_world(self, estimate):
-        """Return the signed unit sensor axis in the world frame."""
-        axis_body = np.zeros(3)
-        axis_body[self.sense_axis_index] = self.sense_sign
-        roll, pitch, yaw = np.asarray(estimate.orientation_rpy, dtype=float)
-        cr, sr = np.cos(roll), np.sin(roll)
-        cp, sp = np.cos(pitch), np.sin(pitch)
-        cy, sy = np.cos(yaw), np.sin(yaw)
-        return np.array([
-            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-            [-sp, cp * sr, cp * cr],
-        ]) @ axis_body
-
     def _force_sensor_config(self):
         sensor = getattr(self, 'force_sensor', None)
         return {
@@ -1118,7 +1102,9 @@ class InteractionsControl:
             'axis': getattr(self, 'sense_axis', 'x'),
             'sign': getattr(self, 'sense_sign', 1),
             'max_sample_age_s': getattr(self, 'sense_max_age_s', 0.25),
-            'control_source': (
+            'control_source': 'wrench_observer',
+            'contact_detection_source': 'wrench_observer',
+            'release_braking_force_source': (
                 'potentiometer_force_sensor'
                 if sensor is not None else 'wrench_observer'
             ),
@@ -1126,6 +1112,23 @@ class InteractionsControl:
                 sensor.spring_constant_n_per_mm if sensor is not None else None
             ),
         }
+
+    @staticmethod
+    def _release_braking_force(estimate, sensor_fields, sensor_enabled):
+        """Select relative sensor force only for the release-braking phase."""
+        observer_force = np.asarray(estimate.external_force, dtype=float)
+        if (
+            sensor_enabled
+            and bool(sensor_fields.get('force_sensor_fresh'))
+        ):
+            return (
+                np.asarray(
+                    sensor_fields['force_sensor_external_force_N'],
+                    dtype=float,
+                ),
+                'potentiometer_force_sensor',
+            )
+        return observer_force.copy(), 'wrench_observer'
 
     def run(self) -> None:
 
@@ -1282,16 +1285,6 @@ class InteractionsControl:
                 raise ValueError(
                     '--calibrate requires detection_method: momentum_impulse'
                 )
-            if (
-                getattr(self, 'force_sensor', None) is not None
-                and not calibration_mode
-                and detection_method != 'momentum_impulse'
-            ):
-                raise ValueError(
-                    '--sense force control requires detection_method: '
-                    'momentum_impulse with state_source: onboard'
-                )
-
             if detection_method in ('momentum_impulse', 'mocap_wrench'):
                 if wrench_config is None:
                     raise ValueError(
@@ -2110,13 +2103,9 @@ class InteractionsControl:
         """
         pipeline = OnboardMomentumWrenchPipeline(config)
         config = pipeline.config
-        sensor_controls_translation = bool(
+        sensor_supports_release_braking = bool(
             getattr(self, 'force_sensor', None) is not None
             and not calibration_mode
-        )
-        sensor_detector = (
-            SpringForceTrendDetector()
-            if sensor_controls_translation else None
         )
         safety = config['safety']
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
@@ -2276,11 +2265,12 @@ class InteractionsControl:
                 'translation_response_axes': ['x', 'y', 'z'],
                 'force_sensor_comparison': {
                     **self._force_sensor_config(),
-                    'control_source': (
-                        'potentiometer_force_sensor'
-                        if sensor_controls_translation else 'wrench_observer'
+                    'control_source': 'wrench_observer',
+                    'contact_detection_source': 'wrench_observer',
+                    'controls_translation': False,
+                    'used_during_release_braking': (
+                        sensor_supports_release_braking
                     ),
-                    'controls_translation': sensor_controls_translation,
                     'observer_recorded_for_comparison': (
                         getattr(self, 'force_sensor', None) is not None
                     ),
@@ -2462,41 +2452,14 @@ class InteractionsControl:
             sensor_fields = self._force_sensor_log_fields(output.estimate, now)
             control_force_world = output.estimate.external_force.copy()
             force_control_source = 'wrench_observer'
-            if sensor_controls_translation:
-                sensor_fresh = bool(sensor_fields.get('force_sensor_fresh'))
-                if sensor_fresh:
-                    control_force_world = np.asarray(
-                        sensor_fields['force_sensor_external_force_N'],
-                        dtype=float,
-                    )
-                    sensor_force_n = float(
-                        sensor_fields['force_sensor_compression_force_N']
-                    )
-                    sensor_detection_time = float(
-                        sensor_fields['force_sensor_sample_time']
-                    )
-                else:
-                    # A stale UART sample must not leave the controller in a
-                    # permanent contact state. Treat it as zero force so an
-                    # active interaction transitions into bounded braking.
-                    control_force_world = np.zeros(3)
-                    sensor_force_n = 0.0
-                    sensor_detection_time = now
-                force_control_source = 'potentiometer_force_sensor'
-                sensor_decision = sensor_detector.update(
-                    sensor_force_n,
-                    sensor_detection_time,
-                    self._force_sensor_axis_world(output.estimate),
+            braking_force_world, braking_force_source = (
+                self._release_braking_force(
+                    output.estimate,
+                    sensor_fields,
+                    sensor_supports_release_braking,
                 )
-                if output.contacts is not None:
-                    contacts = WrenchContactState(
-                        translation=sensor_decision,
-                        yaw=output.contacts.yaw,
-                    )
-                else:
-                    contacts = None
-            else:
-                contacts = output.contacts
+            )
+            contacts = output.contacts
 
             if output.calibrated and not calibration_announced:
                 calibration_announced = True
@@ -2620,9 +2583,7 @@ class InteractionsControl:
                                             decision.release_projection_normalized
                                         ),
                                         'confirmation_dwell_s': (
-                                            sensor_detector.release_time_s
-                                            if sensor_controls_translation
-                                            else pipeline.detector.translation.release_time_s
+                                            pipeline.detector.translation.release_time_s
                                         ),
                                         'state_source': 'crazyflie_state_estimate',
                                     },
@@ -2635,7 +2596,7 @@ class InteractionsControl:
                                     state_time,
                                     decision.release_direction,
                                     output.estimate.orientation_rpy,
-                                    current_force=control_force_world,
+                                    current_force=braking_force_world,
                                     current_mass_kg=force_current_mass,
                                 )
                             ):
@@ -2679,6 +2640,9 @@ class InteractionsControl:
                                         ),
                                         'release_force_N': (
                                             translation_control.release_force_N.tolist()
+                                        ),
+                                        'release_braking_force_source': (
+                                            braking_force_source
                                         ),
                                         'release_momentum_kg_m_s': (
                                             translation_control.release_momentum_kg_m_s.tolist()
@@ -2743,10 +2707,7 @@ class InteractionsControl:
                     translation_control.attitude_mode
                     or translation_control.position_interaction_mode
                 )
-                and (
-                    sensor_controls_translation
-                    or not output.estimate.measurement_rejected
-                )
+                and not output.estimate.measurement_rejected
             ):
                 (
                     force_virtual_resistance_xy,
@@ -2823,7 +2784,7 @@ class InteractionsControl:
                     output.estimate.velocity,
                     state_time,
                     output.estimate.orientation_rpy,
-                    current_force=control_force_world,
+                    current_force=braking_force_world,
                     current_mass_kg=force_current_mass,
                     **braking_kwargs):
                 last_command_position = translation_control.hold_position.copy()
@@ -2873,10 +2834,7 @@ class InteractionsControl:
                 (contacts is None or not contacts.translation.active)
                 and translation_control.consume_detector_rearm(state_time)
             ):
-                if sensor_controls_translation:
-                    sensor_detector.reset(state_time)
-                else:
-                    pipeline.detector.translation.reset(state_time)
+                pipeline.detector.translation.reset(state_time)
                 self._log_event(
                     'Translation Contact Detector Rearmed',
                     {
@@ -2998,9 +2956,9 @@ class InteractionsControl:
                 **sensor_fields,
                 'force_control_source': force_control_source,
                 'control_external_force_N': control_force_world.tolist(),
-                'force_sensor_rate_N_s': (
-                    sensor_detector.last_rate_n_s
-                    if sensor_controls_translation else None
+                'release_braking_force_source': braking_force_source,
+                'release_braking_external_force_N': (
+                    braking_force_world.tolist()
                 ),
                 'external_torque_Nm': estimate.external_torque.tolist(),
                 'force_covariance': estimate.force_covariance.tolist(),

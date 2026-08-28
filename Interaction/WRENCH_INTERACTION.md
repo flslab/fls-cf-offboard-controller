@@ -110,7 +110,7 @@ reference, actual command, frame age, and motor-data age. Stale mocap or stale
 motor telemetry terminates the interaction loop and sends the normal setpoint
 stop notification; there is no attitude-recovery escalation.
 
-## Potentiometer force control and comparison
+## Potentiometer relative force and release braking
 
 Use `--sense --log` (or add `--sense` to an `--interaction --log` run) to
 record the spring-backed potentiometer as an independent force reference. The Arduino must emit
@@ -129,20 +129,23 @@ world frame using the observer attitude before logging/comparison.
 `--sense-spring-constant`, and `--sense-max-age` override the hardware and
 freshness defaults.
 
-In a normal onboard momentum-interaction run, the potentiometer controls the
-translation interaction while the wrench observer continues running and is
-recorded for comparison. Rising spring force starts contact. A sustained force
-drop starts bounded attitude braking immediately. The release snapshot records
-the measured force, vehicle momentum (`mass * velocity`), and position; the
-controller records and holds the actual stopping position only after velocity
-along the release direction reaches zero/reverses (or the braking timeout is
-reached). Yaw contact continues to use the wrench observer.
+Contact onset, release candidate, and contact end continue to come from the
+original wrench/momentum observer. During normal contact rendering, the
+observer force also remains the control input. The potentiometer supplies only
+the signed relative force along its body-frame axis.
+
+Once the observer starts a release candidate, a fresh potentiometer sample is
+used as the force term in the bounded braking calculation. The release snapshot
+combines that relative force with vehicle momentum (`mass * velocity`) and
+position. The controller records and holds the actual stopping position only
+after velocity along the observer-locked release direction reaches zero or
+reverses (or the braking timeout is reached). If the potentiometer sample is
+stale, release braking falls back to the observer force.
 
 Each `wrench_observer` record includes both `external_force_N` (the observer)
-and `control_external_force_N` (the potentiometer-derived force), plus the
-calibrated distance, force rate, sample freshness, release force/momentum/
-position, braking feed-forward acceleration, stopping position, and
-observer-minus-sensor error. A stale sensor sample is treated as zero force so
-an active contact fails safely into the braking/hold sequence. During the
-dedicated calibration run, the sensor remains comparison-only so it cannot
-alter the excitation trajectory.
+and `control_external_force_N` (the observer control force), plus
+`release_braking_external_force_N`, its source, calibrated distance, sample
+freshness, release force/momentum/position, braking feed-forward acceleration,
+stopping position, and observer-minus-sensor error. During the dedicated
+calibration run, the sensor remains comparison-only so it cannot alter the
+excitation trajectory.
