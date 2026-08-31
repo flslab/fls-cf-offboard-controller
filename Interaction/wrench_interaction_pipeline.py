@@ -33,6 +33,14 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
     "calibration_max_speed_m_s": 0.06,
     "calibration_max_angular_rate_rad_s": 0.25,
     "minimum_bias_samples": 30,
+    # Keep the first contact detector disarmed until the vehicle has actually
+    # settled after the initial go-to.  This prevents residual approach
+    # velocity/model transients from being interpreted as a user touch.
+    "initial_contact_arming": {
+        "enabled": True,
+        "max_xy_speed_m_s": 0.03,
+        "stationary_dwell_s": 0.50,
+    },
     "calibration_excitation": {
         "enabled": False,
         "start_delay_s": 1.0,

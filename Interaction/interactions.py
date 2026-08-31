@@ -122,6 +122,100 @@ def release_coast_initial_velocity(
     return coast_velocity
 
 
+def resolve_release_mode(
+        configured_mode,
+        force_sensor_available,
+        calibration_mode=False,
+):
+    """Resolve release behavior without coupling model calibration to sensing."""
+    configured_mode = str(configured_mode)
+    if configured_mode not in ('observer_brake', 'potentiometer_coast'):
+        raise ValueError(
+            'virtual_object.release_behavior.mode must be '
+            'observer_brake or potentiometer_coast'
+        )
+    # --calibrate identifies only the onboard wrench/motor model.  It runs in
+    # shadow mode and must not require or consume the interaction force sensor.
+    if calibration_mode:
+        return 'observer_brake'
+    if configured_mode == 'potentiometer_coast' and not force_sensor_available:
+        raise ValueError(
+            'potentiometer_coast release requires --sense and a fresh '
+            'Arduino force-sensor reader'
+        )
+    return configured_mode
+
+
+class InitialContactArmingGate:
+    """Arm initial contact detection after continuous low XY speed."""
+
+    def __init__(
+            self,
+            max_xy_speed_m_s=0.03,
+            stationary_dwell_s=0.5,
+            enabled=True,
+    ):
+        self.enabled = bool(enabled)
+        self.max_xy_speed_m_s = float(max_xy_speed_m_s)
+        self.stationary_dwell_s = float(stationary_dwell_s)
+        if (
+            not np.isfinite(self.max_xy_speed_m_s)
+            or self.max_xy_speed_m_s <= 0.0
+        ):
+            raise ValueError(
+                'initial contact arming max_xy_speed_m_s must be positive'
+            )
+        if (
+            not np.isfinite(self.stationary_dwell_s)
+            or self.stationary_dwell_s < 0.0
+        ):
+            raise ValueError(
+                'initial contact arming stationary_dwell_s must be non-negative'
+            )
+        self.armed = not self.enabled
+        self.stationary_since = None
+        self.stationary_elapsed_s = 0.0
+        self.xy_speed_m_s = None
+        self._last_timestamp = None
+
+    def update(self, velocity, timestamp):
+        """Return true only on the sample that completes the initial dwell."""
+        velocity = np.asarray(velocity, dtype=float)
+        timestamp = float(timestamp)
+        if (
+            velocity.shape != (3,)
+            or not np.all(np.isfinite(velocity))
+            or not np.isfinite(timestamp)
+        ):
+            raise ValueError(
+                'initial contact arming requires finite XYZ velocity and time'
+            )
+        self.xy_speed_m_s = float(np.linalg.norm(velocity[:2]))
+        if self.armed:
+            self._last_timestamp = timestamp
+            return False
+        if (
+            self._last_timestamp is not None
+            and timestamp < self._last_timestamp
+        ):
+            self.stationary_since = None
+            self.stationary_elapsed_s = 0.0
+        self._last_timestamp = timestamp
+        if self.xy_speed_m_s >= self.max_xy_speed_m_s:
+            self.stationary_since = None
+            self.stationary_elapsed_s = 0.0
+            return False
+        if self.stationary_since is None:
+            self.stationary_since = timestamp
+        self.stationary_elapsed_s = max(
+            0.0, timestamp - self.stationary_since
+        )
+        if self.stationary_elapsed_s < self.stationary_dwell_s:
+            return False
+        self.armed = True
+        return True
+
+
 def inertia_command_mode(mass_class, requested_mode=None):
     """Validate and normalize the preferred slow-response rendering mode."""
     aliases = {
@@ -2281,16 +2375,12 @@ class InteractionsControl:
             release_force_memory_s = float(
                 release_config.get('force_memory_s', 0.02)
             )
-        if release_mode not in ('observer_brake', 'potentiometer_coast'):
-            raise ValueError(
-                'virtual_object.release_behavior.mode must be '
-                'observer_brake or potentiometer_coast'
-            )
-        if release_mode == 'potentiometer_coast' and not force_sensor_available:
-            raise ValueError(
-                'potentiometer_coast release requires --sense and a fresh '
-                'Arduino force-sensor reader'
-            )
+        configured_release_mode = release_mode
+        release_mode = resolve_release_mode(
+            configured_release_mode,
+            force_sensor_available,
+            calibration_mode=calibration_mode,
+        )
         if (
             not np.isfinite(release_force_memory_s)
             or release_force_memory_s < 0.0
@@ -2344,6 +2434,15 @@ class InteractionsControl:
         max_motor_state_skew_s = float(safety.get(
             'max_motor_state_skew_s', safety['max_motor_pose_skew_s']
         ))
+        initial_contact_arming_config = dict(
+            config.get('initial_contact_arming', {})
+        )
+        initial_contact_gate = InitialContactArmingGate(
+            **initial_contact_arming_config
+        )
+        translation_detector_requested = bool(
+            pipeline.detector.translation.enabled
+        )
 
         if config.get('shadow_mode', True):
             logger.warning(
@@ -2391,6 +2490,10 @@ class InteractionsControl:
                         },
                         'release_behavior': {
                             'mode': release_mode,
+                            'configured_mode': configured_release_mode,
+                            'ignored_during_calibration': bool(
+                                calibration_mode
+                            ),
                             'force_drop_n': release_force_drop_n,
                             'decrease_rate_n_s': (
                                 release_decrease_rate_n_s
@@ -2418,6 +2521,15 @@ class InteractionsControl:
                 'nominal_position': nominal_position.tolist(),
                 'nominal_yaw_deg': nominal_yaw_deg,
                 'translation_rearm_delay_s': float(rearm_delay_s),
+                'initial_contact_arming': {
+                    'enabled': initial_contact_gate.enabled,
+                    'max_xy_speed_m_s': (
+                        initial_contact_gate.max_xy_speed_m_s
+                    ),
+                    'stationary_dwell_s': (
+                        initial_contact_gate.stationary_dwell_s
+                    ),
+                },
                 'config': config,
             },
             name='Onboard Wrench Interaction Config',
@@ -2577,6 +2689,15 @@ class InteractionsControl:
                     'required for onboard wrench estimation'
                 )
 
+            initial_contact_just_armed = False
+            if calibration_announced:
+                initial_contact_just_armed = initial_contact_gate.update(
+                    state['velocity'], state_time
+                )
+            pipeline.detector.translation.enabled = bool(
+                translation_detector_requested and initial_contact_gate.armed
+            )
+
             output = pipeline.update(
                 position=position,
                 velocity=state['velocity'],
@@ -2642,8 +2763,46 @@ class InteractionsControl:
                         'torque_bias_Nm': pipeline.torque_bias.tolist(),
                         'state_source': 'crazyflie_state_estimate',
                     })
-                self._log_event('Waiting For User Interaction')
-                logger.info('Interaction detection is active.')
+                self._log_event('Waiting For User Interaction', {
+                    'contact_detector_armed': initial_contact_gate.armed,
+                    'max_xy_speed_m_s': (
+                        initial_contact_gate.max_xy_speed_m_s
+                    ),
+                    'stationary_dwell_s': (
+                        initial_contact_gate.stationary_dwell_s
+                    ),
+                    'state_source': 'crazyflie_state_estimate',
+                })
+                if initial_contact_gate.armed:
+                    logger.info('Interaction detection is active.')
+                else:
+                    logger.info(
+                        'Waiting for XY speed < %.3f m/s for %.2f s '
+                        'before enabling interaction detection.',
+                        initial_contact_gate.max_xy_speed_m_s,
+                        initial_contact_gate.stationary_dwell_s,
+                    )
+
+            if initial_contact_just_armed:
+                self._log_event('Initial Contact Detector Armed', {
+                    'xy_speed_m_s': initial_contact_gate.xy_speed_m_s,
+                    'max_xy_speed_m_s': (
+                        initial_contact_gate.max_xy_speed_m_s
+                    ),
+                    'stationary_elapsed_s': (
+                        initial_contact_gate.stationary_elapsed_s
+                    ),
+                    'stationary_dwell_s': (
+                        initial_contact_gate.stationary_dwell_s
+                    ),
+                    'state_source': 'crazyflie_state_estimate',
+                })
+                logger.info(
+                    'Initial contact detector armed after %.2f s at '
+                    'XY speed %.3f m/s.',
+                    initial_contact_gate.stationary_elapsed_s,
+                    initial_contact_gate.xy_speed_m_s,
+                )
 
             if contacts is not None:
                 transitions = (
@@ -3239,6 +3398,15 @@ class InteractionsControl:
                 ),
                 'force_rendering_enabled': force_rendering_enabled,
                 'release_behavior_mode': release_mode,
+                'initial_contact_detector_armed': (
+                    initial_contact_gate.armed
+                ),
+                'initial_contact_xy_speed_m_s': (
+                    initial_contact_gate.xy_speed_m_s
+                ),
+                'initial_contact_stationary_elapsed_s': (
+                    initial_contact_gate.stationary_elapsed_s
+                ),
                 'potentiometer_release_detected': (
                     None
                     if potentiometer_release_decision is None

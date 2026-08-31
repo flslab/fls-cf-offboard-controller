@@ -5,6 +5,7 @@ import numpy as np
 
 from Interaction.interactions import (
     GuidedTouchProtocol,
+    InitialContactArmingGate,
     InteractionsControl,
     TranslationControlHandoff,
     VirtualObjectPlanarMotion,
@@ -14,11 +15,55 @@ from Interaction.interactions import (
     inertia_position_target,
     kinetic_energy_velocity,
     release_coast_initial_velocity,
+    resolve_release_mode,
     select_inertia_render_mode,
     virtual_resistance_force,
     velocity_inertia_mass_class,
     world_to_body_xy,
 )
+
+
+class InitialContactArmingGateTests(unittest.TestCase):
+    def test_requires_continuous_low_xy_speed_for_full_dwell(self):
+        gate = InitialContactArmingGate(
+            max_xy_speed_m_s=0.03,
+            stationary_dwell_s=0.5,
+        )
+
+        self.assertFalse(gate.update([0.02, 0.0, 0.0], 1.0))
+        self.assertFalse(gate.update([0.02, 0.0, 0.0], 1.3))
+        self.assertFalse(gate.update([0.03, 0.0, 0.0], 1.4))
+        self.assertEqual(gate.stationary_elapsed_s, 0.0)
+        self.assertFalse(gate.update([0.0, 0.02, 0.0], 2.0))
+        self.assertFalse(gate.update([0.0, 0.02, 0.0], 2.49))
+        self.assertTrue(gate.update([0.0, 0.02, 0.0], 2.5))
+        self.assertTrue(gate.armed)
+
+    def test_disabled_gate_is_immediately_armed(self):
+        gate = InitialContactArmingGate(enabled=False)
+
+        self.assertTrue(gate.armed)
+        self.assertFalse(gate.update([1.0, 0.0, 0.0], 0.0))
+
+
+class ReleaseModeTests(unittest.TestCase):
+    def test_calibration_ignores_potentiometer_release_dependency(self):
+        self.assertEqual(
+            resolve_release_mode(
+                'potentiometer_coast',
+                force_sensor_available=False,
+                calibration_mode=True,
+            ),
+            'observer_brake',
+        )
+
+    def test_normal_potentiometer_release_still_requires_sensor(self):
+        with self.assertRaisesRegex(ValueError, 'requires --sense'):
+            resolve_release_mode(
+                'potentiometer_coast',
+                force_sensor_available=False,
+                calibration_mode=False,
+            )
 
 
 class FakeCommander:
@@ -976,6 +1021,12 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'crazyflie_state_estimate',
         )
         self.assertTrue(observer_rows[-1]['shadow_mode'])
+        self.assertFalse(
+            observer_rows[-1]['initial_contact_detector_armed']
+        )
+        self.assertEqual(
+            observer_rows[-1]['initial_contact_stationary_elapsed_s'], 0.0
+        )
         config_rows = [
             entry for group, name, entry in logs.records
             if group == 'configs'
@@ -988,6 +1039,11 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             config_rows[-1]['virtual_object']['release_behavior']['mode'],
             'observer_brake',
         )
+        self.assertEqual(config_rows[-1]['initial_contact_arming'], {
+            'enabled': True,
+            'max_xy_speed_m_s': 0.03,
+            'stationary_dwell_s': 0.5,
+        })
 
 
 if __name__ == '__main__':
