@@ -11,6 +11,7 @@ import zmq
 from Interaction.command_wrapper import CommandWrapper
 from Interaction.flight_behaviors import load_commands
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
+from Interaction.potentiometer_force_sensor import PotentiometerReleaseDetector
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH,
@@ -83,6 +84,42 @@ def inertia_position_target(interaction_origin, measured_position, energy_gain):
     return interaction_origin + energy_gain * (
         measured_position - interaction_origin
     )
+
+
+def release_coast_initial_velocity(
+        measured_velocity,
+        last_force,
+        mass,
+        force_memory_s=0.02,
+        max_velocity_m_s=None,
+):
+    """Initialize coasting from measured speed plus the last force impulse."""
+    velocity = np.asarray(measured_velocity, dtype=float)
+    force = np.asarray(last_force, dtype=float)
+    mass = float(mass)
+    force_memory_s = float(force_memory_s)
+    if (
+        velocity.shape != (3,)
+        or force.shape != (3,)
+        or not np.all(np.isfinite(velocity))
+        or not np.all(np.isfinite(force))
+        or not np.isfinite(mass)
+        or mass <= 0.0
+        or not np.isfinite(force_memory_s)
+        or force_memory_s < 0.0
+    ):
+        raise ValueError('release coast inputs must be finite with positive mass')
+    coast_velocity = velocity.copy()
+    coast_velocity[:2] += force[:2] / mass * force_memory_s
+    coast_velocity[2] = 0.0
+    if max_velocity_m_s is not None:
+        max_speed = float(max_velocity_m_s)
+        if not np.isfinite(max_speed) or max_speed <= 0.0:
+            raise ValueError('release coast max velocity must be positive')
+        speed = float(np.linalg.norm(coast_velocity[:2]))
+        if speed > max_speed:
+            coast_velocity[:2] *= max_speed / speed
+    return coast_velocity
 
 
 def inertia_command_mode(mass_class, requested_mode=None):
@@ -620,7 +657,7 @@ class TranslationControlHandoff:
         logger.info({
             self.CONTACT_POSITION: 'HANDLING INTERACTION',
             self.CONTACT_ZDISTANCE: 'HANDLING INTERACTION',
-            self.POSITION_COAST: 'BRAKING',
+            self.POSITION_COAST: 'COASTING',
             self.ATTITUDE_BRAKING: 'BRAKING',
             self.POSITION_HOLD: 'HOVER',
         }[new_mode])
@@ -718,13 +755,16 @@ class TranslationControlHandoff:
             current_orientation_rpy=None,
             current_force=None,
             current_mass_kg=None,
+            coast=False,
     ):
         if self.shadow_mode or self.mode not in (
                 self.CONTACT_POSITION, self.CONTACT_ZDISTANCE):
             return False
+        coast = bool(coast)
         released_from_position = self.mode == self.CONTACT_POSITION
         self._release_candidate_mode = (
-            'position' if released_from_position else 'orientation'
+            None if coast
+            else ('position' if released_from_position else 'orientation')
         )
         position = np.asarray(current_position, dtype=float)
         if position.shape != (3,) or not np.all(np.isfinite(position)):
@@ -791,18 +831,25 @@ class TranslationControlHandoff:
             velocity[:2] @ self.brake_direction[:2]
         )
         self.hover_z = float(position[2])
-        # Both render modes use the measured vehicle velocity for release
-        # braking. Virtual-object coast velocity is not the physical vehicle
-        # momentum and can fall to zero immediately under high friction.
-        self._set_velocity_brake_attitude(
-            self.brake_projected_speed_m_s,
-            orientation_rpy[2],
-            projected_force_n=float(force[:2] @ self.brake_direction[:2]),
-            current_mass_kg=mass,
-        )
+        if coast:
+            self.set_contact_attitude(0.0, 0.0, 0.0)
+            self.brake_force_feedforward_acceleration_m_s2 = 0.0
+        else:
+            # Legacy observer release uses measured velocity and force for
+            # bounded counter-tilt braking.
+            self._set_velocity_brake_attitude(
+                self.brake_projected_speed_m_s,
+                orientation_rpy[2],
+                projected_force_n=float(
+                    force[:2] @ self.brake_direction[:2]
+                ),
+                current_mass_kg=mass,
+            )
         self._brake_started_at = timestamp
         self.brake_completion_reason = None
-        self._transition_mode(self.ATTITUDE_BRAKING)
+        self._transition_mode(
+            self.POSITION_COAST if coast else self.ATTITUDE_BRAKING
+        )
         return True
 
     def cancel_release_candidate(self, current_position) -> bool:
@@ -1112,6 +1159,20 @@ class InteractionsControl:
                 sensor.spring_constant_n_per_mm if sensor is not None else None
             ),
         }
+
+    def _force_sensor_axis_world(self, estimate):
+        """Return the signed unit sensor axis rotated into the world frame."""
+        axis_body = np.zeros(3)
+        axis_body[self.sense_axis_index] = self.sense_sign
+        roll, pitch, yaw = np.asarray(estimate.orientation_rpy, dtype=float)
+        cr, sr = np.cos(roll), np.sin(roll)
+        cp, sp = np.cos(pitch), np.sin(pitch)
+        cy, sy = np.cos(yaw), np.sin(yaw)
+        return np.array([
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ]) @ axis_body
 
     @staticmethod
     def _release_braking_force(estimate, sensor_fields, sensor_enabled):
@@ -2103,7 +2164,7 @@ class InteractionsControl:
         """
         pipeline = OnboardMomentumWrenchPipeline(config)
         config = pipeline.config
-        sensor_supports_release_braking = bool(
+        force_sensor_available = bool(
             getattr(self, 'force_sensor', None) is not None
             and not calibration_mode
         )
@@ -2129,6 +2190,15 @@ class InteractionsControl:
         force_friction_min_speed_m_s = 0.02
         render_acceleration_tolerance_m_s2 = 0.02
         virtual_max_velocity_m_s = 0.60
+        force_rendering_enabled = False
+        default_release_mode = (
+            'potentiometer_coast'
+            if force_sensor_available else 'observer_brake'
+        )
+        release_mode = default_release_mode
+        release_force_drop_n = 0.01
+        release_decrease_rate_n_s = 0.05
+        release_force_memory_s = 0.02
         if virtual_object_config:
             force_current_mass = float(virtual_object_config.get(
                 'current_mass', config['mass']
@@ -2186,6 +2256,53 @@ class InteractionsControl:
                     'max_velocity_command_m_s', 0.60
                 )
             )
+            force_rendering_config = virtual_object_config.get(
+                'force_rendering', {}
+            )
+            if not isinstance(force_rendering_config, dict):
+                raise ValueError('virtual_object.force_rendering must be a mapping')
+            force_rendering_enabled = bool(
+                force_rendering_config.get('enabled', False)
+            )
+            release_config = virtual_object_config.get(
+                'release_behavior', {}
+            )
+            if not isinstance(release_config, dict):
+                raise ValueError('virtual_object.release_behavior must be a mapping')
+            release_mode = str(
+                release_config.get('mode', default_release_mode)
+            )
+            release_force_drop_n = float(
+                release_config.get('force_drop_n', 0.01)
+            )
+            release_decrease_rate_n_s = float(
+                release_config.get('decrease_rate_n_s', 0.05)
+            )
+            release_force_memory_s = float(
+                release_config.get('force_memory_s', 0.02)
+            )
+        if release_mode not in ('observer_brake', 'potentiometer_coast'):
+            raise ValueError(
+                'virtual_object.release_behavior.mode must be '
+                'observer_brake or potentiometer_coast'
+            )
+        if release_mode == 'potentiometer_coast' and not force_sensor_available:
+            raise ValueError(
+                'potentiometer_coast release requires --sense and a fresh '
+                'Arduino force-sensor reader'
+            )
+        if (
+            not np.isfinite(release_force_memory_s)
+            or release_force_memory_s < 0.0
+        ):
+            raise ValueError('release force_memory_s must be finite and non-negative')
+        potentiometer_release_detector = (
+            PotentiometerReleaseDetector(
+                force_drop_n=release_force_drop_n,
+                decrease_rate_n_s=release_decrease_rate_n_s,
+            )
+            if release_mode == 'potentiometer_coast' else None
+        )
         resistance_parameters = np.asarray([
             force_kinetic_friction_coefficient,
             force_static_friction_coefficient,
@@ -2206,8 +2323,13 @@ class InteractionsControl:
             )
         if virtual_max_velocity_m_s <= 0.0:
             raise ValueError('virtual max velocity must be positive')
-        if preferred_render_mode == 'orientation' and not np.isclose(
-                force_current_mass, float(config['mass'])):
+        if (
+            force_rendering_enabled
+            and preferred_render_mode == 'orientation'
+            and not np.isclose(
+                force_current_mass, float(config['mass'])
+            )
+        ):
             raise ValueError(
                 'virtual_object.current_mass must match wrench_interaction.mass '
                 'for force-based orientation inertia'
@@ -2236,7 +2358,10 @@ class InteractionsControl:
                 'state_source': 'crazyflie_state_estimate',
                 'orientation_feedback_source': (
                     'estimated_external_force'
-                    if preferred_render_mode == 'orientation' else 'none'
+                    if (
+                        force_rendering_enabled
+                        and preferred_render_mode == 'orientation'
+                    ) else 'none'
                 ),
                 'virtual_object': {
                         'current_mass': force_current_mass,
@@ -2261,6 +2386,17 @@ class InteractionsControl:
                         'friction_min_speed_m_s': (
                             force_friction_min_speed_m_s
                         ),
+                        'force_rendering': {
+                            'enabled': force_rendering_enabled,
+                        },
+                        'release_behavior': {
+                            'mode': release_mode,
+                            'force_drop_n': release_force_drop_n,
+                            'decrease_rate_n_s': (
+                                release_decrease_rate_n_s
+                            ),
+                            'force_memory_s': release_force_memory_s,
+                        },
                     },
                 'translation_response_axes': ['x', 'y', 'z'],
                 'force_sensor_comparison': {
@@ -2268,8 +2404,8 @@ class InteractionsControl:
                     'control_source': 'wrench_observer',
                     'contact_detection_source': 'wrench_observer',
                     'controls_translation': False,
-                    'used_during_release_braking': (
-                        sensor_supports_release_braking
+                    'used_for_release_detection': (
+                        release_mode == 'potentiometer_coast'
                     ),
                     'observer_recorded_for_comparison': (
                         getattr(self, 'force_sensor', None) is not None
@@ -2359,6 +2495,9 @@ class InteractionsControl:
             air_density=force_air_density,
             friction_min_speed_m_s=force_friction_min_speed_m_s,
         )
+        potentiometer_release_decision = None
+        potentiometer_release_processed = False
+        coast_initial_velocity = None
         selected_render_mode = None
         render_relation = None
         render_selection = None
@@ -2456,10 +2595,42 @@ class InteractionsControl:
                 self._release_braking_force(
                     output.estimate,
                     sensor_fields,
-                    sensor_supports_release_braking,
+                    force_sensor_available
+                    and release_mode == 'observer_brake',
                 )
             )
+            if (
+                release_mode == 'potentiometer_coast'
+                and potentiometer_release_processed
+                and translation_control.release_position_m is not None
+            ):
+                braking_force_world = translation_control.release_force_N.copy()
+                braking_force_source = 'potentiometer_last_force'
             contacts = output.contacts
+            if (
+                potentiometer_release_detector is not None
+                and contacts is not None
+                and bool(sensor_fields.get('force_sensor_fresh'))
+            ):
+                sensor_force_n = float(
+                    sensor_fields['force_sensor_compression_force_N']
+                )
+                sensor_sample_time = float(
+                    sensor_fields['force_sensor_sample_time']
+                )
+                if (
+                    not potentiometer_release_detector.armed
+                    and contacts.translation.active
+                ):
+                    potentiometer_release_detector.arm(
+                        sensor_force_n, sensor_sample_time
+                    )
+                elif potentiometer_release_detector.armed:
+                    potentiometer_release_decision = (
+                        potentiometer_release_detector.update(
+                            sensor_force_n, sensor_sample_time
+                        )
+                    )
 
             if output.calibrated and not calibration_announced:
                 calibration_announced = True
@@ -2520,28 +2691,53 @@ class InteractionsControl:
                             )
                         if event_name == 'Translation Contact':
                             if decision.started:
-                                selection_resistance, _, _ = (
-                                    virtual_resistance_force(
-                                        output.estimate.velocity[:2],
-                                        force_virtual_mass,
-                                        force_kinetic_friction_coefficient,
-                                        force_drag_coefficient,
-                                        force_frontal_area,
-                                        force_air_density,
-                                        force_friction_min_speed_m_s,
-                                        force_static_friction_coefficient,
-                                        control_force_world[:2],
+                                potentiometer_release_processed = False
+                                potentiometer_release_decision = None
+                                coast_initial_velocity = None
+                                if (
+                                    potentiometer_release_detector is not None
+                                    and bool(sensor_fields.get(
+                                        'force_sensor_fresh'
+                                    ))
+                                ):
+                                    potentiometer_release_detector.arm(
+                                        float(sensor_fields[
+                                            'force_sensor_compression_force_N'
+                                        ]),
+                                        float(sensor_fields[
+                                            'force_sensor_sample_time'
+                                        ]),
                                     )
-                                )
-                                render_selection = select_inertia_render_mode(
-                                    control_force_world[:2],
-                                    output.estimate.velocity[:2],
-                                    force_current_mass,
-                                    force_virtual_mass,
-                                    preferred_render_mode,
-                                    selection_resistance,
-                                    render_acceleration_tolerance_m_s2,
-                                )
+                                if force_rendering_enabled:
+                                    selection_resistance, _, _ = (
+                                        virtual_resistance_force(
+                                            output.estimate.velocity[:2],
+                                            force_virtual_mass,
+                                            force_kinetic_friction_coefficient,
+                                            force_drag_coefficient,
+                                            force_frontal_area,
+                                            force_air_density,
+                                            force_friction_min_speed_m_s,
+                                            force_static_friction_coefficient,
+                                            control_force_world[:2],
+                                        )
+                                    )
+                                    render_selection = select_inertia_render_mode(
+                                        control_force_world[:2],
+                                        output.estimate.velocity[:2],
+                                        force_current_mass,
+                                        force_virtual_mass,
+                                        preferred_render_mode,
+                                        selection_resistance,
+                                        render_acceleration_tolerance_m_s2,
+                                    )
+                                else:
+                                    render_selection = {
+                                        'mode': 'orientation',
+                                        'relation': 'force_rendering_disabled',
+                                        'native_projected_acceleration': 0.0,
+                                        'virtual_projected_acceleration': 0.0,
+                                    }
                                 selected_render_mode = render_selection['mode']
                                 render_relation = render_selection['relation']
                                 virtual_motion.reset(
@@ -2572,7 +2768,10 @@ class InteractionsControl:
                                             ),
                                         },
                                     )
-                            if decision.release_candidate_started:
+                            if (
+                                decision.release_candidate_started
+                                and release_mode == 'observer_brake'
+                            ):
                                 self._log_event(
                                     'Translation Release Candidate',
                                     {
@@ -2589,7 +2788,8 @@ class InteractionsControl:
                                     },
                                 )
                             if (
-                                decision.release_candidate_started
+                                release_mode == 'observer_brake'
+                                and decision.release_candidate_started
                                 and translation_control.end_contact(
                                     self._bounded_wrench_reference(position),
                                     output.estimate.velocity,
@@ -2656,7 +2856,10 @@ class InteractionsControl:
                                         'state_source': 'crazyflie_state_estimate',
                                     },
                                 )
-                            if decision.release_candidate_cancelled:
+                            if (
+                                decision.release_candidate_cancelled
+                                and release_mode == 'observer_brake'
+                            ):
                                 self._log_event(
                                     'Translation Release Candidate Cancelled',
                                     {
@@ -2682,7 +2885,10 @@ class InteractionsControl:
                                             ),
                                         },
                                     )
-                            if decision.ended:
+                            if (
+                                decision.ended
+                                and release_mode == 'observer_brake'
+                            ):
                                 translation_control.confirm_release_candidate()
                                 if (
                                     translation_control.mode
@@ -2690,6 +2896,72 @@ class InteractionsControl:
                                 ):
                                     selected_render_mode = None
                                     render_relation = None
+
+            if (
+                release_mode == 'potentiometer_coast'
+                and potentiometer_release_decision is not None
+                and potentiometer_release_decision.released
+                and not potentiometer_release_processed
+                and (
+                    translation_control.attitude_mode
+                    or translation_control.position_interaction_mode
+                )
+            ):
+                last_force_n = float(
+                    potentiometer_release_decision.last_force_n
+                )
+                last_force_world = (
+                    self._force_sensor_axis_world(output.estimate)
+                    * last_force_n
+                )
+                coast_initial_velocity = release_coast_initial_velocity(
+                    output.estimate.velocity,
+                    last_force_world,
+                    force_current_mass,
+                    force_memory_s=release_force_memory_s,
+                    max_velocity_m_s=virtual_max_velocity_m_s,
+                )
+                virtual_motion.reset(
+                    position[:2], coast_initial_velocity[:2]
+                )
+                coast_direction = coast_initial_velocity.copy()
+                if np.linalg.norm(coast_direction[:2]) <= 1e-9:
+                    coast_direction = last_force_world.copy()
+                if translation_control.end_contact(
+                        self._bounded_wrench_reference(position),
+                        coast_initial_velocity,
+                        state_time,
+                        coast_direction,
+                        output.estimate.orientation_rpy,
+                        current_force=last_force_world,
+                        current_mass_kg=force_current_mass,
+                        coast=True):
+                    potentiometer_release_processed = True
+                    braking_force_world = last_force_world
+                    braking_force_source = 'potentiometer_last_force'
+                    pipeline.admittance.reset()
+                    self._log_event(
+                        'Potentiometer Release Coasting Started',
+                        {
+                            'last_force_N': last_force_world.tolist(),
+                            'last_compression_force_N': last_force_n,
+                            'force_drop_N': (
+                                potentiometer_release_decision.force_drop_n
+                            ),
+                            'force_rate_N_s': (
+                                potentiometer_release_decision.force_rate_n_s
+                            ),
+                            'measured_velocity_m_s': (
+                                output.estimate.velocity.tolist()
+                            ),
+                            'coast_initial_velocity_m_s': (
+                                coast_initial_velocity.tolist()
+                            ),
+                            'release_position_m': position.tolist(),
+                            'force_memory_s': release_force_memory_s,
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
 
             force_target_pitch = 0.0
             force_target_roll = 0.0
@@ -2701,6 +2973,7 @@ class InteractionsControl:
             force_virtual_resistance_xy = np.zeros(2)
             if (
                 output.calibrated
+                and force_rendering_enabled
                 and contacts is not None
                 and contacts.translation.active
                 and (
@@ -2791,7 +3064,9 @@ class InteractionsControl:
                 completed_render_mode = selected_render_mode
                 completed_render_relation = render_relation
                 release_confirmed = bool(
-                    contacts is None or not contacts.translation.active
+                    release_mode == 'potentiometer_coast'
+                    or contacts is None
+                    or not contacts.translation.active
                 )
                 if release_confirmed:
                     selected_render_mode = None
@@ -2835,6 +3110,8 @@ class InteractionsControl:
                 and translation_control.consume_detector_rearm(state_time)
             ):
                 pipeline.detector.translation.reset(state_time)
+                if potentiometer_release_detector is not None:
+                    potentiometer_release_detector.disarm()
                 self._log_event(
                     'Translation Contact Detector Rearmed',
                     {
@@ -2960,6 +3237,23 @@ class InteractionsControl:
                 'release_braking_external_force_N': (
                     braking_force_world.tolist()
                 ),
+                'force_rendering_enabled': force_rendering_enabled,
+                'release_behavior_mode': release_mode,
+                'potentiometer_release_detected': (
+                    None
+                    if potentiometer_release_decision is None
+                    else potentiometer_release_decision.released
+                ),
+                'potentiometer_force_rate_N_s': (
+                    None
+                    if potentiometer_release_decision is None
+                    else potentiometer_release_decision.force_rate_n_s
+                ),
+                'potentiometer_force_drop_N': (
+                    None
+                    if potentiometer_release_decision is None
+                    else potentiometer_release_decision.force_drop_n
+                ),
                 'external_torque_Nm': estimate.external_torque.tolist(),
                 'force_covariance': estimate.force_covariance.tolist(),
                 'torque_covariance': estimate.torque_covariance.tolist(),
@@ -3049,7 +3343,13 @@ class InteractionsControl:
                 'selected_render_mode': selected_render_mode,
                 'virtual_motion_relation': render_relation,
                 'force_orientation_enabled': (
-                    translation_control.attitude_mode
+                    force_rendering_enabled
+                    and translation_control.attitude_mode
+                ),
+                'coast_initial_velocity_m_s': (
+                    None
+                    if coast_initial_velocity is None
+                    else coast_initial_velocity.tolist()
                 ),
                 'force_target_roll_deg': force_target_roll,
                 'force_target_pitch_deg': force_target_pitch,

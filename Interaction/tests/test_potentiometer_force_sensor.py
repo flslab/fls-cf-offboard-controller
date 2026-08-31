@@ -5,7 +5,10 @@ import math
 import numpy as np
 
 from Interaction.interactions import InteractionsControl
-from Interaction.potentiometer_force_sensor import parse_potentiometer_line
+from Interaction.potentiometer_force_sensor import (
+    PotentiometerReleaseDetector,
+    parse_potentiometer_line,
+)
 
 
 class PotentiometerForceSensorParsingTest(unittest.TestCase):
@@ -122,6 +125,28 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
 
         np.testing.assert_allclose(force, estimate.external_force)
         self.assertEqual(source, 'wrench_observer')
+
+    def test_release_detector_uses_last_force_before_compression_drop(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.01,
+            decrease_rate_n_s=0.05,
+        )
+        detector.arm(0.80, 1.00)
+        self.assertFalse(detector.update(0.81, 1.02).released)
+
+        decision = detector.update(0.79, 1.04)
+
+        self.assertTrue(decision.released)
+        self.assertAlmostEqual(decision.last_force_n, 0.81)
+        self.assertAlmostEqual(decision.force_drop_n, 0.02)
+        self.assertLess(decision.force_rate_n_s, 0.0)
+
+    def test_release_detector_ignores_small_force_noise(self):
+        detector = PotentiometerReleaseDetector(force_drop_n=0.01)
+        detector.arm(0.80, 1.00)
+
+        self.assertFalse(detector.update(0.795, 1.02).released)
+        self.assertFalse(detector.update(0.802, 1.04).released)
 
 if __name__ == "__main__":
     unittest.main()

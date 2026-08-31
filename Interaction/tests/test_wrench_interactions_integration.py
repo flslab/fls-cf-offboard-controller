@@ -13,6 +13,7 @@ from Interaction.interactions import (
     inertia_command_mode,
     inertia_position_target,
     kinetic_energy_velocity,
+    release_coast_initial_velocity,
     select_inertia_render_mode,
     virtual_resistance_force,
     velocity_inertia_mass_class,
@@ -357,6 +358,17 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         ))
         self.assertEqual(state['velocity'][0], 0.0)
 
+    def test_release_coast_combines_measured_velocity_and_last_force(self):
+        velocity = release_coast_initial_velocity(
+            measured_velocity=[0.10, 0.20, 0.05],
+            last_force=[0.0, 0.17, 0.0],
+            mass=0.17,
+            force_memory_s=0.02,
+            max_velocity_m_s=0.60,
+        )
+
+        np.testing.assert_allclose(velocity, [0.10, 0.22, 0.0])
+
 
 class WrenchInteractionLoopTests(unittest.TestCase):
     def test_task_detection_method_selects_legacy_velocity(self):
@@ -563,6 +575,42 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         ))
         self.assertEqual(control.command_mode, 'position_hold')
         np.testing.assert_allclose(control.hold_position, [0.16, 0.0, 1.0])
+
+    def test_potentiometer_release_uses_position_coast_with_level_attitude(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            brake_xy_speed_m_s=0.04,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        control.set_contact_attitude(0.0, 0.0, 0.0)
+        self.assertTrue(control.end_contact(
+            [0.0, 0.1, 1.0],
+            [0.0, 0.22, 0.0],
+            1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_force=[0.0, 0.16, 0.0],
+            current_mass_kg=0.17,
+            coast=True,
+        ))
+        self.assertEqual(control.command_mode, 'position_coast')
+        self.assertEqual(control.contact_roll_deg, 0.0)
+        self.assertEqual(control.contact_pitch_deg, 0.0)
+        control.send(commander)
+        self.assertEqual(commander.calls[-1][0], 'position')
+
+        self.assertTrue(control.update_braking(
+            [0.0, 0.11, 1.0],
+            [0.0, 0.20, 0.0],
+            1.1,
+            coast_position=[0.0, 0.14, 1.0],
+            coast_velocity=[0.0, 0.03, 0.0],
+        ))
+        np.testing.assert_allclose(
+            control.stopping_position_m, [0.0, 0.14, 1.0]
+        )
 
     def test_release_records_force_momentum_then_captures_actual_stop_position(self):
         control = TranslationControlHandoff(
@@ -928,6 +976,18 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'crazyflie_state_estimate',
         )
         self.assertTrue(observer_rows[-1]['shadow_mode'])
+        config_rows = [
+            entry for group, name, entry in logs.records
+            if group == 'configs'
+            and name == 'Onboard Wrench Interaction Config'
+        ]
+        self.assertFalse(
+            config_rows[-1]['virtual_object']['force_rendering']['enabled']
+        )
+        self.assertEqual(
+            config_rows[-1]['virtual_object']['release_behavior']['mode'],
+            'observer_brake',
+        )
 
 
 if __name__ == '__main__':

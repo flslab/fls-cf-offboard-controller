@@ -2140,8 +2140,8 @@ if __name__ == '__main__':
     ap.add_argument(
         "--sense", action="store_true",
         help=(
-            "record Arduino potentiometer relative force and use it during "
-            "observer-triggered release braking"
+            "record Arduino potentiometer force and enable configured "
+            "potentiometer-release coasting"
         ),
     )
     ap.add_argument(

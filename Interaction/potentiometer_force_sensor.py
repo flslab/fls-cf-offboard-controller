@@ -35,6 +35,89 @@ class PotentiometerForceSample:
     force_n: float
 
 
+@dataclass(frozen=True)
+class PotentiometerReleaseDecision:
+    released: bool
+    current_force_n: float
+    last_force_n: float | None
+    peak_force_n: float
+    force_rate_n_s: float
+    force_drop_n: float
+
+
+class PotentiometerReleaseDetector:
+    """One-shot release detector armed by an estimator contact onset."""
+
+    def __init__(self, force_drop_n=0.01, decrease_rate_n_s=0.05):
+        self.force_drop_n = float(force_drop_n)
+        self.decrease_rate_n_s = float(decrease_rate_n_s)
+        if (
+            not math.isfinite(self.force_drop_n)
+            or not math.isfinite(self.decrease_rate_n_s)
+            or self.force_drop_n <= 0.0
+            or self.decrease_rate_n_s <= 0.0
+        ):
+            raise ValueError('potentiometer release thresholds must be positive')
+        self.disarm()
+
+    def disarm(self):
+        self.armed = False
+        self.released = False
+        self._last_timestamp = None
+        self._last_force_n = None
+        self._peak_force_n = 0.0
+
+    def arm(self, force_n, timestamp):
+        force_n = max(float(force_n), 0.0)
+        timestamp = float(timestamp)
+        if not math.isfinite(force_n) or not math.isfinite(timestamp):
+            raise ValueError('potentiometer release arm values must be finite')
+        self.armed = True
+        self.released = False
+        self._last_timestamp = timestamp
+        self._last_force_n = force_n
+        self._peak_force_n = force_n
+
+    def update(self, force_n, timestamp):
+        force_n = max(float(force_n), 0.0)
+        timestamp = float(timestamp)
+        if not math.isfinite(force_n) or not math.isfinite(timestamp):
+            raise ValueError('potentiometer release values must be finite')
+        previous_force = self._last_force_n
+        rate = 0.0
+        if (
+            self.armed
+            and not self.released
+            and self._last_timestamp is not None
+            and previous_force is not None
+            and timestamp > self._last_timestamp
+        ):
+            rate = (force_n - previous_force) / (
+                timestamp - self._last_timestamp
+            )
+            self._peak_force_n = max(self._peak_force_n, force_n)
+            force_drop = self._peak_force_n - force_n
+            self.released = bool(
+                force_drop >= self.force_drop_n
+                and rate <= -self.decrease_rate_n_s
+            )
+            self._last_timestamp = timestamp
+            self._last_force_n = force_n
+        else:
+            force_drop = self._peak_force_n - force_n
+
+        return PotentiometerReleaseDecision(
+            released=bool(self.released),
+            current_force_n=force_n,
+            last_force_n=(
+                None if previous_force is None else float(previous_force)
+            ),
+            peak_force_n=float(self._peak_force_n),
+            force_rate_n_s=float(rate),
+            force_drop_n=float(force_drop),
+        )
+
+
 def parse_potentiometer_line(
         line: bytes | str,
         spring_constant_n_per_mm: float = 0.16,

@@ -110,7 +110,7 @@ reference, actual command, frame age, and motor-data age. Stale mocap or stale
 motor telemetry terminates the interaction loop and sends the normal setpoint
 stop notification; there is no attitude-recovery escalation.
 
-## Potentiometer relative force and release braking
+## Potentiometer release and configurable force rendering
 
 Use `--sense --log` (or add `--sense` to an `--interaction --log` run) to
 record the spring-backed potentiometer as an independent force reference. The Arduino must emit
@@ -129,23 +129,37 @@ world frame using the observer attitude before logging/comparison.
 `--sense-spring-constant`, and `--sense-max-age` override the hardware and
 freshness defaults.
 
-Contact onset, release candidate, and contact end continue to come from the
-original wrench/momentum observer. During normal contact rendering, the
-observer force also remains the control input. The potentiometer supplies only
-the signed relative force along its body-frame axis.
+The standard sensor behavior uses the wrench/momentum observer only for engage
+detection. During contact, both observer and potentiometer forces are recorded.
+Force rendering is disabled by default, so the attitude command remains
+`roll=0`, `pitch=0`. When spring compression decreases far and fast enough, the
+last force before the decrease and the measured velocity initialize bounded
+position coasting. Coasting then runs with zero external-force input under the
+configured friction/drag model and holds the final position at the stop-speed
+threshold or timeout.
 
-Once the observer starts a release candidate, a fresh potentiometer sample is
-used as the force term in the bounded braking calculation. The release snapshot
-combines that relative force with vehicle momentum (`mass * velocity`) and
-position. The controller records and holds the actual stopping position only
-after velocity along the observer-locked release direction reaches zero or
-reverses (or the braking timeout is reached). If the potentiometer sample is
-stale, release braking falls back to the observer force.
+Configure the two behaviors independently under `virtual_object`:
+
+```yaml
+force_rendering:
+  enabled: false
+release_behavior:
+  mode: potentiometer_coast
+  force_drop_n: 0.01
+  decrease_rate_n_s: 0.05
+  force_memory_s: 0.02
+```
+
+Set `force_rendering.enabled: true` to restore estimator-force inertia and
+resistance damping during contact. Set `release_behavior.mode:
+observer_brake` to restore the previous observer release-candidate and
+counter-tilt braking path. Enabling both restores the previous complete
+behavior. `potentiometer_coast` requires `--sense`.
 
 Each `wrench_observer` record includes both `external_force_N` (the observer)
 and `control_external_force_N` (the observer control force), plus
-`release_braking_external_force_N`, its source, calibrated distance, sample
-freshness, release force/momentum/position, braking feed-forward acceleration,
-stopping position, and observer-minus-sensor error. During the dedicated
-calibration run, the sensor remains comparison-only so it cannot alter the
-excitation trajectory.
+`release_braking_external_force_N`, force-rendering state, release mode,
+potentiometer force rate/drop, coast initial velocity, calibrated distance,
+sample freshness, release force/momentum/position, stopping position, and
+observer-minus-sensor error. During the dedicated calibration run, the sensor
+remains comparison-only so it cannot alter the excitation trajectory.
