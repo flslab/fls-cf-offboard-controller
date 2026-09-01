@@ -6,6 +6,7 @@ import numpy as np
 
 from Interaction.interactions import InteractionsControl
 from Interaction.potentiometer_force_sensor import (
+    PotentiometerContactDetector,
     PotentiometerForceSensor,
     PotentiometerReleaseDetector,
     parse_potentiometer_line,
@@ -247,6 +248,42 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         self.assertAlmostEqual(decision.last_force_n, 0.81)
         self.assertAlmostEqual(decision.force_drop_n, 0.02)
         self.assertLess(decision.force_rate_n_s, 0.0)
+
+    def test_contact_detector_requires_baseline_then_sustained_compression(self):
+        detector = PotentiometerContactDetector(
+            force_threshold_n=0.08,
+            onset_dwell_s=0.03,
+        )
+
+        self.assertFalse(detector.update(0.20, 1.00).started)
+        self.assertFalse(detector.ready)
+        self.assertFalse(detector.update(0.01, 1.02).started)
+        self.assertTrue(detector.ready)
+        self.assertFalse(detector.update(0.10, 1.04).started)
+        decision = detector.update(0.40, 1.07)
+
+        self.assertTrue(decision.started)
+        self.assertTrue(decision.active)
+        self.assertAlmostEqual(decision.peak_force_n, 0.40)
+
+        detector.mark_released()
+
+        self.assertFalse(detector.active)
+        self.assertFalse(detector.update(0.40, 1.09).started)
+
+    def test_release_detector_can_inherit_precontact_peak(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            decrease_rate_n_s=0.05,
+        )
+        detector.arm(0.80, 1.00, peak_force_n=1.60)
+
+        decision = detector.update(0.70, 1.02)
+
+        self.assertTrue(decision.released)
+        self.assertAlmostEqual(decision.last_force_n, 0.80)
+        self.assertAlmostEqual(decision.peak_force_n, 1.60)
+        self.assertAlmostEqual(decision.force_drop_n, 0.90)
 
     def test_release_detector_ignores_small_force_noise(self):
         detector = PotentiometerReleaseDetector(force_drop_n=0.01)

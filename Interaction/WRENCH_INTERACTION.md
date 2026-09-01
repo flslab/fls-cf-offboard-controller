@@ -140,20 +140,27 @@ contain both `force_sensor_supply_voltage_V` from the Nano and current/latched
 RPi undervoltage, frequency-cap, throttling, and soft-temperature-limit flags.
 Use `--sense-power-poll-interval` to change the RPi polling interval.
 
-The standard sensor behavior uses the wrench/momentum observer only for engage
-detection. During contact, both observer and potentiometer forces are recorded.
+The sensor can own both engage and release detection. The contact detector must
+first observe a low-force baseline, then sustained compression above its onset
+threshold. During contact, both observer and potentiometer forces are recorded.
 Force rendering is disabled by default, so the attitude command remains
 `roll=0`, `pitch=0`. When spring compression decreases far and fast enough, the
 last force before the decrease and the measured velocity initialize bounded
-position coasting. Coasting then runs with zero external-force input under the
-configured friction/drag model and holds the final position at the stop-speed
-threshold or timeout.
+coasting. Coasting first uses orientation commands to align the actual XY
+position/velocity with the virtual friction trajectory. It switches to position
+control only after the state is within tolerance (or the attitude phase times
+out), and finishes only after actual XY speed and position settle or the total
+timeout expires.
 
 Configure the two behaviors independently under `virtual_object`:
 
 ```yaml
 force_rendering:
   enabled: false
+contact_detection:
+  source: potentiometer
+  force_threshold_n: 0.08
+  onset_dwell_s: 0.03
 release_behavior:
   mode: potentiometer_coast
   force_drop_n: 0.01
@@ -162,16 +169,16 @@ release_behavior:
 ```
 
 Set `force_rendering.enabled: true` to restore estimator-force inertia and
-resistance damping during contact. Set `release_behavior.mode:
-observer_brake` to restore the previous observer release-candidate and
-counter-tilt braking path. Enabling both restores the previous complete
-behavior. `potentiometer_coast` requires `--sense`.
+resistance damping during contact. Set `contact_detection.source:
+wrench_observer` and `release_behavior.mode: observer_brake` to restore the
+previous observer-owned contact/release and counter-tilt braking path.
+`potentiometer` contact detection and `potentiometer_coast` require `--sense`.
 
 Each `wrench_observer` record includes both `external_force_N` (the observer)
 and `control_external_force_N` (the observer control force), plus
 `release_braking_external_force_N`, force-rendering state, release mode,
 potentiometer force rate/drop, coast initial velocity, calibrated compression
-and spring length,
+and spring length, coast tracking action/state errors/applied acceleration,
 sample freshness, release force/momentum/position, stopping position, and
 observer-minus-sensor error. During the dedicated calibration run, the sensor
 remains comparison-only so it cannot alter the excitation trajectory.

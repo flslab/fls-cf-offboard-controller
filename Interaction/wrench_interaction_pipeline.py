@@ -127,6 +127,17 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "brake_max_attitude_deg": 20.0,
         "brake_timeout_s": 1.5,
         "brake_velocity_gain_s": 2.0,
+        # Potentiometer-release coasting first uses bounded attitude feedback
+        # to align the real vehicle with the virtual position/velocity state.
+        # Position control takes over only after this state is close enough or
+        # the bounded attitude phase reaches its timeout.
+        "coast_position_gain_s2": 4.0,
+        "coast_velocity_gain_s": 2.5,
+        "coast_max_acceleration_m_s2": 2.0,
+        "coast_alignment_position_tolerance_m": 0.04,
+        "coast_alignment_velocity_tolerance_m_s": 0.08,
+        "coast_alignment_dwell_s": 0.08,
+        "coast_attitude_timeout_s": 0.75,
     },
     "admittance": {
         "translation_mass": [0.30, 0.30, 0.45],

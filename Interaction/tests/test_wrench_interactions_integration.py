@@ -10,6 +10,7 @@ from Interaction.interactions import (
     InteractionsControl,
     TranslationControlHandoff,
     VirtualObjectPlanarMotion,
+    coast_state_tracking_attitude,
     force_inertia_attitude,
     heavy_inertia_attitude,
     inertia_command_mode,
@@ -45,6 +46,20 @@ class InitialContactArmingGateTests(unittest.TestCase):
 
         self.assertTrue(gate.armed)
         self.assertFalse(gate.update([1.0, 0.0, 0.0], 0.0))
+
+    def test_reset_requires_a_new_stationary_dwell(self):
+        gate = InitialContactArmingGate(
+            max_xy_speed_m_s=0.03,
+            stationary_dwell_s=0.5,
+        )
+        gate.update([0.0, 0.0, 0.0], 1.0)
+        self.assertTrue(gate.update([0.0, 0.0, 0.0], 1.5))
+
+        gate.reset()
+
+        self.assertFalse(gate.armed)
+        self.assertFalse(gate.update([0.0, 0.0, 0.0], 2.0))
+        self.assertTrue(gate.update([0.0, 0.0, 0.0], 2.5))
 
 
 class ReleaseModeTests(unittest.TestCase):
@@ -432,6 +447,32 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
 
         np.testing.assert_allclose(velocity, [0.10, 0.22, 0.0])
 
+    def test_coast_attitude_decelerates_when_actual_velocity_is_too_high(self):
+        tracking = coast_state_tracking_attitude(
+            current_position_xy=[0.0, 0.0],
+            current_velocity_xy=[0.0, 0.30],
+            target_position_xy=[0.0, 0.01],
+            target_velocity_xy=[0.0, 0.05],
+            yaw_deg=0.0,
+        )
+
+        self.assertEqual(tracking['action'], 'decelerating')
+        self.assertLess(tracking['applied_acceleration_m_s2'][1], 0.0)
+        self.assertGreater(tracking['roll_deg'], 0.0)
+
+    def test_coast_attitude_accelerates_when_actual_velocity_is_too_low(self):
+        tracking = coast_state_tracking_attitude(
+            current_position_xy=[0.0, 0.0],
+            current_velocity_xy=[0.0, 0.01],
+            target_position_xy=[0.0, 0.05],
+            target_velocity_xy=[0.0, 0.20],
+            yaw_deg=0.0,
+        )
+
+        self.assertEqual(tracking['action'], 'accelerating')
+        self.assertGreater(tracking['applied_acceleration_m_s2'][1], 0.0)
+        self.assertLess(tracking['roll_deg'], 0.0)
+
 
 class WrenchInteractionLoopTests(unittest.TestCase):
     def test_task_detection_method_selects_legacy_velocity(self):
@@ -639,7 +680,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(control.command_mode, 'position_hold')
         np.testing.assert_allclose(control.hold_position, [0.16, 0.0, 1.0])
 
-    def test_potentiometer_release_uses_position_coast_with_level_attitude(self):
+    def test_potentiometer_release_aligns_with_attitude_then_position_settles(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -658,22 +699,43 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             current_mass_kg=0.17,
             coast=True,
         ))
-        self.assertEqual(control.command_mode, 'position_coast')
+        self.assertEqual(control.command_mode, 'attitude_coast')
         self.assertEqual(control.contact_roll_deg, 0.0)
         self.assertEqual(control.contact_pitch_deg, 0.0)
         control.send(commander)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+
+        self.assertFalse(control.update_coast_attitude(
+            [0.0, 0.14, 1.0], [0.0, 0.03, 0.0],
+            [0.0, 0.14, 1.0], [0.0, 0.03, 0.0], 1.01,
+        ))
+        self.assertTrue(control.update_coast_attitude(
+            [0.0, 0.14, 1.0], [0.0, 0.03, 0.0],
+            [0.0, 0.14, 1.0], [0.0, 0.03, 0.0], 1.10,
+        ))
+        self.assertEqual(control.command_mode, 'position_coast')
+        control.send(commander)
         self.assertEqual(commander.calls[-1][0], 'position')
 
-        self.assertTrue(control.update_braking(
-            [0.0, 0.11, 1.0],
-            [0.0, 0.20, 0.0],
-            1.1,
+        self.assertFalse(control.update_braking(
+            [0.0, 0.14, 1.0], [0.0, 0.20, 0.0], 1.11,
             coast_position=[0.0, 0.14, 1.0],
-            coast_velocity=[0.0, 0.03, 0.0],
+            coast_velocity=[0.0, 0.0, 0.0],
+        ))
+        self.assertFalse(control.update_braking(
+            [0.0, 0.14, 1.0], [0.0, 0.03, 0.0], 1.12,
+            coast_position=[0.0, 0.14, 1.0],
+            coast_velocity=[0.0, 0.0, 0.0],
+        ))
+        self.assertTrue(control.update_braking(
+            [0.0, 0.14, 1.0], [0.0, 0.03, 0.0], 1.43,
+            coast_position=[0.0, 0.14, 1.0],
+            coast_velocity=[0.0, 0.0, 0.0],
         ))
         np.testing.assert_allclose(
             control.stopping_position_m, [0.0, 0.14, 1.0]
         )
+        self.assertEqual(control.brake_completion_reason, 'actual_state_settled')
 
     def test_release_records_force_momentum_then_captures_actual_stop_position(self):
         control = TranslationControlHandoff(

@@ -49,8 +49,98 @@ class PotentiometerReleaseDecision:
     force_drop_n: float
 
 
+@dataclass(frozen=True)
+class PotentiometerContactDecision:
+    started: bool
+    active: bool
+    ready: bool
+    current_force_n: float
+    peak_force_n: float
+    onset_elapsed_s: float
+
+
+class PotentiometerContactDetector:
+    """Detect a new interaction from sustained spring compression.
+
+    A reset detector must first observe a force below the onset threshold.
+    This prevents a still-compressed spring from retriggering immediately after
+    the post-coast grace period.
+    """
+
+    def __init__(self, force_threshold_n=0.08, onset_dwell_s=0.03):
+        self.force_threshold_n = float(force_threshold_n)
+        self.onset_dwell_s = float(onset_dwell_s)
+        if (
+            not math.isfinite(self.force_threshold_n)
+            or not math.isfinite(self.onset_dwell_s)
+            or self.force_threshold_n <= 0.0
+            or self.onset_dwell_s < 0.0
+        ):
+            raise ValueError(
+                'potentiometer contact threshold must be positive and dwell '
+                'must be non-negative'
+            )
+        self.reset()
+
+    def reset(self):
+        self.ready = False
+        self.active = False
+        self._onset_started_at = None
+        self._peak_force_n = 0.0
+        self._last_timestamp = None
+
+    def mark_released(self):
+        """End the active contact without permitting an immediate retrigger."""
+        self.ready = False
+        self.active = False
+        self._onset_started_at = None
+
+    def update(self, force_n, timestamp, enabled=True):
+        force_n = max(float(force_n), 0.0)
+        timestamp = float(timestamp)
+        if not math.isfinite(force_n) or not math.isfinite(timestamp):
+            raise ValueError('potentiometer contact values must be finite')
+
+        started = False
+        if (
+            self._last_timestamp is not None
+            and timestamp < self._last_timestamp
+        ):
+            self.reset()
+        self._last_timestamp = timestamp
+
+        if not bool(enabled):
+            self._onset_started_at = None
+        elif not self.active:
+            if force_n < self.force_threshold_n:
+                self.ready = True
+                self._onset_started_at = None
+                self._peak_force_n = 0.0
+            elif self.ready:
+                self._peak_force_n = max(self._peak_force_n, force_n)
+                if self._onset_started_at is None:
+                    self._onset_started_at = timestamp
+                if timestamp - self._onset_started_at >= self.onset_dwell_s:
+                    self.active = True
+                    started = True
+
+        onset_elapsed_s = (
+            0.0
+            if self._onset_started_at is None
+            else max(0.0, timestamp - self._onset_started_at)
+        )
+        return PotentiometerContactDecision(
+            started=started,
+            active=bool(self.active),
+            ready=bool(self.ready),
+            current_force_n=force_n,
+            peak_force_n=float(self._peak_force_n),
+            onset_elapsed_s=float(onset_elapsed_s),
+        )
+
+
 class PotentiometerReleaseDetector:
-    """One-shot release detector armed by an estimator contact onset."""
+    """One-shot release detector armed by a contact onset."""
 
     def __init__(self, force_drop_n=0.01, decrease_rate_n_s=0.05):
         self.force_drop_n = float(force_drop_n)
@@ -71,16 +161,24 @@ class PotentiometerReleaseDetector:
         self._last_force_n = None
         self._peak_force_n = 0.0
 
-    def arm(self, force_n, timestamp):
+    def arm(self, force_n, timestamp, peak_force_n=None):
         force_n = max(float(force_n), 0.0)
         timestamp = float(timestamp)
-        if not math.isfinite(force_n) or not math.isfinite(timestamp):
+        peak_force_n = (
+            force_n if peak_force_n is None
+            else max(float(peak_force_n), force_n)
+        )
+        if (
+            not math.isfinite(force_n)
+            or not math.isfinite(timestamp)
+            or not math.isfinite(peak_force_n)
+        ):
             raise ValueError('potentiometer release arm values must be finite')
         self.armed = True
         self.released = False
         self._last_timestamp = timestamp
         self._last_force_n = force_n
-        self._peak_force_n = force_n
+        self._peak_force_n = peak_force_n
 
     def update(self, force_n, timestamp):
         force_n = max(float(force_n), 0.0)
