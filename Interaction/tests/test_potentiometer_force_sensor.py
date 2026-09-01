@@ -6,6 +6,7 @@ import numpy as np
 
 from Interaction.interactions import InteractionsControl
 from Interaction.potentiometer_force_sensor import (
+    PotentiometerForceSensor,
     PotentiometerReleaseDetector,
     parse_potentiometer_line,
 )
@@ -51,6 +52,25 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         self.assertIsNotNone(sample)
         self.assertAlmostEqual(sample.compression_mm, 0.0)
         self.assertAlmostEqual(sample.force_n, 0.0)
+
+    def test_live_force_info_log_is_rate_limited(self):
+        sample = parse_potentiometer_line(
+            "1234,925,925.25,4.522,7.100,4.873",
+            spring_constant_n_per_mm=0.16,
+            host_time=10.0,
+        )
+        sensor = PotentiometerForceSensor(info_log_interval_s=0.1)
+
+        with self.assertLogs(
+                'Interaction.potentiometer_force_sensor', level='INFO') as logs:
+            self.assertTrue(sensor._log_sample_info(sample, monotonic_time=1.0))
+            self.assertFalse(sensor._log_sample_info(sample, monotonic_time=1.05))
+            self.assertTrue(sensor._log_sample_info(sample, monotonic_time=1.10))
+
+        self.assertEqual(len(logs.output), 2)
+        self.assertIn('Potentiometer force=0.528 N', logs.output[0])
+        self.assertIn('compression=3.300 mm', logs.output[0])
+        self.assertIn('Vcc=4.873 V', logs.output[0])
 
     def test_ignores_header_and_invalid_rows(self):
         self.assertIsNone(parse_potentiometer_line(

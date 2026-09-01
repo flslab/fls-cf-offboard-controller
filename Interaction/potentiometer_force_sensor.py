@@ -196,12 +196,14 @@ class PotentiometerForceSensor:
             max_extension_mm: float = 10.4,
             read_timeout_s: float = 0.1,
             serial_factory: Callable[..., serial.Serial] = serial.Serial,
+            info_log_interval_s: float = 0.1,
     ):
         self.port = str(port)
         self.baud = int(baud)
         self.spring_constant_n_per_mm = float(spring_constant_n_per_mm)
         self.max_extension_mm = float(max_extension_mm)
         self.read_timeout_s = float(read_timeout_s)
+        self.info_log_interval_s = float(info_log_interval_s)
         if self.baud <= 0:
             raise ValueError("baud must be positive")
         if self.spring_constant_n_per_mm <= 0.0:
@@ -210,6 +212,8 @@ class PotentiometerForceSensor:
             raise ValueError("maximum extension must be positive")
         if self.read_timeout_s <= 0.0:
             raise ValueError("read timeout must be positive")
+        if self.info_log_interval_s <= 0.0:
+            raise ValueError("info log interval must be positive")
 
         self._serial_factory = serial_factory
         self._serial = None
@@ -219,6 +223,7 @@ class PotentiometerForceSensor:
         self._sample_event = threading.Event()
         self._thread = None
         self._reader_error = None
+        self._last_info_log_monotonic = None
 
     def start(self, startup_timeout_s: float = 3.0) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -231,6 +236,7 @@ class PotentiometerForceSensor:
         self._stop_event.clear()
         self._sample_event.clear()
         self._reader_error = None
+        self._last_info_log_monotonic = None
         self._thread = threading.Thread(
             target=self._read_loop,
             name="potentiometer-force-sensor",
@@ -266,6 +272,38 @@ class PotentiometerForceSensor:
         with self._lock:
             return self._latest
 
+    def _log_sample_info(
+            self,
+            sample: PotentiometerForceSample,
+            monotonic_time: float | None = None,
+    ) -> bool:
+        """Log the live force at a bounded rate; return whether it was logged."""
+        now = (
+            time.monotonic()
+            if monotonic_time is None else float(monotonic_time)
+        )
+        if (
+            self._last_info_log_monotonic is not None
+            and now - self._last_info_log_monotonic < self.info_log_interval_s
+        ):
+            return False
+        self._last_info_log_monotonic = now
+        logger.info(
+            "Potentiometer force=%.3f N, compression=%.3f mm, "
+            "distance=%.3f mm, raw=%d, Arduino time=%d ms, Vcc=%s",
+            sample.force_n,
+            sample.compression_mm,
+            sample.distance_mm,
+            sample.raw,
+            sample.arduino_time_ms,
+            (
+                "unavailable"
+                if sample.supply_voltage_v is None
+                else f"{sample.supply_voltage_v:.3f} V"
+            ),
+        )
+        return True
+
     def _read_loop(self) -> None:
         try:
             while not self._stop_event.is_set():
@@ -280,6 +318,7 @@ class PotentiometerForceSensor:
                 with self._lock:
                     self._latest = sample
                 self._sample_event.set()
+                self._log_sample_info(sample)
         except Exception as error:
             self._reader_error = error
             logger.exception("Force-sensor serial reader stopped unexpectedly")
