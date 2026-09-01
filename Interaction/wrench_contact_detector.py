@@ -41,6 +41,7 @@ class ContactChannelDetector:
             release_ratio: float = 0.55,
             evidence_leak: float = 1.0,
             enabled: bool = True,
+            onset_axes: Sequence[int] | None = None,
             release_projection_axes: Sequence[int] | None = None,
             release_direction_min_norm: float = 0.02,
     ):
@@ -56,6 +57,18 @@ class ContactChannelDetector:
         self.release_ratio = float(release_ratio)
         self.evidence_leak = float(evidence_leak)
         self.enabled = bool(enabled)
+        self.onset_axes = (
+            tuple(range(len(self.thresholds)))
+            if onset_axes is None
+            else tuple(int(axis) for axis in onset_axes)
+        )
+        if (
+            not self.onset_axes
+            or len(set(self.onset_axes)) != len(self.onset_axes)
+            or min(self.onset_axes) < 0
+            or max(self.onset_axes) >= len(self.thresholds)
+        ):
+            raise ValueError("onset_axes must contain unique valid axes")
         self.release_projection_axes = (
             None
             if release_projection_axes is None
@@ -165,15 +178,29 @@ class ContactChannelDetector:
                 active=False,
                 started=False,
                 ended=False,
-                magnitude=float(np.linalg.norm(value)),
+                magnitude=float(np.linalg.norm(value[list(self.onset_axes)])),
                 normalized_magnitude=0.0,
                 confidence_sigma=0.0,
                 evidence=0.0,
             )
 
-        normalized = float(np.linalg.norm(value / self.thresholds))
-        effective_covariance = covariance + np.diag(np.square(self.covariance_floor))
-        confidence = math.sqrt(max(0.0, float(value.T @ np.linalg.pinv(effective_covariance) @ value)))
+        onset_axes = np.asarray(self.onset_axes, dtype=int)
+        onset_value = value[onset_axes]
+        onset_thresholds = self.thresholds[onset_axes]
+        onset_covariance_floor = self.covariance_floor[onset_axes]
+        onset_covariance = covariance[np.ix_(onset_axes, onset_axes)]
+        normalized = float(np.linalg.norm(onset_value / onset_thresholds))
+        effective_covariance = onset_covariance + np.diag(
+            np.square(onset_covariance_floor)
+        )
+        confidence = math.sqrt(max(
+            0.0,
+            float(
+                onset_value.T
+                @ np.linalg.pinv(effective_covariance)
+                @ onset_value
+            ),
+        ))
         significant = normalized >= 1.0 and confidence >= self.required_sigma
         started = False
         ended = False
@@ -244,7 +271,7 @@ class ContactChannelDetector:
             active=self.active,
             started=started,
             ended=ended,
-            magnitude=float(np.linalg.norm(value)),
+            magnitude=float(np.linalg.norm(onset_value)),
             normalized_magnitude=normalized,
             confidence_sigma=confidence,
             evidence=self.evidence,

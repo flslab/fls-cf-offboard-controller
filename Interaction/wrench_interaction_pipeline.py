@@ -90,9 +90,13 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
             "onset_evidence_s": 0.05,
             "release_time_s": 0.15,
             "release_ratio": 0.55,
-            # Keep onset XYZ-based, then lock the Contact Start XY motion
-            # direction. Release when the signed projected force falls below
-            # the positive threshold, including when it becomes negative.
+            # By default all translation axes participate in contact onset.
+            # Missions may select a subset, for example [0, 1] for lateral
+            # interaction when persistent vertical residuals are irrelevant.
+            "onset_axes": None,
+            # After onset, lock the configured motion direction. Release when
+            # the signed projected force falls below the positive threshold,
+            # including when it becomes negative.
             "release_projection_axes": None,
             "release_direction_min_norm": 0.02,
         },

@@ -49,6 +49,37 @@ class ContactDetectorTests(unittest.TestCase):
         self.assertFalse(decision.started)
         self.assertEqual(decision.normalized_magnitude, 0.0)
 
+    def test_onset_axes_ignore_vertical_force(self):
+        detector = ContactChannelDetector(
+            component_thresholds=[0.08, 0.08, 0.12],
+            covariance_floor=[0.005, 0.005, 0.008],
+            confidence_sigma=2.0,
+            onset_evidence_s=0.01,
+            onset_axes=[0, 1],
+            release_projection_axes=[0, 1],
+        )
+        covariance = np.eye(3) * 1e-6
+
+        # A large persistent Z residual is outside the configured onset axes.
+        for index in range(10):
+            decision = detector.update(
+                [0.0, 0.0, -0.30], covariance, index * 0.01
+            )
+            self.assertFalse(decision.active)
+            self.assertFalse(decision.started)
+            self.assertEqual(decision.normalized_magnitude, 0.0)
+            self.assertEqual(decision.confidence_sigma, 0.0)
+
+        # The same detector still recognizes a persistent lateral contact.
+        started = False
+        for index in range(10, 20):
+            decision = detector.update(
+                [0.12, 0.0, -0.30], covariance, index * 0.01
+            )
+            started |= decision.started
+        self.assertTrue(started)
+        self.assertTrue(decision.active)
+
     def test_projected_release_ignores_side_and_vertical_force(self):
         detector = ContactChannelDetector(
             component_thresholds=[0.08, 0.08, 0.12],
