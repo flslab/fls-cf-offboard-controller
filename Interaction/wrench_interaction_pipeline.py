@@ -140,6 +140,10 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
     },
     "safety": {
         "max_frame_age_s": 0.10,
+        # During shadow calibration only, skip transient stale state packets
+        # while retaining position hold. Active interaction keeps the strict
+        # max_state_age_s cutoff.
+        "calibration_state_dropout_timeout_s": 0.25,
         "max_motor_age_s": 0.15,
         "max_motor_pose_skew_s": 0.03,
         "startup_timeout_s": 5.0,

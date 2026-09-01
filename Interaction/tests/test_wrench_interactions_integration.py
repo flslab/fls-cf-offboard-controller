@@ -4,6 +4,7 @@ import unittest
 import numpy as np
 
 from Interaction.interactions import (
+    calibration_state_dropout_tolerated,
     GuidedTouchProtocol,
     InitialContactArmingGate,
     InteractionsControl,
@@ -64,6 +65,23 @@ class ReleaseModeTests(unittest.TestCase):
                 force_sensor_available=False,
                 calibration_mode=False,
             )
+
+
+class CalibrationStateDropoutTests(unittest.TestCase):
+    def test_calibration_tolerates_brief_stale_state(self):
+        self.assertTrue(calibration_state_dropout_tolerated(
+            0.109, 0.100, 0.250, calibration_mode=True
+        ))
+
+    def test_active_interaction_keeps_strict_state_age_limit(self):
+        self.assertFalse(calibration_state_dropout_tolerated(
+            0.109, 0.100, 0.250, calibration_mode=False
+        ))
+
+    def test_calibration_rejects_sustained_state_dropout(self):
+        self.assertFalse(calibration_state_dropout_tolerated(
+            0.251, 0.100, 0.250, calibration_mode=True
+        ))
 
 
 class FakeCommander:

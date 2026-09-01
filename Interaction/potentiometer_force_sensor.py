@@ -2,11 +2,12 @@
 
 The Arduino sketch emits CSV rows with the following columns::
 
-    time_ms,raw,filtered,voltage,distance_mm
+    time_ms,raw,filtered,voltage,distance_mm[,supply_voltage]
 
-Distance is converted to compression force with Hooke's law.  The reader owns
-the serial port and exposes the latest immutable sample so the flight-control
-loop never blocks on UART I/O.
+The reported distance is the spring's current extension.  It is converted to
+compression with ``max_extension_mm - distance_mm`` and then to force with
+Hooke's law.  The reader owns the serial port and exposes the latest immutable
+sample so the flight-control loop never blocks on UART I/O.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ class PotentiometerForceSample:
     filtered_raw: float
     voltage_v: float
     distance_mm: float
+    supply_voltage_v: float | None
+    compression_mm: float
     force_n: float
 
 
@@ -122,6 +125,7 @@ def parse_potentiometer_line(
         line: bytes | str,
         spring_constant_n_per_mm: float = 0.16,
         host_time: float | None = None,
+        max_extension_mm: float = 10.4,
 ) -> PotentiometerForceSample | None:
     """Parse one Arduino CSV row; headers and malformed rows return ``None``."""
     if isinstance(line, bytes):
@@ -132,7 +136,7 @@ def parse_potentiometer_line(
         return None
 
     parts = [part.strip() for part in text.split(",")]
-    if len(parts) != 5:
+    if len(parts) not in (5, 6):
         return None
     try:
         arduino_time_ms = int(parts[0])
@@ -140,19 +144,33 @@ def parse_potentiometer_line(
         filtered_raw = float(parts[2])
         voltage_v = float(parts[3])
         distance_mm = float(parts[4])
+        supply_voltage_v = float(parts[5]) if len(parts) == 6 else None
         spring_constant = float(spring_constant_n_per_mm)
+        max_extension = float(max_extension_mm)
     except ValueError:
         return None
 
-    values = (filtered_raw, voltage_v, distance_mm, spring_constant)
+    values = (
+        filtered_raw, voltage_v, distance_mm, spring_constant, max_extension,
+    )
     if (
         arduino_time_ms < 0
         or not 0 <= raw <= 1023
         or not all(math.isfinite(value) for value in values)
         or distance_mm < 0.0
         or spring_constant <= 0.0
+        or max_extension <= 0.0
+        or (
+            supply_voltage_v is not None
+            and (
+                not math.isfinite(supply_voltage_v)
+                or not 0.0 <= supply_voltage_v <= 6.5
+            )
+        )
     ):
         return None
+
+    compression_mm = max(max_extension - distance_mm, 0.0)
 
     return PotentiometerForceSample(
         host_time=time.time() if host_time is None else float(host_time),
@@ -161,7 +179,9 @@ def parse_potentiometer_line(
         filtered_raw=filtered_raw,
         voltage_v=voltage_v,
         distance_mm=distance_mm,
-        force_n=distance_mm * spring_constant,
+        supply_voltage_v=supply_voltage_v,
+        compression_mm=compression_mm,
+        force_n=compression_mm * spring_constant,
     )
 
 
@@ -173,17 +193,21 @@ class PotentiometerForceSensor:
             port: str = "/dev/serial0",
             baud: int = 115200,
             spring_constant_n_per_mm: float = 0.16,
+            max_extension_mm: float = 10.4,
             read_timeout_s: float = 0.1,
             serial_factory: Callable[..., serial.Serial] = serial.Serial,
     ):
         self.port = str(port)
         self.baud = int(baud)
         self.spring_constant_n_per_mm = float(spring_constant_n_per_mm)
+        self.max_extension_mm = float(max_extension_mm)
         self.read_timeout_s = float(read_timeout_s)
         if self.baud <= 0:
             raise ValueError("baud must be positive")
         if self.spring_constant_n_per_mm <= 0.0:
             raise ValueError("spring constant must be positive")
+        if self.max_extension_mm <= 0.0:
+            raise ValueError("maximum extension must be positive")
         if self.read_timeout_s <= 0.0:
             raise ValueError("read timeout must be positive")
 
@@ -248,7 +272,8 @@ class PotentiometerForceSensor:
                 line = self._serial.readline()
                 sample = parse_potentiometer_line(
                     line,
-                    self.spring_constant_n_per_mm,
+                    spring_constant_n_per_mm=self.spring_constant_n_per_mm,
+                    max_extension_mm=self.max_extension_mm,
                 )
                 if sample is None:
                     continue

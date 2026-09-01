@@ -114,9 +114,12 @@ stop notification; there is no attitude-recovery escalation.
 
 Use `--sense --log` (or add `--sense` to an `--interaction --log` run) to
 record the spring-backed potentiometer as an independent force reference. The Arduino must emit
-`time_ms,raw,filtered,voltage,distance_mm` at 115200 baud on `/dev/serial0`.
-The default spring constant is 0.16 N/mm, so the recorded compression force is
-`distance_mm * 0.16`.
+`time_ms,raw,filtered,voltage,distance_mm,supply_voltage` at 115200 baud on
+`/dev/serial0`. Five-column firmware remains readable, but its Arduino supply
+voltage is logged as unavailable.
+`distance_mm` is the current extended length. With the default maximum extension
+of 10.4 mm and spring constant of 0.16 N/mm, the recorded compression force is
+`max(10.4 - distance_mm, 0) * 0.16`.
 
 ```text
 --sense --sense-axis y --sense-sign 1
@@ -126,8 +129,14 @@ Change the axis to `y` or `z`, or use `--sense-sign -1`, to match the physical
 sensor orientation in the drone body frame. Each sample is rotated into the
 world frame using the observer attitude before logging/comparison.
 `--sense-port`, `--sense-baud`,
-`--sense-spring-constant`, and `--sense-max-age` override the hardware and
-freshness defaults.
+`--sense-spring-constant`, `--sense-max-extension`, and `--sense-max-age`
+override the hardware, geometry, and freshness defaults.
+
+While `--sense` is active, a background monitor records Raspberry Pi
+`vcgencmd get_throttled` flags every 0.5 seconds. Wrench records therefore
+contain both `force_sensor_supply_voltage_V` from the Nano and current/latched
+RPi undervoltage, frequency-cap, throttling, and soft-temperature-limit flags.
+Use `--sense-power-poll-interval` to change the RPi polling interval.
 
 The standard sensor behavior uses the wrench/momentum observer only for engage
 detection. During contact, both observer and potentiometer forces are recorded.

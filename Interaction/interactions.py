@@ -146,6 +146,35 @@ def resolve_release_mode(
     return configured_mode
 
 
+def calibration_state_dropout_tolerated(
+        state_age_s,
+        max_state_age_s,
+        dropout_timeout_s,
+        calibration_mode=False,
+):
+    """Return whether calibration may safely wait for a fresh state packet."""
+    state_age_s = float(state_age_s)
+    max_state_age_s = float(max_state_age_s)
+    dropout_timeout_s = float(dropout_timeout_s)
+    if (
+        not np.all(np.isfinite([
+            state_age_s, max_state_age_s, dropout_timeout_s
+        ]))
+        or max_state_age_s <= 0.0
+    ):
+        raise ValueError(
+            'state age limits must be finite with positive max_state_age_s'
+        )
+    if not calibration_mode:
+        return False
+    if dropout_timeout_s <= max_state_age_s:
+        raise ValueError(
+            'calibration state dropout timeout must be greater than '
+            'max_state_age_s'
+        )
+    return bool(max_state_age_s < state_age_s <= dropout_timeout_s)
+
+
 class InitialContactArmingGate:
     """Arm initial contact detection after continuous low XY speed."""
 
@@ -1181,6 +1210,8 @@ class InteractionsControl:
         if sensor is None:
             return {}
 
+        power_fields = self._rpi_power_log_fields(sensor, now)
+
         axis = getattr(self, 'sense_axis', 'x')
         axis_index = getattr(
             self, 'sense_axis_index', {'x': 0, 'y': 1, 'z': 2}[axis]
@@ -1193,6 +1224,7 @@ class InteractionsControl:
                 'force_sensor_fresh': False,
                 'force_sensor_axis': axis,
                 'force_sensor_sign': sign,
+                **power_fields,
             }
 
         age_s = float(now) - float(sample.host_time)
@@ -1227,12 +1259,52 @@ class InteractionsControl:
             'force_sensor_filtered_raw': float(sample.filtered_raw),
             'force_sensor_voltage_V': float(sample.voltage_v),
             'force_sensor_distance_mm': float(sample.distance_mm),
+            'force_sensor_supply_voltage_V': (
+                None
+                if sample.supply_voltage_v is None
+                else float(sample.supply_voltage_v)
+            ),
+            'force_sensor_compression_mm': float(sample.compression_mm),
             'force_sensor_compression_force_N': float(sample.force_n),
             'force_sensor_external_force_body_N': force_body.tolist(),
             'force_sensor_external_force_N': force_world.tolist(),
             'estimated_external_force_along_sensor_N': estimated_axis_force,
             'force_sensor_estimate_error_N': (
                 estimated_axis_force - signed_force_n if fresh else None
+            ),
+            **power_fields,
+        }
+
+    @staticmethod
+    def _rpi_power_log_fields(sensor, now):
+        """Return the latest non-blocking Raspberry Pi power-health sample."""
+        monitor = getattr(sensor, 'rpi_power_monitor', None)
+        if monitor is None:
+            return {}
+        sample = monitor.latest()
+        if sample is None:
+            return {'rpi_power_monitor_available': False}
+        return {
+            'rpi_power_monitor_available': True,
+            'rpi_power_sample_time': float(sample.host_time),
+            'rpi_power_sample_age_s': float(now) - float(sample.host_time),
+            'rpi_power_flags': int(sample.flags),
+            'rpi_power_flags_hex': f'0x{sample.flags:x}',
+            'rpi_under_voltage_now': bool(sample.under_voltage_now),
+            'rpi_under_voltage_occurred': bool(
+                sample.under_voltage_occurred
+            ),
+            'rpi_frequency_capped_now': bool(sample.frequency_capped_now),
+            'rpi_frequency_capped_occurred': bool(
+                sample.frequency_capped_occurred
+            ),
+            'rpi_throttled_now': bool(sample.throttled_now),
+            'rpi_throttled_occurred': bool(sample.throttled_occurred),
+            'rpi_soft_temperature_limit_now': bool(
+                sample.soft_temperature_limit_now
+            ),
+            'rpi_soft_temperature_limit_occurred': bool(
+                sample.soft_temperature_limit_occurred
             ),
         }
 
@@ -1252,6 +1324,29 @@ class InteractionsControl:
             'spring_constant_n_per_mm': (
                 sensor.spring_constant_n_per_mm if sensor is not None else None
             ),
+            'max_extension_mm': (
+                getattr(sensor, 'max_extension_mm', None)
+                if sensor is not None else None
+            ),
+            'arduino_supply_voltage_recorded': bool(
+                sensor is not None
+                and getattr(sensor.latest(), 'supply_voltage_v', None)
+                is not None
+            ),
+            'rpi_power_monitor': {
+                'enabled': bool(
+                    sensor is not None
+                    and getattr(sensor, 'rpi_power_monitor', None) is not None
+                ),
+                'poll_interval_s': (
+                    getattr(
+                        getattr(sensor, 'rpi_power_monitor', None),
+                        'poll_interval_s',
+                        None,
+                    )
+                    if sensor is not None else None
+                ),
+            },
         }
 
     def _force_sensor_axis_world(self, estimate):
@@ -2428,6 +2523,17 @@ class InteractionsControl:
         max_state_age_s = float(safety.get(
             'max_state_age_s', safety['max_frame_age_s']
         ))
+        calibration_state_dropout_timeout_s = float(safety.get(
+            'calibration_state_dropout_timeout_s', 0.25
+        ))
+        if (
+            calibration_mode
+            and calibration_state_dropout_timeout_s <= max_state_age_s
+        ):
+            raise ValueError(
+                'safety.calibration_state_dropout_timeout_s must be greater '
+                'than safety.max_state_age_s'
+            )
         max_state_group_skew_s = float(safety.get(
             'max_state_group_skew_s', safety['max_motor_pose_skew_s']
         ))
@@ -2624,6 +2730,8 @@ class InteractionsControl:
         excitation_started = False
         excitation_finished = False
         model_calibration_samples = []
+        calibration_dropout_active = False
+        calibration_dropout_max_age_s = 0.0
 
         while interaction_start is None or time.time() - interaction_start < duration:
             now = time.time()
@@ -2632,11 +2740,68 @@ class InteractionsControl:
                 raise StaleLocalizationError('Onboard state packet set is incomplete')
             state_time = state['time']
             state_age = now - state_time
-            if state_age < -0.5 or state_age > max_state_age_s:
+            if state_age < -0.5:
                 raise StaleLocalizationError(
                     f'Onboard state is {state_age:.3f}s old '
                     f'(limit {max_state_age_s:.3f}s)'
                 )
+            if state_age > max_state_age_s:
+                if calibration_state_dropout_tolerated(
+                        state_age,
+                        max_state_age_s,
+                        calibration_state_dropout_timeout_s,
+                        calibration_mode=calibration_mode):
+                    calibration_dropout_max_age_s = max(
+                        calibration_dropout_max_age_s, state_age
+                    )
+                    if not calibration_dropout_active:
+                        calibration_dropout_active = True
+                        self._log_event(
+                            'Calibration State Dropout Started',
+                            {
+                                'state_age_s': state_age,
+                                'normal_limit_s': max_state_age_s,
+                                'dropout_timeout_s': (
+                                    calibration_state_dropout_timeout_s
+                                ),
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                        logger.warning(
+                            'Skipping transient %.3fs-old calibration state; '
+                            'holding position while waiting for a fresh packet.',
+                            state_age,
+                        )
+                    translation_control.send(self.lo_commander)
+                    self._safe_sleep(dt)
+                    continue
+                effective_limit = (
+                    calibration_state_dropout_timeout_s
+                    if calibration_mode else max_state_age_s
+                )
+                raise StaleLocalizationError(
+                    f'Onboard state is {state_age:.3f}s old '
+                    f'(limit {effective_limit:.3f}s)'
+                )
+            if calibration_dropout_active:
+                self._log_event(
+                    'Calibration State Dropout Recovered',
+                    {
+                        'recovered_state_age_s': state_age,
+                        'maximum_stale_age_s': (
+                            calibration_dropout_max_age_s
+                        ),
+                        'state_source': 'crazyflie_state_estimate',
+                    },
+                )
+                logger.info(
+                    'Calibration state stream recovered at %.3fs age.',
+                    state_age,
+                )
+                calibration_dropout_active = False
+                calibration_dropout_max_age_s = 0.0
             state_group_skew = max(
                 float(state['position_skew_s']),
                 float(state['angular_rate_skew_s']),

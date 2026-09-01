@@ -134,6 +134,7 @@ class Controller:
         self.led = None
         self.tracker = None
         self.force_sensor = None
+        self.rpi_power_monitor = None
         self.log_manager = None
         self.bat_logger = None
         self.sub_socket = None
@@ -261,6 +262,9 @@ class Controller:
 
         if self.force_sensor:
             self.force_sensor.stop()
+
+        if self.rpi_power_monitor:
+            self.rpi_power_monitor.stop()
 
         if self.log_manager:
             self.log_manager.stop(
@@ -651,19 +655,37 @@ class Controller:
         from Interaction.potentiometer_force_sensor import (
             PotentiometerForceSensor,
         )
+        from Interaction.rpi_power_monitor import RaspberryPiPowerMonitor
 
         self.force_sensor = PotentiometerForceSensor(
             port=self.args.sense_port,
             baud=self.args.sense_baud,
             spring_constant_n_per_mm=self.args.sense_spring_constant,
+            max_extension_mm=self.args.sense_max_extension,
         )
         self.force_sensor.start(startup_timeout_s=self.args.sense_startup_timeout)
+        self.rpi_power_monitor = RaspberryPiPowerMonitor(
+            poll_interval_s=self.args.sense_power_poll_interval,
+        )
+        self.rpi_power_monitor.start()
+        self.force_sensor.rpi_power_monitor = self.rpi_power_monitor
         sample = self.force_sensor.latest()
+        power_sample = self.rpi_power_monitor.latest()
         logger.info(
-            "Potentiometer force sensor ready on %s: %.3f mm, %.3f N",
+            "Potentiometer force sensor ready on %s: %.3f mm, %.3f N; "
+            "Arduino Vcc: %s; RPi power flags: %s",
             self.args.sense_port,
             sample.distance_mm,
             sample.force_n,
+            (
+                "unavailable"
+                if sample.supply_voltage_v is None
+                else f"{sample.supply_voltage_v:.3f} V"
+            ),
+            (
+                "unavailable"
+                if power_sample is None else f"0x{power_sample.flags:x}"
+            ),
         )
 
     def _uses_onboard_wrench_state(self):
@@ -2157,6 +2179,10 @@ if __name__ == '__main__':
         help="force-sensor spring constant in N/mm",
     )
     ap.add_argument(
+        "--sense-max-extension", type=float, default=10.4,
+        help="zero-compression potentiometer extension in mm",
+    )
+    ap.add_argument(
         "--sense-axis", choices=["x", "y", "z"], default="y",
         help="body-frame sensor axis compared with the external-force estimate",
     )
@@ -2167,6 +2193,10 @@ if __name__ == '__main__':
     ap.add_argument(
         "--sense-max-age", type=float, default=0.25,
         help="maximum sensor sample age in seconds before it is marked stale",
+    )
+    ap.add_argument(
+        "--sense-power-poll-interval", type=float, default=0.5,
+        help="seconds between Raspberry Pi power-health samples",
     )
     ap.add_argument(
         "--sense-startup-timeout", type=float, default=3.0,
@@ -2245,8 +2275,12 @@ if __name__ == '__main__':
         ap.error('--sense requires --log so sensor and estimate data are recorded')
     if args.sense_spring_constant <= 0.0:
         ap.error('--sense-spring-constant must be positive')
+    if args.sense_max_extension <= 0.0:
+        ap.error('--sense-max-extension must be positive')
     if args.sense_max_age <= 0.0 or args.sense_startup_timeout <= 0.0:
         ap.error('--sense timing values must be positive')
+    if args.sense_power_poll_interval <= 0.0:
+        ap.error('--sense-power-poll-interval must be positive')
 
     with Controller(args) as c:
         try:
