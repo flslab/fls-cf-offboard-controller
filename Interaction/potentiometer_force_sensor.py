@@ -1,13 +1,14 @@
 """Threaded Arduino potentiometer force-sensor reader.
 
-The Arduino sketch emits CSV rows with the following columns::
+The current Arduino sketch emits CSV rows with the following columns::
 
-    time_ms,raw,filtered,voltage,distance_mm[,supply_voltage]
+    time_ms,raw,filtered,voltage,compression_mm[,supply_voltage]
 
-The reported distance is the spring's current extension.  It is converted to
-compression with ``max_extension_mm - distance_mm`` and then to force with
-Hooke's law.  The reader owns the serial port and exposes the latest immutable
-sample so the flight-control loop never blocks on UART I/O.
+Firmware with the legacy ``distance_mm`` header remains positionally compatible;
+its fifth value is also interpreted as compression.  The spring length is
+``max_extension_mm - compression_mm`` and force follows Hooke's law.  The
+reader owns the serial port and exposes the latest immutable sample so the
+flight-control loop never blocks on UART I/O.
 """
 
 from __future__ import annotations
@@ -32,9 +33,9 @@ class PotentiometerForceSample:
     raw: int
     filtered_raw: float
     voltage_v: float
-    distance_mm: float
     supply_voltage_v: float | None
     compression_mm: float
+    length_mm: float
     force_n: float
 
 
@@ -143,7 +144,7 @@ def parse_potentiometer_line(
         raw = int(parts[1])
         filtered_raw = float(parts[2])
         voltage_v = float(parts[3])
-        distance_mm = float(parts[4])
+        compression_mm = float(parts[4])
         supply_voltage_v = float(parts[5]) if len(parts) == 6 else None
         spring_constant = float(spring_constant_n_per_mm)
         max_extension = float(max_extension_mm)
@@ -151,13 +152,13 @@ def parse_potentiometer_line(
         return None
 
     values = (
-        filtered_raw, voltage_v, distance_mm, spring_constant, max_extension,
+        filtered_raw, voltage_v, compression_mm, spring_constant, max_extension,
     )
     if (
         arduino_time_ms < 0
         or not 0 <= raw <= 1023
         or not all(math.isfinite(value) for value in values)
-        or distance_mm < 0.0
+        or not 0.0 <= compression_mm <= max_extension
         or spring_constant <= 0.0
         or max_extension <= 0.0
         or (
@@ -170,7 +171,7 @@ def parse_potentiometer_line(
     ):
         return None
 
-    compression_mm = max(max_extension - distance_mm, 0.0)
+    length_mm = max(max_extension - compression_mm, 0.0)
 
     return PotentiometerForceSample(
         host_time=time.time() if host_time is None else float(host_time),
@@ -178,9 +179,9 @@ def parse_potentiometer_line(
         raw=raw,
         filtered_raw=filtered_raw,
         voltage_v=voltage_v,
-        distance_mm=distance_mm,
         supply_voltage_v=supply_voltage_v,
         compression_mm=compression_mm,
+        length_mm=length_mm,
         force_n=compression_mm * spring_constant,
     )
 
@@ -290,10 +291,10 @@ class PotentiometerForceSensor:
         self._last_info_log_monotonic = now
         logger.info(
             "Potentiometer force=%.3f N, compression=%.3f mm, "
-            "distance=%.3f mm, raw=%d, Arduino time=%d ms, Vcc=%s",
+            "length=%.3f mm, raw=%d, Arduino time=%d ms, Vcc=%s",
             sample.force_n,
             sample.compression_mm,
-            sample.distance_mm,
+            sample.length_mm,
             sample.raw,
             sample.arduino_time_ms,
             (

@@ -26,10 +26,10 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         self.assertEqual(sample.arduino_time_ms, 1234)
         self.assertEqual(sample.raw, 925)
         self.assertAlmostEqual(sample.filtered_raw, 925.25)
-        self.assertAlmostEqual(sample.distance_mm, 7.1)
         self.assertIsNone(sample.supply_voltage_v)
-        self.assertAlmostEqual(sample.compression_mm, 3.3)
-        self.assertAlmostEqual(sample.force_n, 0.528)
+        self.assertAlmostEqual(sample.compression_mm, 7.1)
+        self.assertAlmostEqual(sample.length_mm, 3.3)
+        self.assertAlmostEqual(sample.force_n, 1.136)
 
     def test_parses_optional_arduino_supply_voltage(self):
         sample = parse_potentiometer_line(
@@ -39,10 +39,23 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
 
         self.assertIsNotNone(sample)
         self.assertAlmostEqual(sample.supply_voltage_v, 4.873)
-        self.assertAlmostEqual(sample.compression_mm, 3.3)
-        self.assertAlmostEqual(sample.force_n, 0.528)
+        self.assertAlmostEqual(sample.compression_mm, 7.1)
+        self.assertAlmostEqual(sample.length_mm, 3.3)
+        self.assertAlmostEqual(sample.force_n, 1.136)
 
-    def test_fully_extended_sensor_has_zero_force(self):
+    def test_zero_compression_has_full_length_and_zero_force(self):
+        sample = parse_potentiometer_line(
+            "1234,1023,1023.0,4.000,0.000",
+            spring_constant_n_per_mm=0.16,
+            max_extension_mm=10.4,
+        )
+
+        self.assertIsNotNone(sample)
+        self.assertAlmostEqual(sample.compression_mm, 0.0)
+        self.assertAlmostEqual(sample.length_mm, 10.4)
+        self.assertAlmostEqual(sample.force_n, 0.0)
+
+    def test_full_compression_has_zero_length_and_maximum_force(self):
         sample = parse_potentiometer_line(
             "1234,2,2.0,0.010,10.400",
             spring_constant_n_per_mm=0.16,
@@ -50,8 +63,21 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         )
 
         self.assertIsNotNone(sample)
-        self.assertAlmostEqual(sample.compression_mm, 0.0)
-        self.assertAlmostEqual(sample.force_n, 0.0)
+        self.assertAlmostEqual(sample.compression_mm, 10.4)
+        self.assertAlmostEqual(sample.length_mm, 0.0)
+        self.assertAlmostEqual(sample.force_n, 1.664)
+
+    def test_firmware_fifth_column_is_compression_not_length(self):
+        sample = parse_potentiometer_line(
+            "63900,1022,1022.0,3.960,0.036,3.962",
+            spring_constant_n_per_mm=0.16,
+            max_extension_mm=10.4,
+        )
+
+        self.assertIsNotNone(sample)
+        self.assertAlmostEqual(sample.compression_mm, 0.036)
+        self.assertAlmostEqual(sample.length_mm, 10.364)
+        self.assertAlmostEqual(sample.force_n, 0.00576)
 
     def test_live_force_info_log_is_rate_limited(self):
         sample = parse_potentiometer_line(
@@ -68,13 +94,14 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
             self.assertTrue(sensor._log_sample_info(sample, monotonic_time=1.10))
 
         self.assertEqual(len(logs.output), 2)
-        self.assertIn('Potentiometer force=0.528 N', logs.output[0])
-        self.assertIn('compression=3.300 mm', logs.output[0])
+        self.assertIn('Potentiometer force=1.136 N', logs.output[0])
+        self.assertIn('compression=7.100 mm', logs.output[0])
+        self.assertIn('length=3.300 mm', logs.output[0])
         self.assertIn('Vcc=4.873 V', logs.output[0])
 
     def test_ignores_header_and_invalid_rows(self):
         self.assertIsNone(parse_potentiometer_line(
-            "time_ms,raw,filtered,voltage,distance_mm"
+            "time_ms,raw,filtered,voltage,compression_mm"
         ))
         self.assertIsNone(parse_potentiometer_line("1,2,3"))
         self.assertIsNone(parse_potentiometer_line("1,1024,3,4,5"))
@@ -105,15 +132,18 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         self.assertTrue(fields['force_sensor_fresh'])
         np.testing.assert_allclose(
             fields['force_sensor_external_force_body_N'],
-            [0.0, -0.528, 0.0],
+            [0.0, -1.136, 0.0],
         )
         np.testing.assert_allclose(
-            fields['force_sensor_external_force_N'], [0.0, -0.528, 0.0]
+            fields['force_sensor_external_force_N'], [0.0, -1.136, 0.0]
         )
         self.assertAlmostEqual(
             fields['estimated_external_force_along_sensor_N'], -0.2
         )
-        self.assertAlmostEqual(fields['force_sensor_estimate_error_N'], 0.328)
+        self.assertAlmostEqual(fields['force_sensor_estimate_error_N'], 0.936)
+        self.assertAlmostEqual(fields['force_sensor_compression_mm'], 7.1)
+        self.assertAlmostEqual(fields['force_sensor_length_mm'], 3.3)
+        self.assertNotIn('force_sensor_distance_mm', fields)
 
         stale = controller._force_sensor_log_fields(estimate, now=10.5)
         self.assertFalse(stale['force_sensor_fresh'])
@@ -139,7 +169,7 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         fields = controller._force_sensor_log_fields(estimate, now=10.05)
 
         for actual, expected in zip(
-                fields['force_sensor_external_force_N'], [0.0, 0.528, 0.0]):
+                fields['force_sensor_external_force_N'], [0.0, 1.136, 0.0]):
             self.assertAlmostEqual(actual, expected)
         self.assertAlmostEqual(
             fields['estimated_external_force_along_sensor_N'], 1.0

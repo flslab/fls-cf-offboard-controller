@@ -1258,13 +1258,13 @@ class InteractionsControl:
             'force_sensor_raw': int(sample.raw),
             'force_sensor_filtered_raw': float(sample.filtered_raw),
             'force_sensor_voltage_V': float(sample.voltage_v),
-            'force_sensor_distance_mm': float(sample.distance_mm),
             'force_sensor_supply_voltage_V': (
                 None
                 if sample.supply_voltage_v is None
                 else float(sample.supply_voltage_v)
             ),
             'force_sensor_compression_mm': float(sample.compression_mm),
+            'force_sensor_length_mm': float(sample.length_mm),
             'force_sensor_compression_force_N': float(sample.force_n),
             'force_sensor_external_force_body_N': force_body.tolist(),
             'force_sensor_external_force_N': force_world.tolist(),

@@ -114,12 +114,14 @@ stop notification; there is no attitude-recovery escalation.
 
 Use `--sense --log` (or add `--sense` to an `--interaction --log` run) to
 record the spring-backed potentiometer as an independent force reference. The Arduino must emit
-`time_ms,raw,filtered,voltage,distance_mm,supply_voltage` at 115200 baud on
+`time_ms,raw,filtered,voltage,compression_mm,supply_voltage` at 115200 baud on
 `/dev/serial0`. Five-column firmware remains readable, but its Arduino supply
 voltage is logged as unavailable.
-`distance_mm` is the current extended length. With the default maximum extension
-of 10.4 mm and spring constant of 0.16 N/mm, the recorded compression force is
-`max(10.4 - distance_mm, 0) * 0.16`.
+`compression_mm` is the calibrated spring compression. With the default
+10.4 mm travel and spring constant of 0.16 N/mm, the current spring length and
+force are `max(10.4 - compression_mm, 0)` and `compression_mm * 0.16`.
+Firmware carrying the old `distance_mm` header is positionally compatible; its
+fifth column is interpreted as compression.
 
 ```text
 --sense --sense-axis y --sense-sign 1
@@ -168,7 +170,8 @@ behavior. `potentiometer_coast` requires `--sense`.
 Each `wrench_observer` record includes both `external_force_N` (the observer)
 and `control_external_force_N` (the observer control force), plus
 `release_braking_external_force_N`, force-rendering state, release mode,
-potentiometer force rate/drop, coast initial velocity, calibrated distance,
+potentiometer force rate/drop, coast initial velocity, calibrated compression
+and spring length,
 sample freshness, release force/momentum/position, stopping position, and
 observer-minus-sensor error. During the dedicated calibration run, the sensor
 remains comparison-only so it cannot alter the excitation trajectory.

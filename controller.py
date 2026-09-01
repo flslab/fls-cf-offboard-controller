@@ -672,10 +672,12 @@ class Controller:
         sample = self.force_sensor.latest()
         power_sample = self.rpi_power_monitor.latest()
         logger.info(
-            "Potentiometer force sensor ready on %s: %.3f mm, %.3f N; "
+            "Potentiometer force sensor ready on %s: compression %.3f mm, "
+            "length %.3f mm, %.3f N; "
             "Arduino Vcc: %s; RPi power flags: %s",
             self.args.sense_port,
-            sample.distance_mm,
+            sample.compression_mm,
+            sample.length_mm,
             sample.force_n,
             (
                 "unavailable"
@@ -2180,7 +2182,7 @@ if __name__ == '__main__':
     )
     ap.add_argument(
         "--sense-max-extension", type=float, default=10.4,
-        help="zero-compression potentiometer extension in mm",
+        help="potentiometer travel / released spring length in mm",
     )
     ap.add_argument(
         "--sense-axis", choices=["x", "y", "z"], default="y",
