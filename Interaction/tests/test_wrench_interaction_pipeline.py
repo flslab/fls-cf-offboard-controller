@@ -14,11 +14,10 @@ from Interaction.wrench_interaction_pipeline import (
 
 class DefaultConfigTests(unittest.TestCase):
     def test_release_braking_handoff_uses_practical_speed_threshold(self):
+        handoff = DEFAULT_WRENCH_INTERACTION_CONFIG["control_handoff"]
+        self.assertEqual(handoff["brake_xy_speed_m_s"], 0.20)
         self.assertEqual(
-            DEFAULT_WRENCH_INTERACTION_CONFIG["control_handoff"][
-                "brake_xy_speed_m_s"
-            ],
-            0.10,
+            handoff["brake_min_attitude_taper_speed_m_s"], 0.25
         )
 
 

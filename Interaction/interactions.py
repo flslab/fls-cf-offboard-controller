@@ -125,6 +125,33 @@ def release_coast_initial_velocity(
     return coast_velocity
 
 
+def potentiometer_release_direction(force_world, measured_velocity):
+    """Prefer the spring-force axis over transient velocity at release onset."""
+    force = np.asarray(force_world, dtype=float)
+    velocity = np.asarray(measured_velocity, dtype=float)
+    if (
+        force.shape != (3,)
+        or velocity.shape != (3,)
+        or not np.all(np.isfinite(force))
+        or not np.all(np.isfinite(velocity))
+    ):
+        raise ValueError('release direction inputs must be finite XYZ')
+    direction = force.copy()
+    direction[2] = 0.0
+    source = 'potentiometer_force_world'
+    norm = float(np.linalg.norm(direction[:2]))
+    if norm <= 1e-9:
+        direction = velocity.copy()
+        direction[2] = 0.0
+        source = 'measured_velocity_fallback'
+        norm = float(np.linalg.norm(direction[:2]))
+    if norm > 1e-9:
+        direction /= norm
+    else:
+        direction.fill(0.0)
+    return direction, source
+
+
 def resolve_release_mode(
         configured_mode,
         force_sensor_available,
@@ -806,14 +833,14 @@ class TranslationControlHandoff:
             yaw_deg,
             shadow_mode,
             brake_xy_acceleration_m_s2=0.8,
-            brake_xy_speed_m_s=0.1,
+            brake_xy_speed_m_s=0.2,
             brake_settle_s=0.30,
             position_brake_offset_m=0.05,
             brake_min_attitude_deg=3.0,
             brake_max_attitude_deg=20.0,
             brake_timeout_s=1.5,
             brake_velocity_gain_s=2.0,
-            brake_min_attitude_taper_speed_m_s=0.15,
+            brake_min_attitude_taper_speed_m_s=0.25,
             coast_position_gain_s2=4.0,
             coast_velocity_gain_s=2.5,
             coast_max_acceleration_m_s2=2.0,
@@ -1232,6 +1259,11 @@ class TranslationControlHandoff:
         )
         xy_speed = float(np.linalg.norm(velocity[:2]))
         speed_acceptable = bool(xy_speed <= self.brake_xy_speed_m_s)
+        motion_reversed_at_low_speed = bool(
+            speed_acceptable
+            and np.linalg.norm(self.brake_direction[:2]) > 1e-9
+            and self.brake_projected_speed_m_s <= 0.0
+        )
         if speed_acceptable:
             if self._coast_alignment_since is None:
                 self._coast_alignment_since = timestamp
@@ -1271,19 +1303,27 @@ class TranslationControlHandoff:
         self.coast_tracking_power_w_per_kg = float(
             tracking['power_w_per_kg']
         )
-        if not speed_dwell_complete or not bool(allow_position_handoff):
+        handoff_ready = bool(
+            speed_dwell_complete or motion_reversed_at_low_speed
+        )
+        if not handoff_ready or not bool(allow_position_handoff):
             # A timeout is diagnostic only. Switching a still-moving vehicle
             # to position control would recreate the pullback failure, so keep
             # applying bounded dissipative attitude damping until measured
-            # speed is continuously acceptable.
+            # speed is continuously acceptable or reverses at low speed.
             if attitude_timed_out:
                 self.coast_handoff_reason = 'waiting_for_actual_stop_after_timeout'
             return False
 
-        self.coast_handoff_reason = (
-            'actual_speed_settled_after_timeout'
-            if attitude_timed_out else 'actual_speed_settled'
-        )
+        if motion_reversed_at_low_speed:
+            self.coast_handoff_reason = (
+                'motion_reversed_below_speed_threshold'
+            )
+        else:
+            self.coast_handoff_reason = (
+                'actual_speed_settled_after_timeout'
+                if attitude_timed_out else 'actual_speed_settled'
+            )
         # This is the key no-pullback invariant: the first position command is
         # latched from the measured stop state, never the virtual trajectory.
         self.hold_position = position.copy()
@@ -1295,7 +1335,7 @@ class TranslationControlHandoff:
         self.coast_tracking_acceleration_m_s2 = np.zeros(2)
         self.coast_tracking_acceleration_saturated = False
         self.coast_tracking_power_w_per_kg = 0.0
-        self.brake_completion_reason = 'actual_speed_settled'
+        self.brake_completion_reason = self.coast_handoff_reason
         self._brake_started_at = None
         self._detector_rearm_at = timestamp + self.rearm_delay_s
         self._transition_mode(self.POSITION_HOLD)
@@ -3954,9 +3994,16 @@ class InteractionsControl:
                     self._force_sensor_axis_world(output.estimate)
                     * candidate_force_n
                 )
-                candidate_direction = output.estimate.velocity.copy()
-                if np.linalg.norm(candidate_direction[:2]) <= 1e-9:
-                    candidate_direction = candidate_force_world.copy()
+                # The force sensor defines the user's push direction. The
+                # instantaneous velocity at candidate onset can still be a
+                # small diagonal hover transient and must not define the
+                # zero-crossing direction used by release braking.
+                candidate_direction, candidate_direction_source = (
+                    potentiometer_release_direction(
+                        candidate_force_world,
+                        output.estimate.velocity,
+                    )
+                )
                 coast_initial_velocity = release_coast_initial_velocity(
                     output.estimate.velocity,
                     candidate_force_world,
@@ -3988,6 +4035,12 @@ class InteractionsControl:
                                 output.estimate.velocity.tolist()
                             ),
                             'candidate_position_m': position.tolist(),
+                            'brake_direction_xy': (
+                                translation_control.brake_direction[:2].tolist()
+                            ),
+                            'brake_direction_source': (
+                                candidate_direction_source
+                            ),
                             'command_mode': translation_control.command_mode,
                             'state_source': 'crazyflie_state_estimate',
                         },

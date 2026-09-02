@@ -16,6 +16,7 @@ from Interaction.interactions import (
     inertia_command_mode,
     inertia_position_target,
     kinetic_energy_velocity,
+    potentiometer_release_direction,
     release_coast_initial_velocity,
     resolve_release_mode,
     select_inertia_render_mode,
@@ -80,6 +81,24 @@ class ReleaseModeTests(unittest.TestCase):
                 force_sensor_available=False,
                 calibration_mode=False,
             )
+
+
+class PotentiometerReleaseDirectionTests(unittest.TestCase):
+    def test_force_axis_wins_over_transient_velocity(self):
+        direction, source = potentiometer_release_direction(
+            [0.0, 1.2, 0.1], [0.04, 0.04, 0.0]
+        )
+
+        np.testing.assert_allclose(direction, [0.0, 1.0, 0.0])
+        self.assertEqual(source, 'potentiometer_force_world')
+
+    def test_velocity_is_used_only_when_force_has_no_planar_direction(self):
+        direction, source = potentiometer_release_direction(
+            [0.0, 0.0, 0.2], [-3.0, 4.0, 0.0]
+        )
+
+        np.testing.assert_allclose(direction, [-0.6, 0.8, 0.0])
+        self.assertEqual(source, 'measured_velocity_fallback')
 
 
 class CalibrationStateDropoutTests(unittest.TestCase):
@@ -614,6 +633,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             shadow_mode=False,
             brake_xy_acceleration_m_s2=1.0,
             brake_xy_speed_m_s=0.04,
+            brake_min_attitude_taper_speed_m_s=0.15,
             brake_max_attitude_deg=20.0,
             brake_timeout_s=1.0,
         )
@@ -752,6 +772,50 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.stopping_position_m, [0.0, 0.22, 1.0]
         )
         self.assertEqual(control.brake_completion_reason, 'actual_speed_settled')
+
+    def test_low_speed_direction_reversal_handoffs_without_dwell(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            brake_xy_speed_m_s=0.20,
+            coast_alignment_dwell_s=0.08,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.1, 1.0], [0.0, 0.30, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(
+            [0.0, 0.1, 1.0], [0.0, 0.30, 0.0], timestamp=1.0,
+        )
+
+        # Reversal alone is insufficient while lateral speed is still high.
+        self.assertFalse(control.update_coast_attitude(
+            [0.02, 0.12, 1.0], [0.25, -0.01, 0.0],
+            [0.0, 0.2, 1.0], [0.0, 0.0, 0.0], 1.01,
+        ))
+        self.assertEqual(control.command_mode, 'attitude_coast')
+
+        # Once total speed is also acceptable, crossing the original motion
+        # direction stops attitude braking immediately instead of waiting for
+        # the dwell and accumulating reverse displacement.
+        self.assertTrue(control.update_coast_attitude(
+            [0.021, 0.119, 1.0], [0.02, -0.03, 0.0],
+            [0.0, 0.2, 1.0], [0.0, 0.0, 0.0], 1.02,
+        ))
+        self.assertEqual(control.command_mode, 'position_hold')
+        self.assertEqual(
+            control.coast_handoff_reason,
+            'motion_reversed_below_speed_threshold',
+        )
+        self.assertEqual(
+            control.brake_completion_reason,
+            'motion_reversed_below_speed_threshold',
+        )
+        np.testing.assert_allclose(
+            control.hold_position, [0.021, 0.119, 1.0]
+        )
 
     def test_release_records_force_momentum_then_captures_actual_stop_position(self):
         control = TranslationControlHandoff(
@@ -996,6 +1060,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             initial_position=[0.0, 0.0, 1.0],
             yaw_deg=0.0,
             shadow_mode=False,
+            brake_xy_speed_m_s=0.04,
             brake_timeout_s=0.5,
         )
         self.assertTrue(control.start_contact())

@@ -123,7 +123,7 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # Apply the minimum to total tilt, not independently to roll/pitch. It
         # tapers toward zero near the braking completion speed.
         "brake_min_attitude_deg": 3.0,
-        "brake_min_attitude_taper_speed_m_s": 0.15,
+        "brake_min_attitude_taper_speed_m_s": 0.25,
         "brake_max_attitude_deg": 20.0,
         "brake_timeout_s": 1.5,
         "brake_velocity_gain_s": 2.0,
