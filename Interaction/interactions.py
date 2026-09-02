@@ -28,6 +28,15 @@ from Interaction.wrench_model_calibration import (
 logger = logging.getLogger(__name__)
 
 
+# Temporary video-demo behavior. While this is a positive distance, a
+# potentiometer release candidate does not command attitude braking. Once the
+# release detector confirms full unloading, the controller immediately sends
+# a position target this far along the measured interaction direction.
+# Set to ``None`` to restore the preserved braking-only release path below.
+POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M = 1.0
+POTENTIOMETER_RELEASE_DIRECT_DIRECTION_MIN_SPEED_M_S = 0.02
+
+
 def velocity_inertia_mass_class(current_mass, virtual_mass, mass_tolerance=1e-6):
     """Classify a virtual mass relative to the physical LightBender mass."""
     current_mass = float(current_mass)
@@ -123,6 +132,38 @@ def release_coast_initial_velocity(
         if speed > max_speed:
             coast_velocity[:2] *= max_speed / speed
     return coast_velocity
+
+
+def fixed_distance_release_position_target(
+        release_position,
+        motion_direction,
+        distance_m,
+):
+    """Return an XY target a fixed distance from the release position."""
+    position = np.asarray(release_position, dtype=float)
+    direction = np.asarray(motion_direction, dtype=float)
+    distance_m = float(distance_m)
+    if (
+        position.shape != (3,)
+        or direction.shape != (3,)
+        or not np.all(np.isfinite(position))
+        or not np.all(np.isfinite(direction))
+        or not np.isfinite(distance_m)
+        or distance_m <= 0.0
+    ):
+        raise ValueError(
+            'fixed release target requires finite XYZ state and positive distance'
+        )
+    planar_direction = direction.copy()
+    planar_direction[2] = 0.0
+    direction_norm = float(np.linalg.norm(planar_direction[:2]))
+    if direction_norm <= 1e-9:
+        raise ValueError('fixed release target requires a nonzero XY direction')
+    planar_direction /= direction_norm
+    target = position.copy()
+    target[:2] += distance_m * planar_direction[:2]
+    target[2] = position[2]
+    return target, planar_direction
 
 
 def resolve_release_mode(
@@ -806,7 +847,7 @@ class TranslationControlHandoff:
             yaw_deg,
             shadow_mode,
             brake_xy_acceleration_m_s2=0.8,
-            brake_xy_speed_m_s=0.04,
+            brake_xy_speed_m_s=0.1,
             brake_settle_s=0.30,
             position_brake_offset_m=0.05,
             brake_min_attitude_deg=3.0,
@@ -1177,6 +1218,28 @@ class TranslationControlHandoff:
             self._brake_started_at = timestamp
             self._coast_alignment_since = None
         self._release_candidate_mode = None
+
+    def start_position_coast(self, target_position) -> bool:
+        """Switch a confirmed release directly to a position command."""
+        if self.shadow_mode or self.mode != self.ATTITUDE_COAST:
+            return False
+        target = np.asarray(target_position, dtype=float)
+        if target.shape != (3,) or not np.all(np.isfinite(target)):
+            raise ValueError('position coast target must be finite XYZ')
+        self.hold_position = target.copy()
+        self.stopping_position_m = target.copy()
+        self.hover_z = float(target[2])
+        self._coast_position_settle_since = None
+        self.set_contact_attitude(0.0, 0.0, 0.0)
+        self.brake_command_tilt_deg = 0.0
+        self.coast_tracking_action = 'fixed_distance_position_command'
+        self.coast_tracking_acceleration_m_s2 = None
+        self.coast_tracking_acceleration_saturated = False
+        self.coast_tracking_power_w_per_kg = None
+        self.coast_handoff_reason = 'fixed_distance_release_target'
+        self.brake_completion_reason = None
+        self._transition_mode(self.POSITION_COAST)
+        return True
 
     def update_coast_attitude(
             self,
@@ -3018,7 +3081,17 @@ class InteractionsControl:
                             'mode': release_mode,
                             'configured_mode': configured_release_mode,
                             'coast_control_policy': (
-                                'braking_only_actual_stop'
+                                (
+                                    'direct_fixed_distance_position'
+                                    if POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M
+                                    is not None
+                                    else 'braking_only_actual_stop'
+                                )
+                                if release_mode == 'potentiometer_coast'
+                                else None
+                            ),
+                            'direct_position_distance_m': (
+                                POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M
                                 if release_mode == 'potentiometer_coast'
                                 else None
                             ),
@@ -3049,7 +3122,11 @@ class InteractionsControl:
                     'control_source': 'wrench_observer',
                     'contact_detection_source': contact_detection_source,
                     'release_braking_force_source': (
-                        'measured_xy_velocity'
+                        (
+                            'none_direct_position_target'
+                            if POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M
+                            is not None else 'measured_xy_velocity'
+                        )
                         if release_mode == 'potentiometer_coast'
                         else self._force_sensor_config()[
                             'release_braking_force_source'
@@ -3935,6 +4012,7 @@ class InteractionsControl:
 
             if (
                 release_mode == 'potentiometer_coast'
+                and POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M is None
                 and potentiometer_release_decision is not None
                 and potentiometer_release_decision.candidate_started
                 and bool(sensor_fields.get('force_sensor_fresh'))
@@ -4074,8 +4152,18 @@ class InteractionsControl:
                     position[:2], coast_initial_velocity[:2]
                 )
                 coast_direction = output.estimate.velocity.copy()
-                if np.linalg.norm(coast_direction[:2]) <= 1e-9:
+                coast_direction_source = 'confirmed_release_velocity'
+                direction_min_speed_m_s = (
+                    POTENTIOMETER_RELEASE_DIRECT_DIRECTION_MIN_SPEED_M_S
+                    if POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M
+                    is not None else 1e-9
+                )
+                if (
+                    np.linalg.norm(coast_direction[:2])
+                    <= direction_min_speed_m_s
+                ):
                     coast_direction = pre_release_force_world.copy()
+                    coast_direction_source = 'pre_release_force_fallback'
                 release_started = False
                 if potentiometer_release_pending:
                     translation_control.confirm_release_candidate(
@@ -4108,12 +4196,69 @@ class InteractionsControl:
                     )
                     release_started = True
                 if release_started:
+                    requested_position_target_m = None
+                    position_target_m = None
+                    position_target_direction = None
+                    position_target_direction_source = None
+                    position_target_distance_applied_m = None
+                    position_target_clipped = None
+                    if (
+                        POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M
+                        is not None
+                    ):
+                        position_target_direction = (
+                            translation_control.brake_direction.copy()
+                        )
+                        position_target_direction_source = coast_direction_source
+                        if (
+                            np.linalg.norm(position_target_direction[:2])
+                            <= 1e-9
+                        ):
+                            position_target_direction = (
+                                self._force_sensor_axis_world(output.estimate)
+                            )
+                            position_target_direction_source = (
+                                'force_sensor_axis_fallback'
+                            )
+                        (
+                            requested_position_target_m,
+                            position_target_direction,
+                        ) = fixed_distance_release_position_target(
+                            translation_control.release_position_m,
+                            position_target_direction,
+                            POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M,
+                        )
+                        position_target_m = self._bounded_wrench_reference(
+                            requested_position_target_m
+                        )
+                        position_target_distance_applied_m = float(
+                            np.linalg.norm(
+                                position_target_m[:2]
+                                - translation_control.release_position_m[:2]
+                            )
+                        )
+                        position_target_clipped = bool(
+                            not np.allclose(
+                                position_target_m,
+                                requested_position_target_m,
+                            )
+                        )
+                        if not translation_control.start_position_coast(
+                                position_target_m):
+                            raise RuntimeError(
+                                'confirmed potentiometer release could not start '
+                                'fixed-distance position coast'
+                            )
                     potentiometer_release_processed = True
                     potentiometer_release_pending = False
                     if potentiometer_contact_detector is not None:
                         potentiometer_contact_detector.mark_released()
                     braking_force_world = np.zeros(3)
-                    braking_force_source = 'measured_xy_velocity'
+                    braking_force_source = (
+                        'none_direct_position_target'
+                        if POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M
+                        is not None else 'measured_xy_velocity'
+                    )
                     pipeline.admittance.reset()
                     self._log_event(
                         'Translation Contact End',
@@ -4181,6 +4326,33 @@ class InteractionsControl:
                                 coast_initial_velocity.tolist()
                             ),
                             'release_position_m': position.tolist(),
+                            'position_target_requested_distance_m': (
+                                POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M
+                            ),
+                            'position_target_applied_distance_m': (
+                                position_target_distance_applied_m
+                            ),
+                            'position_target_direction_xy': (
+                                None
+                                if position_target_direction is None else
+                                position_target_direction[:2].tolist()
+                            ),
+                            'position_target_direction_source': (
+                                position_target_direction_source
+                            ),
+                            'position_target_unbounded_m': (
+                                None
+                                if requested_position_target_m is None else
+                                requested_position_target_m.tolist()
+                            ),
+                            'position_target_m': (
+                                None
+                                if position_target_m is None else
+                                position_target_m.tolist()
+                            ),
+                            'position_target_clipped_to_bounds': (
+                                position_target_clipped
+                            ),
                             'force_memory_s': release_force_memory_s,
                             'unloaded_elapsed_s': (
                                 potentiometer_release_decision
@@ -4536,7 +4708,16 @@ class InteractionsControl:
                 'contact_detection_source': contact_detection_source,
                 'release_behavior_mode': release_mode,
                 'coast_control_policy': (
-                    'braking_only_actual_stop'
+                    (
+                        'direct_fixed_distance_position'
+                        if POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M
+                        is not None
+                        else 'braking_only_actual_stop'
+                    )
+                    if release_mode == 'potentiometer_coast' else None
+                ),
+                'direct_position_distance_m': (
+                    POTENTIOMETER_RELEASE_DIRECT_POSITION_DISTANCE_M
                     if release_mode == 'potentiometer_coast' else None
                 ),
                 'initial_contact_detector_armed': (
