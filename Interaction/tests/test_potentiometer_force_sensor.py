@@ -238,16 +238,28 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         detector = PotentiometerReleaseDetector(
             force_drop_n=0.01,
             decrease_rate_n_s=0.05,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.04,
         )
         detector.arm(0.80, 1.00)
         self.assertFalse(detector.update(0.81, 1.02).released)
 
         decision = detector.update(0.79, 1.04)
 
-        self.assertTrue(decision.released)
+        self.assertFalse(decision.released)
+        self.assertTrue(decision.candidate_started)
+        self.assertTrue(decision.candidate_active)
         self.assertAlmostEqual(decision.last_force_n, 0.81)
         self.assertAlmostEqual(decision.force_drop_n, 0.02)
         self.assertLess(decision.force_rate_n_s, 0.0)
+        self.assertAlmostEqual(decision.pre_release_force_n, 0.81)
+
+        self.assertFalse(detector.update(0.04, 1.06).released)
+        decision = detector.update(0.03, 1.11)
+
+        self.assertTrue(decision.released)
+        self.assertFalse(decision.candidate_active)
+        self.assertGreaterEqual(decision.unloaded_elapsed_s, 0.04)
 
     def test_contact_detector_requires_baseline_then_sustained_compression(self):
         detector = PotentiometerContactDetector(
@@ -275,15 +287,29 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         detector = PotentiometerReleaseDetector(
             force_drop_n=0.04,
             decrease_rate_n_s=0.05,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.02,
         )
         detector.arm(0.80, 1.00, peak_force_n=1.60)
 
-        decision = detector.update(0.70, 1.02)
+        # The inherited 1.60 N contact peak is diagnostic only. A tiny local
+        # decrease must not trigger release.
+        decision = detector.update(0.79, 1.02)
+        self.assertFalse(decision.candidate_active)
 
-        self.assertTrue(decision.released)
-        self.assertAlmostEqual(decision.last_force_n, 0.80)
+        decision = detector.update(0.70, 1.04)
+        self.assertTrue(decision.candidate_active)
+        self.assertFalse(decision.released)
+        self.assertAlmostEqual(decision.pre_release_force_n, 0.80)
         self.assertAlmostEqual(decision.peak_force_n, 1.60)
-        self.assertAlmostEqual(decision.force_drop_n, 0.90)
+
+        self.assertFalse(detector.update(0.04, 1.06).released)
+        decision = detector.update(0.03, 1.09)
+        self.assertTrue(decision.released)
+        self.assertAlmostEqual(decision.peak_force_n, 1.60)
+        # Release drop is relative to the local onset edge (0.80 N), while
+        # peak_force_n retains the inherited contact peak for diagnostics.
+        self.assertAlmostEqual(decision.force_drop_n, 0.77)
 
     def test_release_detector_ignores_small_force_noise(self):
         detector = PotentiometerReleaseDetector(force_drop_n=0.01)
@@ -291,6 +317,218 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
 
         self.assertFalse(detector.update(0.795, 1.02).released)
         self.assertFalse(detector.update(0.802, 1.04).released)
+
+    def test_release_candidate_cancels_when_force_recovers(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.05,
+        )
+        detector.arm(0.80, 1.00)
+
+        decision = detector.update(0.74, 1.02)
+        self.assertTrue(decision.candidate_started)
+        self.assertTrue(decision.candidate_active)
+
+        decision = detector.update(0.79, 1.04)
+        self.assertTrue(decision.candidate_cancelled)
+        self.assertFalse(decision.candidate_active)
+        self.assertFalse(decision.released)
+        self.assertEqual(decision.candidate_cancel_reason, 'force_rebound')
+
+    def test_release_onset_ignores_old_peak_after_slow_unload(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            decrease_rate_n_s=0.05,
+        )
+        detector.arm(1.0, 0.0)
+        force_n = 1.0
+        timestamp = 0.0
+        for _ in range(100):
+            force_n -= 0.001
+            timestamp += 0.10
+            self.assertFalse(
+                detector.update(force_n, timestamp).candidate_active
+            )
+
+        # This final edge is fast, but only 0.005 N deep. It must not inherit
+        # the 1.0 N arm peak and masquerade as a 0.04 N release edge.
+        decision = detector.update(force_n - 0.005, timestamp + 0.01)
+        self.assertFalse(decision.candidate_started)
+        self.assertFalse(decision.candidate_active)
+        self.assertAlmostEqual(decision.force_drop_n, 0.005)
+
+    def test_release_candidate_stall_cancels_and_can_resume_contact(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            unloaded_force_n=0.05,
+            candidate_stall_timeout_s=0.50,
+        )
+        detector.arm(0.80, 1.00)
+        self.assertTrue(detector.update(0.70, 1.02).candidate_active)
+
+        decision = None
+        for timestamp in (1.12, 1.22, 1.32, 1.42, 1.52):
+            decision = detector.update(0.70, timestamp)
+
+        self.assertTrue(decision.candidate_cancelled)
+        self.assertEqual(
+            decision.candidate_cancel_reason, 'no_downward_progress'
+        )
+        self.assertFalse(decision.candidate_active)
+        self.assertGreaterEqual(decision.candidate_elapsed_s, 0.50)
+
+    def test_release_candidate_rebound_is_relative_to_candidate_minimum(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            unloaded_force_n=0.05,
+        )
+        detector.arm(0.80, 1.00)
+        self.assertTrue(detector.update(0.70, 1.02).candidate_active)
+        self.assertTrue(detector.update(0.40, 1.04).candidate_active)
+
+        decision = detector.update(0.45, 1.06)
+
+        self.assertTrue(decision.candidate_cancelled)
+        self.assertEqual(decision.candidate_cancel_reason, 'force_rebound')
+
+    def test_release_unloaded_dwell_must_be_continuous(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.05,
+        )
+        detector.arm(0.80, 1.00)
+        self.assertFalse(detector.update(0.70, 1.02).released)
+        self.assertFalse(detector.update(0.04, 1.04).released)
+        self.assertFalse(detector.update(0.06, 1.07).released)
+        self.assertFalse(detector.update(0.04, 1.09).released)
+        decision = detector.update(0.03, 1.15)
+
+        self.assertTrue(decision.released)
+        self.assertGreaterEqual(decision.unloaded_elapsed_s, 0.05)
+
+    def test_noise_inside_unloaded_band_does_not_cancel_dwell(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.01,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.05,
+        )
+        detector.arm(0.80, 1.00)
+        self.assertTrue(detector.update(0.70, 1.02).candidate_active)
+        self.assertFalse(detector.update(0.00, 1.04).released)
+
+        decision = detector.update(0.02, 1.10)
+
+        self.assertTrue(decision.released)
+        self.assertFalse(decision.candidate_cancelled)
+
+    def test_gap_release_keeps_global_peak_diagnostic_only(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            unloaded_force_n=0.05,
+            max_sample_gap_s=0.10,
+        )
+        detector.arm(0.80, 1.00, peak_force_n=1.60)
+
+        decision = detector.update(0.03, 1.30)
+
+        self.assertTrue(decision.candidate_started)
+        self.assertAlmostEqual(decision.pre_release_force_n, 0.80)
+        self.assertAlmostEqual(decision.peak_force_n, 1.60)
+        self.assertAlmostEqual(decision.force_drop_n, 0.77)
+
+    def test_repeated_timestamp_and_sample_gap_do_not_advance_unload_dwell(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.05,
+            max_sample_gap_s=0.10,
+        )
+        detector.arm(0.80, 1.00)
+        self.assertFalse(detector.update(0.70, 1.02).released)
+        self.assertFalse(detector.update(0.04, 1.04).released)
+        self.assertFalse(detector.update(0.03, 1.04).released)
+
+        # The 0.26 s data gap resets continuous dwell evidence.
+        self.assertFalse(detector.update(0.03, 1.30).released)
+        self.assertFalse(detector.update(0.03, 1.34).released)
+        decision = detector.update(0.03, 1.40)
+
+        self.assertTrue(decision.released)
+        self.assertGreaterEqual(decision.unloaded_elapsed_s, 0.05)
+
+    def test_release_during_sample_gap_restarts_dwell_on_recovery(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.05,
+            max_sample_gap_s=0.10,
+        )
+        detector.arm(0.80, 1.00)
+
+        decision = detector.update(0.03, 1.30)
+
+        self.assertTrue(decision.candidate_started)
+        self.assertTrue(decision.candidate_active)
+        self.assertFalse(decision.released)
+        self.assertEqual(decision.unloaded_elapsed_s, 0.0)
+        self.assertFalse(detector.update(0.03, 1.34).released)
+        decision = detector.update(0.03, 1.36)
+        self.assertTrue(decision.released)
+
+    def test_non_unloaded_sample_gap_cancels_candidate(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            unloaded_force_n=0.05,
+            max_sample_gap_s=0.10,
+        )
+        detector.arm(0.80, 1.00)
+        self.assertTrue(detector.update(0.70, 1.02).candidate_active)
+
+        decision = detector.update(0.60, 1.30)
+
+        self.assertTrue(decision.candidate_cancelled)
+        self.assertEqual(decision.candidate_cancel_reason, 'sample_gap')
+        self.assertFalse(decision.candidate_active)
+
+    def test_external_stale_cancel_can_detect_release_after_gap(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.05,
+            max_sample_gap_s=0.10,
+        )
+        detector.arm(0.80, 1.00)
+        self.assertTrue(detector.update(0.70, 1.02).candidate_active)
+        self.assertTrue(detector.cancel_candidate(
+            preserve_loaded_evidence=True
+        ))
+        self.assertFalse(detector.candidate_active)
+
+        recovered = detector.update(0.03, 1.30)
+
+        self.assertTrue(recovered.candidate_started)
+        self.assertTrue(recovered.candidate_active)
+        self.assertFalse(recovered.released)
+        self.assertTrue(detector.update(0.03, 1.36).released)
+
+    def test_timestamp_rollback_cancels_release_candidate(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            unloaded_force_n=0.05,
+        )
+        detector.arm(0.80, 1.00)
+        self.assertTrue(detector.update(0.70, 1.02).candidate_active)
+
+        decision = detector.update(0.60, 0.50)
+
+        self.assertTrue(decision.candidate_cancelled)
+        self.assertEqual(
+            decision.candidate_cancel_reason, 'timestamp_rollback'
+        )
+        self.assertFalse(decision.candidate_active)
+        self.assertFalse(decision.released)
 
 if __name__ == "__main__":
     unittest.main()

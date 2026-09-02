@@ -42,11 +42,18 @@ class PotentiometerForceSample:
 @dataclass(frozen=True)
 class PotentiometerReleaseDecision:
     released: bool
+    candidate_started: bool
+    candidate_active: bool
+    candidate_cancelled: bool
     current_force_n: float
     last_force_n: float | None
     peak_force_n: float
     force_rate_n_s: float
     force_drop_n: float
+    unloaded_elapsed_s: float
+    candidate_elapsed_s: float
+    candidate_cancel_reason: str | None
+    pre_release_force_n: float | None
 
 
 @dataclass(frozen=True)
@@ -140,18 +147,49 @@ class PotentiometerContactDetector:
 
 
 class PotentiometerReleaseDetector:
-    """One-shot release detector armed by a contact onset."""
+    """Confirm release only after unloading returns close to baseline.
 
-    def __init__(self, force_drop_n=0.01, decrease_rate_n_s=0.05):
+    A sufficiently fast force decrease first creates a release candidate.  It
+    does not end contact immediately: the spring must then remain below the
+    unloaded-force threshold for a short dwell.  This separates "the user has
+    started letting go" from "the force transfer has finished", so the
+    coasting state is initialized from the post-unloading vehicle velocity.
+    """
+
+    def __init__(
+            self,
+            force_drop_n=0.01,
+            decrease_rate_n_s=0.05,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.05,
+            max_sample_gap_s=0.15,
+            candidate_stall_timeout_s=0.50,
+    ):
         self.force_drop_n = float(force_drop_n)
         self.decrease_rate_n_s = float(decrease_rate_n_s)
+        self.unloaded_force_n = float(unloaded_force_n)
+        self.unloaded_dwell_s = float(unloaded_dwell_s)
+        self.max_sample_gap_s = float(max_sample_gap_s)
+        self.candidate_stall_timeout_s = float(candidate_stall_timeout_s)
         if (
             not math.isfinite(self.force_drop_n)
             or not math.isfinite(self.decrease_rate_n_s)
+            or not math.isfinite(self.unloaded_force_n)
+            or not math.isfinite(self.unloaded_dwell_s)
+            or not math.isfinite(self.max_sample_gap_s)
+            or not math.isfinite(self.candidate_stall_timeout_s)
             or self.force_drop_n <= 0.0
             or self.decrease_rate_n_s <= 0.0
+            or self.unloaded_force_n < 0.0
+            or self.unloaded_dwell_s < 0.0
+            or self.max_sample_gap_s <= 0.0
+            or self.candidate_stall_timeout_s <= 0.0
         ):
-            raise ValueError('potentiometer release thresholds must be positive')
+            raise ValueError(
+                'potentiometer release drop/rate thresholds must be positive; '
+                'unloaded threshold/dwell must be non-negative and maximum '
+                'sample gap/candidate stall timeout must be positive'
+            )
         self.disarm()
 
     def disarm(self):
@@ -160,6 +198,14 @@ class PotentiometerReleaseDetector:
         self._last_timestamp = None
         self._last_force_n = None
         self._peak_force_n = 0.0
+        self._edge_peak_force_n = 0.0
+        self._candidate_active = False
+        self._candidate_reference_force_n = None
+        self._pre_release_force_n = None
+        self._unloaded_started_at = None
+        self._candidate_started_at = None
+        self._candidate_min_force_n = None
+        self._candidate_last_progress_at = None
 
     def arm(self, force_n, timestamp, peak_force_n=None):
         force_n = max(float(force_n), 0.0)
@@ -179,6 +225,59 @@ class PotentiometerReleaseDetector:
         self._last_timestamp = timestamp
         self._last_force_n = force_n
         self._peak_force_n = peak_force_n
+        # The inherited contact peak is useful for diagnostics, but release
+        # onset must use a local edge peak. Otherwise a historical large force
+        # makes any later tiny negative slope look like a new release.
+        self._edge_peak_force_n = force_n
+        self._candidate_active = False
+        self._candidate_reference_force_n = None
+        self._pre_release_force_n = None
+        self._unloaded_started_at = None
+        self._candidate_started_at = None
+        self._candidate_min_force_n = None
+        self._candidate_last_progress_at = None
+
+    @property
+    def candidate_active(self):
+        return bool(self._candidate_active)
+
+    def _clear_candidate(self, rebase_edge_force_n=None):
+        self._candidate_active = False
+        self._candidate_reference_force_n = None
+        self._pre_release_force_n = None
+        self._unloaded_started_at = None
+        self._candidate_started_at = None
+        self._candidate_min_force_n = None
+        self._candidate_last_progress_at = None
+        if rebase_edge_force_n is not None:
+            self._edge_peak_force_n = max(
+                float(rebase_edge_force_n), 0.0
+            )
+
+    def _start_candidate(self, reference_force_n, force_n, timestamp):
+        reference_force_n = max(float(reference_force_n), float(force_n))
+        self._candidate_active = True
+        self._candidate_reference_force_n = reference_force_n
+        self._pre_release_force_n = reference_force_n
+        self._candidate_started_at = float(timestamp)
+        self._candidate_min_force_n = float(force_n)
+        self._candidate_last_progress_at = float(timestamp)
+        self._unloaded_started_at = None
+
+    def cancel_candidate(self, preserve_loaded_evidence=False):
+        """Cancel a pending release and keep detector/control state aligned.
+
+        When a serial sample goes stale, retaining the last loaded evidence
+        lets the first recovered unloaded sample start a fresh dwell.  The
+        stale interval itself is never credited toward that dwell.
+        """
+        if not self._candidate_active:
+            return False
+        edge_force = (
+            None if preserve_loaded_evidence else self._last_force_n
+        )
+        self._clear_candidate(rebase_edge_force_n=edge_force)
+        return True
 
     def update(self, force_n, timestamp):
         force_n = max(float(force_n), 0.0)
@@ -187,9 +286,84 @@ class PotentiometerReleaseDetector:
             raise ValueError('potentiometer release values must be finite')
         previous_force = self._last_force_n
         rate = 0.0
+        candidate_started = False
+        candidate_cancelled = False
+        candidate_cancel_reason = None
+        candidate_elapsed_s = 0.0
+        reported_force_drop_n = None
+        timestamp_advanced = bool(
+            self._last_timestamp is not None
+            and timestamp > self._last_timestamp
+        )
+        timestamp_rolled_back = bool(
+            self._last_timestamp is not None
+            and timestamp < self._last_timestamp
+        )
+        sample_gap_too_large = bool(
+            timestamp_advanced
+            and timestamp - self._last_timestamp > self.max_sample_gap_s
+        )
+        if self.armed and timestamp_rolled_back:
+            candidate_cancelled = bool(self._candidate_active)
+            if candidate_cancelled:
+                candidate_cancel_reason = 'timestamp_rollback'
+                if self._candidate_reference_force_n is not None:
+                    reported_force_drop_n = max(
+                        self._candidate_reference_force_n - force_n, 0.0
+                    )
+                if self._candidate_started_at is not None:
+                    candidate_elapsed_s = max(
+                        0.0, timestamp - self._candidate_started_at
+                    )
+            self._clear_candidate(rebase_edge_force_n=force_n)
+            self._last_timestamp = timestamp
+            self._last_force_n = force_n
+        elif self.armed and sample_gap_too_large:
+            # Do not count a missing-data interval as unloaded dwell.  If the
+            # signal went from a known loaded contact to unloaded during the
+            # gap, start (or restart) dwell at this recovered sample.
+            gap_reference_force_n = max(
+                self._edge_peak_force_n,
+                0.0 if previous_force is None else float(previous_force),
+            )
+            gap_release_evidence_n = max(
+                gap_reference_force_n, self._peak_force_n
+            ) - force_n
+            recovered_unloaded = bool(
+                force_n <= self.unloaded_force_n
+                and gap_release_evidence_n >= self.force_drop_n
+            )
+            if recovered_unloaded:
+                if not self._candidate_active:
+                    self._start_candidate(
+                        gap_reference_force_n, force_n, timestamp
+                    )
+                    candidate_started = True
+                else:
+                    self._candidate_min_force_n = force_n
+                    self._candidate_last_progress_at = timestamp
+                self._unloaded_started_at = timestamp
+            else:
+                candidate_cancelled = bool(self._candidate_active)
+                if candidate_cancelled:
+                    candidate_cancel_reason = 'sample_gap'
+                    if self._candidate_reference_force_n is not None:
+                        reported_force_drop_n = max(
+                            self._candidate_reference_force_n - force_n, 0.0
+                        )
+                    if self._candidate_started_at is not None:
+                        candidate_elapsed_s = max(
+                            0.0, timestamp - self._candidate_started_at
+                        )
+                self._clear_candidate(rebase_edge_force_n=force_n)
+            self._peak_force_n = max(self._peak_force_n, force_n)
+            self._last_timestamp = timestamp
+            self._last_force_n = force_n
         if (
             self.armed
             and not self.released
+            and not timestamp_rolled_back
+            and not sample_gap_too_large
             and self._last_timestamp is not None
             and previous_force is not None
             and timestamp > self._last_timestamp
@@ -198,18 +372,108 @@ class PotentiometerReleaseDetector:
                 timestamp - self._last_timestamp
             )
             self._peak_force_n = max(self._peak_force_n, force_n)
-            force_drop = self._peak_force_n - force_n
-            self.released = bool(
-                force_drop >= self.force_drop_n
-                and rate <= -self.decrease_rate_n_s
-            )
+            if not self._candidate_active:
+                # Rebase after flat/rising/slowly falling motion.  Only a
+                # contiguous fast falling edge may accumulate the configured
+                # onset drop; an old contact peak cannot trigger a later tiny
+                # dip.
+                if rate > -self.decrease_rate_n_s:
+                    self._edge_peak_force_n = force_n
+                else:
+                    self._edge_peak_force_n = max(
+                        self._edge_peak_force_n, previous_force
+                    )
+            edge_drop = max(self._edge_peak_force_n - force_n, 0.0)
+            if not self._candidate_active and bool(
+                    edge_drop >= self.force_drop_n
+                    and rate <= -self.decrease_rate_n_s):
+                self._start_candidate(
+                    self._edge_peak_force_n, force_n, timestamp
+                )
+                candidate_started = True
+
+            if self._candidate_active:
+                progress_epsilon_n = max(
+                    0.001, min(0.005, 0.10 * self.force_drop_n)
+                )
+                if (
+                    self._candidate_min_force_n is None
+                    or force_n
+                    <= self._candidate_min_force_n - progress_epsilon_n
+                ):
+                    self._candidate_min_force_n = force_n
+                    self._candidate_last_progress_at = timestamp
+
+                candidate_elapsed_s = max(
+                    0.0, timestamp - self._candidate_started_at
+                )
+                rebounded = bool(
+                    not candidate_started
+                    and force_n > self.unloaded_force_n
+                    and self._candidate_min_force_n is not None
+                    and force_n >= (
+                        self._candidate_min_force_n + self.force_drop_n
+                    )
+                )
+                stalled = bool(
+                    force_n > self.unloaded_force_n
+                    and self._candidate_last_progress_at is not None
+                    and timestamp - self._candidate_last_progress_at
+                    >= self.candidate_stall_timeout_s
+                )
+                if rebounded or stalled:
+                    candidate_cancelled = True
+                    candidate_cancel_reason = (
+                        'force_rebound' if rebounded
+                        else 'no_downward_progress'
+                    )
+                    if self._candidate_reference_force_n is not None:
+                        reported_force_drop_n = max(
+                            self._candidate_reference_force_n - force_n, 0.0
+                        )
+                    self._clear_candidate(rebase_edge_force_n=force_n)
+
+            if self._candidate_active and force_n <= self.unloaded_force_n:
+                if self._unloaded_started_at is None:
+                    self._unloaded_started_at = timestamp
+                self.released = bool(
+                    timestamp - self._unloaded_started_at
+                    >= self.unloaded_dwell_s
+                )
+                if self.released:
+                    self._candidate_active = False
+            else:
+                self._unloaded_started_at = None
             self._last_timestamp = timestamp
             self._last_force_n = force_n
+
+        if reported_force_drop_n is not None:
+            force_drop = reported_force_drop_n
+        elif self._candidate_reference_force_n is not None:
+            force_drop = max(
+                self._candidate_reference_force_n - force_n, 0.0
+            )
         else:
-            force_drop = self._peak_force_n - force_n
+            force_drop = max(self._edge_peak_force_n - force_n, 0.0)
+
+        unloaded_elapsed_s = (
+            0.0
+            if self._unloaded_started_at is None
+            else max(0.0, timestamp - self._unloaded_started_at)
+        )
+        if (
+            candidate_elapsed_s <= 0.0
+            and self._candidate_started_at is not None
+        ):
+            candidate_elapsed_s = max(
+                0.0, timestamp - self._candidate_started_at
+            )
 
         return PotentiometerReleaseDecision(
             released=bool(self.released),
+            candidate_started=bool(candidate_started),
+            candidate_active=bool(self._candidate_active),
+            candidate_cancelled=bool(candidate_cancelled),
             current_force_n=force_n,
             last_force_n=(
                 None if previous_force is None else float(previous_force)
@@ -217,6 +481,14 @@ class PotentiometerReleaseDetector:
             peak_force_n=float(self._peak_force_n),
             force_rate_n_s=float(rate),
             force_drop_n=float(force_drop),
+            unloaded_elapsed_s=float(unloaded_elapsed_s),
+            candidate_elapsed_s=float(candidate_elapsed_s),
+            candidate_cancel_reason=candidate_cancel_reason,
+            pre_release_force_n=(
+                None
+                if self._pre_release_force_n is None
+                else float(self._pre_release_force_n)
+            ),
         )
 
 

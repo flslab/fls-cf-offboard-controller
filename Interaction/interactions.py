@@ -291,57 +291,52 @@ def world_to_body_xy(world_velocity_xy, yaw_deg):
     ])
 
 
-def coast_state_tracking_attitude(
-        current_position_xy,
+def coast_braking_attitude(
         current_velocity_xy,
-        target_position_xy,
-        target_velocity_xy,
+        brake_direction_xy,
         yaw_deg,
-        position_gain_s2=4.0,
         velocity_gain_s=2.5,
         max_acceleration_m_s2=2.0,
         max_attitude_deg=20.0,
 ):
-    """Track a planar coast state with a bounded acceleration/tilt command.
+    """Return bounded attitude damping that can only remove kinetic energy.
 
-    Position and velocity feedback can request either acceleration or braking.
+    Acceleration is always opposite the measured planar velocity, including
+    after a small overshoot. Therefore it can brake reverse motion but can
+    never add kinetic energy or chase an old position trajectory.
     Crazyflie positive pitch/roll produces force opposite the corresponding
-    body axis in this command path, hence the negative attitude mapping below.
+    body axis in this command path, hence the negative attitude mapping.
     """
-    current_position_xy = np.asarray(current_position_xy, dtype=float)
     current_velocity_xy = np.asarray(current_velocity_xy, dtype=float)
-    target_position_xy = np.asarray(target_position_xy, dtype=float)
-    target_velocity_xy = np.asarray(target_velocity_xy, dtype=float)
-    vectors = (
-        current_position_xy,
-        current_velocity_xy,
-        target_position_xy,
-        target_velocity_xy,
-    )
-    if any(value.shape != (2,) for value in vectors):
-        raise ValueError('coast state tracking inputs must contain XY')
-    if not all(np.all(np.isfinite(value)) for value in vectors):
-        raise ValueError('coast state tracking inputs must be finite')
-    position_gain_s2 = float(position_gain_s2)
+    brake_direction_xy = np.asarray(brake_direction_xy, dtype=float)
+    if current_velocity_xy.shape != (2,) or brake_direction_xy.shape != (2,):
+        raise ValueError('coast braking velocity/direction must contain XY')
+    if (
+        not np.all(np.isfinite(current_velocity_xy))
+        or not np.all(np.isfinite(brake_direction_xy))
+    ):
+        raise ValueError('coast braking velocity/direction must be finite')
     velocity_gain_s = float(velocity_gain_s)
     max_acceleration_m_s2 = float(max_acceleration_m_s2)
     max_attitude_deg = abs(float(max_attitude_deg))
     parameters = np.asarray([
-        position_gain_s2,
         velocity_gain_s,
         max_acceleration_m_s2,
         max_attitude_deg,
         yaw_deg,
     ])
-    if not np.all(np.isfinite(parameters)) or np.any(parameters[:4] <= 0.0):
-        raise ValueError('coast state tracking gains and limits must be positive')
+    if not np.all(np.isfinite(parameters)) or np.any(parameters[:3] <= 0.0):
+        raise ValueError('coast braking gain and limits must be positive')
 
-    position_error = target_position_xy - current_position_xy
-    velocity_error = target_velocity_xy - current_velocity_xy
-    requested_acceleration = (
-        position_gain_s2 * position_error
-        + velocity_gain_s * velocity_error
-    )
+    direction_norm = float(np.linalg.norm(brake_direction_xy))
+    if direction_norm <= 1e-9:
+        forward_speed = 0.0
+    else:
+        direction = brake_direction_xy / direction_norm
+        forward_speed = float(current_velocity_xy @ direction)
+    velocity_to_brake = current_velocity_xy.copy()
+
+    requested_acceleration = -velocity_gain_s * velocity_to_brake
     requested_norm = float(np.linalg.norm(requested_acceleration))
     applied_acceleration = requested_acceleration.copy()
     if requested_norm > max_acceleration_m_s2:
@@ -353,9 +348,7 @@ def coast_state_tracking_attitude(
         pitch_deg = 0.0
         raw_tilt_deg = 0.0
     else:
-        acceleration_body = world_to_body_xy(
-            applied_acceleration, yaw_deg
-        )
+        acceleration_body = world_to_body_xy(applied_acceleration, yaw_deg)
         raw_tilt_deg = float(np.degrees(np.arctan2(
             applied_norm, 9.81
         )))
@@ -367,22 +360,17 @@ def coast_state_tracking_attitude(
             acceleration_body[1] / applied_norm
         )
 
-    power_sign = float(applied_acceleration @ current_velocity_xy)
-    if power_sign > 1e-4:
-        action = 'accelerating'
-    elif power_sign < -1e-4:
-        action = 'decelerating'
-    else:
-        action = 'aligning'
+    power = float(applied_acceleration @ current_velocity_xy)
     return {
         'roll_deg': float(roll_deg),
         'pitch_deg': float(pitch_deg),
         'raw_tilt_deg': float(raw_tilt_deg),
-        'position_error_m': position_error,
-        'velocity_error_m_s': velocity_error,
+        'forward_speed_m_s': float(forward_speed),
+        'velocity_to_brake_m_s': velocity_to_brake,
         'requested_acceleration_m_s2': requested_acceleration,
         'applied_acceleration_m_s2': applied_acceleration,
-        'action': action,
+        'action': 'decelerating' if power < -1e-4 else 'holding',
+        'power_w_per_kg': power,
         'acceleration_saturated': requested_norm > max_acceleration_m_s2,
     }
 
@@ -832,7 +820,7 @@ class TranslationControlHandoff:
             coast_alignment_position_tolerance_m=0.04,
             coast_alignment_velocity_tolerance_m_s=0.08,
             coast_alignment_dwell_s=0.08,
-            coast_attitude_timeout_s=0.75,
+            coast_attitude_timeout_s=1.5,
             rearm_delay_s=0.0,
     ):
         self.hold_position = np.asarray(initial_position, dtype=float).copy()
@@ -916,6 +904,7 @@ class TranslationControlHandoff:
         self.coast_tracking_velocity_error_m_s = None
         self.coast_tracking_acceleration_m_s2 = None
         self.coast_tracking_acceleration_saturated = False
+        self.coast_tracking_power_w_per_kg = None
         self.coast_handoff_reason = None
 
     def _transition_mode(self, new_mode):
@@ -1030,8 +1019,7 @@ class TranslationControlHandoff:
         coast = bool(coast)
         released_from_position = self.mode == self.CONTACT_POSITION
         self._release_candidate_mode = (
-            None if coast
-            else ('position' if released_from_position else 'orientation')
+            'position' if released_from_position else 'orientation'
         )
         position = np.asarray(current_position, dtype=float)
         if position.shape != (3,) or not np.all(np.isfinite(position)):
@@ -1105,6 +1093,7 @@ class TranslationControlHandoff:
         self.coast_tracking_velocity_error_m_s = None
         self.coast_tracking_acceleration_m_s2 = None
         self.coast_tracking_acceleration_saturated = False
+        self.coast_tracking_power_w_per_kg = None
         self.coast_handoff_reason = None
         if coast:
             self.set_contact_attitude(0.0, 0.0, 0.0)
@@ -1131,7 +1120,10 @@ class TranslationControlHandoff:
         """Resume the interrupted interaction after a transient force dip."""
         if self.shadow_mode or self._release_candidate_mode is None:
             return False
-        if self.mode not in (self.ATTITUDE_BRAKING, self.POSITION_HOLD):
+        if self.mode not in (
+                self.ATTITUDE_BRAKING,
+                self.ATTITUDE_COAST,
+                self.POSITION_HOLD):
             return False
         position = np.asarray(current_position, dtype=float)
         if position.shape != (3,) or not np.all(np.isfinite(position)):
@@ -1152,8 +1144,38 @@ class TranslationControlHandoff:
         )
         return True
 
-    def confirm_release_candidate(self) -> None:
+    def confirm_release_candidate(
+            self,
+            current_position=None,
+            current_velocity=None,
+            current_force=None,
+            timestamp=None,
+    ) -> None:
         """Make an early release handoff permanent after detector dwell."""
+        if current_position is not None:
+            position = np.asarray(current_position, dtype=float)
+            if position.shape != (3,) or not np.all(np.isfinite(position)):
+                raise ValueError('confirmed release position must be finite XYZ')
+            self.release_position_m = position.copy()
+        if current_velocity is not None:
+            velocity = np.asarray(current_velocity, dtype=float)
+            if velocity.shape != (3,) or not np.all(np.isfinite(velocity)):
+                raise ValueError('confirmed release velocity must be finite XYZ')
+            if self.release_mass_kg is not None:
+                self.release_momentum_kg_m_s = (
+                    self.release_mass_kg * velocity.copy()
+                )
+        if current_force is not None:
+            force = np.asarray(current_force, dtype=float)
+            if force.shape != (3,) or not np.all(np.isfinite(force)):
+                raise ValueError('confirmed release force must be finite XYZ')
+            self.release_force_N = force.copy()
+        if timestamp is not None:
+            timestamp = float(timestamp)
+            if not np.isfinite(timestamp):
+                raise ValueError('confirmed release timestamp must be finite')
+            self._brake_started_at = timestamp
+            self._coast_alignment_since = None
         self._release_candidate_mode = None
 
     def update_coast_attitude(
@@ -1164,10 +1186,13 @@ class TranslationControlHandoff:
             target_velocity,
             timestamp,
             current_orientation_rpy=None,
+            allow_position_handoff=True,
     ):
-        """Track the virtual coast with attitude before position handoff.
+        """Brake with attitude, then latch actual position for handoff.
 
         Returns true only on the sample that transitions to position control.
+        The virtual state remains an offline comparison signal; it cannot
+        accelerate the vehicle or become the position target.
         """
         if self.shadow_mode or self.mode != self.ATTITUDE_COAST:
             return False
@@ -1194,53 +1219,25 @@ class TranslationControlHandoff:
         ):
             raise ValueError('coast attitude time/orientation must be finite')
 
-        tracking = coast_state_tracking_attitude(
-            position[:2],
-            velocity[:2],
-            target_position[:2],
-            target_velocity[:2],
-            np.degrees(orientation_rpy[2]),
-            position_gain_s2=self.coast_position_gain_s2,
-            velocity_gain_s=self.coast_velocity_gain_s,
-            max_acceleration_m_s2=self.coast_max_acceleration_m_s2,
-            max_attitude_deg=self.brake_max_attitude_deg,
-        )
-        self.set_contact_position(target_position)
-        self.set_contact_attitude(
-            tracking['roll_deg'], tracking['pitch_deg'], 0.0
-        )
-        self.brake_command_tilt_deg = float(np.hypot(
-            tracking['roll_deg'], tracking['pitch_deg']
-        ))
-        self.coast_tracking_action = tracking['action']
+        # Keep the virtual-state error in the log for model comparison only.
+        # Neither term contributes to the commanded attitude.
         self.coast_tracking_position_error_m = (
-            tracking['position_error_m'].copy()
+            target_position[:2] - position[:2]
         )
         self.coast_tracking_velocity_error_m_s = (
-            tracking['velocity_error_m_s'].copy()
-        )
-        self.coast_tracking_acceleration_m_s2 = (
-            tracking['applied_acceleration_m_s2'].copy()
-        )
-        self.coast_tracking_acceleration_saturated = bool(
-            tracking['acceleration_saturated']
+            target_velocity[:2] - velocity[:2]
         )
         self.brake_projected_speed_m_s = float(
             velocity[:2] @ self.brake_direction[:2]
         )
-
-        aligned = bool(
-            np.linalg.norm(tracking['position_error_m'])
-            <= self.coast_alignment_position_tolerance_m
-            and np.linalg.norm(tracking['velocity_error_m_s'])
-            <= self.coast_alignment_velocity_tolerance_m_s
-        )
-        if aligned:
+        xy_speed = float(np.linalg.norm(velocity[:2]))
+        speed_acceptable = bool(xy_speed <= self.brake_xy_speed_m_s)
+        if speed_acceptable:
             if self._coast_alignment_since is None:
                 self._coast_alignment_since = timestamp
         else:
             self._coast_alignment_since = None
-        alignment_dwell_complete = bool(
+        speed_dwell_complete = bool(
             self._coast_alignment_since is not None
             and timestamp - self._coast_alignment_since
             >= self.coast_alignment_dwell_s
@@ -1250,17 +1247,58 @@ class TranslationControlHandoff:
             and timestamp - self._brake_started_at
             >= min(self.coast_attitude_timeout_s, self.brake_timeout_s)
         )
-        if not alignment_dwell_complete and not attitude_timed_out:
+        tracking = coast_braking_attitude(
+            velocity[:2],
+            self.brake_direction[:2],
+            np.degrees(orientation_rpy[2]),
+            velocity_gain_s=self.coast_velocity_gain_s,
+            max_acceleration_m_s2=self.coast_max_acceleration_m_s2,
+            max_attitude_deg=self.brake_max_attitude_deg,
+        )
+        self.set_contact_attitude(
+            tracking['roll_deg'], tracking['pitch_deg'], 0.0
+        )
+        self.brake_command_tilt_deg = float(np.hypot(
+            tracking['roll_deg'], tracking['pitch_deg']
+        ))
+        self.coast_tracking_action = tracking['action']
+        self.coast_tracking_acceleration_m_s2 = (
+            tracking['applied_acceleration_m_s2'].copy()
+        )
+        self.coast_tracking_acceleration_saturated = bool(
+            tracking['acceleration_saturated']
+        )
+        self.coast_tracking_power_w_per_kg = float(
+            tracking['power_w_per_kg']
+        )
+        if not speed_dwell_complete or not bool(allow_position_handoff):
+            # A timeout is diagnostic only. Switching a still-moving vehicle
+            # to position control would recreate the pullback failure, so keep
+            # applying bounded dissipative attitude damping until measured
+            # speed is continuously acceptable.
+            if attitude_timed_out:
+                self.coast_handoff_reason = 'waiting_for_actual_stop_after_timeout'
             return False
 
         self.coast_handoff_reason = (
-            'state_aligned'
-            if alignment_dwell_complete else 'attitude_timeout'
+            'actual_speed_settled_after_timeout'
+            if attitude_timed_out else 'actual_speed_settled'
         )
-        self._coast_position_settle_since = None
+        # This is the key no-pullback invariant: the first position command is
+        # latched from the measured stop state, never the virtual trajectory.
+        self.hold_position = position.copy()
+        self.hover_z = float(position[2])
+        self.stopping_position_m = position.copy()
         self.set_contact_attitude(0.0, 0.0, 0.0)
         self.brake_command_tilt_deg = 0.0
-        self._transition_mode(self.POSITION_COAST)
+        self.coast_tracking_action = 'position_handoff'
+        self.coast_tracking_acceleration_m_s2 = np.zeros(2)
+        self.coast_tracking_acceleration_saturated = False
+        self.coast_tracking_power_w_per_kg = 0.0
+        self.brake_completion_reason = 'actual_speed_settled'
+        self._brake_started_at = None
+        self._detector_rearm_at = timestamp + self.rearm_delay_s
+        self._transition_mode(self.POSITION_HOLD)
         return True
 
     def update_braking(
@@ -1301,19 +1339,11 @@ class TranslationControlHandoff:
         braking_velocity = velocity
         position_state_settled = False
         if position_coast:
-            coast_position = np.asarray(coast_position, dtype=float)
-            coast_velocity = np.asarray(coast_velocity, dtype=float)
-            if (
-                coast_position.shape != (3,)
-                or coast_velocity.shape != (3,)
-                or not np.all(np.isfinite(coast_position))
-                or not np.all(np.isfinite(coast_velocity))
-            ):
-                raise ValueError(
-                    'position coast requires finite XYZ position and velocity'
-                )
-            self.set_contact_position(coast_position)
-            position_error_xy = coast_position[:2] - position[:2]
+            # ``hold_position`` was latched from the actual state at the
+            # attitude handoff. The virtual coast remains log-only and must
+            # never overwrite this target, otherwise position control pulls
+            # the vehicle back toward an obsolete simulated stop point.
+            position_error_xy = self.hold_position[:2] - position[:2]
             position_state_settled = bool(
                 np.linalg.norm(position_error_xy)
                 <= self.coast_alignment_position_tolerance_m
@@ -1358,8 +1388,8 @@ class TranslationControlHandoff:
         elif not stopped_or_reversed and not timed_out:
             return False
 
-        # Attitude braking captures the measured switch position. Position
-        # coast retains its continuously integrated final visual target.
+        # Both braking paths finish at a measured/latching position. The
+        # virtual coast is comparison-only and never owns the final hold.
         if not position_coast:
             self.hold_position = position.copy()
         self.stopping_position_m = self.hold_position.copy()
@@ -2677,6 +2707,10 @@ class InteractionsControl:
         release_mode = default_release_mode
         release_force_drop_n = 0.01
         release_decrease_rate_n_s = 0.05
+        release_unloaded_force_n = 0.05
+        release_unloaded_dwell_s = 0.05
+        release_max_sample_gap_s = 0.15
+        release_candidate_stall_timeout_s = 0.50
         release_force_memory_s = 0.02
         configured_contact_detection_source = 'wrench_observer'
         contact_detection_source = configured_contact_detection_source
@@ -2761,6 +2795,18 @@ class InteractionsControl:
             release_decrease_rate_n_s = float(
                 release_config.get('decrease_rate_n_s', 0.05)
             )
+            release_unloaded_force_n = float(
+                release_config.get('unloaded_force_n', 0.05)
+            )
+            release_unloaded_dwell_s = float(
+                release_config.get('unloaded_dwell_s', 0.05)
+            )
+            release_max_sample_gap_s = float(
+                release_config.get('max_sample_gap_s', 0.15)
+            )
+            release_candidate_stall_timeout_s = float(
+                release_config.get('candidate_stall_timeout_s', 0.50)
+            )
             release_force_memory_s = float(
                 release_config.get('force_memory_s', 0.02)
             )
@@ -2815,6 +2861,14 @@ class InteractionsControl:
                 'release_behavior.mode: potentiometer_coast'
             )
         if (
+            contact_detection_source == 'potentiometer'
+            and release_unloaded_force_n >= potentiometer_contact_force_n
+        ):
+            raise ValueError(
+                'release_behavior.unloaded_force_n must be below '
+                'contact_detection.force_threshold_n'
+            )
+        if (
             not np.isfinite(release_force_memory_s)
             or release_force_memory_s < 0.0
         ):
@@ -2823,6 +2877,12 @@ class InteractionsControl:
             PotentiometerReleaseDetector(
                 force_drop_n=release_force_drop_n,
                 decrease_rate_n_s=release_decrease_rate_n_s,
+                unloaded_force_n=release_unloaded_force_n,
+                unloaded_dwell_s=release_unloaded_dwell_s,
+                max_sample_gap_s=release_max_sample_gap_s,
+                candidate_stall_timeout_s=(
+                    release_candidate_stall_timeout_s
+                ),
             )
             if release_mode == 'potentiometer_coast' else None
         )
@@ -2957,6 +3017,11 @@ class InteractionsControl:
                         'release_behavior': {
                             'mode': release_mode,
                             'configured_mode': configured_release_mode,
+                            'coast_control_policy': (
+                                'braking_only_actual_stop'
+                                if release_mode == 'potentiometer_coast'
+                                else None
+                            ),
                             'ignored_during_calibration': bool(
                                 calibration_mode
                             ),
@@ -2964,7 +3029,18 @@ class InteractionsControl:
                             'decrease_rate_n_s': (
                                 release_decrease_rate_n_s
                             ),
+                            'unloaded_force_n': release_unloaded_force_n,
+                            'unloaded_dwell_s': release_unloaded_dwell_s,
+                            'max_sample_gap_s': release_max_sample_gap_s,
+                            'candidate_stall_timeout_s': (
+                                release_candidate_stall_timeout_s
+                            ),
                             'force_memory_s': release_force_memory_s,
+                            'force_memory_usage': (
+                                'comparison_only_virtual_model'
+                                if release_mode == 'potentiometer_coast'
+                                else None
+                            ),
                         },
                     },
                 'translation_response_axes': ['x', 'y', 'z'],
@@ -2972,8 +3048,16 @@ class InteractionsControl:
                     **self._force_sensor_config(),
                     'control_source': 'wrench_observer',
                     'contact_detection_source': contact_detection_source,
+                    'release_braking_force_source': (
+                        'measured_xy_velocity'
+                        if release_mode == 'potentiometer_coast'
+                        else self._force_sensor_config()[
+                            'release_braking_force_source'
+                        ]
+                    ),
                     'controls_translation': (
                         contact_detection_source == 'potentiometer'
+                        or release_mode == 'potentiometer_coast'
                     ),
                     'used_for_release_detection': (
                         release_mode == 'potentiometer_coast'
@@ -3077,6 +3161,7 @@ class InteractionsControl:
         )
         potentiometer_release_decision = None
         potentiometer_release_processed = False
+        potentiometer_release_pending = False
         potentiometer_contact_decision = None
         coast_initial_velocity = None
         selected_render_mode = None
@@ -3252,11 +3337,14 @@ class InteractionsControl:
             )
             if (
                 release_mode == 'potentiometer_coast'
-                and potentiometer_release_processed
+                and (
+                    potentiometer_release_pending
+                    or potentiometer_release_processed
+                )
                 and translation_control.release_position_m is not None
             ):
-                braking_force_world = translation_control.release_force_N.copy()
-                braking_force_source = 'potentiometer_last_force'
+                braking_force_world = np.zeros(3)
+                braking_force_source = 'measured_xy_velocity'
             contacts = output.contacts
             if (
                 potentiometer_release_detector is not None
@@ -3289,6 +3377,105 @@ class InteractionsControl:
                             sensor_force_n, sensor_sample_time
                         )
                     )
+                    if potentiometer_release_decision.candidate_started:
+                        self._log_event(
+                            'Potentiometer Release Candidate Started',
+                            {
+                                'compression_force_N': sensor_force_n,
+                                'pre_release_force_N': (
+                                    potentiometer_release_decision
+                                    .pre_release_force_n
+                                ),
+                                'peak_force_N': (
+                                    potentiometer_release_decision.peak_force_n
+                                ),
+                                'force_drop_N': (
+                                    potentiometer_release_decision.force_drop_n
+                                ),
+                                'force_rate_N_s': (
+                                    potentiometer_release_decision.force_rate_n_s
+                                ),
+                                'unloaded_force_threshold_N': (
+                                    release_unloaded_force_n
+                                ),
+                                'unloaded_dwell_s': release_unloaded_dwell_s,
+                                'candidate_stall_timeout_s': (
+                                    release_candidate_stall_timeout_s
+                                ),
+                                'state_source': 'crazyflie_state_estimate',
+                            },
+                        )
+                    elif potentiometer_release_decision.candidate_cancelled:
+                        self._log_event(
+                            'Potentiometer Release Candidate Cancelled',
+                            {
+                                'compression_force_N': sensor_force_n,
+                                'peak_force_N': (
+                                    potentiometer_release_decision.peak_force_n
+                                ),
+                                'force_drop_N': (
+                                    potentiometer_release_decision.force_drop_n
+                                ),
+                                'candidate_elapsed_s': (
+                                    potentiometer_release_decision
+                                    .candidate_elapsed_s
+                                ),
+                                'reason': (
+                                    potentiometer_release_decision
+                                    .candidate_cancel_reason
+                                ),
+                                'state_source': 'crazyflie_state_estimate',
+                            },
+                        )
+
+            if (
+                release_mode == 'potentiometer_coast'
+                and potentiometer_release_pending
+                and not bool(sensor_fields.get('force_sensor_fresh'))
+            ):
+                detector_candidate_cancelled = bool(
+                    potentiometer_release_detector is not None
+                    and potentiometer_release_detector.cancel_candidate(
+                        preserve_loaded_evidence=True
+                    )
+                )
+                if translation_control.cancel_release_candidate(
+                        self._bounded_wrench_reference(position)):
+                    potentiometer_release_pending = False
+                    coast_initial_velocity = None
+                    virtual_motion.reset(
+                        position[:2], output.estimate.velocity[:2]
+                    )
+                    pipeline.admittance.reset()
+                    self._log_event(
+                        'Potentiometer Release Candidate Cancelled',
+                        {
+                            'reason': 'force_sensor_stale',
+                            'sample_age_s': sensor_fields.get(
+                                'force_sensor_sample_age_s'
+                            ),
+                            'maximum_sample_age_s': getattr(
+                                self, 'sense_max_age_s', 0.25
+                            ),
+                            'detector_candidate_cancelled': (
+                                detector_candidate_cancelled
+                            ),
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+                    self._log_event(
+                        'Translation Rendering Resumed',
+                        {
+                            'selected_mode': selected_render_mode,
+                            'motion_relation': render_relation,
+                            'resume_reason': 'force_sensor_stale',
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+                # Never let a latched candidate-start/release decision from
+                # the last fresh UART sample re-enter braking later in this
+                # same stale loop.
+                potentiometer_release_decision = None
 
             if output.calibrated and not calibration_announced:
                 calibration_announced = True
@@ -3347,6 +3534,7 @@ class InteractionsControl:
                 and bool(sensor_fields.get('force_sensor_fresh'))
             ):
                 potentiometer_release_processed = False
+                potentiometer_release_pending = False
                 potentiometer_release_decision = None
                 coast_initial_velocity = None
                 sensor_force_n = float(
@@ -3478,9 +3666,26 @@ class InteractionsControl:
                         or decision.release_candidate_cancelled
                     ):
                         if decision.started or decision.ended:
-                            self._log_event(
+                            transition_event_name = (
                                 f"{event_name} "
-                                f"{'Start' if decision.started else 'End'}",
+                                f"{'Start' if decision.started else 'End'}"
+                            )
+                            if (
+                                event_name == 'Translation Contact'
+                                and release_mode == 'potentiometer_coast'
+                                and (
+                                    decision.ended
+                                    or translation_control.mode
+                                    != translation_control.POSITION_HOLD
+                                )
+                            ):
+                                transition_event_name = (
+                                    'Wrench Observer Translation Contact '
+                                    f"{'Start' if decision.started else 'End'} "
+                                    '(Comparison)'
+                                )
+                            self._log_event(
+                                transition_event_name,
                                 {
                                     'force_N': control_force_world.tolist(),
                                     'estimated_force_N': (
@@ -3511,23 +3716,6 @@ class InteractionsControl:
                             )
                         if event_name == 'Translation Contact':
                             if decision.started:
-                                potentiometer_release_processed = False
-                                potentiometer_release_decision = None
-                                coast_initial_velocity = None
-                                if (
-                                    potentiometer_release_detector is not None
-                                    and bool(sensor_fields.get(
-                                        'force_sensor_fresh'
-                                    ))
-                                ):
-                                    potentiometer_release_detector.arm(
-                                        float(sensor_fields[
-                                            'force_sensor_compression_force_N'
-                                        ]),
-                                        float(sensor_fields[
-                                            'force_sensor_sample_time'
-                                        ]),
-                                    )
                                 if force_rendering_enabled:
                                     selection_resistance, _, _ = (
                                         virtual_resistance_force(
@@ -3558,14 +3746,42 @@ class InteractionsControl:
                                         'native_projected_acceleration': 0.0,
                                         'virtual_projected_acceleration': 0.0,
                                     }
-                                selected_render_mode = render_selection['mode']
-                                render_relation = render_selection['relation']
-                                virtual_motion.reset(
-                                    position[:2], output.estimate.velocity[:2]
-                                )
                                 if translation_control.start_contact(
-                                        selected_render_mode,
+                                        render_selection['mode'],
                                         self._bounded_wrench_reference(position)):
+                                    # Commit contact-owned state only after the
+                                    # handoff accepts the observer onset. A
+                                    # detector re-start during release braking
+                                    # must not orphan the active pot candidate.
+                                    potentiometer_release_processed = False
+                                    potentiometer_release_pending = False
+                                    potentiometer_release_decision = None
+                                    coast_initial_velocity = None
+                                    selected_render_mode = (
+                                        render_selection['mode']
+                                    )
+                                    render_relation = (
+                                        render_selection['relation']
+                                    )
+                                    virtual_motion.reset(
+                                        position[:2],
+                                        output.estimate.velocity[:2],
+                                    )
+                                    if (
+                                        potentiometer_release_detector
+                                        is not None
+                                        and bool(sensor_fields.get(
+                                            'force_sensor_fresh'
+                                        ))
+                                    ):
+                                        potentiometer_release_detector.arm(
+                                            float(sensor_fields[
+                                                'force_sensor_compression_force_N'
+                                            ]),
+                                            float(sensor_fields[
+                                                'force_sensor_sample_time'
+                                            ]),
+                                        )
                                     pipeline.admittance.reset()
                                     self._log_event(
                                         'Translation Rendering Started',
@@ -3720,11 +3936,103 @@ class InteractionsControl:
             if (
                 release_mode == 'potentiometer_coast'
                 and potentiometer_release_decision is not None
+                and potentiometer_release_decision.candidate_started
+                and bool(sensor_fields.get('force_sensor_fresh'))
+                and not potentiometer_release_pending
+                and (
+                    translation_control.attitude_mode
+                    or translation_control.position_interaction_mode
+                )
+            ):
+                candidate_force_n = float(
+                    potentiometer_release_decision.pre_release_force_n
+                    if potentiometer_release_decision.pre_release_force_n
+                    is not None
+                    else potentiometer_release_decision.last_force_n
+                )
+                candidate_force_world = (
+                    self._force_sensor_axis_world(output.estimate)
+                    * candidate_force_n
+                )
+                candidate_direction = output.estimate.velocity.copy()
+                if np.linalg.norm(candidate_direction[:2]) <= 1e-9:
+                    candidate_direction = candidate_force_world.copy()
+                coast_initial_velocity = release_coast_initial_velocity(
+                    output.estimate.velocity,
+                    candidate_force_world,
+                    force_current_mass,
+                    force_memory_s=release_force_memory_s,
+                    max_velocity_m_s=virtual_max_velocity_m_s,
+                )
+                virtual_motion.reset(
+                    position[:2], coast_initial_velocity[:2]
+                )
+                if translation_control.end_contact(
+                        self._bounded_wrench_reference(position),
+                        output.estimate.velocity,
+                        state_time,
+                        candidate_direction,
+                        output.estimate.orientation_rpy,
+                        current_force=candidate_force_world,
+                        current_mass_kg=force_current_mass,
+                        coast=True):
+                    potentiometer_release_pending = True
+                    braking_force_world = np.zeros(3)
+                    braking_force_source = 'measured_xy_velocity'
+                    pipeline.admittance.reset()
+                    self._log_event(
+                        'Potentiometer Release Candidate Braking Started',
+                        {
+                            'pre_release_force_N': candidate_force_n,
+                            'measured_velocity_m_s': (
+                                output.estimate.velocity.tolist()
+                            ),
+                            'candidate_position_m': position.tolist(),
+                            'command_mode': translation_control.command_mode,
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+
+            if (
+                release_mode == 'potentiometer_coast'
+                and potentiometer_release_decision is not None
+                and potentiometer_release_decision.candidate_cancelled
+                and potentiometer_release_pending
+            ):
+                if translation_control.cancel_release_candidate(
+                        self._bounded_wrench_reference(position)):
+                    potentiometer_release_pending = False
+                    coast_initial_velocity = None
+                    virtual_motion.reset(
+                        position[:2], output.estimate.velocity[:2]
+                    )
+                    pipeline.admittance.reset()
+                    self._log_event(
+                        'Translation Rendering Resumed',
+                        {
+                            'selected_mode': selected_render_mode,
+                            'motion_relation': render_relation,
+                            'resume_reason': (
+                                'potentiometer_release_candidate_cancelled'
+                            ),
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+
+            if (
+                release_mode == 'potentiometer_coast'
+                and potentiometer_release_decision is not None
                 and potentiometer_release_decision.released
+                and bool(sensor_fields.get('force_sensor_fresh'))
                 and not potentiometer_release_processed
                 and (
                     translation_control.attitude_mode
                     or translation_control.position_interaction_mode
+                    or (
+                        potentiometer_release_pending
+                        and translation_control.mode
+                        == translation_control.ATTITUDE_COAST
+                    )
                 )
             ):
                 last_force_n = float(
@@ -3734,9 +4042,30 @@ class InteractionsControl:
                     self._force_sensor_axis_world(output.estimate)
                     * last_force_n
                 )
+                pre_release_force_n = float(
+                    potentiometer_release_decision.pre_release_force_n
+                    if potentiometer_release_decision.pre_release_force_n
+                    is not None else last_force_n
+                )
+                candidate_force_vector_locked = bool(
+                    potentiometer_release_pending
+                    and translation_control.release_position_m is not None
+                )
+                if candidate_force_vector_locked:
+                    # Preserve the candidate-start world direction.  Rotating
+                    # the same scalar again at confirmation would let attitude
+                    # changes during unloaded dwell alter the recorded impulse.
+                    pre_release_force_world = (
+                        translation_control.release_force_N.copy()
+                    )
+                else:
+                    pre_release_force_world = (
+                        self._force_sensor_axis_world(output.estimate)
+                        * pre_release_force_n
+                    )
                 coast_initial_velocity = release_coast_initial_velocity(
                     output.estimate.velocity,
-                    last_force_world,
+                    pre_release_force_world,
                     force_current_mass,
                     force_memory_s=release_force_memory_s,
                     max_velocity_m_s=virtual_max_velocity_m_s,
@@ -3744,23 +4073,47 @@ class InteractionsControl:
                 virtual_motion.reset(
                     position[:2], coast_initial_velocity[:2]
                 )
-                coast_direction = coast_initial_velocity.copy()
+                coast_direction = output.estimate.velocity.copy()
                 if np.linalg.norm(coast_direction[:2]) <= 1e-9:
-                    coast_direction = last_force_world.copy()
-                if translation_control.end_contact(
+                    coast_direction = pre_release_force_world.copy()
+                release_started = False
+                if potentiometer_release_pending:
+                    translation_control.confirm_release_candidate(
+                        current_position=(
+                            self._bounded_wrench_reference(position)
+                        ),
+                        current_velocity=output.estimate.velocity,
+                        # Keep the candidate-start force vector already stored
+                        # by end_contact(); confirmation only refreshes vehicle
+                        # state and the braking clock.
+                        current_force=None,
+                        timestamp=state_time,
+                    )
+                    release_started = True
+                elif translation_control.end_contact(
+                    self._bounded_wrench_reference(position),
+                    output.estimate.velocity,
+                    state_time,
+                    coast_direction,
+                    output.estimate.orientation_rpy,
+                    current_force=pre_release_force_world,
+                    current_mass_kg=force_current_mass,
+                    coast=True,
+                ):
+                    translation_control.confirm_release_candidate(
                         self._bounded_wrench_reference(position),
-                        coast_initial_velocity,
+                        output.estimate.velocity,
+                        pre_release_force_world,
                         state_time,
-                        coast_direction,
-                        output.estimate.orientation_rpy,
-                        current_force=last_force_world,
-                        current_mass_kg=force_current_mass,
-                        coast=True):
+                    )
+                    release_started = True
+                if release_started:
                     potentiometer_release_processed = True
+                    potentiometer_release_pending = False
                     if potentiometer_contact_detector is not None:
                         potentiometer_contact_detector.mark_released()
-                    braking_force_world = last_force_world
-                    braking_force_source = 'potentiometer_last_force'
+                    braking_force_world = np.zeros(3)
+                    braking_force_source = 'measured_xy_velocity'
                     pipeline.admittance.reset()
                     self._log_event(
                         'Translation Contact End',
@@ -3775,7 +4128,9 @@ class InteractionsControl:
                             'force_control_source': (
                                 'potentiometer_force_sensor'
                             ),
-                            'contact_detection_source': 'potentiometer',
+                            'contact_detection_source': (
+                                contact_detection_source
+                            ),
                             'compression_force_N': (
                                 potentiometer_release_decision.current_force_n
                             ),
@@ -3788,14 +4143,31 @@ class InteractionsControl:
                             'force_rate_N_s': (
                                 potentiometer_release_decision.force_rate_n_s
                             ),
+                            'unloaded_elapsed_s': (
+                                potentiometer_release_decision
+                                .unloaded_elapsed_s
+                            ),
+                            'unloaded_force_threshold_N': (
+                                release_unloaded_force_n
+                            ),
+                            'pre_release_force_N': pre_release_force_n,
+                            'pre_release_force_vector_locked_at_candidate': (
+                                candidate_force_vector_locked
+                            ),
                             'state_source': 'crazyflie_state_estimate',
                         },
                     )
                     self._log_event(
                         'Potentiometer Release Coasting Started',
                         {
-                            'last_force_N': last_force_world.tolist(),
-                            'last_compression_force_N': last_force_n,
+                            'last_force_N': pre_release_force_world.tolist(),
+                            'last_compression_force_N': pre_release_force_n,
+                            'pre_release_compression_force_N': (
+                                pre_release_force_n
+                            ),
+                            'confirmed_unloaded_force_N': (
+                                potentiometer_release_decision.current_force_n
+                            ),
                             'force_drop_N': (
                                 potentiometer_release_decision.force_drop_n
                             ),
@@ -3810,6 +4182,10 @@ class InteractionsControl:
                             ),
                             'release_position_m': position.tolist(),
                             'force_memory_s': release_force_memory_s,
+                            'unloaded_elapsed_s': (
+                                potentiometer_release_decision
+                                .unloaded_elapsed_s
+                            ),
                             'initial_command_mode': (
                                 translation_control.command_mode
                             ),
@@ -3881,6 +4257,7 @@ class InteractionsControl:
                 )
 
             braking_kwargs = {}
+            coast_handoff_completed = False
             if translation_control.mode in (
                     translation_control.ATTITUDE_COAST,
                     translation_control.POSITION_COAST):
@@ -3905,7 +4282,7 @@ class InteractionsControl:
                     virtual_motion_state['friction_force_N']
                 )
                 force_virtual_drag_N = virtual_motion_state['drag_force_N']
-                if (
+                coast_handoff_completed = bool(
                     translation_control.mode
                     == translation_control.ATTITUDE_COAST
                     and translation_control.update_coast_attitude(
@@ -3915,8 +4292,12 @@ class InteractionsControl:
                         braking_kwargs['coast_velocity'],
                         state_time,
                         output.estimate.orientation_rpy,
+                        allow_position_handoff=(
+                            potentiometer_release_processed
+                        ),
                     )
-                ):
+                )
+                if coast_handoff_completed:
                     self._log_event(
                         'Coast Position Control Handoff',
                         {
@@ -3924,33 +4305,46 @@ class InteractionsControl:
                                 translation_control.coast_handoff_reason
                             ),
                             'actual_position_m': position.tolist(),
-                            'target_position_m': coast_position.tolist(),
+                            'target_position_m': (
+                                translation_control.hold_position.tolist()
+                            ),
+                            'virtual_target_position_m': (
+                                coast_position.tolist()
+                            ),
                             'actual_velocity_m_s': (
                                 output.estimate.velocity.tolist()
                             ),
-                            'target_velocity_m_s': (
+                            'target_velocity_m_s': [0.0, 0.0, 0.0],
+                            'virtual_target_velocity_m_s': (
                                 braking_kwargs['coast_velocity'].tolist()
                             ),
-                            'position_error_m': (
+                            'virtual_position_error_m': (
                                 translation_control
                                 .coast_tracking_position_error_m.tolist()
                             ),
-                            'velocity_error_m_s': (
+                            'virtual_velocity_error_m_s': (
                                 translation_control
                                 .coast_tracking_velocity_error_m_s.tolist()
+                            ),
+                            'braking_only': True,
+                            'command_mode': (
+                                translation_control.command_mode
                             ),
                             'state_source': 'crazyflie_state_estimate',
                         },
                     )
 
-            if translation_control.update_braking(
-                    self._bounded_wrench_reference(position),
-                    output.estimate.velocity,
-                    state_time,
-                    output.estimate.orientation_rpy,
-                    current_force=braking_force_world,
-                    current_mass_kg=force_current_mass,
-                    **braking_kwargs):
+            braking_completed = coast_handoff_completed
+            if not braking_completed:
+                braking_completed = translation_control.update_braking(
+                        self._bounded_wrench_reference(position),
+                        output.estimate.velocity,
+                        state_time,
+                        output.estimate.orientation_rpy,
+                        current_force=braking_force_world,
+                        current_mass_kg=force_current_mass,
+                        **braking_kwargs)
+            if braking_completed:
                 last_command_position = translation_control.hold_position.copy()
                 completed_render_mode = selected_render_mode
                 completed_render_relation = render_relation
@@ -4141,6 +4535,10 @@ class InteractionsControl:
                 'force_rendering_enabled': force_rendering_enabled,
                 'contact_detection_source': contact_detection_source,
                 'release_behavior_mode': release_mode,
+                'coast_control_policy': (
+                    'braking_only_actual_stop'
+                    if release_mode == 'potentiometer_coast' else None
+                ),
                 'initial_contact_detector_armed': (
                     initial_contact_gate.armed
                 ),
@@ -4154,6 +4552,44 @@ class InteractionsControl:
                     None
                     if potentiometer_release_decision is None
                     else potentiometer_release_decision.released
+                ),
+                'potentiometer_release_candidate_active': (
+                    None
+                    if potentiometer_release_decision is None
+                    else potentiometer_release_decision.candidate_active
+                ),
+                'potentiometer_release_candidate_braking_active': (
+                    potentiometer_release_pending
+                ),
+                'potentiometer_release_unloaded_elapsed_s': (
+                    None
+                    if potentiometer_release_decision is None
+                    else potentiometer_release_decision.unloaded_elapsed_s
+                ),
+                'potentiometer_release_unloaded_force_threshold_N': (
+                    release_unloaded_force_n
+                    if potentiometer_release_detector is not None else None
+                ),
+                'potentiometer_release_unloaded_dwell_s': (
+                    release_unloaded_dwell_s
+                    if potentiometer_release_detector is not None else None
+                ),
+                'potentiometer_release_candidate_elapsed_s': (
+                    None
+                    if potentiometer_release_decision is None
+                    else potentiometer_release_decision.candidate_elapsed_s
+                ),
+                'potentiometer_release_candidate_cancel_reason': (
+                    None
+                    if potentiometer_release_decision is None
+                    else (
+                        potentiometer_release_decision
+                        .candidate_cancel_reason
+                    )
+                ),
+                'potentiometer_release_candidate_stall_timeout_s': (
+                    release_candidate_stall_timeout_s
+                    if potentiometer_release_detector is not None else None
                 ),
                 'potentiometer_force_rate_N_s': (
                     None
@@ -4302,6 +4738,9 @@ class InteractionsControl:
                 ),
                 'coast_tracking_acceleration_saturated': (
                     translation_control.coast_tracking_acceleration_saturated
+                ),
+                'coast_tracking_power_W_per_kg': (
+                    translation_control.coast_tracking_power_w_per_kg
                 ),
                 'coast_handoff_reason': (
                     translation_control.coast_handoff_reason

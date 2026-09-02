@@ -144,13 +144,20 @@ The sensor can own both engage and release detection. The contact detector must
 first observe a low-force baseline, then sustained compression above its onset
 threshold. During contact, both observer and potentiometer forces are recorded.
 Force rendering is disabled by default, so the attitude command remains
-`roll=0`, `pitch=0`. When spring compression decreases far and fast enough, the
-last force before the decrease and the measured velocity initialize bounded
-coasting. Coasting first uses orientation commands to align the actual XY
-position/velocity with the virtual friction trajectory. It switches to position
-control only after the state is within tolerance (or the attitude phase times
-out), and finishes only after actual XY speed and position settle or the total
-timeout expires.
+`roll=0`, `pitch=0`. When spring compression decreases far and fast enough, a
+release candidate starts bounded attitude braking immediately. Contact remains
+active until force stays below the unloaded threshold for the configured dwell;
+a force recovery or lack of continued unloading cancels the candidate and
+resumes the interaction. Missing sensor data also cancels active braking; if
+the spring is already unloaded when samples recover, a fresh dwell begins at
+the recovery sample rather than counting the data gap.
+
+Confirmed coasting is braking-only: commanded planar acceleration always
+opposes measured XY velocity, so it cannot add kinetic energy or chase the
+virtual friction trajectory. The virtual trajectory remains in the log for
+comparison. After actual XY speed stays below the stop threshold continuously,
+the measured stop position becomes the first position-control target. A timeout
+is diagnostic and cannot force a moving vehicle into position control.
 
 Configure the two behaviors independently under `virtual_object`:
 
@@ -165,6 +172,10 @@ release_behavior:
   mode: potentiometer_coast
   force_drop_n: 0.01
   decrease_rate_n_s: 0.05
+  unloaded_force_n: 0.05
+  unloaded_dwell_s: 0.05
+  max_sample_gap_s: 0.15
+  candidate_stall_timeout_s: 0.50
   force_memory_s: 0.02
 ```
 
@@ -177,8 +188,9 @@ previous observer-owned contact/release and counter-tilt braking path.
 Each `wrench_observer` record includes both `external_force_N` (the observer)
 and `control_external_force_N` (the observer control force), plus
 `release_braking_external_force_N`, force-rendering state, release mode,
-potentiometer force rate/drop, coast initial velocity, calibrated compression
-and spring length, coast tracking action/state errors/applied acceleration,
+potentiometer force rate/drop, release-candidate/unloaded-dwell state, coast
+initial velocity, calibrated compression and spring length, comparison-only
+virtual-state errors, braking action/applied acceleration and dissipated power,
 sample freshness, release force/momentum/position, stopping position, and
 observer-minus-sensor error. During the dedicated calibration run, the sensor
 remains comparison-only so it cannot alter the excitation trajectory.
