@@ -11,7 +11,6 @@ from Interaction.interactions import (
     TranslationControlHandoff,
     VirtualObjectPlanarMotion,
     coast_braking_attitude,
-    fixed_distance_release_position_target,
     force_inertia_attitude,
     heavy_inertia_attitude,
     inertia_command_mode,
@@ -80,30 +79,6 @@ class ReleaseModeTests(unittest.TestCase):
                 'potentiometer_coast',
                 force_sensor_available=False,
                 calibration_mode=False,
-            )
-
-
-class FixedReleasePositionTargetTests(unittest.TestCase):
-    def test_normalizes_planar_direction_and_preserves_release_height(self):
-        target, direction = fixed_distance_release_position_target(
-            [0.2, -0.1, 1.0], [3.0, 4.0, 7.0], 1.0
-        )
-
-        np.testing.assert_allclose(direction, [0.6, 0.8, 0.0])
-        np.testing.assert_allclose(target, [0.8, 0.7, 1.0])
-
-    def test_preserves_negative_motion_direction(self):
-        target, direction = fixed_distance_release_position_target(
-            [0.4, 0.3, 0.9], [-2.0, 0.0, 1.0], 1.0
-        )
-
-        np.testing.assert_allclose(direction, [-1.0, 0.0, 0.0])
-        np.testing.assert_allclose(target, [-0.6, 0.3, 0.9])
-
-    def test_rejects_undefined_planar_direction(self):
-        with self.assertRaisesRegex(ValueError, 'nonzero XY direction'):
-            fixed_distance_release_position_target(
-                [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], 1.0
             )
 
 
@@ -777,47 +752,6 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.stopping_position_m, [0.0, 0.22, 1.0]
         )
         self.assertEqual(control.brake_completion_reason, 'actual_speed_settled')
-
-    def test_confirmed_release_can_command_fixed_position_coast_immediately(self):
-        commander = FakeCommander()
-        control = TranslationControlHandoff(
-            initial_position=[0.0, 0.0, 1.0],
-            yaw_deg=0.0,
-            shadow_mode=False,
-        )
-        self.assertTrue(control.start_contact('orientation'))
-        self.assertTrue(control.end_contact(
-            [0.0, 0.1, 1.0],
-            [0.0, 0.2, 0.0],
-            1.0,
-            interaction_direction=[0.0, 1.0, 0.0],
-            coast=True,
-        ))
-
-        # The preserved candidate path is still an attitude command. The
-        # temporary direct-position mode bypasses this path in the live loop.
-        control.send(commander)
-        self.assertEqual(commander.calls[-1][0], 'zdistance')
-
-        control.confirm_release_candidate(
-            current_position=[0.0, 0.12, 1.0],
-            current_velocity=[0.0, 0.18, 0.0],
-            timestamp=1.1,
-        )
-        self.assertTrue(control.start_position_coast([0.0, 1.12, 1.0]))
-        self.assertEqual(control.command_mode, 'position_coast')
-        self.assertEqual(
-            control.coast_handoff_reason, 'fixed_distance_release_target'
-        )
-        np.testing.assert_allclose(control.hold_position, [0.0, 1.12, 1.0])
-        np.testing.assert_allclose(
-            control.stopping_position_m, [0.0, 1.12, 1.0]
-        )
-        control.send(commander)
-        self.assertEqual(commander.calls[-1][0], 'position')
-        np.testing.assert_allclose(
-            commander.calls[-1][1][:3], [0.0, 1.12, 1.0]
-        )
 
     def test_release_records_force_momentum_then_captures_actual_stop_position(self):
         control = TranslationControlHandoff(
