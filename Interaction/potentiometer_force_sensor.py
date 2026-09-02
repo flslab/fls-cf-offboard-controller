@@ -659,20 +659,20 @@ class PotentiometerForceSensor:
         ):
             return False
         self._last_info_log_monotonic = now
-        logger.info(
-            "Potentiometer force=%.3f N, compression=%.3f mm, "
-            "length=%.3f mm, raw=%d, Arduino time=%d ms, Vcc=%s",
-            sample.force_n,
-            sample.compression_mm,
-            sample.length_mm,
-            sample.raw,
-            sample.arduino_time_ms,
-            (
-                "unavailable"
-                if sample.supply_voltage_v is None
-                else f"{sample.supply_voltage_v:.3f} V"
-            ),
-        )
+        # logger.info(
+        #     "Potentiometer force=%.3f N, compression=%.3f mm, "
+        #     "length=%.3f mm, raw=%d, Arduino time=%d ms, Vcc=%s",
+        #     sample.force_n,
+        #     sample.compression_mm,
+        #     sample.length_mm,
+        #     sample.raw,
+        #     sample.arduino_time_ms,
+        #     (
+        #         "unavailable"
+        #         if sample.supply_voltage_v is None
+        #         else f"{sample.supply_voltage_v:.3f} V"
+        #     ),
+        # )
         return True
 
     def _read_loop(self) -> None:
