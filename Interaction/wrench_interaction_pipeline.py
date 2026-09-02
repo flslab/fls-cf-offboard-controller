@@ -119,7 +119,7 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # At Contact End apply velocity-proportional attitude damping along the
         # locked interaction direction, then capture current-position hold near
         # zero projected speed/reversal.
-        "brake_xy_speed_m_s": 0.04,
+        "brake_xy_speed_m_s": 0.20,
         # Apply the minimum to total tilt, not independently to roll/pitch. It
         # tapers toward zero near the braking completion speed.
         "brake_min_attitude_deg": 3.0,

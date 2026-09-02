@@ -6,7 +6,20 @@ from Interaction.admittance_controller import AdmittanceController3DYaw
 from Interaction.external_wrench_observer import WrenchEstimate
 from Interaction.wrench_contact_detector import ContactChannelDetector
 from Interaction.wrench_contact_detector import ContactDecision, WrenchContactState
-from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
+from Interaction.wrench_interaction_pipeline import (
+    DEFAULT_WRENCH_INTERACTION_CONFIG,
+    WrenchInteractionPipeline,
+)
+
+
+class DefaultConfigTests(unittest.TestCase):
+    def test_release_braking_handoff_uses_practical_speed_threshold(self):
+        self.assertEqual(
+            DEFAULT_WRENCH_INTERACTION_CONFIG["control_handoff"][
+                "brake_xy_speed_m_s"
+            ],
+            0.10,
+        )
 
 
 class ContactDetectorTests(unittest.TestCase):
