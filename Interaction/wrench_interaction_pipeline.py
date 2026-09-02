@@ -124,19 +124,21 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # tapers toward zero near the braking completion speed.
         "brake_min_attitude_deg": 3.0,
         "brake_min_attitude_taper_speed_m_s": 0.25,
-        "brake_max_attitude_deg": 20.0,
+        # 5 m/s^2 requires about 27 degrees of tilt; retain a 30-degree cap.
+        "brake_max_attitude_deg": 30.0,
         "brake_timeout_s": 1.5,
         "brake_velocity_gain_s": 2.0,
-        # Legacy position/alignment keys remain accepted for archived mission
-        # files. Potentiometer-release control is now braking-only: bounded
-        # attitude damping uses measured velocity until actual XY speed stays
-        # low, then the measured stop position is latched for position hold.
+        # At release, freeze the zero-force virtual stopping point. Attitude
+        # braking uses the remaining distance and a conservative actuator-delay
+        # lookahead; position control receives the frozen point unless the
+        # vehicle has already passed it.
         "coast_position_gain_s2": 4.0,
         "coast_velocity_gain_s": 2.5,
-        "coast_max_acceleration_m_s2": 2.0,
+        "coast_max_acceleration_m_s2": 5.0,
+        "coast_attitude_response_delay_s": 0.12,
         "coast_alignment_position_tolerance_m": 0.04,
         "coast_alignment_velocity_tolerance_m_s": 0.08,
-        "coast_alignment_dwell_s": 0.08,
+        "coast_alignment_dwell_s": 0.02,
         # Diagnostic only; timeout cannot force a moving vehicle into position
         # control because doing so would pull it back toward the handoff point.
         "coast_attitude_timeout_s": 1.5,

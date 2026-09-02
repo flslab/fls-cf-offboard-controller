@@ -11,6 +11,7 @@ from Interaction.interactions import (
     TranslationControlHandoff,
     VirtualObjectPlanarMotion,
     coast_braking_attitude,
+    coast_target_braking_attitude,
     force_inertia_attitude,
     heavy_inertia_attitude,
     inertia_command_mode,
@@ -455,6 +456,22 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         ))
         self.assertEqual(state['velocity'][0], 0.0)
 
+    def test_virtual_stop_prediction_does_not_mutate_live_state(self):
+        motion = VirtualObjectPlanarMotion(
+            mass=0.17,
+            max_velocity_m_s=0.60,
+            max_offset_xy=[0.5, 0.5],
+            kinetic_friction_coefficient=0.10,
+        )
+        motion.reset([0.0, 0.0], [0.60, 0.0])
+
+        prediction = motion.predict_stop()
+
+        self.assertTrue(prediction['stopped'])
+        self.assertAlmostEqual(prediction['position'][0], 0.183, delta=0.01)
+        np.testing.assert_allclose(motion.position, [0.0, 0.0])
+        np.testing.assert_allclose(motion.velocity, [0.60, 0.0])
+
     def test_release_coast_combines_measured_velocity_and_last_force(self):
         velocity = release_coast_initial_velocity(
             measured_velocity=[0.10, 0.20, 0.05],
@@ -489,6 +506,53 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         self.assertGreater(tracking['applied_acceleration_m_s2'][1], 0.0)
         self.assertLess(tracking['roll_deg'], 0.0)
         self.assertLessEqual(tracking['power_w_per_kg'], 0.0)
+
+    def test_target_braking_reserves_distance_for_attitude_delay(self):
+        without_delay = coast_target_braking_attitude(
+            current_position_xy=[0.0, 0.0],
+            current_velocity_xy=[0.0, 0.60],
+            target_position_xy=[0.0, 0.20],
+            brake_direction_xy=[0.0, 1.0],
+            yaw_deg=0.0,
+            response_delay_s=0.0,
+        )
+        with_delay = coast_target_braking_attitude(
+            current_position_xy=[0.0, 0.0],
+            current_velocity_xy=[0.0, 0.60],
+            target_position_xy=[0.0, 0.20],
+            brake_direction_xy=[0.0, 1.0],
+            yaw_deg=0.0,
+            response_delay_s=0.12,
+        )
+
+        self.assertAlmostEqual(with_delay['delay_reserved_distance_m'], 0.072)
+        self.assertGreater(
+            with_delay['required_deceleration_m_s2'],
+            without_delay['required_deceleration_m_s2'],
+        )
+        self.assertLessEqual(with_delay['power_w_per_kg'], 0.0)
+
+    def test_target_braking_levels_early_when_measured_deceleration_will_stop(self):
+        tracking = coast_target_braking_attitude(
+            current_position_xy=[0.0, 0.10],
+            current_velocity_xy=[0.0, 0.40],
+            target_position_xy=[0.0, 0.18],
+            brake_direction_xy=[0.0, 1.0],
+            yaw_deg=0.0,
+            response_delay_s=0.12,
+            measured_acceleration_xy=[0.0, -4.0],
+            max_acceleration_m_s2=5.0,
+            max_attitude_deg=30.0,
+        )
+
+        self.assertEqual(tracking['required_deceleration_m_s2'], 0.0)
+        self.assertEqual(
+            tracking['predicted_forward_speed_after_delay_m_s'], 0.0
+        )
+        self.assertAlmostEqual(tracking['roll_deg'], 0.0)
+        self.assertAlmostEqual(
+            tracking['effective_acceleration_limit_m_s2'], 5.0
+        )
 
     def test_coast_attitude_is_dissipative_for_planar_directions(self):
         for yaw_deg in (-135.0, -20.0, 0.0, 75.0, 170.0):
@@ -713,7 +777,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(control.command_mode, 'position_hold')
         np.testing.assert_allclose(control.hold_position, [0.16, 0.0, 1.0])
 
-    def test_potentiometer_release_brakes_then_holds_actual_stop_position(self):
+    def test_passed_virtual_stop_is_clamped_to_actual_position(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -771,7 +835,35 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         np.testing.assert_allclose(
             control.stopping_position_m, [0.0, 0.22, 1.0]
         )
+        self.assertTrue(control.coast_target_clamped_to_actual)
         self.assertEqual(control.brake_completion_reason, 'actual_speed_settled')
+
+    def test_handoff_holds_frozen_virtual_stop_when_it_is_still_ahead(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            brake_xy_speed_m_s=0.20,
+            coast_alignment_dwell_s=0.0,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.10, 1.0], [0.0, 0.30, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(
+            [0.0, 0.10, 1.0], [0.0, 0.30, 0.0], timestamp=1.0,
+        )
+
+        self.assertTrue(control.update_coast_attitude(
+            [0.0, 0.16, 1.0], [0.0, 0.10, 0.0],
+            [0.0, 0.28, 1.0], [0.0, 0.0, 0.0], 1.01,
+        ))
+        np.testing.assert_allclose(control.hold_position, [0.0, 0.28, 1.0])
+        np.testing.assert_allclose(
+            control.coast_handoff_actual_position_m, [0.0, 0.16, 1.0]
+        )
+        self.assertFalse(control.coast_target_clamped_to_actual)
 
     def test_low_speed_direction_reversal_handoffs_without_dwell(self):
         control = TranslationControlHandoff(
@@ -813,9 +905,8 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.brake_completion_reason,
             'motion_reversed_below_speed_threshold',
         )
-        np.testing.assert_allclose(
-            control.hold_position, [0.021, 0.119, 1.0]
-        )
+        np.testing.assert_allclose(control.hold_position, [0.0, 0.2, 1.0])
+        self.assertFalse(control.coast_target_clamped_to_actual)
 
     def test_release_records_force_momentum_then_captures_actual_stop_position(self):
         control = TranslationControlHandoff(

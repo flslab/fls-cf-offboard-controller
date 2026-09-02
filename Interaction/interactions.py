@@ -365,9 +365,16 @@ def coast_braking_attitude(
 
     requested_acceleration = -velocity_gain_s * velocity_to_brake
     requested_norm = float(np.linalg.norm(requested_acceleration))
+    attitude_acceleration_limit = float(
+        9.81 * np.tan(np.radians(max_attitude_deg))
+    )
+    effective_acceleration_limit = min(
+        max_acceleration_m_s2,
+        attitude_acceleration_limit,
+    )
     applied_acceleration = requested_acceleration.copy()
-    if requested_norm > max_acceleration_m_s2:
-        applied_acceleration *= max_acceleration_m_s2 / requested_norm
+    if requested_norm > effective_acceleration_limit:
+        applied_acceleration *= effective_acceleration_limit / requested_norm
     applied_norm = float(np.linalg.norm(applied_acceleration))
 
     if applied_norm <= 1e-9:
@@ -398,7 +405,184 @@ def coast_braking_attitude(
         'applied_acceleration_m_s2': applied_acceleration,
         'action': 'decelerating' if power < -1e-4 else 'holding',
         'power_w_per_kg': power,
-        'acceleration_saturated': requested_norm > max_acceleration_m_s2,
+        'acceleration_saturated': (
+            requested_norm > effective_acceleration_limit
+        ),
+    }
+
+
+def coast_target_braking_attitude(
+        current_position_xy,
+        current_velocity_xy,
+        target_position_xy,
+        brake_direction_xy,
+        yaw_deg,
+        response_delay_s=0.12,
+        velocity_gain_s=2.5,
+        max_acceleration_m_s2=5.0,
+        max_attitude_deg=30.0,
+        measured_acceleration_xy=None,
+):
+    """Brake toward a frozen stop target with actuator-delay lookahead.
+
+    The longitudinal command is the constant deceleration required to remove
+    the measured forward speed in the distance that will remain after the
+    configured attitude-to-acceleration delay.  Transverse and reverse motion
+    are damped directly.  Every component still opposes measured velocity, so
+    this stage cannot deliberately accelerate the vehicle toward the target.
+    """
+    position = np.asarray(current_position_xy, dtype=float)
+    velocity = np.asarray(current_velocity_xy, dtype=float)
+    target = np.asarray(target_position_xy, dtype=float)
+    direction = np.asarray(brake_direction_xy, dtype=float)
+    measured_acceleration = np.asarray(
+        np.zeros(2)
+        if measured_acceleration_xy is None else measured_acceleration_xy,
+        dtype=float,
+    )
+    if any(value.shape != (2,) for value in (
+            position, velocity, target, direction, measured_acceleration)):
+        raise ValueError('target coast states must contain XY')
+    if not all(np.all(np.isfinite(value)) for value in (
+            position, velocity, target, direction, measured_acceleration)):
+        raise ValueError('target coast states must be finite')
+    response_delay_s = float(response_delay_s)
+    velocity_gain_s = float(velocity_gain_s)
+    max_acceleration_m_s2 = float(max_acceleration_m_s2)
+    max_attitude_deg = abs(float(max_attitude_deg))
+    parameters = np.asarray([
+        response_delay_s,
+        velocity_gain_s,
+        max_acceleration_m_s2,
+        max_attitude_deg,
+        yaw_deg,
+    ])
+    if (
+        not np.all(np.isfinite(parameters))
+        or response_delay_s < 0.0
+        or np.any(parameters[1:4] <= 0.0)
+    ):
+        raise ValueError('target coast gains and limits must be positive')
+
+    direction_norm = float(np.linalg.norm(direction))
+    if direction_norm <= 1e-9:
+        velocity_norm = float(np.linalg.norm(velocity))
+        direction = (
+            velocity / velocity_norm
+            if velocity_norm > 1e-9 else np.zeros(2)
+        )
+    else:
+        direction = direction / direction_norm
+
+    forward_speed = float(velocity @ direction)
+    remaining_distance = float((target - position) @ direction)
+    measured_deceleration = min(max(
+        -float(measured_acceleration @ direction),
+        0.0,
+    ), max_acceleration_m_s2)
+    future_forward_speed = max(
+        forward_speed - measured_deceleration * response_delay_s,
+        0.0,
+    )
+    delay_reserved_distance = max(
+        max(forward_speed, 0.0) * response_delay_s
+        - 0.5 * measured_deceleration * response_delay_s ** 2,
+        0.0,
+    )
+    effective_remaining_distance = max(
+        remaining_distance - delay_reserved_distance,
+        0.0,
+    )
+
+    if forward_speed > 1e-9 and future_forward_speed > 1e-9:
+        if effective_remaining_distance <= 1e-6:
+            required_deceleration = max_acceleration_m_s2
+        else:
+            required_deceleration = min(
+                future_forward_speed ** 2
+                / (2.0 * effective_remaining_distance),
+                max_acceleration_m_s2,
+            )
+        longitudinal_acceleration = -required_deceleration * direction
+    elif forward_speed <= 1e-9:
+        # If the vehicle has crossed zero speed, remove reverse motion rather
+        # than accelerating it back toward a possibly stale target.
+        required_deceleration = min(
+            velocity_gain_s * abs(forward_speed),
+            max_acceleration_m_s2,
+        )
+        longitudinal_acceleration = (
+            -velocity_gain_s * forward_speed * direction
+        )
+    else:
+        # Measured deceleration is already sufficient to remove forward speed
+        # within the response horizon. Command level attitude now instead of
+        # stacking more delayed braking that would arrive after zero speed.
+        required_deceleration = 0.0
+        longitudinal_acceleration = np.zeros(2)
+
+    lateral_velocity = velocity - forward_speed * direction
+    requested_acceleration = (
+        longitudinal_acceleration - velocity_gain_s * lateral_velocity
+    )
+    requested_norm = float(np.linalg.norm(requested_acceleration))
+    attitude_acceleration_limit = float(
+        9.81 * np.tan(np.radians(max_attitude_deg))
+    )
+    effective_acceleration_limit = min(
+        max_acceleration_m_s2,
+        attitude_acceleration_limit,
+    )
+    applied_acceleration = requested_acceleration.copy()
+    if requested_norm > effective_acceleration_limit:
+        applied_acceleration *= effective_acceleration_limit / requested_norm
+    applied_norm = float(np.linalg.norm(applied_acceleration))
+
+    if applied_norm <= 1e-9:
+        roll_deg = 0.0
+        pitch_deg = 0.0
+        raw_tilt_deg = 0.0
+    else:
+        acceleration_body = world_to_body_xy(applied_acceleration, yaw_deg)
+        raw_tilt_deg = float(np.degrees(np.arctan2(
+            applied_norm, 9.81
+        )))
+        applied_tilt_deg = min(raw_tilt_deg, max_attitude_deg)
+        pitch_deg = -applied_tilt_deg * float(
+            acceleration_body[0] / applied_norm
+        )
+        roll_deg = -applied_tilt_deg * float(
+            acceleration_body[1] / applied_norm
+        )
+
+    power = float(applied_acceleration @ velocity)
+    return {
+        'roll_deg': float(roll_deg),
+        'pitch_deg': float(pitch_deg),
+        'raw_tilt_deg': float(raw_tilt_deg),
+        'forward_speed_m_s': float(forward_speed),
+        'remaining_distance_m': float(remaining_distance),
+        'delay_reserved_distance_m': float(delay_reserved_distance),
+        'effective_remaining_distance_m': float(
+            effective_remaining_distance
+        ),
+        'required_deceleration_m_s2': float(required_deceleration),
+        'measured_deceleration_m_s2': float(measured_deceleration),
+        'predicted_forward_speed_after_delay_m_s': float(
+            future_forward_speed
+        ),
+        'effective_acceleration_limit_m_s2': float(
+            effective_acceleration_limit
+        ),
+        'velocity_to_brake_m_s': velocity.copy(),
+        'requested_acceleration_m_s2': requested_acceleration,
+        'applied_acceleration_m_s2': applied_acceleration,
+        'action': 'decelerating' if power < -1e-4 else 'holding',
+        'power_w_per_kg': power,
+        'acceleration_saturated': (
+            requested_norm > effective_acceleration_limit
+        ),
+        'target_passed': bool(remaining_distance <= 0.0),
     }
 
 
@@ -620,6 +804,61 @@ class VirtualObjectPlanarMotion:
         if self.origin.shape != (2,) or self.velocity.shape != (2,):
             raise ValueError('virtual reset position and velocity must contain XY')
 
+    def predict_stop(self, dt=0.005, max_duration_s=10.0):
+        """Simulate the zero-force virtual trajectory without mutating it."""
+        dt = float(dt)
+        max_duration_s = float(max_duration_s)
+        if (
+            not np.isfinite(dt)
+            or not np.isfinite(max_duration_s)
+            or dt <= 0.0
+            or max_duration_s <= 0.0
+        ):
+            raise ValueError('virtual stop prediction timing must be positive')
+        dt = min(dt, 0.05)
+        position = self.position.copy()
+        velocity = self.velocity.copy()
+        elapsed = 0.0
+        stopped = False
+        stop_speed = max(
+            float(self.resistance_config['friction_min_speed_m_s']),
+            1e-3,
+        )
+        while elapsed < max_duration_s:
+            speed = float(np.linalg.norm(velocity))
+            if speed <= stop_speed:
+                velocity.fill(0.0)
+                stopped = True
+                break
+            resistance, _, _ = virtual_resistance_force(
+                velocity,
+                external_force_xy=np.zeros(2),
+                **self.resistance_config,
+            )
+            acceleration = -resistance / self.mass
+            previous_velocity = velocity.copy()
+            proposed_velocity = previous_velocity + acceleration * dt
+            for axis in range(2):
+                if previous_velocity[axis] * proposed_velocity[axis] < 0.0:
+                    proposed_velocity[axis] = 0.0
+            proposed_position = position + proposed_velocity * dt
+            offset = np.clip(
+                proposed_position - self.origin,
+                -self.max_offset_xy,
+                self.max_offset_xy,
+            )
+            clipped = proposed_position != self.origin + offset
+            proposed_velocity[clipped] = 0.0
+            position = self.origin + offset
+            velocity = proposed_velocity
+            elapsed += dt
+        return {
+            'position': position.copy(),
+            'velocity': velocity.copy(),
+            'duration_s': float(elapsed),
+            'stopped': bool(stopped or np.linalg.norm(velocity) <= stop_speed),
+        }
+
     def resistance(self, external_force_xy=None):
         return virtual_resistance_force(
             self.velocity,
@@ -837,16 +1076,17 @@ class TranslationControlHandoff:
             brake_settle_s=0.30,
             position_brake_offset_m=0.05,
             brake_min_attitude_deg=3.0,
-            brake_max_attitude_deg=20.0,
+            brake_max_attitude_deg=30.0,
             brake_timeout_s=1.5,
             brake_velocity_gain_s=2.0,
             brake_min_attitude_taper_speed_m_s=0.25,
             coast_position_gain_s2=4.0,
             coast_velocity_gain_s=2.5,
-            coast_max_acceleration_m_s2=2.0,
+            coast_max_acceleration_m_s2=5.0,
+            coast_attitude_response_delay_s=0.12,
             coast_alignment_position_tolerance_m=0.04,
             coast_alignment_velocity_tolerance_m_s=0.08,
-            coast_alignment_dwell_s=0.08,
+            coast_alignment_dwell_s=0.02,
             coast_attitude_timeout_s=1.5,
             rearm_delay_s=0.0,
     ):
@@ -870,6 +1110,9 @@ class TranslationControlHandoff:
         self.coast_velocity_gain_s = float(coast_velocity_gain_s)
         self.coast_max_acceleration_m_s2 = float(
             coast_max_acceleration_m_s2
+        )
+        self.coast_attitude_response_delay_s = float(
+            coast_attitude_response_delay_s
         )
         self.coast_alignment_position_tolerance_m = float(
             coast_alignment_position_tolerance_m
@@ -895,6 +1138,7 @@ class TranslationControlHandoff:
             or self.coast_position_gain_s2 <= 0
             or self.coast_velocity_gain_s <= 0
             or self.coast_max_acceleration_m_s2 <= 0
+            or self.coast_attitude_response_delay_s < 0
             or self.coast_alignment_position_tolerance_m <= 0
             or self.coast_alignment_velocity_tolerance_m_s <= 0
             or self.coast_alignment_dwell_s < 0
@@ -933,6 +1177,17 @@ class TranslationControlHandoff:
         self.coast_tracking_acceleration_saturated = False
         self.coast_tracking_power_w_per_kg = None
         self.coast_handoff_reason = None
+        self.coast_stop_target_position_m = None
+        self.coast_handoff_actual_position_m = None
+        self.coast_target_clamped_to_actual = False
+        self.coast_target_remaining_distance_m = None
+        self.coast_delay_reserved_distance_m = None
+        self.coast_required_deceleration_m_s2 = None
+        self.coast_measured_deceleration_m_s2 = None
+        self.coast_predicted_forward_speed_after_delay_m_s = None
+        self._coast_previous_velocity_xy = None
+        self._coast_previous_timestamp = None
+        self._coast_filtered_acceleration_xy = np.zeros(2)
 
     def _transition_mode(self, new_mode):
         self.mode = new_mode
@@ -960,6 +1215,17 @@ class TranslationControlHandoff:
         self.hover_z = float(self.hold_position[2])
         self.set_contact_attitude(0.0, 0.0, 0.0)
         self._release_candidate_mode = None
+        self.coast_stop_target_position_m = None
+        self.coast_handoff_actual_position_m = None
+        self.coast_target_clamped_to_actual = False
+        self.coast_target_remaining_distance_m = None
+        self.coast_delay_reserved_distance_m = None
+        self.coast_required_deceleration_m_s2 = None
+        self.coast_measured_deceleration_m_s2 = None
+        self.coast_predicted_forward_speed_after_delay_m_s = None
+        self._coast_previous_velocity_xy = None
+        self._coast_previous_timestamp = None
+        self._coast_filtered_acceleration_xy.fill(0.0)
         self._transition_mode(
             self.CONTACT_POSITION
             if render_mode == 'position' else self.CONTACT_ZDISTANCE
@@ -1122,6 +1388,9 @@ class TranslationControlHandoff:
         self.coast_tracking_acceleration_saturated = False
         self.coast_tracking_power_w_per_kg = None
         self.coast_handoff_reason = None
+        self._coast_previous_velocity_xy = velocity[:2].copy()
+        self._coast_previous_timestamp = timestamp
+        self._coast_filtered_acceleration_xy.fill(0.0)
         if coast:
             self.set_contact_attitude(0.0, 0.0, 0.0)
             self.brake_force_feedforward_acceleration_m_s2 = 0.0
@@ -1162,6 +1431,9 @@ class TranslationControlHandoff:
         self.brake_completion_reason = None
         self.brake_command_tilt_deg = 0.0
         self.brake_force_feedforward_acceleration_m_s2 = 0.0
+        self._coast_previous_velocity_xy = None
+        self._coast_previous_timestamp = None
+        self._coast_filtered_acceleration_xy.fill(0.0)
         self.hold_position = position.copy()
         self.hover_z = float(position[2])
         self.set_contact_attitude(0.0, 0.0, 0.0)
@@ -1215,11 +1487,12 @@ class TranslationControlHandoff:
             current_orientation_rpy=None,
             allow_position_handoff=True,
     ):
-        """Brake with attitude, then latch actual position for handoff.
+        """Brake with attitude toward a stop target frozen at release.
 
         Returns true only on the sample that transitions to position control.
-        The virtual state remains an offline comparison signal; it cannot
-        accelerate the vehicle or become the position target.
+        The stop target becomes the position command unless measured motion
+        has already carried the vehicle past it, in which case the measured
+        position is latched to preserve the no-pullback invariant.
         """
         if self.shadow_mode or self.mode != self.ATTITUDE_COAST:
             return False
@@ -1246,8 +1519,8 @@ class TranslationControlHandoff:
         ):
             raise ValueError('coast attitude time/orientation must be finite')
 
-        # Keep the virtual-state error in the log for model comparison only.
-        # Neither term contributes to the commanded attitude.
+        # The frozen stop target shapes longitudinal braking and becomes the
+        # position target after handoff when it is still ahead of the vehicle.
         self.coast_tracking_position_error_m = (
             target_position[:2] - position[:2]
         )
@@ -1279,13 +1552,57 @@ class TranslationControlHandoff:
             and timestamp - self._brake_started_at
             >= min(self.coast_attitude_timeout_s, self.brake_timeout_s)
         )
-        tracking = coast_braking_attitude(
+        if (
+            self._coast_previous_velocity_xy is not None
+            and self._coast_previous_timestamp is not None
+        ):
+            acceleration_dt = timestamp - self._coast_previous_timestamp
+            if 1e-4 <= acceleration_dt <= 0.10:
+                raw_acceleration = (
+                    velocity[:2] - self._coast_previous_velocity_xy
+                ) / acceleration_dt
+                raw_acceleration = np.clip(
+                    raw_acceleration,
+                    -2.0 * self.coast_max_acceleration_m_s2,
+                    2.0 * self.coast_max_acceleration_m_s2,
+                )
+                filter_alpha = 1.0 - np.exp(-acceleration_dt / 0.08)
+                self._coast_filtered_acceleration_xy = (
+                    filter_alpha * raw_acceleration
+                    + (1.0 - filter_alpha)
+                    * self._coast_filtered_acceleration_xy
+                )
+        self._coast_previous_velocity_xy = velocity[:2].copy()
+        self._coast_previous_timestamp = timestamp
+        tracking = coast_target_braking_attitude(
+            position[:2],
             velocity[:2],
+            target_position[:2],
             self.brake_direction[:2],
             np.degrees(orientation_rpy[2]),
+            response_delay_s=self.coast_attitude_response_delay_s,
             velocity_gain_s=self.coast_velocity_gain_s,
             max_acceleration_m_s2=self.coast_max_acceleration_m_s2,
             max_attitude_deg=self.brake_max_attitude_deg,
+            measured_acceleration_xy=(
+                self._coast_filtered_acceleration_xy
+            ),
+        )
+        self.coast_stop_target_position_m = target_position.copy()
+        self.coast_target_remaining_distance_m = float(
+            tracking['remaining_distance_m']
+        )
+        self.coast_delay_reserved_distance_m = float(
+            tracking['delay_reserved_distance_m']
+        )
+        self.coast_required_deceleration_m_s2 = float(
+            tracking['required_deceleration_m_s2']
+        )
+        self.coast_measured_deceleration_m_s2 = float(
+            tracking['measured_deceleration_m_s2']
+        )
+        self.coast_predicted_forward_speed_after_delay_m_s = float(
+            tracking['predicted_forward_speed_after_delay_m_s']
         )
         self.set_contact_attitude(
             tracking['roll_deg'], tracking['pitch_deg'], 0.0
@@ -1324,11 +1641,21 @@ class TranslationControlHandoff:
                 'actual_speed_settled_after_timeout'
                 if attitude_timed_out else 'actual_speed_settled'
             )
-        # This is the key no-pullback invariant: the first position command is
-        # latched from the measured stop state, never the virtual trajectory.
-        self.hold_position = position.copy()
-        self.hover_z = float(position[2])
-        self.stopping_position_m = position.copy()
+        # Hold the stop point frozen at release, provided it is still ahead of
+        # the vehicle.  If physical lag already carried the vehicle past that
+        # point, latch the measured position instead so position control can
+        # never command a pullback along the interaction direction.
+        self.coast_handoff_actual_position_m = position.copy()
+        target_is_behind = bool(
+            np.linalg.norm(self.brake_direction[:2]) > 1e-9
+            and self.coast_target_remaining_distance_m < 0.0
+        )
+        self.coast_target_clamped_to_actual = target_is_behind
+        self.hold_position = (
+            position.copy() if target_is_behind else target_position.copy()
+        )
+        self.hover_z = float(self.hold_position[2])
+        self.stopping_position_m = self.hold_position.copy()
         self.set_contact_attitude(0.0, 0.0, 0.0)
         self.brake_command_tilt_deg = 0.0
         self.coast_tracking_action = 'position_handoff'
@@ -3058,7 +3385,7 @@ class InteractionsControl:
                             'mode': release_mode,
                             'configured_mode': configured_release_mode,
                             'coast_control_policy': (
-                                'braking_only_actual_stop'
+                                'target_aware_no_pullback'
                                 if release_mode == 'potentiometer_coast'
                                 else None
                             ),
@@ -3208,6 +3535,7 @@ class InteractionsControl:
         render_relation = None
         render_selection = None
         virtual_motion_state = None
+        coast_stop_prediction = None
         excitation_config = config['calibration_excitation']
         guided_touch = GuidedTouchProtocol(config.get('guided_touch_test'))
         if guided_touch.enabled and duration < guided_touch.required_duration_s:
@@ -3577,6 +3905,7 @@ class InteractionsControl:
                 potentiometer_release_pending = False
                 potentiometer_release_decision = None
                 coast_initial_velocity = None
+                coast_stop_prediction = None
                 sensor_force_n = float(
                     sensor_fields['force_sensor_compression_force_N']
                 )
@@ -4014,6 +4343,7 @@ class InteractionsControl:
                 virtual_motion.reset(
                     position[:2], coast_initial_velocity[:2]
                 )
+                coast_stop_prediction = virtual_motion.predict_stop()
                 if translation_control.end_contact(
                         self._bounded_wrench_reference(position),
                         output.estimate.velocity,
@@ -4056,6 +4386,7 @@ class InteractionsControl:
                         self._bounded_wrench_reference(position)):
                     potentiometer_release_pending = False
                     coast_initial_velocity = None
+                    coast_stop_prediction = None
                     virtual_motion.reset(
                         position[:2], output.estimate.velocity[:2]
                     )
@@ -4126,6 +4457,7 @@ class InteractionsControl:
                 virtual_motion.reset(
                     position[:2], coast_initial_velocity[:2]
                 )
+                coast_stop_prediction = virtual_motion.predict_stop()
                 coast_direction = output.estimate.velocity.copy()
                 if np.linalg.norm(coast_direction[:2]) <= 1e-9:
                     coast_direction = pre_release_force_world.copy()
@@ -4233,6 +4565,22 @@ class InteractionsControl:
                             'coast_initial_velocity_m_s': (
                                 coast_initial_velocity.tolist()
                             ),
+                            'predicted_stop_position_m': (
+                                None if coast_stop_prediction is None
+                                else [
+                                    float(coast_stop_prediction['position'][0]),
+                                    float(coast_stop_prediction['position'][1]),
+                                    float(translation_control.hover_z),
+                                ]
+                            ),
+                            'predicted_stop_duration_s': (
+                                None if coast_stop_prediction is None
+                                else coast_stop_prediction['duration_s']
+                            ),
+                            'predicted_stop_reached': (
+                                None if coast_stop_prediction is None
+                                else coast_stop_prediction['stopped']
+                            ),
                             'release_position_m': position.tolist(),
                             'force_memory_s': release_force_memory_s,
                             'unloaded_elapsed_s': (
@@ -4320,6 +4668,15 @@ class InteractionsControl:
                     virtual_motion_state['position'][1],
                     translation_control.hover_z,
                 ]))
+                predicted_stop_position = coast_position
+                if coast_stop_prediction is not None:
+                    predicted_stop_position = self._bounded_wrench_reference(
+                        np.array([
+                            coast_stop_prediction['position'][0],
+                            coast_stop_prediction['position'][1],
+                            translation_control.hover_z,
+                        ])
+                    )
                 braking_kwargs = {
                     'coast_position': coast_position,
                     'coast_velocity': np.array([
@@ -4341,7 +4698,7 @@ class InteractionsControl:
                     and translation_control.update_coast_attitude(
                         self._bounded_wrench_reference(position),
                         output.estimate.velocity,
-                        coast_position,
+                        predicted_stop_position,
                         braking_kwargs['coast_velocity'],
                         state_time,
                         output.estimate.orientation_rpy,
@@ -4363,6 +4720,29 @@ class InteractionsControl:
                             ),
                             'virtual_target_position_m': (
                                 coast_position.tolist()
+                            ),
+                            'predicted_stop_position_m': (
+                                predicted_stop_position.tolist()
+                            ),
+                            'predicted_stop_duration_s': (
+                                None if coast_stop_prediction is None
+                                else coast_stop_prediction['duration_s']
+                            ),
+                            'predicted_stop_reached': (
+                                None if coast_stop_prediction is None
+                                else coast_stop_prediction['stopped']
+                            ),
+                            'target_clamped_to_actual': (
+                                translation_control
+                                .coast_target_clamped_to_actual
+                            ),
+                            'target_remaining_distance_m': (
+                                translation_control
+                                .coast_target_remaining_distance_m
+                            ),
+                            'attitude_response_delay_s': (
+                                translation_control
+                                .coast_attitude_response_delay_s
                             ),
                             'actual_velocity_m_s': (
                                 output.estimate.velocity.tolist()
@@ -4417,6 +4797,17 @@ class InteractionsControl:
                         'hold_position_m': last_command_position.tolist(),
                         'stopping_position_m': (
                             translation_control.stopping_position_m.tolist()
+                        ),
+                        'actual_handoff_position_m': (
+                            None
+                            if translation_control
+                            .coast_handoff_actual_position_m is None
+                            else translation_control
+                            .coast_handoff_actual_position_m.tolist()
+                        ),
+                        'target_clamped_to_actual': (
+                            translation_control
+                            .coast_target_clamped_to_actual
                         ),
                         'release_force_N': (
                             translation_control.release_force_N.tolist()
@@ -4589,7 +4980,7 @@ class InteractionsControl:
                 'contact_detection_source': contact_detection_source,
                 'release_behavior_mode': release_mode,
                 'coast_control_policy': (
-                    'braking_only_actual_stop'
+                    'target_aware_no_pullback'
                     if release_mode == 'potentiometer_coast' else None
                 ),
                 'initial_contact_detector_armed': (
@@ -4794,6 +5185,41 @@ class InteractionsControl:
                 ),
                 'coast_tracking_power_W_per_kg': (
                     translation_control.coast_tracking_power_w_per_kg
+                ),
+                'coast_stop_target_position_m': (
+                    None
+                    if translation_control.coast_stop_target_position_m is None
+                    else translation_control
+                    .coast_stop_target_position_m.tolist()
+                ),
+                'coast_handoff_actual_position_m': (
+                    None
+                    if translation_control.coast_handoff_actual_position_m
+                    is None
+                    else translation_control
+                    .coast_handoff_actual_position_m.tolist()
+                ),
+                'coast_target_clamped_to_actual': (
+                    translation_control.coast_target_clamped_to_actual
+                ),
+                'coast_target_remaining_distance_m': (
+                    translation_control.coast_target_remaining_distance_m
+                ),
+                'coast_delay_reserved_distance_m': (
+                    translation_control.coast_delay_reserved_distance_m
+                ),
+                'coast_required_deceleration_m_s2': (
+                    translation_control.coast_required_deceleration_m_s2
+                ),
+                'coast_measured_deceleration_m_s2': (
+                    translation_control.coast_measured_deceleration_m_s2
+                ),
+                'coast_predicted_forward_speed_after_delay_m_s': (
+                    translation_control
+                    .coast_predicted_forward_speed_after_delay_m_s
+                ),
+                'coast_attitude_response_delay_s': (
+                    translation_control.coast_attitude_response_delay_s
                 ),
                 'coast_handoff_reason': (
                     translation_control.coast_handoff_reason

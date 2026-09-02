@@ -19,6 +19,12 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(
             handoff["brake_min_attitude_taper_speed_m_s"], 0.25
         )
+        self.assertEqual(handoff["coast_max_acceleration_m_s2"], 5.0)
+        self.assertEqual(handoff["brake_max_attitude_deg"], 30.0)
+        self.assertEqual(
+            handoff["coast_attitude_response_delay_s"], 0.12
+        )
+        self.assertEqual(handoff["coast_alignment_dwell_s"], 0.02)
 
 
 class ContactDetectorTests(unittest.TestCase):
