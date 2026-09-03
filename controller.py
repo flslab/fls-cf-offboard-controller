@@ -30,6 +30,7 @@ from cflib.utils.reset_estimator import reset_estimator
 
 from Interaction.interactions import InteractionsControl
 from Interaction.command_wrapper import CommandWrapper
+from Interaction.braking_repeat_test import validate_repeat_test_options
 
 from mocap import Mocap
 from smooth_controller import SmoothController
@@ -170,6 +171,7 @@ class Controller:
         return bool(
             getattr(self.args, 'interaction', False)
             or getattr(self.args, 'calibrate', False)
+            or getattr(self.args, 'braking_test', False)
             or getattr(self.args, 'sense', False)
         )
 
@@ -642,7 +644,7 @@ class Controller:
         else:
             raise Exception(
                 "No mode is passed. Passing --illumination, --interaction, "
-                "or --calibrate is required."
+                "--calibrate, or --braking-test is required."
             )
 
         logger.debug("logging activated")
@@ -827,7 +829,8 @@ class Controller:
             self.z_tune_pattern()
         elif self.args.trajectory:
             self.fly_trajectory(self.args.trajectory)
-        elif getattr(self.args, 'calibrate', False):
+        elif (getattr(self.args, 'calibrate', False)
+              or getattr(self.args, 'braking_test', False)):
             self.calibration_switch()
         elif self.args.orchestrated:
             if self.args.illumination:
@@ -1263,7 +1266,7 @@ class Controller:
             self.ll_commander.send_notify_setpoint_stop()
 
     def calibration_switch(self):
-        """Run one standalone no-contact wrench-model calibration flight."""
+        """Run contact-free calibration or the data-only attitude repeat test."""
         try:
             if self.args.ground_test:
                 self._safe_sleep(1)
@@ -1283,7 +1286,10 @@ class Controller:
                 sense_sign=self.args.sense_sign,
                 sense_max_age_s=self.args.sense_max_age,
             )
-            controller.run_calibration()
+            if getattr(self.args, 'braking_test', False):
+                controller.run_braking_test()
+            else:
+                controller.run_calibration()
         except Exception as error:
             logging.error(
                 "Calibration Error: %s\nTraceback:\n%s",
@@ -2211,6 +2217,11 @@ if __name__ == '__main__':
             "attitude/braking trials, then save both calibration models"
         ),
     )
+    ap.add_argument(
+        "--braking-test", action="store_true",
+        help=("data-only attitude repeat test: 20 deg, paired 0.24s pulses, "
+              "alternating -Y/+Y three times; skip XYZ and preserve calibration"),
+    )
     ap.add_argument("--intractable-illumination", action="store_true", help="interaction application with illumination")
     ap.add_argument("--morphing", action="store_true", help="illumination application with morphing emulator")
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=None, type=float)
@@ -2274,6 +2285,10 @@ if __name__ == '__main__':
     ap.add_argument("--autotune", action="store_true", help="run automatic pid tuner")
 
     args = ap.parse_args()
+    try:
+        validate_repeat_test_options(args)
+    except ValueError as error:
+        ap.error(str(error))
     if args.interaction and args.calibrate:
         ap.error('--interaction and --calibrate are mutually exclusive')
     if args.sense and not args.log:

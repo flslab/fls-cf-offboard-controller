@@ -153,7 +153,17 @@ class InteractionLogger(LogManager):
                     var_info['data'].append(data[var_name])
 
         if self.live_logger:
-            self.live_logger.write({"type": 'state', "group": group_name, "data": data})
+            # Preserve both clocks for offline delay/jitter analysis.  The
+            # Crazyflie callback timestamp is the raw 24-bit millisecond
+            # counter (it wraps); it is not a Unix time or a measured delay.
+            # Keep these fields out of runtime packet buffers so state age,
+            # nearest-packet selection, and control timing remain unchanged.
+            saved_data = dict(data)
+            saved_data['cf_timestamp_ms'] = timestamp
+            saved_data['host_receive_time_s'] = cur_time
+            self.live_logger.write({
+                "type": 'state', "group": group_name, "data": saved_data,
+            })
 
     def _update_kf(self, pos, kf):
         return [axis_kf.update(p) for p, axis_kf in zip(pos, kf.values())]

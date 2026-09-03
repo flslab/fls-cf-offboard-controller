@@ -117,6 +117,131 @@ mission settings. Historical capture logs and stored evidence remain readable;
 no capture quality gate participates in the new live calibration. Position
 recovery between attitude trials remains, and is not a capture experiment.
 
+### Independent attitude repeat flight (`--braking-test`)
+
+This **real flight** collects independent repeats without rerunning XYZ excitation
+or replacing the existing `Interaction/wrench_calibration.json`. On the launch
+computer, with `translation_inertia.yaml` selected in the swarm manifest:
+
+```bash
+cd /Users/shuqinzhu/Documents/FLS_Research/lightbender/orchestrator
+python3 orchestrator.py --braking-test --skip-record
+```
+
+Update both the launcher and offboard controller first. The normal launcher
+pulls the controller repository before running it. Do not add `--calibrate`,
+`--interaction`, or `--sense`. The launcher forwards `--log
+--smooth-controller-rate 100 --cf-log-period 10`. Direct controller callers must
+supply their usual mission/connection arguments plus these logging/rate flags.
+
+The fixed protocol is `-Y, +Y, -Y, +Y, -Y, +Y` in world coordinates. Each trial:
+
+1. Return to the calibration nominal position and pass the existing readiness
+   gate (current mission: XY speed <= 0.05 m/s, tilt <= 4 degrees, position error
+   <= 0.08 m, stable for 0.30 s; failure to settle within 5 s aborts).
+2. Level for 0.20 s; tilt 20 degrees forward for 0.24 s.
+3. Level for 0.20 s; tilt 20 degrees in the opposite direction for 0.24 s.
+4. Level for 0.65 s of observation, then position recovery for 2.0 s.
+
+The scheduled test lasts about 22.7 s **plus** startup stationary bias collection,
+readiness waits, takeoff/landing. It inherits the mission's boundaries, speed,
+displacement, localization and battery checks; it does not remove safety limits.
+Keep the same clear volume as the previous calibration and do not touch the drone.
+These matched pulses are data collection, **not a promise of a smooth stop**.
+
+`Planar Braking Repeat Test Started` records the exact protocol, nominal position,
+control rate, and SHA-256 of the preexisting calibration (or null if absent).
+`Planar Braking Repeat Test Complete` requires all six trials and all sampled
+attitude phases; it reports sample counts, but never fits or approves a new model.
+An abort has no completion event. Original phase and `wrench_observer` records
+remain available, so every command/state can be compared with the prior run.
+Saved raw state packets now also include `cf_timestamp_ms` (wrapping firmware
+counter) and `host_receive_time_s`; existing runtime timestamp semantics are unchanged.
+These two clocks are not directly interchangeable or a one-way latency estimate.
+
+After download, use a **new** output directory for observed repeat statistics:
+
+```bash
+venv/bin/python -m Interaction.braking_replay /path/to/repeat-flight.json \
+  --output /path/to/new-repeat-summary --summary-only
+```
+
+This reports signed brake-entry/terminal speed and rollback before position
+recovery, with within-direction repeat statistics. It does not refit or validate
+the old prediction model; independent model validation is the subsequent analysis.
+
+### Offline stopping prediction replay
+
+From the repository root, run:
+
+```sh
+venv/bin/python -m Interaction.braking_replay /path/to/flight.json --output /path/to/new-report-directory
+```
+
+The source log must contain one saved planar fit and complete phase events,
+commands and synchronized onboard observer samples. Existing output directories
+are refused; this utility never modifies the flight log, calibration file or
+controller. `--no-plots` omits the matplotlib dependency.
+
+Reports compare the saved fit (in-sample) against leave-one-duration-pair-out
+fits, keeping both signs of each held-out duration out of training. They include
+signed velocity/position trajectories, terminal speed, first zero crossing,
+reversal classification, and measured velocity-integral/position consistency.
+Position recovery is excluded. The prediction is initialized once before brake;
+future measured states cannot correct it. Command-history and measured-attitude
+initialization are reported separately as a sensitivity check.
+
+The replay integrates a causal continuous realization of the fitted effective
+command delay/acceleration lag. It does not claim bit-identical behavior to the
+fitter's discrete low-pass interpolation, independently identified physical
+attitude dynamics, or validation of unexecuted command schedules. Crossing zero
+is not proof of a stable stop; a missing crossing means none was observed before
+recovery. CV from one flight is preliminary evidence, not flight authorization.
+
+For full-trajectory identification using the exact same continuous integrator
+as prediction (numpy/scipy; matplotlib for plots), run:
+
+```sh
+venv/bin/python -m Interaction.braking_trajectory_fit /path/to/flight.json --output /path/to/new-model-comparison
+```
+
+This compares the legacy window fit with three offline candidates: full-trajectory
+delay/lag/gain with a common signed-motion bias, replacing that bias by world-Y
+bias, and additionally allowing nonnegative linear drag. Parameters are shared
+across trials; world-Y bias reverses its projection between +Y and -Y. Each
+training trial contributes its time-mean squared velocity error and final 0.1s
+mean-velocity error with equal weight. Position is not a training target.
+
+Four fixed optimizer seeds and fixed bounds are independent of held-out data.
+Each duration pair stays out of parameter fitting; all-data fits are explicitly
+in-sample. Reports include fold parameters, active bounds, conditioning, actual
+tail-attitude diagnostics and held-out errors. No candidate is automatically
+selected, exported as runtime calibration, or enabled. Fitting and selecting
+models after inspecting these six trials is exploratory: independent-flight
+validation remains necessary even if same-flight CV improves.
+
+To separate command-to-tilt response from tilt-to-motion residuals, use:
+
+```sh
+venv/bin/python -m Interaction.braking_split_diagnostic /path/to/flight.json --output /path/to/new-split-diagnostic
+```
+
+The split diagnostic fits stable first/second-order tilt dynamics on four trials,
+predicts the held-out duration pair, and separately fits a shared acceleration
+gain using training measured attitudes. It compares command-history initialization,
+pre-brake measured angle/rate initialization, zero-rate sensitivity, and an explicitly
+non-deployable future-measured-attitude oracle. Short-horizon forecasts use a fresh
+initial state for each forecast but never reset within one forecast. Future command
+schedules are the recorded commands, not validation of an unflown control policy.
+
+It also reports external-frame position corroboration, velocity/position consistency,
+and a noncausal attitude-time-shift diagnostic. Positive oracle lead is not a negative
+delay to install in the controller. Current log timestamps are host reception times;
+the device timestamp passed to `_cf_log_group_callback` is not retained. No changes
+to logging or controller timing are made by these offline scripts. The generated
+Chinese report includes a minimal repeatability test plan; it is not an executable
+mission or flight authorization.
+
 Active `potentiometer_coast` refuses to run without a current-schema planar fit
 that passed those gates. Runtime braking acceleration is limited to the smaller
 of `coast_max_acceleration_m_s2` and the largest fitted calibration-step
