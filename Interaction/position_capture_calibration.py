@@ -202,7 +202,9 @@ class PositionCaptureCalibration:
         direction = np.asarray(trial["direction_xy"])
         segment = trial["segment_id"]
         speed = float(np.linalg.norm(velocity[:2]))
-        if speed > self.max_xy_speed_m_s:
+        # Recovery is a position-controlled return, not an identification
+        # maneuver. Its speed alone must not abort the calibration.
+        if phase != "recovery" and speed > self.max_xy_speed_m_s:
             raise ValueError("position capture XY speed exceeds configured safety limit")
         if phase == "accelerate" and segment not in self._started:
             if speed > self.trial_start_max_xy_speed_m_s:

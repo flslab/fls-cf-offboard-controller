@@ -44,6 +44,74 @@ class ShortCapturePlan:
 
 
 class PositionCaptureRuntimeTests(unittest.TestCase):
+    def test_recovery_speed_exempt_but_capture_speed_and_displacement_guarded(self):
+        for phase, displacement, expected in [
+            ('recovery', 0.1, 'previous calibration file'),
+            ('recovery', 1.1, 'safety limit'),
+            ('capture', 0.1, 'safety limit'),
+        ]:
+            with self.subTest(phase=phase, displacement=displacement):
+                clock = [1000.0]
+                logs = FakeOnboardLogManager(clock[0])
+                controller = InteractionsControl.__new__(InteractionsControl)
+                controller.drone_id = 'test'
+                controller.log_manager = logs
+                controller.ctrl_rate = 50
+                controller.bounds = None
+                controller.lo_commander = FakeCommander()
+                controller.hl_commander = FakeCommander()
+
+                def sleep(_seconds):
+                    clock[0] += 0.02
+                    logs.advance(0.02)
+
+                controller._safe_sleep = sleep
+                original_state = controller._get_synchronized_onboard_wrench_state
+                inject = [False]
+
+                def state():
+                    result = original_state()
+                    if inject[0]:
+                        result['velocity'][0] = .717
+                        result['position'][0] = displacement
+                    return result
+
+                controller._get_synchronized_onboard_wrench_state = state
+                plan = ShortCapturePlan()
+                plan.max_xy_speed_m_s = .70
+                original_command = plan.command
+
+                def command(elapsed, *args):
+                    inject[0] = True
+                    result = original_command(elapsed, *args)
+                    result.phase = phase
+                    result.position_target = (
+                        np.array([.2, 0, 1]) if phase == 'capture' else None
+                    )
+                    return result
+
+                plan.command = command
+                with (
+                    patch('Interaction.interactions.time.time', lambda: clock[0]),
+                    patch('Interaction.interactions.PositionCaptureCalibration', return_value=plan),
+                    patch('Interaction.interactions.identify_xyz_alignment', return_value={}),
+                    patch('Interaction.interactions.save_drone_calibration') as save,
+                ):
+                    with self.assertRaisesRegex((RuntimeError, ValueError), expected):
+                        controller.interaction_onboard_wrench_admittance(
+                            duration=.18, nominal_position=[0, 0, 1],
+                            config={
+                                'state_source': 'onboard', 'shadow_mode': True,
+                                'observer_settle_s': 0, 'bias_calibration_s': .01,
+                                'minimum_bias_samples': 1,
+                                'motor_model': {'hover_pwm': 30000, 'hover_voltage': 8},
+                                'calibration_excitation': {'enabled': False},
+                                'planar_braking_calibration': {'enabled': False},
+                                'position_capture_calibration': {'enabled': True},
+                            }, calibration_mode=True,
+                        )
+                    save.assert_not_called()
+
     def test_due_attitude_phase_levels_and_aborts_instead_of_skew_retry(self):
         clock = [1000.0]
         logs = FakeOnboardLogManager(clock[0])

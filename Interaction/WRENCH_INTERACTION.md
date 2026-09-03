@@ -120,6 +120,11 @@ so check battery/endurance and clear the full one-metre XY safety radius before
 starting. Existing localization, speed, displacement and flight safety aborts
 remain active. Trial starts must be settled.
 
+The capture-stage XY speed abort applies to settle, acceleration, level and
+capture, but not to the position-controlled `recovery` return. Recovery still
+enforces displacement, flight boundaries and telemetry/battery protections;
+the next trial must pass readiness checks. Capture quality limits are unchanged.
+
 The `position_capture_fit` entry contains the exact protocol and per-trial
 entry speed/tilt/lateral motion, peak overshoot, reverse speed and settling time.
 A trial must stay within the configured overshoot limit (default 3 cm), never
