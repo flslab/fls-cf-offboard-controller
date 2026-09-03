@@ -9,6 +9,7 @@ from Interaction.interactions import (
     attitude_to_world_acceleration,
     calibrated_force_render_attitude_limit,
     calibration_state_dropout_tolerated,
+    calibration_state_group_skew_tolerated,
     constrain_predictive_coast_render_mode,
     GuidedTouchProtocol,
     InitialContactArmingGate,
@@ -391,6 +392,38 @@ class CalibrationStateDropoutTests(unittest.TestCase):
         self.assertFalse(calibration_state_dropout_tolerated(
             0.251, 0.100, 0.250, calibration_mode=True
         ))
+
+    def test_calibration_tolerates_brief_state_group_skew(self):
+        self.assertTrue(calibration_state_group_skew_tolerated(
+            0.080, 0.030, 0.004, 0.250, calibration_mode=True
+        ))
+
+    def test_active_interaction_keeps_strict_group_skew_limit(self):
+        self.assertFalse(calibration_state_group_skew_tolerated(
+            0.080, 0.030, 0.004, 0.250, calibration_mode=False
+        ))
+
+    def test_planar_attitude_trial_never_resumes_after_group_skew(self):
+        self.assertFalse(calibration_state_group_skew_tolerated(
+            0.080, 0.030, 0.004, 0.250,
+            calibration_mode=True,
+            planar_attitude_active=True,
+        ))
+
+    def test_calibration_rejects_persistent_or_excessive_group_skew(self):
+        self.assertFalse(calibration_state_group_skew_tolerated(
+            0.080, 0.030, 0.251, 0.250, calibration_mode=True
+        ))
+        self.assertFalse(calibration_state_group_skew_tolerated(
+            0.251, 0.030, 0.004, 0.250, calibration_mode=True
+        ))
+
+    def test_group_skew_policy_rejects_nonfinite_values(self):
+        with self.assertRaises(ValueError):
+            calibration_state_group_skew_tolerated(
+                np.nan, 0.030, 0.004, 0.250,
+                calibration_mode=True,
+            )
 
     def test_force_render_tilt_stays_inside_calibration_envelope(self):
         self.assertEqual(

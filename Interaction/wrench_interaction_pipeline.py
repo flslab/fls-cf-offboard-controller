@@ -226,6 +226,13 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # while retaining position hold. Active interaction keeps the strict
         # max_state_age_s cutoff.
         "calibration_state_dropout_timeout_s": 0.25,
+        # A shared telemetry pause can make one callback group recover a few
+        # milliseconds before the others. During calibration position-control
+        # phases only, wait briefly for those groups to resynchronize.
+        "calibration_state_group_skew_timeout_s": 0.25,
+        # Bound the total time calibration may remain paused across repeated
+        # individually recoverable state-stream gaps.
+        "calibration_max_protocol_clock_lag_s": 10.0,
         "max_motor_age_s": 0.15,
         "max_motor_pose_skew_s": 0.03,
         "startup_timeout_s": 5.0,

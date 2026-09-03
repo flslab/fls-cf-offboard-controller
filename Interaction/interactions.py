@@ -284,6 +284,50 @@ def calibration_state_dropout_tolerated(
     return bool(max_state_age_s < state_age_s <= dropout_timeout_s)
 
 
+def calibration_state_group_skew_tolerated(
+        state_group_skew_s,
+        max_state_group_skew_s,
+        dropout_elapsed_s,
+        dropout_timeout_s,
+        calibration_mode=False,
+        planar_attitude_active=False,
+):
+    """Allow only a brief calibration hold for mismatched state groups.
+
+    The skewed packet set is never passed to the observer or calibration fit.
+    Normal interaction remains fail-fast, and an open-loop planar attitude
+    trial is aborted rather than resumed from an uncertain actuator state.
+    """
+    values = np.asarray([
+        state_group_skew_s,
+        max_state_group_skew_s,
+        dropout_elapsed_s,
+        dropout_timeout_s,
+    ], dtype=float)
+    if (
+        not np.all(np.isfinite(values))
+        or state_group_skew_s < 0.0
+        or max_state_group_skew_s <= 0.0
+        or dropout_elapsed_s < 0.0
+        or dropout_timeout_s <= 0.0
+        or (
+            calibration_mode
+            and dropout_timeout_s <= max_state_group_skew_s
+        )
+    ):
+        raise ValueError(
+            'state-group skew limits and elapsed time must be finite; '
+            'the calibration timeout must exceed the normal skew limit'
+        )
+    return bool(
+        calibration_mode
+        and not planar_attitude_active
+        and max_state_group_skew_s < state_group_skew_s
+        <= dropout_timeout_s
+        and dropout_elapsed_s <= dropout_timeout_s
+    )
+
+
 def _validated_attitude_limit(max_attitude_deg, context):
     """Return a finite tilt limit in the physically valid tangent range."""
     max_attitude_deg = float(max_attitude_deg)
@@ -5126,6 +5170,35 @@ class InteractionsControl:
         max_state_group_skew_s = float(safety.get(
             'max_state_group_skew_s', safety['max_motor_pose_skew_s']
         ))
+        calibration_state_group_skew_timeout_s = float(safety.get(
+            'calibration_state_group_skew_timeout_s',
+            calibration_state_dropout_timeout_s,
+        ))
+        calibration_max_protocol_clock_lag_s = float(safety.get(
+            'calibration_max_protocol_clock_lag_s', 10.0
+        ))
+        state_sync_limits = np.asarray([
+            max_state_age_s,
+            calibration_state_dropout_timeout_s,
+            max_state_group_skew_s,
+            calibration_state_group_skew_timeout_s,
+            calibration_max_protocol_clock_lag_s,
+        ], dtype=float)
+        if not np.all(np.isfinite(state_sync_limits)) or np.any(
+                state_sync_limits <= 0.0):
+            raise ValueError(
+                'onboard state age/skew safety limits must be finite and '
+                'positive'
+            )
+        if (
+            calibration_mode
+            and calibration_state_group_skew_timeout_s
+            <= max_state_group_skew_s
+        ):
+            raise ValueError(
+                'safety.calibration_state_group_skew_timeout_s must be '
+                'greater than safety.max_state_group_skew_s'
+            )
         max_motor_state_skew_s = float(safety.get(
             'max_motor_state_skew_s', safety['max_motor_pose_skew_s']
         ))
@@ -5401,9 +5474,58 @@ class InteractionsControl:
         last_planar_braking_phase = None
         calibration_dropout_active = False
         calibration_dropout_max_age_s = 0.0
+        calibration_group_skew_dropout_active = False
+        calibration_group_skew_dropout_started_at = None
+        calibration_group_skew_dropout_max_s = 0.0
+        calibration_elapsed_s = 0.0
 
-        while interaction_start is None or time.time() - interaction_start < duration:
+        while True:
             now = time.time()
+            planar_attitude_active = bool(
+                calibration_mode
+                and active_planar_braking_command is not None
+                and active_planar_braking_command.attitude_control
+            )
+            if (
+                calibration_mode
+                and interaction_start is not None
+                and not planar_attitude_active
+            ):
+                # Also treat an attitude phase that became due during a
+                # callback gap as unsafe.  The previous command may still be
+                # latched, or the scheduled open-loop phase may otherwise be
+                # entered without a synchronized velocity sample.
+                planar_attitude_active = bool(
+                    planar_braking_plan.command(
+                        calibration_elapsed_s, 0.0
+                    ).attitude_control
+                )
+            if interaction_start is not None:
+                interaction_elapsed_s = (
+                    calibration_elapsed_s
+                    if calibration_mode
+                    else now - interaction_start
+                )
+                if interaction_elapsed_s >= duration:
+                    break
+            if (
+                calibration_mode
+                and interaction_start is not None
+                and (
+                    now - interaction_start - calibration_elapsed_s
+                    > calibration_max_protocol_clock_lag_s
+                )
+            ):
+                if planar_attitude_active:
+                    self.lo_commander.send_zdistance_setpoint(
+                        0.0, 0.0, 0.0, float(nominal_position[2])
+                    )
+                raise StaleLocalizationError(
+                    'Calibration protocol clock is '
+                    f'{now - interaction_start - calibration_elapsed_s:.3f}s '
+                    'behind wall time '
+                    f'(limit {calibration_max_protocol_clock_lag_s:.3f}s)'
+                )
             state = self._get_synchronized_onboard_wrench_state()
             if state is None:
                 raise StaleLocalizationError('Onboard state packet set is incomplete')
@@ -5415,11 +5537,7 @@ class InteractionsControl:
                     f'(limit {max_state_age_s:.3f}s)'
                 )
             if state_age > max_state_age_s:
-                if (
-                    calibration_mode
-                    and active_planar_braking_command is not None
-                    and active_planar_braking_command.attitude_control
-                ):
+                if planar_attitude_active:
                     # A stale velocity sample makes open-loop attitude
                     # calibration unsafe. Level immediately and abort so a
                     # prior tilt is never held through a telemetry dropout.
@@ -5486,16 +5604,109 @@ class InteractionsControl:
                 )
                 calibration_dropout_active = False
                 calibration_dropout_max_age_s = 0.0
-            state_group_skew = max(
-                float(state['position_skew_s']),
-                float(state['angular_rate_skew_s']),
-                float(state['yaw_control_skew_s']),
+            state_group_skews = {
+                'position_skew_s': float(state['position_skew_s']),
+                'angular_rate_skew_s': float(state['angular_rate_skew_s']),
+                'yaw_control_skew_s': float(state['yaw_control_skew_s']),
+            }
+            state_group_skew_values = np.asarray(
+                list(state_group_skews.values()), dtype=float
             )
+            if (
+                not np.all(np.isfinite(state_group_skew_values))
+                or np.any(state_group_skew_values < 0.0)
+            ):
+                raise StaleLocalizationError(
+                    'Onboard state-group skew contains an invalid value'
+                )
+            state_group_skew = float(np.max(state_group_skew_values))
             if state_group_skew > max_state_group_skew_s:
+                if planar_attitude_active:
+                    # Never resume an open-loop tilt after losing synchronized
+                    # state.  Level immediately and make the operator restart
+                    # the calibration trial from a known state.
+                    self.lo_commander.send_zdistance_setpoint(
+                        0.0, 0.0, 0.0, float(nominal_position[2])
+                    )
+                    raise StaleLocalizationError(
+                        'Onboard state groups became unsynchronized during '
+                        'planar attitude calibration '
+                        f'({state_group_skew:.3f}s)'
+                    )
+                if calibration_group_skew_dropout_started_at is None:
+                    calibration_group_skew_dropout_started_at = now
+                dropout_elapsed_s = max(
+                    now - calibration_group_skew_dropout_started_at, 0.0
+                )
+                if calibration_state_group_skew_tolerated(
+                        state_group_skew,
+                        max_state_group_skew_s,
+                        dropout_elapsed_s,
+                        calibration_state_group_skew_timeout_s,
+                        calibration_mode=calibration_mode,
+                        planar_attitude_active=planar_attitude_active):
+                    calibration_group_skew_dropout_max_s = max(
+                        calibration_group_skew_dropout_max_s,
+                        state_group_skew,
+                    )
+                    if not calibration_group_skew_dropout_active:
+                        calibration_group_skew_dropout_active = True
+                        self._log_event(
+                            'Calibration State Group Skew Started',
+                            {
+                                **state_group_skews,
+                                'maximum_group_skew_s': state_group_skew,
+                                'normal_limit_s': max_state_group_skew_s,
+                                'dropout_timeout_s': (
+                                    calibration_state_group_skew_timeout_s
+                                ),
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                        logger.warning(
+                            'Skipping transient %.3fs calibration state-group '
+                            'skew; holding position while groups resynchronize.',
+                            state_group_skew,
+                        )
+                    translation_control.send(self.lo_commander)
+                    self._safe_sleep(dt)
+                    continue
+                effective_limit = (
+                    calibration_state_group_skew_timeout_s
+                    if calibration_mode else max_state_group_skew_s
+                )
                 raise StaleLocalizationError(
                     f'Onboard state-group skew is {state_group_skew:.3f}s '
-                    f'(limit {max_state_group_skew_s:.3f}s)'
+                    f'(limit {effective_limit:.3f}s; invalid for '
+                    f'{dropout_elapsed_s:.3f}s)'
                 )
+            if calibration_group_skew_dropout_active:
+                dropout_elapsed_s = max(
+                    now - calibration_group_skew_dropout_started_at, 0.0
+                )
+                self._log_event(
+                    'Calibration State Group Skew Recovered',
+                    {
+                        **state_group_skews,
+                        'recovered_group_skew_s': state_group_skew,
+                        'maximum_group_skew_s': (
+                            calibration_group_skew_dropout_max_s
+                        ),
+                        'dropout_elapsed_s': dropout_elapsed_s,
+                        'state_source': 'crazyflie_state_estimate',
+                    },
+                )
+                logger.info(
+                    'Calibration state groups resynchronized at %.3fs skew '
+                    'after %.3fs.',
+                    state_group_skew,
+                    dropout_elapsed_s,
+                )
+                calibration_group_skew_dropout_active = False
+                calibration_group_skew_dropout_started_at = None
+                calibration_group_skew_dropout_max_s = 0.0
             if state_time == last_state_time:
                 if (
                     calibration_mode
@@ -6981,7 +7192,11 @@ class InteractionsControl:
             if interaction_start is not None:
                 self._emit_guided_touch_prompts(
                     guided_touch,
-                    time.time() - interaction_start,
+                    (
+                        calibration_elapsed_s
+                        if calibration_mode
+                        else time.time() - interaction_start
+                    ),
                     'crazyflie_state_estimate',
                 )
 
@@ -6989,7 +7204,11 @@ class InteractionsControl:
             baseline_yaw = nominal_yaw_deg
             excitation_active = False
             if interaction_start is not None and excitation_config['enabled']:
-                excitation_elapsed = time.time() - interaction_start
+                excitation_elapsed = (
+                    calibration_elapsed_s
+                    if calibration_mode
+                    else time.time() - interaction_start
+                )
                 excitation_time = excitation_elapsed - float(
                     excitation_config['start_delay_s']
                 )
@@ -7013,9 +7232,8 @@ class InteractionsControl:
 
             planar_braking_command = None
             if calibration_mode and interaction_start is not None:
-                calibration_elapsed = time.time() - interaction_start
                 planar_braking_command = planar_braking_plan.command(
-                    calibration_elapsed,
+                    calibration_elapsed_s,
                     np.degrees(output.estimate.orientation_rpy[2]),
                 )
                 phase_marker = (
@@ -7644,6 +7862,12 @@ class InteractionsControl:
                 'shadow_mode': pipeline.shadow_mode,
             })
             self._safe_sleep(max(dt - (time.time() - now), 0.0))
+            if calibration_mode and interaction_start is not None:
+                # Advance the calibration protocol only after one complete,
+                # fresh, synchronized sample/control cycle. A telemetry pause
+                # therefore cannot skip excitation or attitude phases, nor
+                # make the duration check accept an incomplete fit.
+                calibration_elapsed_s += dt
 
         if calibration_mode:
             fit = identify_xyz_alignment(
