@@ -6,6 +6,35 @@ from Interaction.braking_response_calibration import PlanarBrakingCalibration
 
 
 class PlanarBrakingCalibrationTests(unittest.TestCase):
+    def test_fixed_twenty_degree_duration_sweep_has_paired_pulses(self):
+        plan = PlanarBrakingCalibration({
+            "enabled": True, "tilt_levels_deg": [20.0],
+            "accelerate_durations_s": [0.16, 0.24, 0.32],
+            "repetitions_per_duration": 1,
+        })
+        np.testing.assert_allclose(plan.trial_accelerate_s, [.16, .16, .24, .24, .32, .32])
+        np.testing.assert_allclose(plan.trial_brake_s, plan.trial_accelerate_s)
+        self.assertEqual(plan.repetitions, 3)
+        for i, start in enumerate(plan.trial_start_s):
+            accel_time = start + plan.level_before_acceleration_s
+            accel = plan.command(accel_time + .001, yaw_deg=0)
+            brake = plan.command(accel_time + plan.trial_accelerate_s[i]
+                                 + plan.level_before_brake_s + .001, yaw_deg=0)
+            self.assertEqual(accel.segment_id, i)
+            self.assertEqual(brake.segment_id, i)
+            self.assertEqual(accel.phase, 'accelerate')
+            self.assertEqual(brake.phase, 'brake')
+            self.assertAlmostEqual(abs(accel.roll_deg), 20)
+            self.assertAlmostEqual(brake.roll_deg, -accel.roll_deg)
+        self.assertEqual(plan.command(plan.end_s, yaw_deg=0).phase, 'complete')
+        self.assertEqual(plan.timing_protocol()['accelerate_durations_s'], [.16, .24, .32])
+
+    def test_duration_sweep_rejects_invalid_durations(self):
+        for durations in ([], [0], [-1], [float('nan')], [.2, .1], [.1, .1]):
+            with self.subTest(durations=durations), self.assertRaises(ValueError):
+                PlanarBrakingCalibration({'tilt_levels_deg': [20],
+                                         'accelerate_durations_s': durations})
+
     def setUp(self):
         self.plan = PlanarBrakingCalibration({
             "enabled": True,

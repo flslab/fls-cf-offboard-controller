@@ -199,56 +199,37 @@ class CalibrationTrialWaitRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime[0].lo_commander.calls[-1],
                          ('zdistance', (0.0, 0.0, 0.0, 1.0), {}))
 
-    def test_capture_wait_clamps_to_acceleration_boundary_and_retains_all_trials(self):
-        def behavior(state, _now, logs, controller):
-            position_calls = [call for call in controller.lo_commander.calls
-                              if call[0] == 'position']
-            if position_calls:
-                state['position'][:] = position_calls[-1][1][:3]
-            phases = self.events(logs, 'Position Capture Calibration Phase')
-            if phases and phases[-1]['phase'] in ('accelerate', 'level_before_capture'):
-                # Synthetic positive excitation at the fixed-target transition;
-                # this test verifies runtime scheduling, not physical fit quality.
-                state['velocity'][:2] = [0.1 * item for item in phases[-1]['direction_xy']]
-
-        runtime = self.make_runtime(wait_behavior=behavior)
+    def test_old_capture_enabled_setting_cannot_run_retired_experiment(self):
+        runtime = self.make_runtime()
         controller, logs, clock, _times, config, _duration = runtime
         config['planar_braking_calibration']['enabled'] = False
-        config['position_capture_calibration'] = {
-            'enabled': True, 'start_delay_s': 0.01,
-            'directions_xy': [[1, 0], [-1, 0]], 'repetitions': 1,
-            'accelerate_durations_s': [0.10], 'target_distances_m': [0.08],
-            # Not divisible by the 20ms control period: the clock must clamp.
-            'settle_s': 0.025, 'level_before_capture_s': 0.04,
-            'capture_s': 0.60, 'recovery_s': 0.04,
-            'trial_start_dwell_s': 0.30, 'trial_start_timeout_s': 5.0,
-        }
-        plan = PositionCaptureCalibration(config['position_capture_calibration'])
+        config['position_capture_calibration'] = {'enabled': True}
         with (
             patch('Interaction.interactions.time.time', lambda: clock[0]),
             patch('Interaction.interactions.identify_xyz_alignment', return_value={}),
-            patch.object(PositionCaptureCalibration, 'summarize',
-                         return_value={'usable': False}),
-            patch('Interaction.interactions.save_drone_calibration') as save,
+            patch('Interaction.interactions.save_drone_calibration',
+                  return_value=('/tmp/test-calibration.json', {'impulse_estimator': {}})) as save,
         ):
-            with self.assertRaisesRegex(ValueError, 'previous calibration file'):
-                controller.interaction_onboard_wrench_admittance(
-                    duration=plan.end_s + 0.04, nominal_position=[0, 0, 1],
-                    config=config, calibration_mode=True,
-                )
-            save.assert_not_called()
-        starts = self.events(logs, 'Position Capture Calibration Trial Wait Started')
-        ready = self.events(logs, 'Position Capture Calibration Trial Ready')
-        self.assertEqual(len(starts), 2)
-        self.assertEqual(len(ready), 2)
-        for trial, start in zip(plan.trials, starts):
-            self.assertAlmostEqual(start['protocol_elapsed_s'],
-                                   trial['start_s'] + plan.settle_s)
-        phases = self.events(logs, 'Position Capture Calibration Phase')
-        expected = ['settle', 'accelerate', 'level_before_capture', 'capture', 'recovery']
-        for segment in [0, 1]:
-            self.assertEqual([entry['phase'] for entry in phases
-                              if entry['segment_id'] == segment], expected)
+            controller.interaction_onboard_wrench_admittance(
+                duration=0.3, nominal_position=[0, 0, 1],
+                config=config, calibration_mode=True,
+            )
+            save.assert_called_once()
+        self.assertEqual(self.events(logs, 'Position Capture Calibration Phase'), [])
+
+    def test_nonuniform_pulses_wait_at_each_exact_trial_boundary(self):
+        runtime = list(self.make_runtime())
+        config = runtime[4]['planar_braking_calibration']
+        config.update(tilt_levels_deg=[20], accelerate_durations_s=[.04, .06, .08])
+        plan = PlanarBrakingCalibration(config, start_after_s=.01)
+        runtime[5] = plan.end_s + .04
+        self.run_planar(runtime)
+        starts = self.events(runtime[1], 'Planar Braking Calibration Trial Wait Started')
+        ready = self.events(runtime[1], 'Planar Braking Calibration Trial Ready')
+        self.assertEqual(len(starts), 6)
+        self.assertEqual(len(ready), 6)
+        for start, expected in zip(starts, plan.trial_start_s):
+            self.assertAlmostEqual(start['protocol_elapsed_s'], expected)
 
 
 if __name__ == '__main__':

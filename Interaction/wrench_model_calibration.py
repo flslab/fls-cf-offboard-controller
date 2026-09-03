@@ -1515,6 +1515,19 @@ def apply_drone_calibration(
                     "repetitions_per_tilt", 1
                 )
             )
+            if "accelerate_durations_s" in configured_planar_calibration:
+                durations = configured_planar_calibration["accelerate_durations_s"]
+                repeats = configured_planar_calibration.get("repetitions_per_duration", 1)
+                configured_repetitions_per_tilt = len(durations) * int(repeats)
+                saved_durations = braking["protocol"].get("accelerate_durations_s")
+                if (saved_durations is None
+                        or len(saved_durations) != len(durations)
+                        or not np.allclose(saved_durations, durations, rtol=0, atol=1e-9)
+                        or braking["protocol"].get("repetitions_per_duration") != repeats):
+                    raise ValueError(
+                        "saved planar braking pulse durations do not match this "
+                        "mission; rerun --calibrate"
+                    )
             saved_repetitions_per_tilt = int(
                 braking["protocol"].get(
                     "repetitions_per_tilt",

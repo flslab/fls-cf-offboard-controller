@@ -80,18 +80,23 @@ and `--smooth-controller-rate 50` or higher; the active orchestrator uses 100
 Hz. The mission may provide a calibration-only
 `wrench_interaction.calibration_nominal_position`, so the clear-volume
 calibration point does not change the apparatus-aligned interaction target.
-`--calibrate` runs three contact-free stages. First it forces
+`--calibrate` runs two contact-free stages. First it forces
 shadow mode and commands the bounded XYZ position chirp used by the wrench
 observer. It then performs bounded planar attitude trials with the sequence
 level -> accelerate -> level -> equal-duration opposite brake -> level ->
-position recovery.  The current Y-mounted experiment tests 8, 14, and 20
-degrees in both +Y and -Y (six trials total). This spans the active rendering
-and braking envelope without deliberately commanding a net reverse impulse.
+position recovery.  The current Y-mounted experiment fixes tilt at 20 degrees and tests paired
+acceleration/braking durations of 0.16, 0.24 and 0.32 seconds in both +Y and -Y
+(six trials total). Each trial levels for 0.20 seconds, accelerates for T,
+levels for 0.20 seconds, brakes at the opposite 20 degrees for T, levels for
+0.65 seconds, then recovers with position control for 2 seconds.
+Equal opposite command pulses cancel velocity only in an ideal symmetric
+model; delay, drag and initial velocity can produce residual motion or reversal.
+Zero tilt is not XY position hold. Inspect measured velocity after braking.
 The second fit identifies attitude-command delay, first-order response time,
 and planar acceleration scale. Strict gates require enough windows in every
 trial, acceptable training and validation R-squared and normalized RMSE in
-each direction, bounded acceleration gain, consistent gains across tilt
-levels, and agreement between +Y/-Y at every individual level. Poor or
+each direction, bounded acceleration gain, consistent gains across pulse
+durations, and agreement between +Y/-Y at every individual level. Poor or
 incomplete trials fail without overwriting a usable calibration. The fits and
 the exact trial protocol are atomically saved per drone in the same
 `Interaction/wrench_calibration.json`.
@@ -100,46 +105,17 @@ Before each planar trial, the existing position-recovery interval is followed
 by a bounded **nominal-position hold**, not an extended zero-tilt command.
 The next trial starts only after XY speed is at most 0.05 m/s, actual tilt is
 at most 4 degrees and XY error from nominal is at most 0.08 m continuously for
-0.30 seconds. Up to 5 seconds of extra hold is allowed per trial. The same gate
-applies before each position-capture acceleration. Duplicate polls do not add
+0.30 seconds. Up to 5 seconds of extra hold is allowed per trial. Duplicate polls do not add
 evidence; stale samples or gaps over 0.10 seconds reset the dwell. Wall-time
 timeout and flight safety limits stay active. Intentional waits pause the
-shared protocol clock, so they do not consume later maneuvers or shorten
-capture observation. Open-loop phase
+shared protocol clock, so they do not consume later maneuvers. Open-loop phase
 durations are never extended to wait for readiness. These waits add to the
 nominal flight duration; the log records each wait and admission.
 
-The third stage measures **position-command capture**, separately from the
-attitude fit. On each of +X, -X, +Y and -Y it applies an 8-degree acceleration
-for 0.10, 0.20 or 0.30 seconds, commands level for 0.20 seconds, then latches a
-position target 0.08, 0.16 or 0.28 metres ahead of the measured entry position.
-It repeats that *fixed* XYZ target for a four-second observation window before
-returning to the nominal point. Actual entry velocity is recorded; acceleration
-duration is not treated as a known speed. Twelve trials add about 82 seconds,
-so check battery/endurance and clear the full one-metre XY safety radius before
-starting. Existing localization, speed, displacement and flight safety aborts
-remain active. Trial starts must be settled.
-
-The capture-stage XY speed abort applies to settle, acceleration, level and
-capture, but not to the position-controlled `recovery` return. Recovery still
-enforces displacement, flight boundaries and telemetry/battery protections;
-the next trial must pass readiness checks. Capture quality limits are unchanged.
-
-The `position_capture_fit` entry contains the exact protocol and per-trial
-entry speed/tilt/lateral motion, peak overshoot, reverse speed and settling time.
-A trial must stay within the configured overshoot limit (default 3 cm), never
-reverse faster than 0.05 m/s, and end within 3 cm of its target at XY speed at
-most 0.05 m/s for at least 0.30 seconds.
-Incomplete/stale trials, nonconstant targets and failed settling are not
-successes. The diagnostic report is logged even when unusable; a failed new
-capture calibration does not replace the existing calibration file. Partial
-older save callers preserve previously stored capture evidence.
-
-This entry is **empirical trial evidence, not a certified continuous capture
-envelope**. It does not reuse the attitude acceleration limit as the position
-PID's braking capability, and it does not automatically enable earlier
-nonzero-speed position handoff. Inspect the actual capture results first; the
-existing interaction handoff policy is unchanged in this calibration addition.
+The position-capture experiment is retired and is not enabled even by old
+mission settings. Historical capture logs and stored evidence remain readable;
+no capture quality gate participates in the new live calibration. Position
+recovery between attitude trials remains, and is not a capture experiment.
 
 Active `potentiometer_coast` refuses to run without a current-schema planar fit
 that passed those gates. Runtime braking acceleration is limited to the smaller

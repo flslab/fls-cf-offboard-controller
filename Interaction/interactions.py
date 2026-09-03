@@ -3987,17 +3987,12 @@ class InteractionsControl:
                         braking_config,
                         start_after_s=excitation_end_s,
                     )
-                    capture_config = wrench_config.setdefault(
-                        'position_capture_calibration', {}
-                    )
-                    capture_config['enabled'] = True
-                    capture_plan = PositionCaptureCalibration(
-                        capture_config, start_after_s=braking_plan.duration_s
-                    )
+                    # Retired experiment: old mission settings must not
+                    # silently re-enable position-capture trials.
+                    wrench_config.pop('position_capture_calibration', None)
                     # Validate readiness timing before entering any maneuver.
                     CalibrationTrialReadinessGate(braking_config)
-                    CalibrationTrialReadinessGate(capture_config)
-                    interaction_duration = capture_plan.end_s + 0.5
+                    interaction_duration = braking_plan.end_s + 0.5
                 else:
                     wrench_config, saved_calibration = apply_drone_calibration(
                         wrench_config,
@@ -4071,10 +4066,7 @@ class InteractionsControl:
                         logger.info('Loaded wrench calibration: %s', calibration_path)
                 if calibration_mode:
                     if getattr(self, 'bounds', None) is not None:
-                        margin = max(
-                            braking_plan.max_displacement_m,
-                            capture_plan.max_displacement_m,
-                        )
+                        margin = braking_plan.max_displacement_m
                         x, y = float(target[0]), float(target[1])
                         if not (
                             self.bounds['x_min'] <= x - margin
@@ -4083,7 +4075,7 @@ class InteractionsControl:
                             and y + margin <= self.bounds['y_max']
                         ):
                             raise ValueError(
-                                'planar braking / position capture calibration '
+                                'planar braking calibration '
                                 'needs at least '
                                 f'{margin:.2f} m XY boundary margin around '
                                 'the nominal hover point'
@@ -4102,17 +4094,12 @@ class InteractionsControl:
                         braking_plan.max_displacement_m,
                     )
                     logger.warning(
-                        'Calibration also includes %d fixed-target position '
-                        'capture trials at %.1fdeg after planar braking; '
-                        'total scheduled '
-                        'motion time %.1fs (plus startup bias collection). '
-                        'Keep the full %.2fm XY safety radius clear. '
-                        'These trials measure position-controller capture '
-                        'ability and do not change normal interaction control.',
-                        len(capture_plan.trials), capture_plan.tilt_deg,
+                        'Calibration uses paired acceleration/braking durations '
+                        '%s s; total scheduled motion time %.1fs plus startup '
+                        'bias collection and readiness holds. No position '
+                        'capture trials are run.',
+                        braking_plan.trial_accelerate_s.tolist(),
                         interaction_duration,
-                        max(braking_plan.max_displacement_m,
-                            capture_plan.max_displacement_m),
                     )
                 interaction_function = (
                     self.interaction_onboard_wrench_admittance
@@ -5486,7 +5473,9 @@ class InteractionsControl:
             planar_braking_config,
             start_after_s=excitation_end_s,
         )
-        position_capture_config = config.get('position_capture_calibration', {})
+        # Keep historical report support, but remove this experiment from all
+        # live calibration paths, including callers with an older mission.
+        position_capture_config = {}
         position_capture_plan = PositionCaptureCalibration(
             position_capture_config,
             start_after_s=planar_braking_plan.duration_s,
@@ -5544,8 +5533,7 @@ class InteractionsControl:
             calibration_trial_gates.append(gate)
             for segment_id in range(len(planar_braking_plan.trial_directions)):
                 calibration_trial_boundaries.append((
-                    planar_braking_plan.maneuver_start_s
-                    + segment_id * planar_braking_plan.trial_s,
+                    float(planar_braking_plan.trial_start_s[segment_id]),
                     'Planar Braking', segment_id, gate, planar_braking_plan,
                 ))
         if calibration_mode and position_capture_plan.enabled:
@@ -8434,6 +8422,7 @@ class InteractionsControl:
                     ),
                 )
                 planar_braking_fit['protocol'] = {
+                    **planar_braking_plan.timing_protocol(),
                     'directions_xy': (
                         planar_braking_plan.directions.tolist()
                     ),

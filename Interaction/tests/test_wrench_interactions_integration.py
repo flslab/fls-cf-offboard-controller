@@ -1398,12 +1398,8 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             calls[0]['config']['planar_braking_calibration'],
             start_after_s=12.0,
         )
-        capture_plan = PositionCaptureCalibration(
-            calls[0]['config']['position_capture_calibration'],
-            start_after_s=braking_plan.duration_s,
-        )
         self.assertAlmostEqual(
-            calls[0]['duration'], capture_plan.end_s + 0.5
+            calls[0]['duration'], braking_plan.end_s + 0.5
         )
         self.assertTrue(calls[0]['calibration_mode'])
         self.assertTrue(
@@ -1416,14 +1412,12 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertTrue(
             calls[0]['config']['planar_braking_calibration']['enabled']
         )
-        self.assertTrue(
-            calls[0]['config']['position_capture_calibration']['enabled']
-        )
+        self.assertNotIn('position_capture_calibration', calls[0]['config'])
         self.assertEqual(
             calls[0]['calibration_path'], '/tmp/test-calibration.json'
         )
 
-    def test_calibration_preflight_requires_position_capture_clearance(self):
+    def test_calibration_ignores_retired_position_capture_clearance(self):
         controller = InteractionsControl.__new__(InteractionsControl)
         controller.drone_id = 'lb11'
         controller.lo_commander = FakeCommander()
@@ -1456,10 +1450,9 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             lambda **kwargs: calls.append(kwargs)
         )
 
-        with self.assertRaisesRegex(ValueError, '1.00 m XY boundary margin'):
-            controller.run_calibration()
-
-        self.assertEqual(calls, [])
+        controller.run_calibration()
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn('position_capture_calibration', calls[0]['config'])
 
     def test_active_translation_aims_release_tilt_along_braking_direction_then_holds(self):
         commander = FakeCommander()

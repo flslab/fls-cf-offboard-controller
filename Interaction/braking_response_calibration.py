@@ -88,6 +88,24 @@ class PlanarBrakingCalibration:
             )
         self.tilt_levels_deg = tilt_levels.copy()
         self.tilt_deg = float(np.max(self.tilt_levels_deg))
+        self.accelerate_durations_s = None
+        if "accelerate_durations_s" in config:
+            durations = np.asarray(config["accelerate_durations_s"], dtype=float)
+            repeats = config.get("repetitions_per_duration", 1)
+            if (durations.ndim != 1 or len(durations) == 0
+                    or not np.all(np.isfinite(durations))
+                    or np.any(durations <= 0) or np.any(np.diff(durations) <= 0)
+                    or isinstance(repeats, bool) or not np.isfinite(float(repeats))
+                    or int(repeats) != repeats or repeats <= 0):
+                raise ValueError("acceleration durations must be positive, increasing with integer repeats")
+            if len(self.tilt_levels_deg) != 1:
+                raise ValueError("duration sweep requires one fixed tilt angle")
+            self.accelerate_durations_s = durations.copy()
+            self.repetitions_per_duration = int(repeats)
+            # Each duration is a repetition at the same tilt for the existing
+            # signed-gain quality checks. Opposite pulses have matched times.
+            self.repetitions_per_tilt = len(durations) * int(repeats)
+            self.accelerate_s = self.brake_s = float(max(durations))
         # ``repetitions`` remains the number of trials per direction.  Keeping
         # this aggregate makes the persisted protocol compatible with the
         # existing signed-quality contract while each individual level is also
@@ -178,10 +196,38 @@ class PlanarBrakingCalibration:
         )
         self.trial_s = self.attitude_trial_s + self.recovery_s
         self.maneuver_start_s = self.start_after_s + self.start_delay_s
-        self.end_s = (
-            self.maneuver_start_s
-            + len(self.trial_directions) * self.trial_s
+        count = len(self.trial_directions)
+        self.trial_accelerate_s = np.full(count, self.accelerate_s)
+        self.trial_brake_s = np.full(count, self.brake_s)
+        if self.accelerate_durations_s is not None:
+            self.trial_accelerate_s = np.repeat(np.tile(
+                self.accelerate_durations_s, self.repetitions_per_duration
+            ), len(self.directions))
+            self.trial_brake_s = self.trial_accelerate_s.copy()
+        self.trial_attitude_durations_s = (
+            self.level_before_acceleration_s + self.trial_accelerate_s
+            + self.level_before_brake_s + self.trial_brake_s
+            + self.level_after_brake_s
         )
+        self.trial_durations_s = self.trial_attitude_durations_s + self.recovery_s
+        self.trial_start_s = self.maneuver_start_s + np.r_[
+            0.0, np.cumsum(self.trial_durations_s)[:-1]
+        ]
+        self.end_s = float(self.maneuver_start_s + sum(self.trial_durations_s))
+
+    def timing_protocol(self):
+        """Exact per-trial timing; scalar durations alone cannot describe a sweep."""
+        return {
+            "accelerate_durations_s": (
+                None if self.accelerate_durations_s is None
+                else self.accelerate_durations_s.tolist()
+            ),
+            "repetitions_per_duration": getattr(self, "repetitions_per_duration", None),
+            "trial_accelerate_s": self.trial_accelerate_s.tolist(),
+            "trial_brake_s": self.trial_brake_s.tolist(),
+            "trial_start_s": self.trial_start_s.tolist(),
+            "trial_durations_s": self.trial_durations_s.tolist(),
+        }
 
     @property
     def duration_s(self):
@@ -239,12 +285,10 @@ class PlanarBrakingCalibration:
                 pitch_deg=0.0,
             )
 
-        maneuver_elapsed = elapsed_s - self.maneuver_start_s
-        segment_id = min(
-            int(maneuver_elapsed // self.trial_s),
-            len(self.trial_directions) - 1,
-        )
-        local_s = maneuver_elapsed - segment_id * self.trial_s
+        segment_id = int(np.searchsorted(self.trial_start_s, elapsed_s, side="right") - 1)
+        local_s = elapsed_s - self.trial_start_s[segment_id]
+        accelerate_s = self.trial_accelerate_s[segment_id]
+        brake_s = self.trial_brake_s[segment_id]
         direction = self.trial_directions[segment_id].copy()
         tilt_deg = float(self.trial_tilt_levels_deg[segment_id])
         acceleration_m_s2 = 9.81 * np.tan(np.radians(tilt_deg))
@@ -252,25 +296,25 @@ class PlanarBrakingCalibration:
         if local_s < self.level_before_acceleration_s:
             phase = "level_before_acceleration"
             command_acceleration = zero
-        elif local_s < self.level_before_acceleration_s + self.accelerate_s:
+        elif local_s < self.level_before_acceleration_s + accelerate_s:
             phase = "accelerate"
             command_acceleration = acceleration_m_s2 * direction
         elif local_s < (
             self.level_before_acceleration_s
-            + self.accelerate_s
+            + accelerate_s
             + self.level_before_brake_s
         ):
             phase = "level_before_brake"
             command_acceleration = zero
         elif local_s < (
             self.level_before_acceleration_s
-            + self.accelerate_s
+            + accelerate_s
             + self.level_before_brake_s
-            + self.brake_s
+            + brake_s
         ):
             phase = "brake"
             command_acceleration = -acceleration_m_s2 * direction
-        elif local_s < self.attitude_trial_s:
+        elif local_s < self.trial_attitude_durations_s[segment_id]:
             phase = "level_after_brake"
             command_acceleration = zero
         else:
