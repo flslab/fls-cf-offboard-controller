@@ -1222,9 +1222,10 @@ def coast_target_braking_attitude(
         # Level-now is safe only when its eventual longitudinal speed remains
         # between the current speed and zero.  Any queued response outside that
         # interval either crosses through zero or accelerates farther away from
-        # rest. Cancel exactly that excess with one bounded command-period
-        # impulse. This definition is continuous and symmetric for forward,
-        # reverse, and exactly-zero measured speeds.
+        # rest. Retain bounded tail cancellation for reversal/zero-speed
+        # protection. While still moving forward, however, a forward-growing
+        # tail must be handled by the stopping controller below: canceling only
+        # that extra speed would otherwise starve distance-aware braking.
         predicted_level_terminal_speed = float(
             level_tail['final_speed_m_s']
         )
@@ -1238,7 +1239,14 @@ def coast_target_braking_attitude(
         terminal_speed_correction = (
             tail_terminal_target_speed - predicted_level_terminal_speed
         )
-        if abs(terminal_speed_correction) > 1e-6:
+        forward_tail_should_use_stop_controller = bool(
+            forward_speed > 1e-9
+            and predicted_level_terminal_speed > forward_speed
+        )
+        if (
+            abs(terminal_speed_correction) > 1e-6
+            and not forward_tail_should_use_stop_controller
+        ):
             tail_cancellation_signed_acceleration = float(np.clip(
                 terminal_speed_correction / command_hold_s,
                 -effective_physical_acceleration_limit,

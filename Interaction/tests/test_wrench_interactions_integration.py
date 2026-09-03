@@ -266,6 +266,43 @@ class PotentiometerReleaseDirectionTests(unittest.TestCase):
         )
         self.assertLess(tracking['applied_acceleration_m_s2'][1], 0.0)
 
+    def test_release_candidate_still_only_cancels_forward_growing_tail(self):
+        for world_y_sign in (-1.0, 1.0):
+            with self.subTest(world_y_sign=world_y_sign):
+                direction = np.array([0.0, world_y_sign])
+                tracking = release_tail_neutralization_attitude(
+                    current_velocity_xy=0.60 * direction,
+                    brake_direction_xy=direction,
+                    yaw_deg=0.0,
+                    response_delay_s=0.12,
+                    response_time_constant_s=0.08,
+                    command_hold_s=0.02,
+                    measured_acceleration_xy=direction,
+                    command_history=[(-1.0, direction.copy())],
+                    timestamp=0.0,
+                    future_command_started_at=0.0,
+                )
+
+                self.assertGreater(
+                    tracking['predicted_level_terminal_speed_m_s'],
+                    tracking['forward_speed_m_s'],
+                )
+                self.assertEqual(
+                    tracking['action'], 'canceling_predicted_forward_tail'
+                )
+                # A candidate does not yet own the stop target: its pulse
+                # removes only extra queued speed, not the current motion.
+                self.assertAlmostEqual(
+                    tracking['target_terminal_speed_m_s'], 0.60
+                )
+                self.assertGreater(
+                    tracking['tail_cancellation_acceleration_m_s2'], 0.0
+                )
+                self.assertLess(
+                    float(tracking['applied_acceleration_m_s2'] @ direction),
+                    0.0,
+                )
+
     def test_delayed_rollout_is_invariant_at_command_boundary(self):
         history = [
             (-1.0, np.zeros(2)),
@@ -932,6 +969,133 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         self.assertAlmostEqual(
             tracking['effective_acceleration_limit_m_s2'], 5.0
         )
+
+    def test_target_braking_prioritizes_stopping_over_forward_tail(self):
+        for world_y_sign in (-1.0, 1.0):
+            with self.subTest(world_y_sign=world_y_sign):
+                direction = np.array([0.0, world_y_sign])
+                tracking = coast_target_braking_attitude(
+                    current_position_xy=[0.0, 0.0],
+                    current_velocity_xy=0.60 * direction,
+                    target_position_xy=0.20 * direction,
+                    brake_direction_xy=direction,
+                    yaw_deg=0.0,
+                    response_delay_s=0.12,
+                    response_time_constant_s=0.08,
+                    command_hold_s=0.02,
+                    measured_acceleration_xy=direction,
+                    command_history=[(-1.0, direction.copy())],
+                    timestamp=0.0,
+                    future_command_started_at=0.0,
+                )
+
+                self.assertGreater(
+                    tracking['predicted_level_terminal_speed_m_s'],
+                    tracking['forward_speed_m_s'],
+                )
+                self.assertEqual(tracking['action'], 'decelerating')
+                self.assertFalse(tracking['target_passed'])
+                self.assertEqual(
+                    tracking['tail_cancellation_acceleration_m_s2'], 0.0
+                )
+                self.assertGreater(
+                    tracking['required_deceleration_m_s2'], 0.0
+                )
+                self.assertLessEqual(
+                    tracking['required_deceleration_m_s2'],
+                    tracking['impulse_safe_deceleration_m_s2'],
+                )
+                self.assertLess(tracking['power_w_per_kg'], 0.0)
+                self.assertLess(
+                    float(tracking['applied_acceleration_m_s2'] @ direction),
+                    0.0,
+                )
+
+    def test_target_passed_damps_forward_motion_despite_forward_tail(self):
+        for world_y_sign in (-1.0, 1.0):
+            for distance_past_target in (0.01, 0.50):
+                with self.subTest(
+                        world_y_sign=world_y_sign,
+                        distance_past_target=distance_past_target):
+                    direction = np.array([0.0, world_y_sign])
+                    tracking = coast_target_braking_attitude(
+                        current_position_xy=[0.0, 0.0],
+                        current_velocity_xy=0.60 * direction,
+                        target_position_xy=-distance_past_target * direction,
+                        brake_direction_xy=direction,
+                        yaw_deg=0.0,
+                        response_delay_s=0.12,
+                        response_time_constant_s=0.08,
+                        command_hold_s=0.02,
+                        measured_acceleration_xy=direction,
+                        command_history=[(-1.0, direction.copy())],
+                        timestamp=0.0,
+                        future_command_started_at=0.0,
+                    )
+
+                    self.assertGreater(
+                        tracking['predicted_level_terminal_speed_m_s'],
+                        tracking['forward_speed_m_s'],
+                    )
+                    self.assertEqual(
+                        tracking['action'],
+                        'damping_forward_motion_after_target',
+                    )
+                    self.assertTrue(tracking['target_passed'])
+                    self.assertEqual(
+                        tracking['tail_cancellation_acceleration_m_s2'], 0.0
+                    )
+                    # Passing farther beyond the target must not add a
+                    # position-pull term to the forward-velocity damping.
+                    self.assertAlmostEqual(
+                        tracking['required_deceleration_m_s2'], 2.5 * 0.60
+                    )
+                    np.testing.assert_allclose(
+                        tracking['applied_acceleration_m_s2'],
+                        -1.50 * direction,
+                    )
+                    self.assertLess(tracking['power_w_per_kg'], 0.0)
+
+    def test_forward_tail_stop_controller_retains_one_frame_impulse_limit(self):
+        for world_y_sign in (-1.0, 1.0):
+            with self.subTest(world_y_sign=world_y_sign):
+                direction = np.array([0.0, world_y_sign])
+                tracking = coast_target_braking_attitude(
+                    current_position_xy=[0.0, 0.0],
+                    current_velocity_xy=0.04 * direction,
+                    target_position_xy=0.001 * direction,
+                    brake_direction_xy=direction,
+                    yaw_deg=0.0,
+                    response_delay_s=0.12,
+                    response_time_constant_s=0.08,
+                    terminal_speed_margin_m_s=0.03,
+                    command_hold_s=0.02,
+                    measured_acceleration_xy=0.05 * direction,
+                    command_history=[(-1.0, 0.05 * direction)],
+                    timestamp=0.0,
+                    future_command_started_at=0.0,
+                    max_acceleration_m_s2=5.0,
+                    max_attitude_deg=30.0,
+                )
+
+                terminal_speed = tracking['predicted_level_terminal_speed_m_s']
+                self.assertGreater(terminal_speed, 0.04)
+                self.assertEqual(tracking['action'], 'decelerating')
+                self.assertLess(
+                    tracking['impulse_safe_deceleration_m_s2'],
+                    tracking['effective_acceleration_limit_m_s2'],
+                )
+                self.assertAlmostEqual(
+                    tracking['required_deceleration_m_s2'],
+                    tracking['impulse_safe_deceleration_m_s2'],
+                )
+                acceleration = float(
+                    tracking['applied_acceleration_m_s2'] @ direction
+                )
+                self.assertLess(acceleration, 0.0)
+                self.assertAlmostEqual(
+                    terminal_speed + acceleration * 0.02, 0.03
+                )
 
     def test_target_braking_cancels_forward_rebound_after_small_reversal(self):
         tracking = coast_target_braking_attitude(
