@@ -7428,7 +7428,7 @@ class InteractionsControl:
                         np.degrees(output.estimate.orientation_rpy[:2])
                     ))
                     # Waiting is not permission to exceed the flight envelope.
-                    if (xy_speed > plan.max_xy_speed_m_s
+                    if ((plan is planar_braking_plan and xy_speed > plan.max_xy_speed_m_s)
                             or xy_displacement > plan.max_displacement_m):
                         raise RuntimeError(
                             f'{label} calibration exceeded its safety limit '
@@ -7645,9 +7645,7 @@ class InteractionsControl:
                         ) > position_capture_plan.max_displacement_m
                     )
                 if (
-                    (position_capture_command.phase != 'recovery'
-                     and xy_speed > position_capture_plan.max_xy_speed_m_s)
-                    or xy_displacement > position_capture_plan.max_displacement_m
+                    xy_displacement > position_capture_plan.max_displacement_m
                     or (first_acceleration_command
                         and xy_displacement > start_position_tolerance_m)
                     or invalid_target

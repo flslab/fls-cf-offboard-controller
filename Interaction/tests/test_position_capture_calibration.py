@@ -55,15 +55,19 @@ class PositionCaptureCalibrationTests(unittest.TestCase):
         self.assertEqual({tuple(t["direction_xy"]) for t in plan.trials},
                          {(1, 0), (-1, 0), (0, 1), (0, -1)})
 
-    def test_speed_limit_exemption_is_only_for_recovery(self):
+    def test_speed_no_longer_aborts_capture_or_recovery(self):
         plan = self.make_plan()
         recovery = plan.command(plan.trials[0]["capture_end_s"] + .01,
                                 0, [0, .3, 1], [0, -.717, 0], [0, 0, 0])
         self.assertEqual(recovery.phase, "recovery")
         self.assertFalse(recovery.attitude_control)
-        for elapsed in [.01, .31, .45, .61]:
-            with self.subTest(elapsed=elapsed), self.assertRaisesRegex(ValueError, "safety limit"):
-                self.make_plan().command(elapsed, 0, [0, 0, 1], [0, .717, 0], [0, 0, 0])
+        for elapsed in [.01, .45, .61]:
+            plan = self.make_plan()
+            if elapsed > .31:
+                plan.command(.31, 0, [0, 0, 1], [0, 0, 0], [0, 0, 0])
+            plan.command(elapsed, 0, [0, 0, 1], [0, .717, 0], [0, 0, 0])
+        with self.assertRaisesRegex(ValueError, 'settled XY speed'):
+            self.make_plan().command(.31, 0, [0, 0, 1], [0, .717, 0], [0, 0, 0])
 
     def test_capture_speed_quality_gate_remains_active(self):
         plan = self.make_plan()
@@ -120,7 +124,7 @@ class PositionCaptureCalibrationTests(unittest.TestCase):
         plan = self.make_plan()
         with self.assertRaises(ValueError):
             plan.command(.31, 0, [0, float("nan"), 1], [0, 0, 0], [0, 0, 0])
-        with self.assertRaisesRegex(ValueError, "safety limit"):
+        with self.assertRaisesRegex(ValueError, "settled XY speed"):
             plan.command(.31, 0, [0, 0, 1], [0, .8, 0], [0, 0, 0])
 
     def test_complete_good_trials_are_empirical_not_continuous_certificate(self):

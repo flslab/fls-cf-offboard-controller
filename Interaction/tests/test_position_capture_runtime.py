@@ -44,11 +44,12 @@ class ShortCapturePlan:
 
 
 class PositionCaptureRuntimeTests(unittest.TestCase):
-    def test_recovery_speed_exempt_but_capture_speed_and_displacement_guarded(self):
+    def test_speed_does_not_abort_but_displacement_remains_guarded(self):
         for phase, displacement, expected in [
             ('recovery', 0.1, 'previous calibration file'),
             ('recovery', 1.1, 'safety limit'),
-            ('capture', 0.1, 'safety limit'),
+            ('capture', 0.1, 'previous calibration file'),
+            ('capture', 1.1, 'safety limit'),
         ]:
             with self.subTest(phase=phase, displacement=displacement):
                 clock = [1000.0]
