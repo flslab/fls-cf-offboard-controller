@@ -336,6 +336,42 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         self.assertFalse(decision.released)
         self.assertEqual(decision.candidate_cancel_reason, 'force_rebound')
 
+    def test_release_candidate_can_lead_full_drop_without_ending_contact(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            candidate_lead_drop_n=0.005,
+            decrease_rate_n_s=0.05,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.05,
+        )
+        detector.arm(0.10, 1.00)
+
+        decision = detector.update(0.094, 1.02)
+
+        self.assertTrue(decision.candidate_started)
+        self.assertTrue(decision.candidate_active)
+        self.assertFalse(decision.released)
+        self.assertLess(decision.force_drop_n, detector.force_drop_n)
+
+    def test_early_release_candidate_cancels_on_equally_small_rebound(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            candidate_lead_drop_n=0.005,
+            decrease_rate_n_s=0.05,
+            unloaded_force_n=0.05,
+        )
+        detector.arm(0.200, 1.00)
+
+        decision = detector.update(0.194, 1.02)
+        self.assertTrue(decision.candidate_started)
+        self.assertTrue(decision.candidate_active)
+
+        decision = detector.update(0.200, 1.04)
+        self.assertTrue(decision.candidate_cancelled)
+        self.assertEqual(decision.candidate_cancel_reason, 'force_rebound')
+        self.assertFalse(decision.candidate_active)
+        self.assertFalse(decision.released)
+
     def test_release_onset_ignores_old_peak_after_slow_unload(self):
         detector = PotentiometerReleaseDetector(
             force_drop_n=0.04,
@@ -407,6 +443,44 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
 
         self.assertTrue(decision.released)
         self.assertGreaterEqual(decision.unloaded_elapsed_s, 0.05)
+
+    def test_unloaded_threshold_alone_does_not_bypass_full_release_drop(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            candidate_lead_drop_n=0.005,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.05,
+        )
+        detector.arm(0.081, 1.00)
+
+        self.assertTrue(detector.update(0.049, 1.02).candidate_active)
+        decision = detector.update(0.049, 1.10)
+        self.assertFalse(decision.released)
+        self.assertEqual(decision.unloaded_elapsed_s, 0.0)
+
+        self.assertFalse(detector.update(0.040, 1.12).released)
+        self.assertTrue(detector.update(0.040, 1.18).released)
+
+    def test_incomplete_drop_below_unloaded_threshold_cannot_stall_forever(self):
+        detector = PotentiometerReleaseDetector(
+            force_drop_n=0.04,
+            candidate_lead_drop_n=0.005,
+            unloaded_force_n=0.05,
+            unloaded_dwell_s=0.05,
+            candidate_stall_timeout_s=0.15,
+            max_sample_gap_s=0.25,
+        )
+        detector.arm(0.081, 1.00)
+
+        self.assertTrue(detector.update(0.049, 1.02).candidate_active)
+        decision = detector.update(0.049, 1.18)
+
+        self.assertTrue(decision.candidate_cancelled)
+        self.assertFalse(decision.candidate_active)
+        self.assertFalse(decision.released)
+        self.assertEqual(
+            decision.candidate_cancel_reason, 'no_downward_progress'
+        )
 
     def test_noise_inside_unloaded_band_does_not_cancel_dwell(self):
         detector = PotentiometerReleaseDetector(

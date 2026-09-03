@@ -58,10 +58,13 @@ Point-cloud mode has no orientation and is rejected.
 
 ## Safe rollout
 
-The supplied mission uses `shadow_mode: true`. In this mode the observer,
-detectors, and proposed admittance references run and are logged, but the actual
-command ignores contact response. It remains at the nominal XYZ/yaw reference
-unless the explicitly configured calibration excitation is enabled.
+The active `translation_inertia.yaml` experiment currently uses
+`shadow_mode: false` with force rendering enabled, so it can command roll/pitch.
+For the first rollout after any calibration or control change, explicitly set
+`shadow_mode: true`. In shadow mode the observer, detectors, and proposed
+admittance references run and are logged, but the actual command ignores contact
+response and remains at the nominal XYZ/yaw reference unless the explicitly
+configured calibration excitation is enabled.
 
 ## Model calibration
 
@@ -71,14 +74,28 @@ Run a dedicated contact-free calibration before interaction:
 python3 orchestrator/orchestrator.py --calibrate
 ```
 
-`--calibrate` forces shadow mode, commands a bounded XYZ chirp, identifies an
-independent actuator-to-velocity delay, first-order time constant, and
-acceleration scale for X/Y/Z, then atomically saves the result on each drone as
-`Interaction/wrench_calibration.json` under that controller checkout. Entries
-are keyed by drone ID. `--interaction` disables calibration excitation and
-automatically loads that drone's saved values. The short stationary bias
-calibration still runs at the start of every flight because that bias can vary
-between flights.
+The orchestrator always enables controller logging. If you invoke
+`controller.py` directly instead, `--calibrate` must be paired with `--log`.
+`--calibrate` runs two contact-free stages. First it forces
+shadow mode and commands the bounded XYZ position chirp used by the wrench
+observer. It then performs bounded planar attitude trials with the sequence
+level -> accelerate -> level -> opposite brake -> level -> position recovery.
+The current Y-mounted experiment runs three +Y and three -Y repetitions (six
+trials total). The second fit identifies attitude-command delay, first-order
+response time, and planar acceleration scale. Strict gates require enough
+windows in every trial, acceptable training and validation R-squared and
+normalized RMSE in each direction, bounded acceleration gain, consistent
+repeat gains, and agreement between the two directional gains. Poor or
+incomplete trials fail without overwriting a usable calibration. Both fits and
+the exact trial protocol are atomically saved per drone in the same
+`Interaction/wrench_calibration.json`.
+
+Active `potentiometer_coast` refuses to run without a current-schema planar fit
+that passed those gates. Runtime braking acceleration is limited to the smaller
+of `coast_max_acceleration_m_s2` and the fitted calibration-step acceleration
+times `maximum_acceleration_extrapolation_ratio`, so runtime control stays near
+the acceleration envelope exercised by calibration. `--interaction` disables
+both excitation stages and automatically loads the saved values.
 
 Before setting `shadow_mode: false`:
 
@@ -144,20 +161,37 @@ The sensor can own both engage and release detection. The contact detector must
 first observe a low-force baseline, then sustained compression above its onset
 threshold. During contact, both observer and potentiometer forces are recorded.
 Force rendering is disabled by default, so the attitude command remains
-`roll=0`, `pitch=0`. When spring compression decreases far and fast enough, a
-release candidate starts bounded attitude braking immediately. Contact remains
-active until force stays below the unloaded threshold for the configured dwell;
-a force recovery or lack of continued unloading cancels the candidate and
-resumes the interaction. Missing sensor data also cancels active braking; if
-the spring is already unloaded when samples recover, a fresh dwell begins at
-the recovery sample rather than counting the data gap.
+`roll=0`, `pitch=0`. When it is enabled and a fast local force decrease starts a
+release candidate, the attitude path immediately removes render tilt. It rolls
+the calibrated response forward and may issue one finite, bounded pulse opposite
+the predicted residual tail in either direction; this sign-symmetric
+cancellation prevents an old counter-tilt or its compensating tail from causing
+reversal. The candidate cap is lower than confirmed-coasting acceleration
+because the decision is reversible. Contact remains active until force stays
+below the unloaded threshold for the configured dwell; a force recovery or lack
+of continued unloading cancels the candidate and resumes live rendering. A
+brief sensor gap keeps the candidate level/tail-aware and pauses confirmation;
+recovered samples must start a fresh unloaded dwell rather than receiving credit
+for the gap. If the sensor remains stale for
+`candidate_sensor_stale_timeout_s`, the candidate sends one safe level or
+latched-position command and then enters the normal landing error path, instead
+of leaving candidate attitude control active indefinitely.
 
-Confirmed coasting is braking-only: commanded planar acceleration always
-opposes measured XY velocity, so it cannot add kinetic energy or chase the
-virtual friction trajectory. The virtual trajectory remains in the log for
-comparison. After actual XY speed stays below the stop threshold continuously,
-the measured stop position becomes the first position-control target. A timeout
-is diagnostic and cannot force a moving vehicle into position control.
+Confirmed coasting rolls the calibrated command delay, attitude time constant,
+actual tilt, and already-sent command queue forward on every fresh state. It
+levels early when the queued braking impulse is sufficient and caps each finite
+command-period impulse. Its tail cancellation is sign-symmetric: it opposes
+either a predicted braking-tail reversal or a queued forward rebound, then
+expires and is recomputed from the next state. It never accelerates to chase
+position. If the frozen virtual stop is already passed, it damps velocity
+without pulling back.
+Position control receives ownership only after longitudinal speed, bounded
+transverse speed, actual tilt, and measured acceleration are settled *and* the
+last non-level command has cleared the delay queue plus four fitted time
+constants. It retains the release-time virtual stop only along the interaction
+axis and latches the measured perpendicular coordinate. If the stop is already
+behind the vehicle, it latches the complete measured position. A timeout is
+diagnostic and cannot force an out-of-envelope vehicle into position control.
 
 Configure the two behaviors independently under `virtual_object`:
 
@@ -170,12 +204,14 @@ contact_detection:
   onset_dwell_s: 0.03
 release_behavior:
   mode: potentiometer_coast
-  force_drop_n: 0.01
+  force_drop_n: 0.04
+  candidate_lead_drop_n: 0.005
   decrease_rate_n_s: 0.05
   unloaded_force_n: 0.05
   unloaded_dwell_s: 0.05
   max_sample_gap_s: 0.15
-  candidate_stall_timeout_s: 0.50
+  candidate_sensor_stale_timeout_s: 0.25
+  candidate_stall_timeout_s: 0.15
   force_memory_s: 0.02
 ```
 
@@ -184,6 +220,18 @@ resistance damping during contact. Set `contact_detection.source:
 wrench_observer` and `release_behavior.mode: observer_brake` to restore the
 previous observer-owned contact/release and counter-tilt braking path.
 `potentiometer` contact detection and `potentiometer_coast` require `--sense`.
+Active `potentiometer_coast` also requires `inertia_command: orientation` and
+keeps dynamic render selection on that observable attitude-command path; a
+position-rendered PID tail is not covered by the planar braking fit. The active
+force-render tilt is capped to the saved calibration trial tilt even when
+`max_attitude_deg` requests a larger value.
+
+The current fit covers one opposed planar axis. Coasting therefore commands no
+uncalibrated transverse attitude. Once longitudinal speed, tilt, acceleration,
+and the delayed command queue are settled, bounded lateral drift may hand off
+to native position control. Its perpendicular target is latched at the measured
+position, while only the still-ahead longitudinal virtual stop is retained; this
+prevents a stale lateral target from pulling the vehicle sideways or backward.
 
 Each `wrench_observer` record includes both `external_force_N` (the observer)
 and `control_external_force_N` (the observer control force), plus

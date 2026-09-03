@@ -2206,7 +2206,10 @@ if __name__ == '__main__':
     )
     ap.add_argument(
         "--calibrate", action="store_true",
-        help="record contact-free excitation and save wrench model calibration",
+        help=(
+            "run contact-free position excitation plus bounded planar "
+            "attitude/braking trials, then save both calibration models"
+        ),
     )
     ap.add_argument("--intractable-illumination", action="store_true", help="interaction application with illumination")
     ap.add_argument("--morphing", action="store_true", help="illumination application with morphing emulator")
@@ -2275,6 +2278,8 @@ if __name__ == '__main__':
         ap.error('--interaction and --calibrate are mutually exclusive')
     if args.sense and not args.log:
         ap.error('--sense requires --log so sensor and estimate data are recorded')
+    if args.calibrate and not args.log:
+        ap.error('--calibrate requires --log so both fitted responses are recorded')
     if args.sense_spring_constant <= 0.0:
         ap.error('--sense-spring-constant must be positive')
     if args.sense_max_extension <= 0.0:

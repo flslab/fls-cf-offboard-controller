@@ -54,6 +54,47 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "yaw_amplitude_deg": 10.0,
         "yaw_frequency_hz": 0.23,
     },
+    # Second stage of --calibrate.  Each trial commands a small planar tilt,
+    # level attitude, the opposite tilt, and level attitude again.  The
+    # resulting command-to-velocity response is fitted separately from the
+    # wrench observer model and saved in the same per-drone calibration file.
+    "planar_braking_calibration": {
+        "enabled": False,
+        "start_delay_s": 1.0,
+        # The current force sensor and interaction are mounted on world Y.
+        # Repeat both signs to estimate that axis without pretending a pooled
+        # scalar is a valid roll/pitch anisotropy model.
+        "directions_xy": [[0.0, 1.0], [0.0, -1.0]],
+        "repetitions": 3,
+        "tilt_deg": 8.0,
+        "level_before_acceleration_s": 0.20,
+        "accelerate_s": 0.35,
+        "level_before_brake_s": 0.20,
+        "brake_s": 0.45,
+        "level_after_brake_s": 0.60,
+        "recovery_s": 1.50,
+        "max_xy_speed_m_s": 0.70,
+        "max_displacement_m": 0.45,
+        "trial_start_max_xy_speed_m_s": 0.05,
+        "trial_start_max_tilt_deg": 4.0,
+        "fit_window_s": 0.08,
+        "max_fit_delay_s": 0.25,
+        "max_fit_time_constant_s": 0.25,
+        "minimum_fit_r_squared": 0.70,
+        "minimum_validation_r_squared": 0.50,
+        "minimum_acceleration_scale": 0.20,
+        "maximum_acceleration_scale": 2.50,
+        "minimum_trials_per_direction": 3,
+        "minimum_windows_per_trial": 12,
+        "minimum_direction_r_squared": 0.70,
+        "minimum_direction_validation_r_squared": 0.50,
+        "maximum_direction_nrmse": 0.20,
+        "maximum_direction_gain_ratio": 1.25,
+        "maximum_repeat_gain_deviation": 0.20,
+        # Runtime acceleration is capped to this multiple of the calibrated
+        # 8-degree step response; the configured 5 m/s^2 remains an upper bound.
+        "maximum_acceleration_extrapolation_ratio": 1.25,
+    },
     "observer": {
         "position_measurement_std": [0.004, 0.004, 0.006],
         "orientation_measurement_std": [0.015, 0.015, 0.020],
@@ -136,9 +177,31 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_velocity_gain_s": 2.5,
         "coast_max_acceleration_m_s2": 5.0,
         "coast_attitude_response_delay_s": 0.12,
+        "coast_attitude_time_constant_s": 0.08,
+        "coast_attitude_acceleration_scale": 1.0,
+        "coast_calibrated_direction_xy": None,
+        # Level slightly before the model predicts zero terminal velocity.
+        # This buffer absorbs fit/discretization error without preventing the
+        # 0.04 m/s state-settled handoff below.
+        "coast_level_terminal_speed_m_s": 0.03,
+        "coast_command_period_s": 0.02,
+        "coast_command_acceleration_deadband_m_s2": 0.02,
+        # A release candidate is reversible, so its response-tail correction
+        # is deliberately gentler than confirmed coasting.
+        "coast_candidate_tail_cancellation_max_acceleration_m_s2": 1.0,
+        "coast_acceleration_filter_time_constant_s": 0.08,
+        # Position control receives ownership only after measured translation,
+        # attitude, and acceleration have settled. Longitudinal motion uses the
+        # tight stop threshold; bounded transverse drift is handed to position
+        # control with its target latched at the measured lateral coordinate.
+        # brake_xy_speed_m_s is retained for the legacy observer-brake path.
+        "coast_handoff_speed_m_s": 0.04,
+        "coast_handoff_max_lateral_speed_m_s": 0.15,
+        "coast_handoff_max_tilt_deg": 3.0,
+        "coast_handoff_max_acceleration_m_s2": 0.35,
         "coast_alignment_position_tolerance_m": 0.04,
         "coast_alignment_velocity_tolerance_m_s": 0.08,
-        "coast_alignment_dwell_s": 0.02,
+        "coast_alignment_dwell_s": 0.05,
         # Diagnostic only; timeout cannot force a moving vehicle into position
         # control because doing so would pull it back toward the handoff point.
         "coast_attitude_timeout_s": 1.5,

@@ -164,8 +164,13 @@ class PotentiometerReleaseDetector:
             unloaded_dwell_s=0.05,
             max_sample_gap_s=0.15,
             candidate_stall_timeout_s=0.50,
+            candidate_lead_drop_n=None,
     ):
         self.force_drop_n = float(force_drop_n)
+        self.candidate_lead_drop_n = float(
+            self.force_drop_n
+            if candidate_lead_drop_n is None else candidate_lead_drop_n
+        )
         self.decrease_rate_n_s = float(decrease_rate_n_s)
         self.unloaded_force_n = float(unloaded_force_n)
         self.unloaded_dwell_s = float(unloaded_dwell_s)
@@ -173,12 +178,15 @@ class PotentiometerReleaseDetector:
         self.candidate_stall_timeout_s = float(candidate_stall_timeout_s)
         if (
             not math.isfinite(self.force_drop_n)
+            or not math.isfinite(self.candidate_lead_drop_n)
             or not math.isfinite(self.decrease_rate_n_s)
             or not math.isfinite(self.unloaded_force_n)
             or not math.isfinite(self.unloaded_dwell_s)
             or not math.isfinite(self.max_sample_gap_s)
             or not math.isfinite(self.candidate_stall_timeout_s)
             or self.force_drop_n <= 0.0
+            or self.candidate_lead_drop_n <= 0.0
+            or self.candidate_lead_drop_n > self.force_drop_n
             or self.decrease_rate_n_s <= 0.0
             or self.unloaded_force_n < 0.0
             or self.unloaded_dwell_s < 0.0
@@ -186,7 +194,8 @@ class PotentiometerReleaseDetector:
             or self.candidate_stall_timeout_s <= 0.0
         ):
             raise ValueError(
-                'potentiometer release drop/rate thresholds must be positive; '
+                'potentiometer release lead/full drop thresholds must be '
+                'positive with lead <= full drop; '
                 'unloaded threshold/dwell must be non-negative and maximum '
                 'sample gap/candidate stall timeout must be positive'
             )
@@ -375,8 +384,9 @@ class PotentiometerReleaseDetector:
             if not self._candidate_active:
                 # Rebase after flat/rising/slowly falling motion.  Only a
                 # contiguous fast falling edge may accumulate the configured
-                # onset drop; an old contact peak cannot trigger a later tiny
-                # dip.
+                # early lead drop; an old contact peak cannot trigger a later
+                # tiny dip. Full release still requires the unloaded threshold
+                # and dwell below.
                 if rate > -self.decrease_rate_n_s:
                     self._edge_peak_force_n = force_n
                 else:
@@ -385,7 +395,7 @@ class PotentiometerReleaseDetector:
                     )
             edge_drop = max(self._edge_peak_force_n - force_n, 0.0)
             if not self._candidate_active and bool(
-                    edge_drop >= self.force_drop_n
+                    edge_drop >= self.candidate_lead_drop_n
                     and rate <= -self.decrease_rate_n_s):
                 self._start_candidate(
                     self._edge_peak_force_n, force_n, timestamp
@@ -412,14 +422,23 @@ class PotentiometerReleaseDetector:
                     and force_n > self.unloaded_force_n
                     and self._candidate_min_force_n is not None
                     and force_n >= (
-                        self._candidate_min_force_n + self.force_drop_n
+                        self._candidate_min_force_n
+                        + self.candidate_lead_drop_n
                     )
                 )
+                full_release_drop_reached = bool(
+                    self._candidate_reference_force_n is not None
+                    and self._candidate_reference_force_n - force_n
+                    >= self.force_drop_n
+                )
                 stalled = bool(
-                    force_n > self.unloaded_force_n
-                    and self._candidate_last_progress_at is not None
+                    self._candidate_last_progress_at is not None
                     and timestamp - self._candidate_last_progress_at
                     >= self.candidate_stall_timeout_s
+                    and (
+                        force_n > self.unloaded_force_n
+                        or not full_release_drop_reached
+                    )
                 )
                 if rebounded or stalled:
                     candidate_cancelled = True
@@ -433,7 +452,16 @@ class PotentiometerReleaseDetector:
                         )
                     self._clear_candidate(rebase_edge_force_n=force_n)
 
-            if self._candidate_active and force_n <= self.unloaded_force_n:
+            full_release_drop_reached = bool(
+                self._candidate_reference_force_n is not None
+                and self._candidate_reference_force_n - force_n
+                >= self.force_drop_n
+            )
+            if (
+                self._candidate_active
+                and force_n <= self.unloaded_force_n
+                and full_release_drop_reached
+            ):
                 if self._unloaded_started_at is None:
                     self._unloaded_started_at = timestamp
                 self.released = bool(
@@ -659,20 +687,20 @@ class PotentiometerForceSensor:
         ):
             return False
         self._last_info_log_monotonic = now
-        # logger.info(
-        #     "Potentiometer force=%.3f N, compression=%.3f mm, "
-        #     "length=%.3f mm, raw=%d, Arduino time=%d ms, Vcc=%s",
-        #     sample.force_n,
-        #     sample.compression_mm,
-        #     sample.length_mm,
-        #     sample.raw,
-        #     sample.arduino_time_ms,
-        #     (
-        #         "unavailable"
-        #         if sample.supply_voltage_v is None
-        #         else f"{sample.supply_voltage_v:.3f} V"
-        #     ),
-        # )
+        logger.info(
+            "Potentiometer force=%.3f N, compression=%.3f mm, "
+            "length=%.3f mm, raw=%d, Arduino time=%d ms, Vcc=%s",
+            sample.force_n,
+            sample.compression_mm,
+            sample.length_mm,
+            sample.raw,
+            sample.arduino_time_ms,
+            (
+                "unavailable"
+                if sample.supply_voltage_v is None
+                else f"{sample.supply_voltage_v:.3f} V"
+            ),
+        )
         return True
 
     def _read_loop(self) -> None:
