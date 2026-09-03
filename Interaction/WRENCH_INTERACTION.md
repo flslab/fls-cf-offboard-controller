@@ -128,13 +128,28 @@ cd /Users/shuqinzhu/Documents/FLS_Research/lightbender/orchestrator
 python3 orchestrator.py --braking-test --skip-record
 ```
 
+To replace one invalid **+Y** trial, keep the same pulse timing and select one
+repetition (the direction is world +Y, not necessarily the vehicle's body +Y):
+
+```bash
+python3 orchestrator.py --braking-test \
+  --braking-test-direction positive-y --braking-test-repetitions 1 --skip-record
+```
+
+`--braking-test-direction` accepts `both` (default), `positive-y`, or `negative-y`.
+`--braking-test-repetitions` accepts 1–3 trials **per selected direction**, default
+3. Selectors without `--braking-test` are rejected. Omit both to retain the original
+six trials. A single-direction run is data-only, not a substitute for the opposed
+directions required by normal `--calibrate`. This does not repair external
+localization dropouts; confirm the localization input is working before flying.
+
 Update both the launcher and offboard controller first. The normal launcher
 pulls the controller repository before running it. Do not add `--calibrate`,
 `--interaction`, or `--sense`. The launcher forwards `--log
 --smooth-controller-rate 100 --cf-log-period 10`. Direct controller callers must
 supply their usual mission/connection arguments plus these logging/rate flags.
 
-The fixed protocol is `-Y, +Y, -Y, +Y, -Y, +Y` in world coordinates. Each trial:
+The default protocol is `-Y, +Y, -Y, +Y, -Y, +Y` in world coordinates. Each trial:
 
 1. Return to the calibration nominal position and pass the existing readiness
    gate (current mission: XY speed <= 0.05 m/s, tilt <= 4 degrees, position error
@@ -143,7 +158,7 @@ The fixed protocol is `-Y, +Y, -Y, +Y, -Y, +Y` in world coordinates. Each trial:
 3. Level for 0.20 s; tilt 20 degrees in the opposite direction for 0.24 s.
 4. Level for 0.65 s of observation, then position recovery for 2.0 s.
 
-The scheduled test lasts about 22.7 s **plus** startup stationary bias collection,
+The default scheduled test lasts about 22.7 s (one selected trial: 5.03 s) **plus** startup stationary bias collection,
 readiness waits, takeoff/landing. It inherits the mission's boundaries, speed,
 displacement, localization and battery checks; it does not remove safety limits.
 Keep the same clear volume as the previous calibration and do not touch the drone.
@@ -151,7 +166,7 @@ These matched pulses are data collection, **not a promise of a smooth stop**.
 
 `Planar Braking Repeat Test Started` records the exact protocol, nominal position,
 control rate, and SHA-256 of the preexisting calibration (or null if absent).
-`Planar Braking Repeat Test Complete` requires all six trials and all sampled
+`Planar Braking Repeat Test Complete` requires all selected trials and all sampled
 attitude phases; it reports sample counts, but never fits or approves a new model.
 An abort has no completion event. Original phase and `wrench_observer` records
 remain available, so every command/state can be compared with the prior run.
@@ -169,6 +184,7 @@ venv/bin/python -m Interaction.braking_replay /path/to/repeat-flight.json \
 This reports signed brake-entry/terminal speed and rollback before position
 recovery, with within-direction repeat statistics. It does not refit or validate
 the old prediction model; independent model validation is the subsequent analysis.
+For a single trial, sample standard deviation is unavailable (`null`), not zero.
 
 ### Offline stopping prediction replay
 

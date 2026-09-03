@@ -13,7 +13,7 @@ import numpy as np
 
 from Interaction.braking_repeat_test import (
     calibration_reference, repeat_test_config, repeat_test_result,
-    validate_repeat_test_options,
+    validate_repeat_test_options, resolve_repeat_test_selection,
 )
 from Interaction.braking_response_calibration import PlanarBrakingCalibration
 from Interaction.interactions import InteractionsControl, StaleLocalizationError
@@ -61,6 +61,40 @@ class BrakingRepeatTestTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 validate_repeat_test_options(SimpleNamespace(**(vars(args) | {field: value})))
 
+    def test_selectors_are_bounded_and_only_valid_in_test_mode(self):
+        self.assertEqual(resolve_repeat_test_selection(), ('both', 3))
+        for direction in ('both', 'positive-y', 'negative-y'):
+            for count in (1, 2, 3):
+                config = repeat_test_config({}, direction=direction, repetitions=count)
+                plan = PlanarBrakingCalibration(config['planar_braking_calibration'],
+                                                require_opposed_directions=False)
+                self.assertEqual(len(plan.trial_directions), count * (2 if direction == 'both' else 1))
+                np.testing.assert_allclose(plan.trial_accelerate_s, .24)
+                np.testing.assert_allclose(plan.trial_brake_s, .24)
+                np.testing.assert_allclose(plan.trial_tilt_levels_deg, 20)
+        for count in (0, 4, -1, True, 1.0, '1'):
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                resolve_repeat_test_selection('positive-y', count)
+        with self.assertRaises(ValueError):
+            resolve_repeat_test_selection('x', 1)
+        for selector in ({'braking_test_direction': 'both'}, {'braking_test_repetitions': 3}):
+            with self.assertRaisesRegex(ValueError, 'require --braking-test'):
+                validate_repeat_test_options(SimpleNamespace(**selector))
+
+    def test_single_direction_never_weakens_normal_calibration_requirement(self):
+        config = repeat_test_config({}, direction='positive-y', repetitions=1)['planar_braking_calibration']
+        with self.assertRaisesRegex(ValueError, 'opposed'):
+            PlanarBrakingCalibration(config)
+        with self.assertRaisesRegex(ValueError, 'opposed'):
+            PlanarBrakingCalibration(config | {'require_opposed_directions': False})
+        plan = PlanarBrakingCalibration(config, require_opposed_directions=False)
+        np.testing.assert_equal(plan.trial_directions, [[0, 1]])
+        self.assertAlmostEqual(plan.end_s, 4.53)
+        for directions in ([[0, 1], [1, 0]], [[0, 1], [0, 1]]):
+            with self.assertRaisesRegex(ValueError, 'opposed'):
+                PlanarBrakingCalibration(config | {'directions_xy': directions},
+                                         require_opposed_directions=False)
+
     def test_controller_dispatch_and_logging_include_test_mode(self):
         source = ast.parse(Path('controller.py').read_text())
         node = next(n for n in source.body if isinstance(n, ast.ClassDef) and n.name == 'Controller')
@@ -78,15 +112,21 @@ class BrakingRepeatTestTests(unittest.TestCase):
         self.assertTrue(namespace['_is_interaction_application'](controller))
         namespace['run_mission'](controller)
         control = namespace['InteractionsControl'].return_value
-        control.run_braking_test.assert_called_once_with()
+        control.run_braking_test.assert_called_once_with(direction=None, repetitions=None)
         control.run_calibration.assert_not_called()
+        control.reset_mock()
+        controller.args.braking_test_direction = 'positive-y'
+        controller.args.braking_test_repetitions = 1
+        namespace['run_mission'](controller)
+        control.run_braking_test.assert_called_once_with(direction='positive-y', repetitions=1)
 
-    def make_runtime(self, behavior=None):
+    def make_runtime(self, behavior=None, *, direction=None, repetitions=None):
         fixture = wait_fixture.CalibrationTrialWaitRuntimeTests()
         runtime = fixture.make_runtime(wait_behavior=behavior)
         controller, logs, clock, times, config, _duration = runtime
-        config = repeat_test_config(config)
-        plan = PlanarBrakingCalibration(config['planar_braking_calibration'])
+        config = repeat_test_config(config, direction=direction, repetitions=repetitions)
+        plan = PlanarBrakingCalibration(config['planar_braking_calibration'],
+                                       require_opposed_directions=False)
         return controller, logs, clock, times, config, plan.end_s + .5
 
     def test_complete_six_trials_without_excitation_fitting_or_file_changes(self):
@@ -123,6 +163,39 @@ class BrakingRepeatTestTests(unittest.TestCase):
         for segment in range(6):
             self.assertEqual([r['phase'] for r in phases if r['segment_id'] == segment], expected)
         self.assertLess(ready[0]['time'] - 1000., 3.)  # No old 30-second XYZ wait.
+
+    def test_single_positive_y_completes_only_one_trial_without_fit_or_save(self):
+        controller, logs, clock, _times, config, duration = self.make_runtime(
+            direction='positive-y', repetitions=1)
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            path = Path(directory) / 'calibration.json'
+            path.write_bytes(b'{"preserve": true}\n')
+            reference = calibration_reference(path)
+            stack.enter_context(patch('Interaction.interactions.time.time', lambda: clock[0]))
+            forbidden = [stack.enter_context(patch('Interaction.interactions.' + name,
+                         side_effect=AssertionError(name + ' must not run')))
+                         for name in ('identify_xyz_alignment', 'identify_planar_braking_response',
+                                      'save_drone_calibration')]
+            controller.interaction_onboard_wrench_admittance(
+                duration=duration, nominal_position=[0, 0, 1], config=config,
+                calibration_mode=True, braking_test_mode=True, calibration_path=path,
+                braking_test_direction='positive-y', braking_test_repetitions=1)
+            for call in forbidden:
+                call.assert_not_called()
+            self.assertEqual(calibration_reference(path), reference)
+        events = wait_fixture.CalibrationTrialWaitRuntimeTests.events
+        complete = events(logs, 'Planar Braking Repeat Test Complete')
+        self.assertEqual(len(complete), 1)
+        self.assertEqual(complete[0]['maneuver_count'], 1)
+        self.assertEqual(complete[0]['protocol']['direction_selection'], 'positive-y')
+        self.assertEqual(complete[0]['protocol']['repetitions_per_direction'], 1)
+        self.assertEqual(complete[0]['protocol']['trial_directions_xy'], [[0., 1.]])
+        phases = events(logs, 'Planar Braking Calibration Phase')
+        self.assertEqual([row['phase'] for row in phases], [
+            'level_before_acceleration', 'accelerate', 'level_before_brake',
+            'brake', 'level_after_brake', 'recovery', 'complete'])
+        self.assertEqual(len(events(logs, 'Planar Braking Calibration Trial Ready')), 1)
+        self.assertFalse(events(logs, 'Wrench Calibration Excitation Started'))
 
     def test_stale_attitude_aborts_without_completion_or_save(self):
         def stale(state, _time, _logs, controller):
@@ -165,6 +238,14 @@ class BrakingRepeatTestTests(unittest.TestCase):
         self.assertTrue(kwargs['calibration_mode'])
         self.assertEqual(kwargs['nominal_position'], [0., 0., 1.])
         self.assertLess(kwargs['duration'], 24.)
+        self.assertEqual(controller.mission, before)
+        controller.run_braking_test(direction='positive-y', repetitions=1)
+        kwargs = controller.interaction_onboard_wrench_admittance.call_args.kwargs
+        self.assertEqual(kwargs['braking_test_direction'], 'positive-y')
+        self.assertEqual(kwargs['braking_test_repetitions'], 1)
+        self.assertEqual(kwargs['config']['planar_braking_calibration']['directions_xy'], [[0., 1.]])
+        self.assertAlmostEqual(kwargs['duration'], 5.03)
+        self.assertEqual(kwargs['nominal_position'], [0., 0., 1.])
         self.assertEqual(controller.mission, before)
 
 

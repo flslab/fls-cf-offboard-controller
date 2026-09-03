@@ -199,6 +199,28 @@ class BrakingReplayTests(unittest.TestCase):
         self.assertTrue(traces)
         self.assertTrue(all('predicted_velocity_m_s' not in r for r in traces))
 
+    def test_single_positive_trial_extracts_and_summarizes_without_a_fit(self):
+        # Keep the first (+Y) synthetic trial with its actual phase/command
+        # records. Exercise extraction, rather than mocking its result.
+        records = synthetic_repeat_records()
+        records = [row for row in records if (
+            row.get('name') == 'Planar Braking Repeat Test Complete'
+            or (row['type'] == 'events' and row['data'].get('segment_id') == 0)
+            or (row['type'] == 'commands' and row['data']['time'] < 13)
+            or (row['type'] == 'wrench_observer' and row['data']['state_time'] < 1003)
+        )]
+        records[-1]['data']['maneuver_count'] = 1
+        records[-1]['data']['protocol']['trial_accelerate_s'] = [.24]
+        with patch('Interaction.braking_replay.identify_planar_braking_response') as fit:
+            report, traces, trials = summarize_observations(records)
+            fit.assert_not_called()
+        self.assertEqual(len(trials), 1)
+        self.assertEqual(report['metrics'][0]['direction_xy'], [0., 1.])
+        self.assertEqual(report['repeat_groups'][0]['count'], 1)
+        self.assertIsNone(report['repeat_groups'][0]['actual_terminal_mean_m_s']['sample_std'])
+        self.assertFalse(report['metadata']['contains_fitted_model'])
+        self.assertTrue(traces)
+
     def test_rollback_is_decline_from_preceding_peak_before_recovery(self):
         trial = synthetic_trial()
         trial.positions = np.interp(trial.times, [0, .6, .9, 1.5], [0, 0, .2, .12])

@@ -1287,7 +1287,10 @@ class Controller:
                 sense_max_age_s=self.args.sense_max_age,
             )
             if getattr(self.args, 'braking_test', False):
-                controller.run_braking_test()
+                controller.run_braking_test(
+                    direction=getattr(self.args, 'braking_test_direction', None),
+                    repetitions=getattr(self.args, 'braking_test_repetitions', None),
+                )
             else:
                 controller.run_calibration()
         except Exception as error:
@@ -2220,7 +2223,15 @@ if __name__ == '__main__':
     ap.add_argument(
         "--braking-test", action="store_true",
         help=("data-only attitude repeat test: 20 deg, paired 0.24s pulses, "
-              "alternating -Y/+Y three times; skip XYZ and preserve calibration"),
+              "default alternating -Y/+Y three times; skip XYZ and preserve calibration"),
+    )
+    ap.add_argument(
+        "--braking-test-direction", choices=('both', 'positive-y', 'negative-y'),
+        default=None, help="world-axis trial direction; requires --braking-test (default: both)",
+    )
+    ap.add_argument(
+        "--braking-test-repetitions", type=int, choices=(1, 2, 3), default=None,
+        help="trials per selected direction; requires --braking-test (default: 3)",
     )
     ap.add_argument("--intractable-illumination", action="store_true", help="interaction application with illumination")
     ap.add_argument("--morphing", action="store_true", help="illumination application with morphing emulator")

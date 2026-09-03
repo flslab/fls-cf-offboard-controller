@@ -8,8 +8,26 @@ from Interaction.braking_response_calibration import PlanarBrakingCalibration
 from Interaction.calibration_trial_readiness import CalibrationTrialReadinessGate
 
 
-def repeat_test_config(config):
+def resolve_repeat_test_selection(direction=None, repetitions=None):
+    """Default to six trials; restrict supplemental collection to the same axis."""
+    direction = 'both' if direction is None else direction
+    repetitions = 3 if repetitions is None else repetitions
+    if direction not in ('both', 'positive-y', 'negative-y'):
+        raise ValueError('--braking-test-direction must be both, positive-y or negative-y')
+    if (isinstance(repetitions, bool) or not isinstance(repetitions, int)
+            or not 1 <= repetitions <= 3):
+        raise ValueError('--braking-test-repetitions must be an integer from 1 to 3')
+    return direction, repetitions
+
+
+def repeat_test_config(config, *, direction=None, repetitions=None):
     """Override the maneuver, not the mission's safety/readiness envelope."""
+    direction, repetitions = resolve_repeat_test_selection(direction, repetitions)
+    directions = {
+        'both': [[0.0, -1.0], [0.0, 1.0]],
+        'positive-y': [[0.0, 1.0]],
+        'negative-y': [[0.0, -1.0]],
+    }[direction]
     result = deepcopy(config)
     result['shadow_mode'] = True
     result['startup_bias_calibration_enabled'] = True
@@ -21,8 +39,8 @@ def repeat_test_config(config):
         'enabled': True,
         'tilt_levels_deg': [20.0],
         'accelerate_durations_s': [0.24],
-        'repetitions_per_duration': 3,
-        'directions_xy': [[0.0, -1.0], [0.0, 1.0]],
+        'repetitions_per_duration': repetitions,
+        'directions_xy': directions,
         'start_delay_s': 1.0,
         'level_before_acceleration_s': 0.20,
         'level_before_brake_s': 0.20,
@@ -30,15 +48,20 @@ def repeat_test_config(config):
         'recovery_s': 2.0,
     })
     # Fail before maneuvers for malformed inherited limits.
-    PlanarBrakingCalibration(braking, start_after_s=0.0)
+    PlanarBrakingCalibration(braking, start_after_s=0.0, require_opposed_directions=False)
     CalibrationTrialReadinessGate(braking)
     return result
 
 
 def validate_repeat_test_options(args):
     """Validate dedicated CLI mode without importing hardware dependencies."""
+    direction = getattr(args, 'braking_test_direction', None)
+    repetitions = getattr(args, 'braking_test_repetitions', None)
     if not getattr(args, 'braking_test', False):
+        if direction is not None or repetitions is not None:
+            raise ValueError('--braking-test-direction and --braking-test-repetitions require --braking-test')
         return
+    resolve_repeat_test_selection(direction, repetitions)
     conflicts = (
         'interaction', 'calibrate', 'sense', 'illumination',
         'intractable_illumination', 'autotune', 'simple_takeoff',
@@ -71,6 +94,11 @@ def repeat_test_protocol(plan, config):
         **plan.timing_protocol(),
         'directions_xy': plan.directions.tolist(),
         'trial_directions_xy': plan.trial_directions.tolist(),
+        'direction_selection': (
+            'both' if len(plan.directions) == 2
+            else 'positive-y' if plan.directions[0, 1] > 0 else 'negative-y'
+        ),
+        'repetitions_per_direction': plan.repetitions_per_duration,
         'tilt_deg': plan.tilt_deg,
         'tilt_levels_deg': plan.tilt_levels_deg.tolist(),
         'accelerate_s': plan.accelerate_s,

@@ -3,7 +3,7 @@
 The maneuver is intentionally simple and observable: accelerate with a small
 constant tilt, command level attitude, decelerate with the opposite tilt, then
 command level attitude again before returning to position hold.  It is used
-only by the explicit ``--calibrate`` flight path.
+by the explicit ``--calibrate`` and data-only ``--braking-test`` flight paths.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ class PlanarBrakingCalibration:
         "brake", "level_after_brake",
     })
 
-    def __init__(self, config, start_after_s=0.0):
+    def __init__(self, config, start_after_s=0.0, *, require_opposed_directions=True):
         config = dict(config or {})
         self.enabled = bool(config.get("enabled", False))
         self.start_after_s = float(start_after_s)
@@ -170,7 +170,12 @@ class PlanarBrakingCalibration:
             raise ValueError("braking calibration directions cannot be zero")
         self.directions = directions / norms[:, None]
         direction_projection = self.directions @ self.directions[0]
-        if (
+        # Single-direction data collection is explicit at the call site, not a
+        # YAML switch that could weaken the ordinary calibration contract.
+        single_direction_test = (
+            require_opposed_directions is False and len(self.directions) == 1
+        )
+        if not single_direction_test and (
             np.any(np.abs(direction_projection) < 0.98)
             or not np.any(direction_projection > 0.98)
             or not np.any(direction_projection < -0.98)

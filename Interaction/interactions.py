@@ -17,6 +17,7 @@ from Interaction.braking_repeat_test import (
     repeat_test_config,
     repeat_test_protocol,
     repeat_test_result,
+    resolve_repeat_test_selection,
 )
 from Interaction.position_capture_calibration import PositionCaptureCalibration
 from Interaction.calibration_trial_readiness import CalibrationTrialReadinessGate
@@ -3784,13 +3785,17 @@ class InteractionsControl:
             raise ValueError('--calibrate requires Interaction.action: translation')
         self._run_translation(calibration_mode=True)
 
-    def run_braking_test(self) -> None:
-        """Run six fixed-duration attitude repeats, without fitting or saving."""
+    def run_braking_test(self, *, direction=None, repetitions=None) -> None:
+        """Run selected fixed-duration attitude repeats, without fitting or saving."""
         if self.mission.get('Interaction', {}).get('action') != 'translation':
             raise ValueError('--braking-test requires Interaction.action: translation')
         if self.ctrl_rate < 50:
             raise ValueError('--braking-test requires a control rate of at least 50 Hz')
-        self._run_translation(calibration_mode=True, braking_test_mode=True)
+        direction, repetitions = resolve_repeat_test_selection(direction, repetitions)
+        self._run_translation(
+            calibration_mode=True, braking_test_mode=True,
+            braking_test_direction=direction, braking_test_repetitions=repetitions,
+        )
 
     def check_interaction_boundary(self, pos=None):
         if self.bounds is None:
@@ -3890,7 +3895,8 @@ class InteractionsControl:
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
-    def _run_translation(self, calibration_mode=False, braking_test_mode=False) -> None:
+    def _run_translation(self, calibration_mode=False, braking_test_mode=False,
+                         braking_test_direction=None, braking_test_repetitions=None) -> None:
         """Run model-based interaction, with a legacy velocity-mode fallback."""
         try:
             if braking_test_mode and not calibration_mode:
@@ -3985,7 +3991,10 @@ class InteractionsControl:
                         )
                 if calibration_mode:
                     wrench_config = (
-                        repeat_test_config(wrench_config)
+                        repeat_test_config(
+                            wrench_config, direction=braking_test_direction,
+                            repetitions=braking_test_repetitions,
+                        )
                         if braking_test_mode else deepcopy(wrench_config)
                     )
                     wrench_config['shadow_mode'] = True
@@ -4007,6 +4016,7 @@ class InteractionsControl:
                     braking_plan = PlanarBrakingCalibration(
                         braking_config,
                         start_after_s=excitation_end_s,
+                        require_opposed_directions=not braking_test_mode,
                     )
                     # Retired experiment: old mission settings must not
                     # silently re-enable position-capture trials.
@@ -4139,7 +4149,11 @@ class InteractionsControl:
                     rearm_delay_s=translation_setting.get('grace_time', 0),
                     calibration_mode=calibration_mode,
                     calibration_path=calibration_path,
-                    **({'braking_test_mode': True} if braking_test_mode else {}),
+                    **({
+                        'braking_test_mode': True,
+                        'braking_test_direction': braking_test_direction,
+                        'braking_test_repetitions': braking_test_repetitions,
+                    } if braking_test_mode else {}),
                 )
                 return
 
@@ -4898,6 +4912,8 @@ class InteractionsControl:
             calibration_mode=False,
             calibration_path=DEFAULT_CALIBRATION_PATH,
             braking_test_mode=False,
+            braking_test_direction=None,
+            braking_test_repetitions=None,
     ):
         """Run wrench interaction from synchronized onboard state estimates.
 
@@ -4908,7 +4924,10 @@ class InteractionsControl:
         if braking_test_mode:
             if not calibration_mode or self.ctrl_rate < 50:
                 raise ValueError('braking repeat test needs calibration mode and at least 50 Hz')
-            config = repeat_test_config(config or {})
+            config = repeat_test_config(
+                config or {}, direction=braking_test_direction,
+                repetitions=braking_test_repetitions,
+            )
         pipeline = OnboardMomentumWrenchPipeline(config)
         config = pipeline.config
         force_sensor_available = bool(
@@ -5501,6 +5520,7 @@ class InteractionsControl:
         planar_braking_plan = PlanarBrakingCalibration(
             planar_braking_config,
             start_after_s=excitation_end_s,
+            require_opposed_directions=not braking_test_mode,
         )
         repeat_reference = None
         if braking_test_mode:
@@ -5513,8 +5533,12 @@ class InteractionsControl:
                 'nominal_yaw_deg': nominal_yaw_deg,
                 'control_rate_hz': self.ctrl_rate,
             })
-            logger.info('BRAKING REPEAT TEST: six 20 deg / 0.24s paired pulses; '
-                        'no XYZ excitation and no calibration file updates.')
+            logger.info('BRAKING REPEAT TEST: %d trials at 20 deg / 0.24s; '
+                        'directions=%s, repeats per direction=%d; '
+                        'no XYZ excitation and no calibration file updates.',
+                        len(planar_braking_plan.trial_directions),
+                        planar_braking_plan.directions.tolist(),
+                        planar_braking_plan.repetitions_per_duration)
         # Keep historical report support, but remove this experiment from all
         # live calibration paths, including callers with an older mission.
         position_capture_config = {}
