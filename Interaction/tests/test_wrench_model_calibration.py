@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -16,6 +17,57 @@ from Interaction.wrench_model_calibration import (
 
 
 class WrenchModelCalibrationTests(unittest.TestCase):
+    def test_capture_evidence_saved_separately_and_preserved_by_old_callers(self):
+        fit = {
+            'model_delay_s': [0.0, 0.0, 0.0],
+            'model_time_constant_s': [0.0, 0.0, 0.0],
+            'model_acceleration_scale': [1.0, 1.0, 1.0],
+        }
+        # The capture module tests validate real trial reports. This test
+        # isolates persistence and checks that its validator is not bypassed.
+        capture = {
+            'kind': 'empirical_position_capture_trials',
+            'usable': True,
+            'control_context': {'pid_parameters': {'posCtlPid': {'xKp': '1.9'}}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'wrench_calibration.json'
+            with patch(
+                'Interaction.wrench_model_calibration.position_capture_fit_is_current',
+                return_value=True,
+            ) as validate:
+                save_drone_calibration(
+                    'lb11', fit, {}, path,
+                    planar_braking_fit=self._current_planar_fit(),
+                    position_capture_fit=capture,
+                )
+                validate.assert_called_once_with(capture)
+            saved = json.loads(path.read_text())['drones']['lb11']
+            self.assertEqual(saved['position_capture_fit'], capture)
+            self.assertNotIn('position_capture_fit', saved['control_handoff'])
+
+            save_drone_calibration('lb11', fit, {}, path)
+            saved_again = json.loads(path.read_text())['drones']['lb11']
+            self.assertEqual(saved_again['position_capture_fit'], capture)
+            self.assertEqual(saved_again['planar_braking_fit'], saved['planar_braking_fit'])
+
+    def test_unusable_capture_does_not_overwrite_any_previous_calibration(self):
+        fit = {
+            'model_delay_s': [0.0, 0.0, 0.0],
+            'model_time_constant_s': [0.0, 0.0, 0.0],
+            'model_acceleration_scale': [1.0, 1.0, 1.0],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'wrench_calibration.json'
+            save_drone_calibration('lb11', fit, {}, path)
+            before = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, 'position capture'):
+                save_drone_calibration(
+                    'lb11', dict(fit, model_delay_s=[0.1, 0.1, 0.1]), {}, path,
+                    position_capture_fit={'usable': False},
+                )
+            self.assertEqual(path.read_bytes(), before)
+
     @staticmethod
     def _current_planar_fit():
         return {

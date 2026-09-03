@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 
 from Interaction.braking_response_calibration import PlanarBrakingCalibration
+from Interaction.position_capture_calibration import PositionCaptureCalibration
 from Interaction.interactions import (
     attitude_to_world_acceleration,
     calibrated_force_render_attitude_limit,
@@ -1397,8 +1398,12 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             calls[0]['config']['planar_braking_calibration'],
             start_after_s=12.0,
         )
+        capture_plan = PositionCaptureCalibration(
+            calls[0]['config']['position_capture_calibration'],
+            start_after_s=braking_plan.duration_s,
+        )
         self.assertAlmostEqual(
-            calls[0]['duration'], braking_plan.end_s + 0.5
+            calls[0]['duration'], capture_plan.end_s + 0.5
         )
         self.assertTrue(calls[0]['calibration_mode'])
         self.assertTrue(
@@ -1411,9 +1416,50 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertTrue(
             calls[0]['config']['planar_braking_calibration']['enabled']
         )
+        self.assertTrue(
+            calls[0]['config']['position_capture_calibration']['enabled']
+        )
         self.assertEqual(
             calls[0]['calibration_path'], '/tmp/test-calibration.json'
         )
+
+    def test_calibration_preflight_requires_position_capture_clearance(self):
+        controller = InteractionsControl.__new__(InteractionsControl)
+        controller.drone_id = 'lb11'
+        controller.lo_commander = FakeCommander()
+        controller.bounds = {
+            'x_min': -0.5, 'x_max': 0.5,
+            'y_min': -0.5, 'y_max': 0.5,
+            'z_min': 0.0, 'z_max': 2.0,
+        }
+        controller.mission = {
+            'drones': {'lb11': {'target': [0.0, 0.0, 1.0, 0.0]}},
+            'Interaction': {
+                'action': 'translation',
+                'config': {
+                    'detection_method': 'momentum_impulse',
+                    'duration': 60,
+                    'wrench_interaction': {
+                        'state_source': 'onboard',
+                        'planar_braking_calibration': {
+                            'max_displacement_m': 0.45,
+                        },
+                        'position_capture_calibration': {
+                            'max_displacement_m': 1.0,
+                        },
+                    },
+                },
+            },
+        }
+        calls = []
+        controller.interaction_onboard_wrench_admittance = (
+            lambda **kwargs: calls.append(kwargs)
+        )
+
+        with self.assertRaisesRegex(ValueError, '1.00 m XY boundary margin'):
+            controller.run_calibration()
+
+        self.assertEqual(calls, [])
 
     def test_active_translation_aims_release_tilt_along_braking_direction_then_holds(self):
         commander = FakeCommander()

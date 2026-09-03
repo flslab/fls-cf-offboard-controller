@@ -11,6 +11,8 @@ import tempfile
 
 import numpy as np
 
+from Interaction.position_capture_calibration import position_capture_fit_is_current
+
 
 DEFAULT_CALIBRATION_PATH = Path(__file__).with_name("wrench_calibration.json")
 SCHEMA_VERSION = 1
@@ -1628,6 +1630,7 @@ def save_drone_calibration(
         motor_model,
         path=DEFAULT_CALIBRATION_PATH,
         planar_braking_fit=None,
+        position_capture_fit=None,
 ):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1701,6 +1704,17 @@ def save_drone_calibration(
         entry["planar_braking_fit"] = deepcopy(
             previous_entry["planar_braking_fit"]
         )
+    if position_capture_fit is not None:
+        if not position_capture_fit_is_current(position_capture_fit):
+            raise ValueError(
+                "refusing to save unusable position capture calibration; "
+                "the previous calibration has not been replaced"
+            )
+        # This is independent position-command evidence, not another estimate
+        # of the open-loop attitude gain. Do not map it to aMax or silently
+        # activate an unvalidated continuous runtime capture envelope.
+        entry["position_capture_fit"] = deepcopy(position_capture_fit)
+    # entry starts as a copy, so older/partial callers retain this evidence.
     document.setdefault("drones", {})[str(drone_id)] = entry
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", dir=str(path.parent)

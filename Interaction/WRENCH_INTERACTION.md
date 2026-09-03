@@ -80,7 +80,7 @@ and `--smooth-controller-rate 50` or higher; the active orchestrator uses 100
 Hz. The mission may provide a calibration-only
 `wrench_interaction.calibration_nominal_position`, so the clear-volume
 calibration point does not change the apparatus-aligned interaction target.
-`--calibrate` runs two contact-free stages. First it forces
+`--calibrate` runs three contact-free stages. First it forces
 shadow mode and commands the bounded XYZ position chirp used by the wrench
 observer. It then performs bounded planar attitude trials with the sequence
 level -> accelerate -> level -> equal-duration opposite brake -> level ->
@@ -92,16 +92,43 @@ and planar acceleration scale. Strict gates require enough windows in every
 trial, acceptable training and validation R-squared and normalized RMSE in
 each direction, bounded acceleration gain, consistent gains across tilt
 levels, and agreement between +Y/-Y at every individual level. Poor or
-incomplete trials fail without overwriting a usable calibration. Both fits and
+incomplete trials fail without overwriting a usable calibration. The fits and
 the exact trial protocol are atomically saved per drone in the same
 `Interaction/wrench_calibration.json`.
+
+The third stage measures **position-command capture**, separately from the
+attitude fit. On each of +X, -X, +Y and -Y it applies an 8-degree acceleration
+for 0.10, 0.20 or 0.30 seconds, commands level for 0.20 seconds, then latches a
+position target 0.08, 0.16 or 0.28 metres ahead of the measured entry position.
+It repeats that *fixed* XYZ target for a four-second observation window before
+returning to the nominal point. Actual entry velocity is recorded; acceleration
+duration is not treated as a known speed. Twelve trials add about 82 seconds,
+so check battery/endurance and clear the full one-metre XY safety radius before
+starting. Existing localization, speed, displacement and flight safety aborts
+remain active. Trial starts must be settled.
+
+The `position_capture_fit` entry contains the exact protocol and per-trial
+entry speed/tilt/lateral motion, peak overshoot, reverse speed and settling time.
+A trial must stay within the configured overshoot limit (default 3 cm), never
+reverse faster than 0.05 m/s, and end within 3 cm of its target at XY speed at
+most 0.05 m/s for at least 0.30 seconds.
+Incomplete/stale trials, nonconstant targets and failed settling are not
+successes. The diagnostic report is logged even when unusable; a failed new
+capture calibration does not replace the existing calibration file. Partial
+older save callers preserve previously stored capture evidence.
+
+This entry is **empirical trial evidence, not a certified continuous capture
+envelope**. It does not reuse the attitude acceleration limit as the position
+PID's braking capability, and it does not automatically enable earlier
+nonzero-speed position handoff. Inspect the actual capture results first; the
+existing interaction handoff policy is unchanged in this calibration addition.
 
 Active `potentiometer_coast` refuses to run without a current-schema planar fit
 that passed those gates. Runtime braking acceleration is limited to the smaller
 of `coast_max_acceleration_m_s2` and the largest fitted calibration-step
 acceleration times `maximum_acceleration_extrapolation_ratio`, with an absolute
 5 m/s^2 ceiling, so runtime control stays near the acceleration envelope
-exercised by calibration. `--interaction` disables both excitation stages and
+exercised by calibration. `--interaction` does not run the calibration trials and
 automatically loads the saved values.
 
 Before setting `shadow_mode: false`:

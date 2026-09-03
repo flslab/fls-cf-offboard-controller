@@ -12,6 +12,7 @@ from Interaction.command_wrapper import CommandWrapper
 from Interaction.braking_response_calibration import (
     PlanarBrakingCalibration,
 )
+from Interaction.position_capture_calibration import PositionCaptureCalibration
 from Interaction.flight_behaviors import load_commands
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
 from Interaction.potentiometer_force_sensor import (
@@ -3985,7 +3986,14 @@ class InteractionsControl:
                         braking_config,
                         start_after_s=excitation_end_s,
                     )
-                    interaction_duration = braking_plan.end_s + 0.5
+                    capture_config = wrench_config.setdefault(
+                        'position_capture_calibration', {}
+                    )
+                    capture_config['enabled'] = True
+                    capture_plan = PositionCaptureCalibration(
+                        capture_config, start_after_s=braking_plan.duration_s
+                    )
+                    interaction_duration = capture_plan.end_s + 0.5
                 else:
                     wrench_config, saved_calibration = apply_drone_calibration(
                         wrench_config,
@@ -4059,7 +4067,10 @@ class InteractionsControl:
                         logger.info('Loaded wrench calibration: %s', calibration_path)
                 if calibration_mode:
                     if getattr(self, 'bounds', None) is not None:
-                        margin = braking_plan.max_displacement_m
+                        margin = max(
+                            braking_plan.max_displacement_m,
+                            capture_plan.max_displacement_m,
+                        )
                         x, y = float(target[0]), float(target[1])
                         if not (
                             self.bounds['x_min'] <= x - margin
@@ -4068,7 +4079,8 @@ class InteractionsControl:
                             and y + margin <= self.bounds['y_max']
                         ):
                             raise ValueError(
-                                'planar braking calibration needs at least '
+                                'planar braking / position capture calibration '
+                                'needs at least '
                                 f'{margin:.2f} m XY boundary margin around '
                                 'the nominal hover point'
                             )
@@ -4084,6 +4096,19 @@ class InteractionsControl:
                         ),
                         braking_plan.tilt_deg,
                         braking_plan.max_displacement_m,
+                    )
+                    logger.warning(
+                        'Calibration also includes %d fixed-target position '
+                        'capture trials at %.1fdeg after planar braking; '
+                        'total scheduled '
+                        'motion time %.1fs (plus startup bias collection). '
+                        'Keep the full %.2fm XY safety radius clear. '
+                        'These trials measure position-controller capture '
+                        'ability and do not change normal interaction control.',
+                        len(capture_plan.trials), capture_plan.tilt_deg,
+                        interaction_duration,
+                        max(braking_plan.max_displacement_m,
+                            capture_plan.max_displacement_m),
                     )
                 interaction_function = (
                     self.interaction_onboard_wrench_admittance
@@ -5457,6 +5482,11 @@ class InteractionsControl:
             planar_braking_config,
             start_after_s=excitation_end_s,
         )
+        position_capture_config = config.get('position_capture_calibration', {})
+        position_capture_plan = PositionCaptureCalibration(
+            position_capture_config,
+            start_after_s=planar_braking_plan.duration_s,
+        )
         if (
             calibration_mode
             and planar_braking_plan.enabled
@@ -5466,6 +5496,16 @@ class InteractionsControl:
                 f'interaction duration {duration:.1f}s is shorter than the '
                 'complete planar braking calibration '
                 f'({planar_braking_plan.duration_s:.1f}s)'
+            )
+        if (
+            calibration_mode
+            and position_capture_plan.enabled
+            and duration < position_capture_plan.duration_s
+        ):
+            raise ValueError(
+                f'interaction duration {duration:.1f}s is shorter than the '
+                'complete position capture calibration '
+                f'({position_capture_plan.duration_s:.1f}s)'
             )
         guided_touch = GuidedTouchProtocol(config.get('guided_touch_test'))
         if guided_touch.enabled and duration < guided_touch.required_duration_s:
@@ -5480,6 +5520,10 @@ class InteractionsControl:
         active_planar_braking_command = None
         active_planar_braking_command_since = None
         last_planar_braking_phase = None
+        position_capture_samples = []
+        active_position_capture_command = None
+        active_position_capture_command_since = None
+        last_position_capture_phase = None
         calibration_dropout_active = False
         calibration_dropout_max_age_s = 0.0
         calibration_group_skew_dropout_active = False
@@ -5491,8 +5535,12 @@ class InteractionsControl:
             now = time.time()
             planar_attitude_active = bool(
                 calibration_mode
-                and active_planar_braking_command is not None
-                and active_planar_braking_command.attitude_control
+                and (
+                    (active_planar_braking_command is not None
+                     and active_planar_braking_command.attitude_control)
+                    or (active_position_capture_command is not None
+                        and active_position_capture_command.attitude_control)
+                )
             )
             if (
                 calibration_mode
@@ -5507,6 +5555,9 @@ class InteractionsControl:
                     planar_braking_plan.command(
                         calibration_elapsed_s, 0.0
                     ).attitude_control
+                    or position_capture_plan.attitude_phase_due(
+                        calibration_elapsed_s
+                    )
                 )
             if interaction_start is not None:
                 interaction_elapsed_s = (
@@ -5536,10 +5587,18 @@ class InteractionsControl:
                 )
             state = self._get_synchronized_onboard_wrench_state()
             if state is None:
+                if planar_attitude_active:
+                    self.lo_commander.send_zdistance_setpoint(
+                        0.0, 0.0, 0.0, float(nominal_position[2])
+                    )
                 raise StaleLocalizationError('Onboard state packet set is incomplete')
             state_time = state['time']
             state_age = now - state_time
             if state_age < -0.5:
+                if planar_attitude_active:
+                    self.lo_commander.send_zdistance_setpoint(
+                        0.0, 0.0, 0.0, float(nominal_position[2])
+                    )
                 raise StaleLocalizationError(
                     f'Onboard state is {state_age:.3f}s old '
                     f'(limit {max_state_age_s:.3f}s)'
@@ -5624,6 +5683,10 @@ class InteractionsControl:
                 not np.all(np.isfinite(state_group_skew_values))
                 or np.any(state_group_skew_values < 0.0)
             ):
+                if planar_attitude_active:
+                    self.lo_commander.send_zdistance_setpoint(
+                        0.0, 0.0, 0.0, float(nominal_position[2])
+                    )
                 raise StaleLocalizationError(
                     'Onboard state-group skew contains an invalid value'
                 )
@@ -5718,6 +5781,17 @@ class InteractionsControl:
             if state_time == last_state_time:
                 if (
                     calibration_mode
+                    and active_position_capture_command is not None
+                    and active_position_capture_command.attitude_control
+                ):
+                    self.lo_commander.send_zdistance_setpoint(
+                        active_position_capture_command.roll_deg,
+                        active_position_capture_command.pitch_deg,
+                        0.0,
+                        float(nominal_position[2]),
+                    )
+                elif (
+                    calibration_mode
                     and active_planar_braking_command is not None
                     and active_planar_braking_command.attitude_control
                 ):
@@ -5768,6 +5842,10 @@ class InteractionsControl:
                 or motor_is_stale
                 or motor_is_unsynchronized
             ):
+                if planar_attitude_active:
+                    self.lo_commander.send_zdistance_setpoint(
+                        0.0, 0.0, 0.0, float(nominal_position[2])
+                    )
                 raise RuntimeError(
                     'Fresh, state-synchronized motor PWM and battery data are '
                     'required for onboard wrench estimation'
@@ -5794,6 +5872,34 @@ class InteractionsControl:
                 timestamp=state_time,
                 yaw_control_command=state['yaw_control_command'],
             )
+
+            # Attribute this measurement to the command that was actually
+            # latched before the sample, never to the next scheduled phase.
+            # In particular, retain the final capture sample before recovery.
+            if (
+                calibration_mode
+                and active_position_capture_command is not None
+                and active_position_capture_command.phase == 'capture'
+                and active_position_capture_command_since is not None
+                and state_time >= active_position_capture_command_since
+            ):
+                position_capture_samples.append({
+                    'timestamp': float(state_time),
+                    'command_started_at': float(
+                        active_position_capture_command_since
+                    ),
+                    'segment_id': active_position_capture_command.segment_id,
+                    'phase': active_position_capture_command.phase,
+                    'position': position.tolist(),
+                    'velocity': output.estimate.velocity.tolist(),
+                    'orientation_rpy': (
+                        output.estimate.orientation_rpy.tolist()
+                    ),
+                    'position_target': (
+                        active_position_capture_command.position_target.tolist()
+                    ),
+                    'battery_voltage_V': battery_voltage,
+                })
 
             if (
                 calibration_mode
@@ -7269,6 +7375,58 @@ class InteractionsControl:
                         'state_source': 'crazyflie_state_estimate',
                     })
 
+            position_capture_command = None
+            if calibration_mode and interaction_start is not None:
+                try:
+                    position_capture_command = position_capture_plan.command(
+                        calibration_elapsed_s,
+                        np.degrees(output.estimate.orientation_rpy[2]),
+                        position,
+                        output.estimate.velocity,
+                        output.estimate.orientation_rpy,
+                    )
+                except ValueError as exc:
+                    if planar_attitude_active:
+                        self.lo_commander.send_zdistance_setpoint(
+                            0.0, 0.0, 0.0, float(nominal_position[2])
+                        )
+                    self._log_event('Position Capture Calibration Rejected', {
+                        'reason': str(exc),
+                        'protocol_elapsed_s': calibration_elapsed_s,
+                        'state_source': 'crazyflie_state_estimate',
+                    })
+                    raise
+                capture_phase_marker = (
+                    position_capture_command.segment_id,
+                    position_capture_command.phase,
+                )
+                if (
+                    position_capture_command.phase != 'waiting'
+                    and capture_phase_marker != last_position_capture_phase
+                ):
+                    last_position_capture_phase = capture_phase_marker
+                    self._log_event('Position Capture Calibration Phase', {
+                        'segment_id': position_capture_command.segment_id,
+                        'phase': position_capture_command.phase,
+                        'direction_xy': (
+                            position_capture_command.direction_xy.tolist()
+                        ),
+                        'command_roll_deg': position_capture_command.roll_deg,
+                        'command_pitch_deg': position_capture_command.pitch_deg,
+                        'fixed_target_m': (
+                            None
+                            if position_capture_command.position_target is None
+                            else position_capture_command.position_target.tolist()
+                        ),
+                        'entry_position_m': position.tolist(),
+                        'entry_velocity_m_s': output.estimate.velocity.tolist(),
+                        'entry_orientation_rpy_rad': (
+                            output.estimate.orientation_rpy.tolist()
+                        ),
+                        'protocol_elapsed_s': calibration_elapsed_s,
+                        'state_source': 'crazyflie_state_estimate',
+                    })
+
             if calibration_mode and excitation_active:
                 model_calibration_samples.append((
                     float(state_time),
@@ -7323,6 +7481,111 @@ class InteractionsControl:
                         f'phase={planar_braking_command.phase})'
                     )
             if (
+                position_capture_command is not None
+                and position_capture_command.active
+            ):
+                xy_speed = float(np.linalg.norm(output.estimate.velocity[:2]))
+                xy_displacement = float(np.linalg.norm(
+                    position[:2] - nominal_position[:2]
+                ))
+                first_acceleration_command = bool(
+                    position_capture_command.phase == 'accelerate'
+                    and (
+                        active_position_capture_command is None
+                        or active_position_capture_command.segment_id
+                        != position_capture_command.segment_id
+                        or active_position_capture_command.phase != 'accelerate'
+                    )
+                )
+                # Each trial must begin near the same nominal origin. Merely
+                # being slow at the preceding capture target is insufficient.
+                start_position_tolerance_m = (
+                    position_capture_plan.trial_start_max_position_error_m
+                )
+                invalid_target = False
+                target_error = None
+                if position_capture_command.position_target is not None:
+                    capture_target = np.asarray(
+                        position_capture_command.position_target, dtype=float
+                    )
+                    try:
+                        self.check_interaction_boundary(capture_target)
+                    except BoundaryExceededError as exc:
+                        invalid_target = True
+                        target_error = str(exc)
+                    invalid_target = bool(
+                        invalid_target
+                        or np.linalg.norm(
+                            capture_target[:2] - nominal_position[:2]
+                        ) > position_capture_plan.max_displacement_m
+                    )
+                if (
+                    xy_speed > position_capture_plan.max_xy_speed_m_s
+                    or xy_displacement > position_capture_plan.max_displacement_m
+                    or (first_acceleration_command
+                        and xy_displacement > start_position_tolerance_m)
+                    or invalid_target
+                ):
+                    self.lo_commander.send_zdistance_setpoint(
+                        0.0, 0.0, 0.0, float(nominal_position[2])
+                    )
+                    failure = (
+                        'Position capture calibration exceeded its safety '
+                        f'limit (speed={xy_speed:.3f}m/s, '
+                        f'displacement={xy_displacement:.3f}m, '
+                        f'phase={position_capture_command.phase}, '
+                        f'invalid_target={invalid_target}, '
+                        f'target_error={target_error})'
+                    )
+                    self._log_event('Position Capture Calibration Rejected', {
+                        'reason': failure,
+                        'protocol_elapsed_s': calibration_elapsed_s,
+                        'segment_id': position_capture_command.segment_id,
+                        'state_source': 'crazyflie_state_estimate',
+                    })
+                    raise RuntimeError(failure)
+            if (
+                position_capture_command is not None
+                and position_capture_command.active
+            ):
+                command_sent_at = time.time()
+                if position_capture_command.attitude_control:
+                    self.lo_commander.send_zdistance_setpoint(
+                        position_capture_command.roll_deg,
+                        position_capture_command.pitch_deg,
+                        0.0,
+                        float(nominal_position[2]),
+                    )
+                    command_position = None
+                else:
+                    # Capture uses the once-latched target, while settle and
+                    # recovery return to nominal. Keep handoff's hold target
+                    # identical so duplicate/skew retries cannot silently
+                    # replace the capture target with the nominal position.
+                    command_position = (
+                        nominal_position.copy()
+                        if position_capture_command.position_target is None
+                        else position_capture_command.position_target.copy()
+                    )
+                    translation_control.hold_position = command_position.copy()
+                    translation_control.yaw_deg = nominal_yaw_deg
+                    translation_control.send(self.lo_commander)
+                command_yaw = nominal_yaw_deg
+                if (
+                    active_position_capture_command is None
+                    or (
+                        active_position_capture_command.segment_id,
+                        active_position_capture_command.phase,
+                    ) != (
+                        position_capture_command.segment_id,
+                        position_capture_command.phase,
+                    )
+                ):
+                    active_position_capture_command_since = command_sent_at
+                active_position_capture_command = position_capture_command
+                active_planar_braking_command = None
+                active_planar_braking_command_since = None
+            elif (
                 planar_braking_command is not None
                 and planar_braking_command.attitude_control
             ):
@@ -7356,6 +7619,12 @@ class InteractionsControl:
                 translation_control.yaw_deg = float(command_yaw)
                 translation_control.send(self.lo_commander)
                 if (
+                    position_capture_command is not None
+                    and position_capture_command.phase == 'complete'
+                ):
+                    active_position_capture_command = None
+                    active_position_capture_command_since = None
+                if (
                     planar_braking_command is not None
                     and planar_braking_command.active
                 ):
@@ -7383,6 +7652,17 @@ class InteractionsControl:
 
             estimate = output.estimate
             raw = output.raw_estimate
+            calibration_attitude_command = (
+                position_capture_command
+                if (position_capture_command is not None
+                    and position_capture_command.attitude_control)
+                else (
+                    planar_braking_command
+                    if (planar_braking_command is not None
+                        and planar_braking_command.attitude_control)
+                    else None
+                )
+            )
             self.log_manager.add_log_entry('wrench_observer', {
                 'time': now,
                 'state_source': 'crazyflie_state_estimate',
@@ -7615,23 +7895,54 @@ class InteractionsControl:
                     else planar_braking_command
                     .command_acceleration_xy.tolist()
                 ),
+                'position_capture_calibration_active': bool(
+                    position_capture_command is not None
+                    and position_capture_command.active
+                ),
+                'position_capture_calibration_phase': (
+                    None if position_capture_command is None
+                    else position_capture_command.phase
+                ),
+                'position_capture_calibration_segment_id': (
+                    None if position_capture_command is None
+                    else position_capture_command.segment_id
+                ),
+                'position_capture_fixed_target_m': (
+                    None
+                    if (position_capture_command is None
+                        or position_capture_command.position_target is None)
+                    else position_capture_command.position_target.tolist()
+                ),
+                'position_capture_command_started_at': (
+                    active_position_capture_command_since
+                ),
+                'calibration_protocol_elapsed_s': (
+                    calibration_elapsed_s if calibration_mode else None
+                ),
                 'proposed_position_m': proposed_position.tolist(),
                 'proposed_yaw_deg': proposed_yaw,
-                'command_mode': translation_control.command_mode,
+                'command_mode': (
+                    ('position_capture_attitude_calibration'
+                     if position_capture_command.attitude_control
+                     else 'position_capture_calibration')
+                    if (position_capture_command is not None
+                        and position_capture_command.active)
+                    else translation_control.command_mode
+                ),
                 'command_position_m': (
                     None if command_position is None
                     else np.asarray(command_position, dtype=float).tolist()
                 ),
                 'command_zdistance_m': (
-                    translation_control.hover_z
-                    if not translation_control.uses_position_setpoint else None
+                    float(nominal_position[2])
+                    if calibration_attitude_command is not None
+                    else (translation_control.hover_z
+                          if not translation_control.uses_position_setpoint
+                          else None)
                 ),
                 'command_roll_deg': (
-                    planar_braking_command.roll_deg
-                    if (
-                        planar_braking_command is not None
-                        and planar_braking_command.attitude_control
-                    )
+                    calibration_attitude_command.roll_deg
+                    if calibration_attitude_command is not None
                     else (
                         translation_control.contact_roll_deg
                         if not translation_control.uses_position_setpoint
@@ -7639,11 +7950,8 @@ class InteractionsControl:
                     )
                 ),
                 'command_pitch_deg': (
-                    planar_braking_command.pitch_deg
-                    if (
-                        planar_braking_command is not None
-                        and planar_braking_command.attitude_control
-                    )
+                    calibration_attitude_command.pitch_deg
+                    if calibration_attitude_command is not None
                     else (
                         translation_control.contact_pitch_deg
                         if not translation_control.uses_position_setpoint
@@ -8009,12 +8317,67 @@ class InteractionsControl:
                             braking_battery_samples
                         )), 4),
                     }
+            position_capture_fit = None
+            if position_capture_plan.enabled:
+                position_capture_fit = position_capture_plan.summarize(
+                    position_capture_samples
+                )
+                cached_parameters = getattr(
+                    getattr(getattr(self, 'cf', None), 'param', None),
+                    'values', None,
+                )
+                parameter_groups = (
+                    'posCtlPid', 'velCtlPid', 'pid_attitude', 'pid_rate',
+                    'stabilizer',
+                )
+                controller_parameters = {
+                    group: deepcopy(cached_parameters[group])
+                    for group in parameter_groups
+                    if (isinstance(cached_parameters, dict)
+                        and isinstance(cached_parameters.get(group), dict))
+                }
+                position_capture_fit['control_context'] = {
+                    'nominal_yaw_deg': nominal_yaw_deg,
+                    'nominal_position_m': nominal_position.tolist(),
+                    'mass_kg': float(config['mass']),
+                    'control_rate_hz': self.ctrl_rate,
+                    'controller_parameter_source': (
+                        'crazyflie_cached_parameters'
+                        if controller_parameters else 'unavailable'
+                    ),
+                    'controller_parameters': controller_parameters,
+                    'controller_parameter_groups_unavailable': [
+                        group for group in parameter_groups
+                        if group not in controller_parameters
+                    ],
+                    'automatic_interaction_handoff_enabled': False,
+                }
+                self._log_event('Position Capture Calibration Evaluated', {
+                    'position_capture_fit': position_capture_fit,
+                    'state_source': 'crazyflie_state_estimate',
+                })
+                if not position_capture_fit.get('usable', False):
+                    # Evaluate the entire capture window, including any late
+                    # rebound, before saving anything. A failed new stage must
+                    # not replace a previously usable calibration file.
+                    self._log_event('Position Capture Calibration Rejected', {
+                        'reason': 'fixed-target capture quality gates failed',
+                        'position_capture_fit': position_capture_fit,
+                        'previous_calibration_preserved': True,
+                        'state_source': 'crazyflie_state_estimate',
+                    })
+                    raise ValueError(
+                        'position capture calibration failed quality gates; '
+                        'previous calibration file was preserved; inspect '
+                        'Position Capture Calibration Evaluated in the flight log'
+                    )
             saved_path, saved_entry = save_drone_calibration(
                 self.drone_id,
                 fit,
                 config['motor_model'],
                 calibration_path,
                 planar_braking_fit=planar_braking_fit,
+                position_capture_fit=position_capture_fit,
             )
             self._log_event('Wrench Model Calibration Saved', {
                 'state_source': 'crazyflie_state_estimate',
@@ -8023,6 +8386,7 @@ class InteractionsControl:
                 'fit': fit,
                 'control_handoff': saved_entry.get('control_handoff'),
                 'planar_braking_fit': planar_braking_fit,
+                'position_capture_fit': position_capture_fit,
             })
             logger.info('CALIBRATED %s', saved_path)
         else:
