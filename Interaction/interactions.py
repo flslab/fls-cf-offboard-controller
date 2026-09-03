@@ -181,6 +181,34 @@ def resolve_release_mode(
     return configured_mode
 
 
+def resolve_wrench_nominal_target(
+        mission_target,
+        wrench_config,
+        calibration_mode=False,
+):
+    """Use an optional clear-volume target only for calibration flights."""
+    target = list(mission_target)
+    if len(target) < 3:
+        raise ValueError('wrench mission target must contain X, Y, and Z')
+    if calibration_mode:
+        calibration_target = dict(wrench_config or {}).get(
+            'calibration_nominal_position'
+        )
+        if calibration_target is not None:
+            calibration_target = np.asarray(calibration_target, dtype=float)
+            if (
+                calibration_target.shape != (3,)
+                or not np.all(np.isfinite(calibration_target))
+            ):
+                raise ValueError(
+                    'calibration_nominal_position must contain finite XYZ'
+                )
+            target[:3] = calibration_target.tolist()
+    if not np.all(np.isfinite(np.asarray(target[:3], dtype=float))):
+        raise ValueError('wrench mission target XYZ must be finite')
+    return target
+
+
 def release_candidate_sensor_stale_watchdog(
         candidate_pending,
         sensor_fresh,
@@ -3837,7 +3865,11 @@ class InteractionsControl:
                 calibration_path = translation_setting.get(
                     'wrench_calibration_file', str(DEFAULT_CALIBRATION_PATH)
                 )
-                target = self.mission['drones'][self.drone_id]['target']
+                target = resolve_wrench_nominal_target(
+                    self.mission['drones'][self.drone_id]['target'],
+                    wrench_config,
+                    calibration_mode=calibration_mode,
+                )
                 nominal_yaw = (
                     target[3]
                     if len(target) > 3
@@ -3990,9 +4022,14 @@ class InteractionsControl:
                             )
                     logger.warning(
                         'Calibration includes %d open-loop planar trials at '
-                        'up to %.1f deg tilt; keep the full %.2f m XY safety '
-                        'radius clear and do not touch the vehicle.',
+                        'tilt levels %s deg (maximum %.1f); keep the full '
+                        '%.2f m XY safety radius clear and do not touch the '
+                        'vehicle.',
                         len(braking_plan.trial_directions),
+                        ', '.join(
+                            f'{value:g}'
+                            for value in braking_plan.tilt_levels_deg
+                        ),
                         braking_plan.tilt_deg,
                         braking_plan.max_displacement_m,
                     )
@@ -5563,6 +5600,9 @@ class InteractionsControl:
                         active_planar_braking_command
                         .command_acceleration_xy.tolist()
                     ),
+                    'command_tilt_deg': float(
+                        active_planar_braking_command.tilt_deg
+                    ),
                     'command_roll_deg': float(
                         active_planar_braking_command.roll_deg
                     ),
@@ -6999,6 +7039,7 @@ class InteractionsControl:
                         ),
                         'command_roll_deg': planar_braking_command.roll_deg,
                         'command_pitch_deg': planar_braking_command.pitch_deg,
+                        'command_tilt_deg': planar_braking_command.tilt_deg,
                         'state_source': 'crazyflie_state_estimate',
                     })
 
@@ -7686,6 +7727,12 @@ class InteractionsControl:
                     ),
                     'repetitions': planar_braking_plan.repetitions,
                     'tilt_deg': planar_braking_plan.tilt_deg,
+                    'tilt_levels_deg': (
+                        planar_braking_plan.tilt_levels_deg.tolist()
+                    ),
+                    'repetitions_per_tilt': (
+                        planar_braking_plan.repetitions_per_tilt
+                    ),
                     'level_before_acceleration_s': (
                         planar_braking_plan.level_before_acceleration_s
                     ),

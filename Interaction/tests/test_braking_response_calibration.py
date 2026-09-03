@@ -54,6 +54,59 @@ class PlanarBrakingCalibrationTests(unittest.TestCase):
         self.assertAlmostEqual(yawed.roll_deg, 0.0, places=10)
         self.assertAlmostEqual(yawed.pitch_deg, -8.0)
 
+    def test_multi_level_schedule_runs_both_signs_at_each_tilt(self):
+        plan = PlanarBrakingCalibration({
+            "enabled": True,
+            "start_delay_s": 0.0,
+            "directions_xy": [[0.0, 1.0], [0.0, -1.0]],
+            # Legacy defaults may remain after recursive config merging; the
+            # explicit multi-level controls must take precedence.
+            "repetitions": 3,
+            "tilt_deg": 8.0,
+            "tilt_levels_deg": [8.0, 14.0, 20.0],
+            "repetitions_per_tilt": 1,
+            "level_before_acceleration_s": 0.2,
+            "accelerate_s": 0.32,
+            "level_before_brake_s": 0.2,
+            "brake_s": 0.32,
+            "level_after_brake_s": 0.65,
+            "recovery_s": 2.0,
+        })
+
+        self.assertEqual(plan.repetitions, 3)
+        self.assertEqual(len(plan.trial_directions), 6)
+        np.testing.assert_allclose(
+            plan.trial_tilt_levels_deg,
+            [8.0, 8.0, 14.0, 14.0, 20.0, 20.0],
+        )
+        observed = []
+        for segment_id in range(6):
+            local_acceleration_time = (
+                plan.maneuver_start_s
+                + segment_id * plan.trial_s
+                + plan.level_before_acceleration_s
+                + 0.01
+            )
+            command = plan.command(local_acceleration_time, yaw_deg=0.0)
+            observed.append((
+                command.segment_id,
+                command.tilt_deg,
+                tuple(command.direction_xy),
+                float(np.hypot(command.roll_deg, command.pitch_deg)),
+            ))
+        self.assertEqual(
+            [(entry[1], entry[2]) for entry in observed],
+            [
+                (8.0, (0.0, 1.0)), (8.0, (0.0, -1.0)),
+                (14.0, (0.0, 1.0)), (14.0, (0.0, -1.0)),
+                (20.0, (0.0, 1.0)), (20.0, (0.0, -1.0)),
+            ],
+        )
+        np.testing.assert_allclose(
+            [entry[3] for entry in observed],
+            [8.0, 8.0, 14.0, 14.0, 20.0, 20.0],
+        )
+
     def test_normalizes_direction_and_rejects_unsafe_configuration(self):
         normalized = PlanarBrakingCalibration({
             "enabled": True,
@@ -76,6 +129,11 @@ class PlanarBrakingCalibrationTests(unittest.TestCase):
                 "enabled": True,
                 "directions_xy": [[0.0, 1.0]],
                 "tilt_deg": 30.0,
+            })
+        with self.assertRaisesRegex(ValueError, "strictly increasing"):
+            PlanarBrakingCalibration({
+                "enabled": True,
+                "tilt_levels_deg": [14.0, 8.0, 20.0],
             })
 
 

@@ -75,27 +75,34 @@ python3 orchestrator/orchestrator.py --calibrate
 ```
 
 The orchestrator always enables controller logging. If you invoke
-`controller.py` directly instead, `--calibrate` must be paired with `--log`.
+`controller.py` directly instead, `--calibrate` must be paired with `--log`
+and `--smooth-controller-rate 50` or higher; the active orchestrator uses 100
+Hz. The mission may provide a calibration-only
+`wrench_interaction.calibration_nominal_position`, so the clear-volume
+calibration point does not change the apparatus-aligned interaction target.
 `--calibrate` runs two contact-free stages. First it forces
 shadow mode and commands the bounded XYZ position chirp used by the wrench
 observer. It then performs bounded planar attitude trials with the sequence
-level -> accelerate -> level -> opposite brake -> level -> position recovery.
-The current Y-mounted experiment runs three +Y and three -Y repetitions (six
-trials total). The second fit identifies attitude-command delay, first-order
-response time, and planar acceleration scale. Strict gates require enough
-windows in every trial, acceptable training and validation R-squared and
-normalized RMSE in each direction, bounded acceleration gain, consistent
-repeat gains, and agreement between the two directional gains. Poor or
+level -> accelerate -> level -> equal-duration opposite brake -> level ->
+position recovery.  The current Y-mounted experiment tests 8, 14, and 20
+degrees in both +Y and -Y (six trials total). This spans the active rendering
+and braking envelope without deliberately commanding a net reverse impulse.
+The second fit identifies attitude-command delay, first-order response time,
+and planar acceleration scale. Strict gates require enough windows in every
+trial, acceptable training and validation R-squared and normalized RMSE in
+each direction, bounded acceleration gain, consistent gains across tilt
+levels, and agreement between +Y/-Y at every individual level. Poor or
 incomplete trials fail without overwriting a usable calibration. Both fits and
 the exact trial protocol are atomically saved per drone in the same
 `Interaction/wrench_calibration.json`.
 
 Active `potentiometer_coast` refuses to run without a current-schema planar fit
 that passed those gates. Runtime braking acceleration is limited to the smaller
-of `coast_max_acceleration_m_s2` and the fitted calibration-step acceleration
-times `maximum_acceleration_extrapolation_ratio`, so runtime control stays near
-the acceleration envelope exercised by calibration. `--interaction` disables
-both excitation stages and automatically loads the saved values.
+of `coast_max_acceleration_m_s2` and the largest fitted calibration-step
+acceleration times `maximum_acceleration_extrapolation_ratio`, with an absolute
+5 m/s^2 ceiling, so runtime control stays near the acceleration envelope
+exercised by calibration. `--interaction` disables both excitation stages and
+automatically loads the saved values.
 
 Before setting `shadow_mode: false`:
 
@@ -223,8 +230,8 @@ previous observer-owned contact/release and counter-tilt braking path.
 Active `potentiometer_coast` also requires `inertia_command: orientation` and
 keeps dynamic render selection on that observable attitude-command path; a
 position-rendered PID tail is not covered by the planar braking fit. The active
-force-render tilt is capped to the saved calibration trial tilt even when
-`max_attitude_deg` requests a larger value.
+force-render tilt is capped to the largest saved calibration trial tilt even
+when `max_attitude_deg` requests a larger value.
 
 The current fit covers one opposed planar axis. Coasting therefore commands no
 uncalibrated transverse attitude. Once longitudinal speed, tilt, acceleration,

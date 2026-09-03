@@ -66,6 +66,19 @@ def planar_braking_fit_is_current(braking) -> bool:
             braking["direction_quality"]["maximum_direction_gain_ratio"]
         )
         calibration_tilt_deg = float(braking["protocol"]["tilt_deg"])
+        tilt_levels_deg = np.asarray(
+            braking["protocol"].get(
+                "tilt_levels_deg", [calibration_tilt_deg]
+            ),
+            dtype=float,
+        )
+        repetitions = int(braking["protocol"]["repetitions"])
+        repetitions_per_tilt = int(
+            braking["protocol"].get(
+                "repetitions_per_tilt",
+                repetitions if len(tilt_levels_deg) == 1 else 0,
+            )
+        )
         calibrated_axis = _normalized_planar_calibration_axis(
             braking["protocol"].get("directions_xy"),
             "saved planar braking calibration",
@@ -97,7 +110,10 @@ def planar_braking_fit_is_current(braking) -> bool:
         <= MAX_PLANAR_ACCELERATION_EXTRAPOLATION_RATIO
         and np.isclose(
             acceleration_limit,
-            fitted_step_acceleration * extrapolation_ratio,
+            min(
+                DEFAULT_COAST_MAX_ACCELERATION_M_S2,
+                fitted_step_acceleration * extrapolation_ratio,
+            ),
             rtol=0.02,
             atol=1e-3,
         )
@@ -112,6 +128,20 @@ def planar_braking_fit_is_current(braking) -> bool:
         and 1.0 <= maximum_gain_ratio <= MAX_PLANAR_DIRECTION_GAIN_RATIO
         and 0.0 < calibration_tilt_deg
         < MAX_PLANAR_CALIBRATION_TILT_DEG
+        and tilt_levels_deg.ndim == 1
+        and len(tilt_levels_deg) > 0
+        and np.all(np.isfinite(tilt_levels_deg))
+        and np.all(tilt_levels_deg > 0.0)
+        and np.all(tilt_levels_deg < MAX_PLANAR_CALIBRATION_TILT_DEG)
+        and np.all(np.diff(tilt_levels_deg) > 0.0)
+        and np.isclose(
+            calibration_tilt_deg,
+            float(np.max(tilt_levels_deg)),
+            rtol=0.0,
+            atol=1e-6,
+        )
+        and repetitions_per_tilt > 0
+        and repetitions == len(tilt_levels_deg) * repetitions_per_tilt
         and _planar_direction_quality_is_current(
             braking, calibrated_axis
         )
@@ -170,6 +200,18 @@ def _planar_direction_quality_is_current(braking, calibrated_axis):
         maneuver_count = int(braking["maneuver_count"])
         repetitions = int(braking["protocol"]["repetitions"])
         protocol_direction_count = len(braking["protocol"]["directions_xy"])
+        protocol_tilt_levels = np.asarray(
+            braking["protocol"].get(
+                "tilt_levels_deg", [braking["protocol"]["tilt_deg"]]
+            ),
+            dtype=float,
+        )
+        repetitions_per_tilt = int(
+            braking["protocol"].get(
+                "repetitions_per_tilt",
+                repetitions if len(protocol_tilt_levels) == 1 else 0,
+            )
+        )
     except (KeyError, TypeError, ValueError):
         return False
     threshold_values = np.asarray([
@@ -205,6 +247,7 @@ def _planar_direction_quality_is_current(braking, calibrated_axis):
 
     signed_gains = []
     all_trial_ids = []
+    observed_level_gains = {}
     for label, expected_sign in (("positive", 1.0), ("negative", -1.0)):
         try:
             evidence = directions[label]
@@ -236,6 +279,9 @@ def _planar_direction_quality_is_current(braking, calibrated_axis):
             validation_r_squared,
             repeat_deviation,
         ]
+        calculated_repeat_deviation = float(np.max(np.abs(
+            trial_gains / max(abs(direction_gain), 1e-12) - 1.0
+        ))) if len(trial_gains) else float("inf")
         if (
             direction.shape != (2,)
             or not np.all(np.isfinite(numeric))
@@ -259,13 +305,128 @@ def _planar_direction_quality_is_current(braking, calibrated_axis):
             or train_r_squared < minimum_train_r_squared
             or train_nrmse > maximum_nrmse
             or validation_r_squared < minimum_validation_r_squared
-            or repeat_deviation > maximum_repeat_deviation
+            or not np.isclose(
+                repeat_deviation,
+                calculated_repeat_deviation,
+                rtol=0.02,
+                atol=1e-3,
+            )
+            or calculated_repeat_deviation > maximum_repeat_deviation
         ):
             return False
         signed_gains.append(direction_gain)
         all_trial_ids.extend(trial_ids)
+        if len(protocol_tilt_levels) > 1:
+            try:
+                trial_tilt_levels = np.asarray(
+                    evidence["trial_tilt_levels_deg"], dtype=float
+                )
+            except (KeyError, TypeError, ValueError):
+                return False
+            expected_tilt_levels = np.tile(
+                protocol_tilt_levels, repetitions_per_tilt
+            )
+            if (
+                trial_tilt_levels.shape != (trial_count,)
+                or not np.all(np.isfinite(trial_tilt_levels))
+                or expected_tilt_levels.shape != (trial_count,)
+                or not np.allclose(
+                    np.sort(trial_tilt_levels),
+                    np.sort(expected_tilt_levels),
+                    rtol=0.0,
+                    atol=0.05,
+                )
+            ):
+                return False
+            observed_level_gains[label] = (
+                trial_tilt_levels.copy(), trial_gains.copy()
+            )
     if len(set(all_trial_ids)) != maneuver_count:
         return False
+    if len(protocol_tilt_levels) > 1:
+        try:
+            reported_pairs = quality["per_tilt_gain_ratios"]
+            reported_maximum_pair_ratio = float(
+                quality["maximum_per_tilt_gain_ratio"]
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+        if (
+            not isinstance(reported_pairs, list)
+            or len(reported_pairs) != len(protocol_tilt_levels)
+            or not np.isfinite(reported_maximum_pair_ratio)
+        ):
+            return False
+        calculated_pair_ratios = []
+        for expected_tilt, reported in zip(
+                protocol_tilt_levels, reported_pairs):
+            try:
+                reported_tilt = float(reported["tilt_deg"])
+                reported_positive_gain = float(reported["positive_gain"])
+                reported_negative_gain = float(reported["negative_gain"])
+                reported_pair_ratio = float(reported["gain_ratio"])
+            except (KeyError, TypeError, ValueError):
+                return False
+            positive_tilts, positive_gains = observed_level_gains["positive"]
+            negative_tilts, negative_gains = observed_level_gains["negative"]
+            positive_mask = np.isclose(
+                positive_tilts, expected_tilt, rtol=0.0, atol=0.05
+            )
+            negative_mask = np.isclose(
+                negative_tilts, expected_tilt, rtol=0.0, atol=0.05
+            )
+            if not np.any(positive_mask) or not np.any(negative_mask):
+                return False
+            calculated_positive_gain = float(np.median(
+                positive_gains[positive_mask]
+            ))
+            calculated_negative_gain = float(np.median(
+                negative_gains[negative_mask]
+            ))
+            calculated_pair_ratio = max(
+                calculated_positive_gain, calculated_negative_gain
+            ) / min(calculated_positive_gain, calculated_negative_gain)
+            values = np.asarray([
+                reported_tilt,
+                reported_positive_gain,
+                reported_negative_gain,
+                reported_pair_ratio,
+                calculated_pair_ratio,
+            ])
+            if (
+                not np.all(np.isfinite(values))
+                or not np.isclose(
+                    reported_tilt, expected_tilt, rtol=0.0, atol=0.05
+                )
+                or not np.isclose(
+                    reported_positive_gain,
+                    calculated_positive_gain,
+                    rtol=0.02,
+                    atol=1e-3,
+                )
+                or not np.isclose(
+                    reported_negative_gain,
+                    calculated_negative_gain,
+                    rtol=0.02,
+                    atol=1e-3,
+                )
+                or not np.isclose(
+                    reported_pair_ratio,
+                    calculated_pair_ratio,
+                    rtol=0.02,
+                    atol=1e-3,
+                )
+                or calculated_pair_ratio > maximum_gain_ratio
+            ):
+                return False
+            calculated_pair_ratios.append(calculated_pair_ratio)
+        if not np.isclose(
+            reported_maximum_pair_ratio,
+            max(calculated_pair_ratios),
+            rtol=0.02,
+            atol=1e-3,
+        ):
+            return False
     calculated_gain_ratio = max(signed_gains) / min(signed_gains)
     return bool(
         np.isclose(
@@ -281,6 +442,198 @@ def _planar_direction_quality_is_current(braking, calibrated_axis):
             atol=0.02,
         )
     )
+
+
+def _planar_fit_meets_configured_quality(braking, configured) -> bool:
+    """Re-evaluate saved measurements against the current mission gates."""
+    configured = dict(configured or {})
+    if not configured:
+        return True
+    try:
+        quality = braking["direction_quality"]
+        directions = quality["directions"]
+
+        def optional_float(key):
+            if key not in configured:
+                return None
+            value = float(configured[key])
+            if not np.isfinite(value):
+                raise ValueError(key)
+            return value
+
+        def optional_int(key):
+            if key not in configured:
+                return None
+            numeric = float(configured[key])
+            value = int(numeric)
+            if not np.isfinite(numeric) or numeric != value or value <= 0:
+                raise ValueError(key)
+            return value
+
+        max_delay = optional_float("max_fit_delay_s")
+        max_tau = optional_float("max_fit_time_constant_s")
+        minimum_fit_r_squared = optional_float("minimum_fit_r_squared")
+        minimum_validation_r_squared = optional_float(
+            "minimum_validation_r_squared"
+        )
+        minimum_scale = optional_float("minimum_acceleration_scale")
+        maximum_scale = optional_float("maximum_acceleration_scale")
+        minimum_trials = optional_int("minimum_trials_per_direction")
+        minimum_windows = optional_int("minimum_windows_per_trial")
+        minimum_direction_r_squared = optional_float(
+            "minimum_direction_r_squared"
+        )
+        minimum_direction_validation_r_squared = optional_float(
+            "minimum_direction_validation_r_squared"
+        )
+        maximum_direction_nrmse = optional_float(
+            "maximum_direction_nrmse"
+        )
+        maximum_direction_gain_ratio = optional_float(
+            "maximum_direction_gain_ratio"
+        )
+        maximum_trial_gain_deviation = optional_float(
+            "maximum_repeat_gain_deviation"
+        )
+        extrapolation_ratio = optional_float(
+            "maximum_acceleration_extrapolation_ratio"
+        )
+        delay = float(braking["command_delay_s"])
+        tau = float(braking["command_time_constant_s"])
+        scale = float(braking["horizontal_acceleration_scale"])
+        fit_r_squared = (
+            None
+            if minimum_fit_r_squared is None
+            else float(braking["r_squared"])
+        )
+        validation_r_squared = (
+            None
+            if minimum_validation_r_squared is None
+            else float(braking["acceleration_validation_r_squared"])
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+    measured_values = [delay, tau, scale]
+    if fit_r_squared is not None:
+        measured_values.append(fit_r_squared)
+    if validation_r_squared is not None:
+        measured_values.append(validation_r_squared)
+    if not np.all(np.isfinite(measured_values)):
+        return False
+
+    if (
+        (max_delay is not None and (max_delay < 0.0 or delay > max_delay))
+        or (max_tau is not None and (max_tau < 0.0 or tau > max_tau))
+        or (
+            minimum_fit_r_squared is not None
+            and fit_r_squared < minimum_fit_r_squared
+        )
+        or (
+            minimum_validation_r_squared is not None
+            and validation_r_squared < minimum_validation_r_squared
+        )
+        or (minimum_scale is not None and scale < minimum_scale)
+        or (maximum_scale is not None and scale > maximum_scale)
+        or (
+            minimum_scale is not None and maximum_scale is not None
+            and maximum_scale <= minimum_scale
+        )
+        or (
+            maximum_direction_gain_ratio is not None
+            and (
+                maximum_direction_gain_ratio < 1.0
+                or float(quality["gain_ratio"])
+                > maximum_direction_gain_ratio
+                or float(quality.get(
+                    "maximum_per_tilt_gain_ratio", quality["gain_ratio"]
+                )) > maximum_direction_gain_ratio
+            )
+        )
+        or (
+            extrapolation_ratio is not None
+            and not 1.0 <= extrapolation_ratio
+            <= MAX_PLANAR_ACCELERATION_EXTRAPOLATION_RATIO
+        )
+    ):
+        return False
+
+    for label in ("positive", "negative"):
+        try:
+            evidence = directions[label]
+            trial_count = int(evidence["trial_count"])
+            trial_gains = np.asarray(evidence["trial_gains"], dtype=float)
+            direction_gain = float(evidence["gain"])
+            train_windows = int(evidence["train_window_count"])
+            validation_windows = int(evidence["validation_window_count"])
+            train_r_squared = float(evidence["train_r_squared"])
+            validation_direction_r_squared = float(
+                evidence["validation_r_squared"]
+            )
+            train_nrmse = float(evidence["train_nrmse"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        evidence_values = np.r_[
+            trial_gains,
+            direction_gain,
+            train_r_squared,
+            validation_direction_r_squared,
+            train_nrmse,
+        ]
+        if not np.all(np.isfinite(evidence_values)):
+            return False
+        trial_deviation = float(np.max(np.abs(
+            trial_gains / max(abs(direction_gain), 1e-12) - 1.0
+        ))) if len(trial_gains) else float("inf")
+        if (
+            (minimum_trials is not None and trial_count < minimum_trials)
+            or (
+                minimum_windows is not None
+                and (
+                    train_windows < minimum_windows * trial_count
+                    or validation_windows < minimum_windows * trial_count
+                )
+            )
+            or (
+                minimum_direction_r_squared is not None
+                and train_r_squared < minimum_direction_r_squared
+            )
+            or (
+                minimum_direction_validation_r_squared is not None
+                and validation_direction_r_squared
+                < minimum_direction_validation_r_squared
+            )
+            or (
+                maximum_direction_nrmse is not None
+                and (
+                    maximum_direction_nrmse <= 0.0
+                    or train_nrmse > maximum_direction_nrmse
+                )
+            )
+            or (
+                minimum_scale is not None
+                and (
+                    direction_gain < minimum_scale
+                    or np.any(trial_gains < minimum_scale)
+                )
+            )
+            or (
+                maximum_scale is not None
+                and (
+                    direction_gain > maximum_scale
+                    or np.any(trial_gains > maximum_scale)
+                )
+            )
+            or (
+                maximum_trial_gain_deviation is not None
+                and (
+                    maximum_trial_gain_deviation < 0.0
+                    or trial_deviation > maximum_trial_gain_deviation
+                )
+            )
+        ):
+            return False
+    return True
 
 
 def _low_pass(values: np.ndarray, times: np.ndarray, tau_s: float) -> np.ndarray:
@@ -711,11 +1064,13 @@ def identify_planar_braking_response(
             "train_x": [], "train_y": [], "train_duration": [],
             "validation_x": [], "validation_y": [],
             "validation_duration": [], "trial_gains": [], "trial_ids": [],
+            "trial_tilt_levels_deg": [],
         },
         "negative": {
             "train_x": [], "train_y": [], "train_duration": [],
             "validation_x": [], "validation_y": [],
             "validation_duration": [], "trial_gains": [], "trial_ids": [],
+            "trial_tilt_levels_deg": [],
         },
     }
     for segment_index, (
@@ -761,6 +1116,10 @@ def identify_planar_braking_response(
         train_windows["train_duration"].extend(train_durations)
         train_windows["trial_gains"].append(trial_gain)
         train_windows["trial_ids"].append(int(segment_id))
+        step_command_acceleration = float(np.max(np.abs(command_grid)))
+        train_windows["trial_tilt_levels_deg"].append(float(np.degrees(
+            np.arctan2(step_command_acceleration, 9.81)
+        )))
 
         validation_x, segment_validation_y, validation_durations = (
             regression_windows(
@@ -883,6 +1242,10 @@ def identify_planar_braking_response(
             "trial_ids": windows["trial_ids"],
             "trial_count": len(windows["trial_ids"]),
             "trial_gains": [round(float(value), 6) for value in trial_gains],
+            "trial_tilt_levels_deg": [
+                round(float(value), 6)
+                for value in windows["trial_tilt_levels_deg"]
+            ],
             "gain": round(direction_gain, 6),
             "train_window_count": int(len(train_x)),
             "train_r_squared": round(train_r_squared, 6),
@@ -947,6 +1310,67 @@ def identify_planar_braking_response(
         quality_failures.append(
             f"opposed-direction gain ratio {direction_gain_ratio:.3f} is too high"
         )
+    # A pooled +Y/-Y ratio can hide crossed amplitude asymmetry (for example,
+    # weak +Y only at 8 deg and weak -Y only at 20 deg).  Pair the fitted trial
+    # gains by commanded tilt and require symmetry at every tested level.
+    paired_tilt_gains = []
+    positive_evidence = direction_quality["directions"]["positive"]
+    negative_evidence = direction_quality["directions"]["negative"]
+    positive_tilts = np.asarray(
+        positive_evidence["trial_tilt_levels_deg"], dtype=float
+    )
+    negative_tilts = np.asarray(
+        negative_evidence["trial_tilt_levels_deg"], dtype=float
+    )
+    positive_trial_gains = np.asarray(
+        positive_evidence["trial_gains"], dtype=float
+    )
+    negative_trial_gains = np.asarray(
+        negative_evidence["trial_gains"], dtype=float
+    )
+    all_tilt_levels = np.unique(np.round(np.r_[
+        positive_tilts, negative_tilts,
+    ], decimals=4))
+    for tilt_deg in all_tilt_levels:
+        positive_mask = np.isclose(
+            positive_tilts, tilt_deg, rtol=0.0, atol=0.05
+        )
+        negative_mask = np.isclose(
+            negative_tilts, tilt_deg, rtol=0.0, atol=0.05
+        )
+        if not np.any(positive_mask) or not np.any(negative_mask):
+            quality_failures.append(
+                f"tilt {tilt_deg:.2f} deg is missing one command direction"
+            )
+            continue
+        positive_gain = float(np.median(
+            positive_trial_gains[positive_mask]
+        ))
+        negative_gain = float(np.median(
+            negative_trial_gains[negative_mask]
+        ))
+        paired_ratio = max(positive_gain, negative_gain) / max(
+            min(positive_gain, negative_gain), 1e-12
+        )
+        paired_tilt_gains.append({
+            "tilt_deg": round(float(tilt_deg), 6),
+            "positive_gain": round(positive_gain, 6),
+            "negative_gain": round(negative_gain, 6),
+            "gain_ratio": round(paired_ratio, 6),
+        })
+        if paired_ratio > maximum_direction_gain_ratio:
+            quality_failures.append(
+                f"opposed-direction gain ratio at {tilt_deg:.2f} deg "
+                f"is {paired_ratio:.3f}"
+            )
+    direction_quality["per_tilt_gain_ratios"] = paired_tilt_gains
+    direction_quality["maximum_per_tilt_gain_ratio"] = round(
+        max(
+            (entry["gain_ratio"] for entry in paired_tilt_gains),
+            default=float("inf"),
+        ),
+        6,
+    )
     if r_squared < float(minimum_r_squared):
         quality_failures.append(f"pooled fit R^2 {r_squared:.3f} is too low")
     if (
@@ -955,12 +1379,20 @@ def identify_planar_braking_response(
     ):
         quality_failures.append("pooled validation R^2 is too low")
     usable = not quality_failures
+    # The runtime envelope is anchored to the largest step actually exercised,
+    # not the median step.  This is equivalent for the former single-amplitude
+    # protocol and lets a quality-gated multi-amplitude sweep validate stronger
+    # braking without extrapolating from its middle level.
     fitted_deceleration = (
-        float(np.median(commanded_decelerations))
+        float(np.max(commanded_decelerations))
         if commanded_decelerations else 0.0
     )
     validated_max_acceleration = (
-        fitted_deceleration * float(maximum_acceleration_extrapolation_ratio)
+        min(
+            DEFAULT_COAST_MAX_ACCELERATION_M_S2,
+            fitted_deceleration
+            * float(maximum_acceleration_extrapolation_ratio),
+        )
     )
     result = {
         "fit_schema_version": PLANAR_BRAKING_FIT_SCHEMA_VERSION,
@@ -1034,8 +1466,17 @@ def apply_drone_calibration(
         impulse[key] = deepcopy(fitted[key])
     braking = calibration.get("planar_braking_fit")
     if planar_braking_fit_is_current(braking):
+        configured_planar_calibration = resolved.get(
+            "planar_braking_calibration", {}
+        )
+        if not _planar_fit_meets_configured_quality(
+                braking, configured_planar_calibration):
+            raise ValueError(
+                "saved planar braking fit does not satisfy current mission "
+                "quality gates; rerun --calibrate"
+            )
         configured_directions = np.asarray(
-            resolved.get("planar_braking_calibration", {}).get(
+            configured_planar_calibration.get(
                 "directions_xy", [[0.0, 1.0], [0.0, -1.0]]
             ),
             dtype=float,
@@ -1056,6 +1497,44 @@ def apply_drone_calibration(
                 "saved planar braking direction does not match this mission; "
                 "rerun --calibrate"
             )
+        if "tilt_levels_deg" in configured_planar_calibration:
+            configured_tilt_levels = np.asarray(
+                configured_planar_calibration["tilt_levels_deg"],
+                dtype=float,
+            )
+            saved_tilt_levels = np.asarray(
+                braking["protocol"].get(
+                    "tilt_levels_deg", [braking["protocol"]["tilt_deg"]]
+                ),
+                dtype=float,
+            )
+            configured_repetitions_per_tilt = int(
+                configured_planar_calibration.get(
+                    "repetitions_per_tilt", 1
+                )
+            )
+            saved_repetitions_per_tilt = int(
+                braking["protocol"].get(
+                    "repetitions_per_tilt",
+                    braking["protocol"]["repetitions"]
+                    if len(saved_tilt_levels) == 1 else 0,
+                )
+            )
+            if (
+                configured_tilt_levels.shape != saved_tilt_levels.shape
+                or not np.allclose(
+                    configured_tilt_levels,
+                    saved_tilt_levels,
+                    rtol=0.0,
+                    atol=0.05,
+                )
+                or configured_repetitions_per_tilt
+                != saved_repetitions_per_tilt
+            ):
+                raise ValueError(
+                    "saved planar braking tilt sweep does not match this "
+                    "mission; rerun --calibrate"
+                )
         runtime_axis = (
             None
             if runtime_interaction_axis is None
@@ -1121,9 +1600,24 @@ def apply_drone_calibration(
                 "coast_max_acceleration_m_s2",
                 DEFAULT_COAST_MAX_ACCELERATION_M_S2,
             ))
+            configured_extrapolation_ratio = float(
+                configured_planar_calibration.get(
+                    "maximum_acceleration_extrapolation_ratio",
+                    braking["maximum_acceleration_extrapolation_ratio"],
+                )
+            )
+            configured_fit_limit = round(
+                min(
+                    DEFAULT_COAST_MAX_ACCELERATION_M_S2,
+                    float(braking["fitted_step_acceleration_m_s2"])
+                    * configured_extrapolation_ratio,
+                ),
+                6,
+            )
             handoff["coast_max_acceleration_m_s2"] = min(
                 configured_max_acceleration,
                 float(validated_max_acceleration),
+                configured_fit_limit,
             )
     return resolved, calibration
 

@@ -23,6 +23,7 @@ class BrakingCalibrationCommand:
     segment_id: int | None
     direction_xy: np.ndarray
     command_acceleration_xy: np.ndarray
+    tilt_deg: float
     roll_deg: float
     pitch_deg: float
 
@@ -52,8 +53,48 @@ class PlanarBrakingCalibration:
             config.get("level_after_brake_s", 0.60)
         )
         self.recovery_s = float(config.get("recovery_s", 1.50))
-        self.tilt_deg = abs(float(config.get("tilt_deg", 8.0)))
-        self.repetitions = int(config.get("repetitions", 3))
+        configured_tilt_levels = config.get("tilt_levels_deg")
+        if configured_tilt_levels is None:
+            tilt_levels = np.asarray([
+                abs(float(config.get("tilt_deg", 8.0)))
+            ], dtype=float)
+            self.repetitions_per_tilt = int(config.get("repetitions", 3))
+        else:
+            tilt_levels = np.asarray(configured_tilt_levels, dtype=float)
+            # A recursively merged config may still contain the legacy scalar
+            # ``tilt_deg``/``repetitions`` defaults.  Explicit multi-level
+            # fields take precedence and avoid accidentally multiplying the
+            # six intended trials into eighteen.
+            self.repetitions_per_tilt = int(
+                config.get("repetitions_per_tilt", 1)
+            )
+        if tilt_levels.ndim != 1 or len(tilt_levels) == 0:
+            raise ValueError(
+                "braking calibration tilt_levels_deg must be a non-empty list"
+            )
+        if (
+            not np.all(np.isfinite(tilt_levels))
+            or np.any(tilt_levels <= 0.0)
+            or np.any(tilt_levels >= 30.0)
+        ):
+            raise ValueError(
+                "braking calibration tilt levels must be between 0 and 30 deg"
+            )
+        if len(np.unique(np.round(tilt_levels, decimals=9))) != len(tilt_levels):
+            raise ValueError("braking calibration tilt levels must be unique")
+        if np.any(np.diff(tilt_levels) <= 0.0):
+            raise ValueError(
+                "braking calibration tilt levels must be strictly increasing"
+            )
+        self.tilt_levels_deg = tilt_levels.copy()
+        self.tilt_deg = float(np.max(self.tilt_levels_deg))
+        # ``repetitions`` remains the number of trials per direction.  Keeping
+        # this aggregate makes the persisted protocol compatible with the
+        # existing signed-quality contract while each individual level is also
+        # recorded explicitly.
+        self.repetitions = int(
+            len(self.tilt_levels_deg) * self.repetitions_per_tilt
+        )
         self.max_xy_speed_m_s = float(
             config.get("max_xy_speed_m_s", 0.70)
         )
@@ -89,8 +130,7 @@ class PlanarBrakingCalibration:
             raise ValueError("braking calibration timing and limits must be finite")
         if (
             self.repetitions <= 0
-            or self.tilt_deg <= 0.0
-            or self.tilt_deg >= 30.0
+            or self.repetitions_per_tilt <= 0
             or self.level_before_acceleration_s <= 0.0
             or self.accelerate_s <= 0.0
             or self.level_before_brake_s <= 0.0
@@ -120,7 +160,15 @@ class PlanarBrakingCalibration:
             raise ValueError(
                 "braking calibration requires one pair of opposed directions"
             )
-        self.trial_directions = np.tile(self.directions, (self.repetitions, 1))
+        repeated_levels = np.tile(
+            self.tilt_levels_deg, self.repetitions_per_tilt
+        )
+        self.trial_directions = np.tile(
+            self.directions, (len(repeated_levels), 1)
+        )
+        self.trial_tilt_levels_deg = np.repeat(
+            repeated_levels, len(self.directions)
+        )
         self.attitude_trial_s = (
             self.level_before_acceleration_s
             + self.accelerate_s
@@ -174,6 +222,7 @@ class PlanarBrakingCalibration:
                 segment_id=None,
                 direction_xy=zero,
                 command_acceleration_xy=zero,
+                tilt_deg=0.0,
                 roll_deg=0.0,
                 pitch_deg=0.0,
             )
@@ -185,6 +234,7 @@ class PlanarBrakingCalibration:
                 segment_id=None,
                 direction_xy=zero,
                 command_acceleration_xy=zero,
+                tilt_deg=0.0,
                 roll_deg=0.0,
                 pitch_deg=0.0,
             )
@@ -196,7 +246,8 @@ class PlanarBrakingCalibration:
         )
         local_s = maneuver_elapsed - segment_id * self.trial_s
         direction = self.trial_directions[segment_id].copy()
-        acceleration_m_s2 = 9.81 * np.tan(np.radians(self.tilt_deg))
+        tilt_deg = float(self.trial_tilt_levels_deg[segment_id])
+        acceleration_m_s2 = 9.81 * np.tan(np.radians(tilt_deg))
 
         if local_s < self.level_before_acceleration_s:
             phase = "level_before_acceleration"
@@ -237,6 +288,7 @@ class PlanarBrakingCalibration:
             segment_id=segment_id,
             direction_xy=direction,
             command_acceleration_xy=command_acceleration.copy(),
+            tilt_deg=tilt_deg,
             roll_deg=float(roll_deg),
             pitch_deg=float(pitch_deg),
         )

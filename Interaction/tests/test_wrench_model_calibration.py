@@ -76,18 +76,21 @@ class WrenchModelCalibrationTests(unittest.TestCase):
         }
 
     @staticmethod
-    def _synthetic_planar_samples(segment_gains=None):
+    def _synthetic_planar_samples(
+            segment_gains=None, segment_command_amplitudes=None):
         dt = 0.02
         delay_s = 0.06
         tau_s = 0.08
         bias = 0.02
-        command_amplitude = 1.8
         samples = []
-        directions = (
-            np.array([0.0, 1.0]),
-            np.array([0.0, -1.0]),
-            np.array([0.0, 1.0]),
-            np.array([0.0, -1.0]),
+        command_amplitudes = (
+            [1.8] * 4
+            if segment_command_amplitudes is None
+            else list(segment_command_amplitudes)
+        )
+        directions = tuple(
+            np.array([0.0, 1.0 if index % 2 == 0 else -1.0])
+            for index in range(len(command_amplitudes))
         )
         gains = (
             [1.35] * len(directions)
@@ -95,9 +98,13 @@ class WrenchModelCalibrationTests(unittest.TestCase):
         )
         if len(gains) != len(directions):
             raise ValueError("segment_gains must match the synthetic trials")
+        if len(command_amplitudes) != len(directions):
+            raise ValueError(
+                "segment_command_amplitudes must match the synthetic trials"
+            )
 
-        for segment_id, (direction, gain) in enumerate(zip(
-                directions, gains)):
+        for segment_id, (direction, gain, command_amplitude) in enumerate(zip(
+                directions, gains, command_amplitudes)):
             base = segment_id * 2.0
             local_times = np.arange(0.007, 1.507, dt)
             times = base + local_times
@@ -250,6 +257,119 @@ class WrenchModelCalibrationTests(unittest.TestCase):
         }
         self.assertTrue(planar_braking_fit_is_current(fit))
 
+    def test_multi_level_fit_uses_largest_exercised_step_and_signed_pairs(self):
+        amplitudes = [1.38, 1.38, 2.45, 2.45, 3.57, 3.57]
+        fit = identify_planar_braking_response(
+            self._synthetic_planar_samples(
+                segment_command_amplitudes=amplitudes
+            ),
+            expected_maneuver_count=6,
+            minimum_trials_per_direction=3,
+        )
+        tilt_levels = [
+            float(np.degrees(np.arctan2(value, 9.81)))
+            for value in amplitudes[::2]
+        ]
+        fit['protocol'] = {
+            'calibrated_axes': ['y'],
+            'directions_xy': [[0.0, 1.0], [0.0, -1.0]],
+            'repetitions': 3,
+            'repetitions_per_tilt': 1,
+            'tilt_deg': tilt_levels[-1],
+            'tilt_levels_deg': tilt_levels,
+        }
+
+        self.assertAlmostEqual(
+            fit['fitted_step_acceleration_m_s2'],
+            1.35 * amplitudes[-1],
+            delta=0.03,
+        )
+        self.assertEqual(fit['validated_max_acceleration_m_s2'], 5.0)
+        self.assertEqual(
+            len(fit['direction_quality']['per_tilt_gain_ratios']), 3
+        )
+        self.assertTrue(planar_braking_fit_is_current(fit))
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'wrench_calibration.json'
+            save_drone_calibration(
+                'lb11',
+                {
+                    'model_delay_s': [0.01, 0.02, 0.03],
+                    'model_time_constant_s': [0.04, 0.05, 0.06],
+                    'model_acceleration_scale': [1.0, 1.0, 1.0],
+                    'axes': {},
+                    'sample_count': 100,
+                    'duration_s': 10.0,
+                },
+                {'hover_pwm': 31900},
+                path,
+                planar_braking_fit=fit,
+            )
+            resolved, _ = apply_drone_calibration(
+                {
+                    'impulse_estimator': {'window_s': 0.08},
+                    'planar_braking_calibration': {
+                        'directions_xy': [[0.0, 1.0], [0.0, -1.0]],
+                        'tilt_levels_deg': tilt_levels,
+                        'repetitions_per_tilt': 1,
+                        'max_fit_delay_s': 0.25,
+                        'max_fit_time_constant_s': 0.25,
+                        'minimum_fit_r_squared': 0.70,
+                        'minimum_validation_r_squared': 0.50,
+                        'minimum_acceleration_scale': 0.20,
+                        'maximum_acceleration_scale': 2.50,
+                        'minimum_trials_per_direction': 3,
+                        'minimum_windows_per_trial': 12,
+                        'minimum_direction_r_squared': 0.70,
+                        'minimum_direction_validation_r_squared': 0.50,
+                        'maximum_direction_nrmse': 0.20,
+                        'maximum_direction_gain_ratio': 1.25,
+                        'maximum_repeat_gain_deviation': 0.20,
+                        'maximum_acceleration_extrapolation_ratio': 1.25,
+                    },
+                    'control_handoff': {
+                        'coast_max_acceleration_m_s2': 5.0,
+                    },
+                },
+                'lb11',
+                path,
+            )
+            self.assertEqual(
+                resolved['control_handoff']['coast_max_acceleration_m_s2'],
+                5.0,
+            )
+
+        corrupted = json.loads(json.dumps(fit))
+        corrupted['direction_quality']['per_tilt_gain_ratios'][-1][
+            'gain_ratio'
+        ] = 1.24
+        self.assertFalse(planar_braking_fit_is_current(corrupted))
+
+        missing_level = json.loads(json.dumps(fit))
+        missing_level['direction_quality']['directions']['negative'][
+            'trial_tilt_levels_deg'
+        ][-1] = missing_level['protocol']['tilt_levels_deg'][0]
+        self.assertFalse(planar_braking_fit_is_current(missing_level))
+
+    def test_multi_level_fit_rejects_crossed_direction_asymmetry(self):
+        amplitudes = [1.38, 1.38, 2.45, 2.45, 3.57, 3.57]
+        with self.assertRaisesRegex(ValueError, "opposed-direction gain ratio at"):
+            identify_planar_braking_response(
+                self._synthetic_planar_samples(
+                    segment_gains=[0.8, 1.2, 1.0, 1.0, 1.2, 0.8],
+                    segment_command_amplitudes=amplitudes,
+                ),
+                expected_maneuver_count=6,
+                minimum_r_squared=-10.0,
+                minimum_validation_r_squared=-10.0,
+                minimum_trials_per_direction=3,
+                minimum_direction_r_squared=-10.0,
+                minimum_direction_validation_r_squared=-10.0,
+                maximum_direction_nrmse=10.0,
+                maximum_repeat_gain_deviation=0.30,
+            )
+
     def test_rejects_incomplete_planar_protocol(self):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             identify_planar_braking_response(
@@ -356,6 +476,61 @@ class WrenchModelCalibrationTests(unittest.TestCase):
                 [0.0, 1.0],
             )
 
+            with self.assertRaisesRegex(ValueError, 'quality gates.*rerun'):
+                apply_drone_calibration(
+                    {
+                        'impulse_estimator': {'window_s': 0.08},
+                        'planar_braking_calibration': {
+                            'directions_xy': [
+                                [0.0, 1.0], [0.0, -1.0]
+                            ],
+                            'minimum_direction_r_squared': 0.99,
+                        },
+                        'control_handoff': {},
+                    },
+                    'lb11',
+                    path,
+                )
+
+            tighter, _ = apply_drone_calibration(
+                {
+                    'impulse_estimator': {'window_s': 0.08},
+                    'planar_braking_calibration': {
+                        'directions_xy': [
+                            [0.0, 1.0], [0.0, -1.0]
+                        ],
+                        'maximum_acceleration_extrapolation_ratio': 1.10,
+                    },
+                    'control_handoff': {
+                        'coast_max_acceleration_m_s2': 5.0,
+                    },
+                },
+                'lb11',
+                path,
+            )
+            self.assertAlmostEqual(
+                tighter['control_handoff']['coast_max_acceleration_m_s2'],
+                braking['fitted_step_acceleration_m_s2'] * 1.10,
+                places=6,
+            )
+
+            with self.assertRaisesRegex(ValueError, 'tilt sweep.*rerun'):
+                apply_drone_calibration(
+                    {
+                        'impulse_estimator': {'window_s': 0.08},
+                        'planar_braking_calibration': {
+                            'directions_xy': [
+                                [0.0, 1.0], [0.0, -1.0]
+                            ],
+                            'tilt_levels_deg': [8.0, 14.0, 20.0],
+                            'repetitions_per_tilt': 1,
+                        },
+                        'control_handoff': {},
+                    },
+                    'lb11',
+                    path,
+                )
+
             with self.assertRaisesRegex(ValueError, 'rerun --calibrate'):
                 apply_drone_calibration(
                     {
@@ -434,6 +609,35 @@ class WrenchModelCalibrationTests(unittest.TestCase):
                     'diagonal',
                     path,
                     runtime_interaction_axis='y',
+                )
+
+            nonfinite_pooled_quality = json.loads(json.dumps(braking))
+            nonfinite_pooled_quality['r_squared'] = float('nan')
+            nonfinite_pooled_quality[
+                'acceleration_validation_r_squared'
+            ] = float('nan')
+            save_drone_calibration(
+                'nonfinite',
+                fit,
+                {'hover_pwm': 31900},
+                path,
+                planar_braking_fit=nonfinite_pooled_quality,
+            )
+            with self.assertRaisesRegex(ValueError, 'quality gates.*rerun'):
+                apply_drone_calibration(
+                    {
+                        'impulse_estimator': {'window_s': 0.08},
+                        'planar_braking_calibration': {
+                            'directions_xy': [
+                                [0.0, 1.0], [0.0, -1.0]
+                            ],
+                            'minimum_fit_r_squared': 0.70,
+                            'minimum_validation_r_squared': 0.50,
+                        },
+                        'control_handoff': {},
+                    },
+                    'nonfinite',
+                    path,
                 )
 
     def test_legacy_planar_fit_is_not_applied_without_current_quality_metadata(self):
@@ -522,6 +726,14 @@ class WrenchModelCalibrationTests(unittest.TestCase):
         self.assertFalse(
             planar_braking_fit_is_current(failed_direction_quality)
         )
+
+        forged_repeatability = json.loads(json.dumps(fit))
+        positive = forged_repeatability['direction_quality']['directions'][
+            'positive'
+        ]
+        positive['trial_gains'] = [0.9, 1.575]
+        positive['maximum_repeat_gain_deviation'] = 0.0
+        self.assertFalse(planar_braking_fit_is_current(forged_repeatability))
 
         nan_fit = json.loads(json.dumps(fit))
         nan_fit['command_delay_s'] = float('nan')

@@ -28,6 +28,7 @@ from Interaction.interactions import (
     release_tail_neutralization_attitude,
     release_coast_initial_velocity,
     resolve_release_mode,
+    resolve_wrench_nominal_target,
     select_inertia_render_mode,
     virtual_resistance_force,
     velocity_inertia_mass_class,
@@ -73,6 +74,32 @@ class InitialContactArmingGateTests(unittest.TestCase):
 
 
 class ReleaseModeTests(unittest.TestCase):
+    def test_calibration_target_override_does_not_move_interaction_target(self):
+        mission_target = [0.0, -1.0, 1.0, 0.0]
+        config = {'calibration_nominal_position': [0.0, 0.0, 1.0]}
+
+        self.assertEqual(
+            resolve_wrench_nominal_target(
+                mission_target, config, calibration_mode=True
+            )[:3],
+            [0.0, 0.0, 1.0],
+        )
+        self.assertEqual(
+            resolve_wrench_nominal_target(
+                mission_target, config, calibration_mode=False
+            )[:3],
+            [0.0, -1.0, 1.0],
+        )
+        self.assertEqual(mission_target, [0.0, -1.0, 1.0, 0.0])
+
+    def test_calibration_target_override_requires_finite_xyz(self):
+        with self.assertRaisesRegex(ValueError, 'finite XYZ'):
+            resolve_wrench_nominal_target(
+                [0.0, -1.0, 1.0],
+                {'calibration_nominal_position': [0.0, np.nan, 1.0]},
+                calibration_mode=True,
+            )
+
     def test_calibration_ignores_potentiometer_release_dependency(self):
         self.assertEqual(
             resolve_release_mode(

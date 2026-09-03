@@ -2280,6 +2280,11 @@ if __name__ == '__main__':
         ap.error('--sense requires --log so sensor and estimate data are recorded')
     if args.calibrate and not args.log:
         ap.error('--calibrate requires --log so both fitted responses are recorded')
+    if args.calibrate and args.smooth_controller_rate < 50:
+        ap.error(
+            '--calibrate requires --smooth-controller-rate 50 or higher so '
+            'each 0.32s attitude step has enough fit samples'
+        )
     if args.sense_spring_constant <= 0.0:
         ap.error('--sense-spring-constant must be positive')
     if args.sense_max_extension <= 0.0:
