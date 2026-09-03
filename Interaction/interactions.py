@@ -13,6 +13,7 @@ from Interaction.braking_response_calibration import (
     PlanarBrakingCalibration,
 )
 from Interaction.position_capture_calibration import PositionCaptureCalibration
+from Interaction.calibration_trial_readiness import CalibrationTrialReadinessGate
 from Interaction.flight_behaviors import load_commands
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
 from Interaction.potentiometer_force_sensor import (
@@ -3993,6 +3994,9 @@ class InteractionsControl:
                     capture_plan = PositionCaptureCalibration(
                         capture_config, start_after_s=braking_plan.duration_s
                     )
+                    # Validate readiness timing before entering any maneuver.
+                    CalibrationTrialReadinessGate(braking_config)
+                    CalibrationTrialReadinessGate(capture_config)
                     interaction_duration = capture_plan.end_s + 0.5
                 else:
                     wrench_config, saved_calibration = apply_drone_calibration(
@@ -5530,9 +5534,78 @@ class InteractionsControl:
         calibration_group_skew_dropout_started_at = None
         calibration_group_skew_dropout_max_s = 0.0
         calibration_elapsed_s = 0.0
+        # A gate owns only the interval before a new trial. Once an attitude
+        # command has been sent, its fixed-duration protocol is never paused
+        # for readiness. Both stages share the same paused protocol clock.
+        calibration_trial_gates = []
+        calibration_trial_boundaries = []
+        if calibration_mode and planar_braking_plan.enabled:
+            gate = CalibrationTrialReadinessGate(planar_braking_config)
+            calibration_trial_gates.append(gate)
+            for segment_id in range(len(planar_braking_plan.trial_directions)):
+                calibration_trial_boundaries.append((
+                    planar_braking_plan.maneuver_start_s
+                    + segment_id * planar_braking_plan.trial_s,
+                    'Planar Braking', segment_id, gate, planar_braking_plan,
+                ))
+        if calibration_mode and position_capture_plan.enabled:
+            gate = CalibrationTrialReadinessGate(position_capture_config)
+            calibration_trial_gates.append(gate)
+            for trial in getattr(position_capture_plan, 'trials', []):
+                calibration_trial_boundaries.append((
+                    trial['start_s'] + position_capture_plan.settle_s,
+                    'Position Capture', trial['segment_id'], gate,
+                    position_capture_plan,
+                ))
+        calibration_trial_boundaries.sort(key=lambda trial: trial[0])
+        calibration_trial_wait = None
+
+        def begin_trial_wait(wall_time):
+            for boundary in calibration_trial_boundaries:
+                boundary_s, label, segment_id, gate, _plan = boundary
+                if (calibration_elapsed_s + 1e-9 >= boundary_s
+                        and not gate.admitted(segment_id)):
+                    if not gate.waiting:
+                        gate.begin(segment_id, wall_time)
+                        self._log_event(label + ' Calibration Trial Wait Started', {
+                            'segment_id': segment_id,
+                            'protocol_elapsed_s': calibration_elapsed_s,
+                            'hold_position_m': nominal_position.tolist(),
+                            'state_source': 'crazyflie_state_estimate',
+                        })
+                        logger.info('%s calibration trial %s: holding nominal '
+                                    'position until the start state is stable.',
+                                    label, segment_id)
+                    return boundary
+            return None
+
+        def check_trial_wait(wall_time, *, invalidate=False, duplicate=False):
+            if calibration_trial_wait is None:
+                return
+            _, label, segment_id, gate, _plan = calibration_trial_wait
+            try:
+                if invalidate:
+                    gate.invalidate(wall_time)
+                elif duplicate:
+                    gate.no_new_sample(wall_time)
+                else:
+                    gate.poll(wall_time)
+            except TimeoutError as exc:
+                self._log_event(label + ' Calibration Trial Wait Timeout', {
+                    'segment_id': segment_id,
+                    'protocol_elapsed_s': calibration_elapsed_s,
+                    'wait_elapsed_s': gate.wait_elapsed_s(wall_time),
+                    'reason': str(exc),
+                    'state_source': 'crazyflie_state_estimate',
+                })
+                raise
 
         while True:
             now = time.time()
+            calibration_wait_this_cycle = False
+            if calibration_mode and interaction_start is not None:
+                calibration_trial_wait = begin_trial_wait(now)
+                check_trial_wait(now)
             planar_attitude_active = bool(
                 calibration_mode
                 and (
@@ -5546,6 +5619,7 @@ class InteractionsControl:
                 calibration_mode
                 and interaction_start is not None
                 and not planar_attitude_active
+                and calibration_trial_wait is None
             ):
                 # Also treat an attitude phase that became due during a
                 # callback gap as unsafe.  The previous command may still be
@@ -5567,13 +5641,15 @@ class InteractionsControl:
                 )
                 if interaction_elapsed_s >= duration:
                     break
+            calibration_clock_lag_s = (
+                now - interaction_start - calibration_elapsed_s
+                - sum(gate.total_wait_s(now) for gate in calibration_trial_gates)
+                if calibration_mode and interaction_start is not None else 0.0
+            )
             if (
                 calibration_mode
                 and interaction_start is not None
-                and (
-                    now - interaction_start - calibration_elapsed_s
-                    > calibration_max_protocol_clock_lag_s
-                )
+                and calibration_clock_lag_s > calibration_max_protocol_clock_lag_s
             ):
                 if planar_attitude_active:
                     self.lo_commander.send_zdistance_setpoint(
@@ -5581,12 +5657,13 @@ class InteractionsControl:
                     )
                 raise StaleLocalizationError(
                     'Calibration protocol clock is '
-                    f'{now - interaction_start - calibration_elapsed_s:.3f}s '
+                    f'{calibration_clock_lag_s:.3f}s '
                     'behind wall time '
                     f'(limit {calibration_max_protocol_clock_lag_s:.3f}s)'
                 )
             state = self._get_synchronized_onboard_wrench_state()
             if state is None:
+                check_trial_wait(now, invalidate=True)
                 if planar_attitude_active:
                     self.lo_commander.send_zdistance_setpoint(
                         0.0, 0.0, 0.0, float(nominal_position[2])
@@ -5595,6 +5672,7 @@ class InteractionsControl:
             state_time = state['time']
             state_age = now - state_time
             if state_age < -0.5:
+                check_trial_wait(now, invalidate=True)
                 if planar_attitude_active:
                     self.lo_commander.send_zdistance_setpoint(
                         0.0, 0.0, 0.0, float(nominal_position[2])
@@ -5604,6 +5682,7 @@ class InteractionsControl:
                     f'(limit {max_state_age_s:.3f}s)'
                 )
             if state_age > max_state_age_s:
+                check_trial_wait(now, invalidate=True)
                 if planar_attitude_active:
                     # A stale velocity sample makes open-loop attitude
                     # calibration unsafe. Level immediately and abort so a
@@ -5683,6 +5762,7 @@ class InteractionsControl:
                 not np.all(np.isfinite(state_group_skew_values))
                 or np.any(state_group_skew_values < 0.0)
             ):
+                check_trial_wait(now, invalidate=True)
                 if planar_attitude_active:
                     self.lo_commander.send_zdistance_setpoint(
                         0.0, 0.0, 0.0, float(nominal_position[2])
@@ -5692,6 +5772,7 @@ class InteractionsControl:
                 )
             state_group_skew = float(np.max(state_group_skew_values))
             if state_group_skew > max_state_group_skew_s:
+                check_trial_wait(now, invalidate=True)
                 if planar_attitude_active:
                     # Never resume an open-loop tilt after losing synchronized
                     # state.  Level immediately and make the operator restart
@@ -5779,6 +5860,7 @@ class InteractionsControl:
                 calibration_group_skew_dropout_started_at = None
                 calibration_group_skew_dropout_max_s = 0.0
             if state_time == last_state_time:
+                check_trial_wait(now, duplicate=True)
                 if (
                     calibration_mode
                     and active_position_capture_command is not None
@@ -7344,8 +7426,55 @@ class InteractionsControl:
                     excitation_finished = True
                     self._log_event('Wrench Calibration Excitation Complete')
 
-            planar_braking_command = None
             if calibration_mode and interaction_start is not None:
+                # Also covers a trial at t=0 in the same cycle that startup
+                # bias calibration finishes. This is before any trial command.
+                calibration_trial_wait = begin_trial_wait(now)
+                if calibration_trial_wait is not None:
+                    _, label, segment_id, gate, plan = calibration_trial_wait
+                    xy_speed = float(np.linalg.norm(output.estimate.velocity[:2]))
+                    xy_displacement = float(np.linalg.norm(
+                        position[:2] - nominal_position[:2]
+                    ))
+                    actual_tilt_deg = float(np.linalg.norm(
+                        np.degrees(output.estimate.orientation_rpy[:2])
+                    ))
+                    # Waiting is not permission to exceed the flight envelope.
+                    if (xy_speed > plan.max_xy_speed_m_s
+                            or xy_displacement > plan.max_displacement_m):
+                        raise RuntimeError(
+                            f'{label} calibration exceeded its safety limit '
+                            'while waiting for trial readiness '
+                            f'(speed={xy_speed:.3f}m/s, '
+                            f'displacement={xy_displacement:.3f}m)'
+                        )
+                    check_trial_wait(now)
+                    wait_elapsed_s = gate.wait_elapsed_s(now)
+                    ready = gate.update(
+                        segment_id, now, state_time, xy_speed,
+                        actual_tilt_deg, xy_displacement,
+                    )
+                    if ready:
+                        self._log_event(label + ' Calibration Trial Ready', {
+                            'segment_id': segment_id,
+                            'protocol_elapsed_s': calibration_elapsed_s,
+                            'wait_elapsed_s': wait_elapsed_s,
+                            'xy_speed_m_s': xy_speed,
+                            'tilt_deg': actual_tilt_deg,
+                            'position_error_m': xy_displacement,
+                            'state_source': 'crazyflie_state_estimate',
+                        })
+                        logger.info('%s calibration trial %s ready after %.2fs '
+                                    'at XY speed %.3fm/s and tilt %.2fdeg.',
+                                    label, segment_id, wait_elapsed_s,
+                                    xy_speed, actual_tilt_deg)
+                        calibration_trial_wait = None
+                    else:
+                        calibration_wait_this_cycle = True
+
+            planar_braking_command = None
+            if (calibration_mode and interaction_start is not None
+                    and not calibration_wait_this_cycle):
                 planar_braking_command = planar_braking_plan.command(
                     calibration_elapsed_s,
                     np.degrees(output.estimate.orientation_rpy[2]),
@@ -7376,7 +7505,8 @@ class InteractionsControl:
                     })
 
             position_capture_command = None
-            if calibration_mode and interaction_start is not None:
+            if (calibration_mode and interaction_start is not None
+                    and not calibration_wait_this_cycle):
                 try:
                     position_capture_command = position_capture_plan.command(
                         calibration_elapsed_s,
@@ -7457,6 +7587,13 @@ class InteractionsControl:
                 trial_start_unsettled = bool(
                     planar_braking_command.phase
                     == 'level_before_acceleration'
+                    and (
+                        active_planar_braking_command is None
+                        or active_planar_braking_command.segment_id
+                        != planar_braking_command.segment_id
+                        or active_planar_braking_command.phase
+                        != 'level_before_acceleration'
+                    )
                     and (
                         xy_speed
                         > planar_braking_plan.trial_start_max_xy_speed_m_s
@@ -7544,7 +7681,19 @@ class InteractionsControl:
                         'state_source': 'crazyflie_state_estimate',
                     })
                     raise RuntimeError(failure)
-            if (
+            if calibration_wait_this_cycle:
+                command_position = nominal_position.copy()
+                command_yaw = nominal_yaw_deg
+                translation_control.hold_position = command_position.copy()
+                translation_control.yaw_deg = nominal_yaw_deg
+                translation_control.send(self.lo_commander)
+                # These samples belong to position hold, not the preceding
+                # attitude/capture trial's response-identification data.
+                active_planar_braking_command = None
+                active_planar_braking_command_since = None
+                active_position_capture_command = None
+                active_position_capture_command_since = None
+            elif (
                 position_capture_command is not None
                 and position_capture_command.active
             ):
@@ -7919,6 +8068,20 @@ class InteractionsControl:
                 'calibration_protocol_elapsed_s': (
                     calibration_elapsed_s if calibration_mode else None
                 ),
+                'calibration_trial_waiting': calibration_wait_this_cycle,
+                'calibration_trial_wait_stage': (
+                    None if calibration_trial_wait is None
+                    else calibration_trial_wait[1]
+                ),
+                'calibration_trial_wait_segment_id': (
+                    None if calibration_trial_wait is None
+                    else calibration_trial_wait[2]
+                ),
+                'calibration_intentional_wait_s': (
+                    sum(gate.total_wait_s(now)
+                        for gate in calibration_trial_gates)
+                    if calibration_mode else None
+                ),
                 'proposed_position_m': proposed_position.tolist(),
                 'proposed_yaw_deg': proposed_yaw,
                 'command_mode': (
@@ -8178,12 +8341,20 @@ class InteractionsControl:
                 'shadow_mode': pipeline.shadow_mode,
             })
             self._safe_sleep(max(dt - (time.time() - now), 0.0))
-            if calibration_mode and interaction_start is not None:
+            if (calibration_mode and interaction_start is not None
+                    and not calibration_wait_this_cycle):
                 # Advance the calibration protocol only after one complete,
                 # fresh, synchronized sample/control cycle. A telemetry pause
                 # therefore cannot skip excitation or attitude phases, nor
                 # make the duration check accept an incomplete fit.
-                calibration_elapsed_s += dt
+                next_elapsed_s = calibration_elapsed_s + dt
+                # Never step past an unadmitted start boundary: otherwise a
+                # short level phase could be skipped while waiting for a trial.
+                for boundary_s, _label, key, gate, _plan in calibration_trial_boundaries:
+                    if (not gate.admitted(key)
+                            and calibration_elapsed_s < boundary_s <= next_elapsed_s):
+                        next_elapsed_s = min(next_elapsed_s, boundary_s)
+                calibration_elapsed_s = next_elapsed_s
 
         if calibration_mode:
             fit = identify_xyz_alignment(
@@ -8291,6 +8462,17 @@ class InteractionsControl:
                     'max_displacement_m': (
                         planar_braking_plan.max_displacement_m
                     ),
+                    **{
+                        name: getattr(calibration_trial_gates[0], name)
+                        for name in (
+                            'trial_start_max_xy_speed_m_s',
+                            'trial_start_max_tilt_deg',
+                            'trial_start_max_position_error_m',
+                            'trial_start_dwell_s',
+                            'trial_start_timeout_s',
+                            'trial_start_max_sample_gap_s',
+                        )
+                    },
                     'calibrated_axes': [
                         axis_name
                         for axis_index, axis_name in enumerate(('x', 'y'))

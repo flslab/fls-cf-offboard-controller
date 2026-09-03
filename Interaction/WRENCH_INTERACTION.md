@@ -96,6 +96,19 @@ incomplete trials fail without overwriting a usable calibration. The fits and
 the exact trial protocol are atomically saved per drone in the same
 `Interaction/wrench_calibration.json`.
 
+Before each planar trial, the existing position-recovery interval is followed
+by a bounded **nominal-position hold**, not an extended zero-tilt command.
+The next trial starts only after XY speed is at most 0.05 m/s, actual tilt is
+at most 4 degrees and XY error from nominal is at most 0.08 m continuously for
+0.30 seconds. Up to 5 seconds of extra hold is allowed per trial. The same gate
+applies before each position-capture acceleration. Duplicate polls do not add
+evidence; stale samples or gaps over 0.10 seconds reset the dwell. Wall-time
+timeout and flight safety limits stay active. Intentional waits pause the
+shared protocol clock, so they do not consume later maneuvers or shorten
+capture observation. Open-loop phase
+durations are never extended to wait for readiness. These waits add to the
+nominal flight duration; the log records each wait and admission.
+
 The third stage measures **position-command capture**, separately from the
 attitude fit. On each of +X, -X, +Y and -Y it applies an 8-degree acceleration
 for 0.10, 0.20 or 0.30 seconds, commands level for 0.20 seconds, then latches a

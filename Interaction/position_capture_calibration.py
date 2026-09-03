@@ -69,6 +69,9 @@ class PositionCaptureCalibration:
             "trial_start_max_xy_speed_m_s": 0.05,
             "trial_start_max_tilt_deg": 4.0,
             "trial_start_max_position_error_m": 0.08,
+            "trial_start_dwell_s": 0.30,
+            "trial_start_timeout_s": 5.0,
+            "trial_start_max_sample_gap_s": 0.10,
             "minimum_entry_speed_m_s": 0.03,
             "position_tolerance_m": 0.03,
             "settle_speed_m_s": 0.05,
@@ -91,6 +94,8 @@ class PositionCaptureCalibration:
             raise ValueError("position capture duration must cover settling and endpoint samples")
         if self.minimum_entry_speed_m_s >= self.max_xy_speed_m_s:
             raise ValueError("position capture minimum entry speed exceeds safety limit")
+        if self.trial_start_dwell_s >= self.trial_start_timeout_s:
+            raise ValueError("position capture start dwell must be shorter than timeout")
         self.accelerate_durations_s = np.asarray(
             config.get("accelerate_durations_s", [0.10, 0.20, 0.30]), dtype=float
         )
@@ -236,6 +241,8 @@ class PositionCaptureCalibration:
             "capture_s", "recovery_s", "max_xy_speed_m_s", "max_displacement_m",
             "trial_start_max_xy_speed_m_s", "trial_start_max_tilt_deg",
             "trial_start_max_position_error_m",
+            "trial_start_dwell_s", "trial_start_timeout_s",
+            "trial_start_max_sample_gap_s",
             "minimum_entry_speed_m_s", "position_tolerance_m",
             "settle_speed_m_s", "settle_dwell_s", "max_overshoot_m",
             "max_reverse_speed_m_s",
