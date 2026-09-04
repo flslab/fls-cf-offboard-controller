@@ -4,8 +4,12 @@ import unittest
 
 import numpy as np
 from scipy.integrate import solve_ivp
+from scipy.linalg import expm
 
-from Interaction.model_based_braking import ModelBasedBrakingController
+from Interaction.model_based_braking import (
+    ModelBasedBrakingController,
+    _second_order_transition,
+)
 
 
 def model():
@@ -39,6 +43,21 @@ def controller(*, direction=1, target=.15, deadline=.32, **config):
 
 
 class ModelBasedBrakingTests(unittest.TestCase):
+    def test_closed_form_transition_matches_matrix_exponential(self):
+        for wn in (5., 14., 100.):
+            for zeta in (.2, .8, .999999, 1., 1.000001, 1.5, 2.):
+                for dt in (1e-6, .003, .01, .02):
+                    matrix = np.array([
+                        [0., 1.],
+                        [-wn*wn, -2.*zeta*wn],
+                    ])
+                    np.testing.assert_allclose(
+                        _second_order_transition(wn, zeta, dt),
+                        expm(matrix*dt),
+                        rtol=2e-10,
+                        atol=2e-12,
+                    )
+
     def test_default_disabled_and_candidate_requires_explicit_experiment(self):
         for config, reason in [({}, "disabled"),
                                ({"enabled": True}, "model_not_approved_for_nonexperimental_control")]:
@@ -119,8 +138,30 @@ class ModelBasedBrakingTests(unittest.TestCase):
         ticks = iter([0., 2., 2.])
         item._clock = lambda: next(ticks)
         result = item.decide(0., state())
-        self.assertEqual(result['reason'], 'prediction_compute_budget_exceeded')
-        self.assertIsNone(result['roll_deg'])
+        self.assertEqual(result['action'], 'brake')
+        self.assertEqual(
+            result['reason'],
+            'prediction_compute_budget_exceeded_continue_bounded_original_brake',
+        )
+        self.assertAlmostEqual(result['selected_pulse_s'], .32)
+        self.assertTrue(result['fallback_to_original_brake'])
+        self.assertFalse(result['terminal_constraints_evaluated'])
+        self.assertIsNone(result['hard_terminal_constraints_satisfied'])
+        self.assertAlmostEqual(result['roll_deg'], 20.)
+
+    def test_budget_overrun_never_brakes_after_measured_reverse(self):
+        item = controller()
+        ticks = iter([0., 2., 2.])
+        item._clock = lambda: next(ticks)
+        result = item.decide(0., state(v=-.03))
+        self.assertEqual(result['action'], 'level')
+        self.assertEqual(
+            result['reason'],
+            'prediction_compute_budget_exceeded_level_for_nonpositive_velocity',
+        )
+        self.assertFalse(result['fallback_to_original_brake'])
+        self.assertEqual(result['projected_tilt_rad'], 0.)
+        self.assertTrue(result['level_latched'])
 
     def test_model_copy_frozen_during_episode(self):
         source = model()

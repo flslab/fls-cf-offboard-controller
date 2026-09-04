@@ -238,6 +238,14 @@ attitude dynamics, or validation of unexecuted command schedules. Crossing zero
 is not proof of a stable stop; a missing crossing means none was observed before
 recovery. CV from one flight is preliminary evidence, not flight authorization.
 
+The calibration-only rolling controller evaluates the fitted second-order
+attitude model with its exact closed-form state transition. A compute-budget
+overrun cannot authorize a new adaptive pulse or satisfy terminal-state gates:
+while measured projected velocity remains positive it may only continue the
+original fixed brake, at the original tilt and no later than its original
+deadline. Nonpositive velocity, a level latch, or the deadline commands level;
+other invalid-state/model fallbacks remain commandless and are mapped to level.
+
 For full-trajectory identification using the exact same continuous integrator
 as prediction (numpy/scipy; matplotlib for plots), run:
 

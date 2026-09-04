@@ -197,6 +197,17 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
         self.assertIn(2, adapter._latched)
 
     @patch('Interaction.adaptive_braking_calibration.ModelBasedBrakingController', FakePredictor)
+    def test_brake_decision_continues_only_original_command(self):
+        adapter = self.adapter()
+        self.prepare_brake(adapter)
+        adapter._episodes[2].action = 'brake'
+        proposed = self.command(2, 'brake')
+        result = adapter.modify(proposed, 10.66, state(10.659), report())
+        self.assertIs(result, proposed)
+        self.assertEqual(result.phase, 'brake')
+        self.assertNotIn(2, adapter._latched)
+
+    @patch('Interaction.adaptive_braking_calibration.ModelBasedBrakingController', FakePredictor)
     def test_missing_measurements_do_not_hold_brake_past_warmup(self):
         adapter = self.adapter()
         self.prepare_brake(adapter)

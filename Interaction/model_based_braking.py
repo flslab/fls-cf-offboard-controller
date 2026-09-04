@@ -8,8 +8,11 @@ claim that a POSITION controller has been identified.
 Use is explicitly calibration-scoped. Its one-way mode may shorten the original
 constant brake pulse, but cannot extend it or restart braking after leveling.
 The caller must log/send a decision, then record_command only after that send
-succeeds. A fallback contains NO command: the caller must level/abort the
-experimental maneuver, not continue a stale brake instruction.
+succeeds. Invalid-input/model fallbacks contain NO command: the caller must
+level/abort the experimental maneuver, not continue a stale instruction. The
+single exception is a visible compute-budget overrun while the vehicle is still
+moving forward: it may request the already-authorized original brake command,
+but never beyond its original deadline or at a larger tilt.
 """
 from __future__ import annotations
 
@@ -18,7 +21,6 @@ import math
 import time
 
 import numpy as np
-from scipy.linalg import expm
 
 
 DEFAULTS = {
@@ -64,6 +66,37 @@ def _vector(value, size, name):
     if result.shape != (size,) or not np.isfinite(result).all():
         raise ValueError(name + " has an invalid shape or value")
     return result
+
+
+def _second_order_transition(wn_rad_s, zeta, dt_s):
+    """Exact state transition for x'' + 2*zeta*wn*x' + wn^2*x = 0.
+
+    This closed form avoids a general-purpose matrix exponential in the flight
+    loop. The critically damped branch also avoids cancellation near zeta=1.
+    """
+    wn = float(wn_rad_s)
+    damping = float(zeta)
+    dt = float(dt_s)
+    decay_rate = damping*wn
+    if abs(damping-1.) <= 1e-7:
+        decay = math.exp(-wn*dt)
+        return decay*np.array([
+            [1.+wn*dt, dt],
+            [-wn*wn*dt, 1.-wn*dt],
+        ])
+    if damping < 1.:
+        frequency = wn*math.sqrt(1.-damping*damping)
+        cosine = math.cos(frequency*dt)
+        sine_over_frequency = math.sin(frequency*dt)/frequency
+    else:
+        frequency = wn*math.sqrt(damping*damping-1.)
+        cosine = math.cosh(frequency*dt)
+        sine_over_frequency = math.sinh(frequency*dt)/frequency
+    decay = math.exp(-decay_rate*dt)
+    return decay*np.array([
+        [cosine+decay_rate*sine_over_frequency, sine_over_frequency],
+        [-wn*wn*sine_over_frequency, cosine-decay_rate*sine_over_frequency],
+    ])
 
 
 def _validated_model(model, experimental):
@@ -185,8 +218,8 @@ class ModelBasedBrakingController:
             max_brake = max(-float(r["command_acceleration_m_s2"][0]) for r in selected)
             if 9.81*math.tan(math.radians(self.config["brake_tilt_deg"])) > max_brake+1e-6:
                 raise ValueError("brake_tilt_exceeds_observed_command")
-            wn, zeta = self.params["wn_rad_s"], self.params["zeta"]
-            self._matrix = np.array([[0., 1.], [-wn*wn, -2*zeta*wn]])
+            self._wn = self.params["wn_rad_s"]
+            self._zeta = self.params["zeta"]
         except (TypeError, ValueError, KeyError) as error:
             self._model_error = str(error)
 
@@ -300,7 +333,9 @@ class ModelBasedBrakingController:
             step = float(right-left)
             key = round(step, 10)
             if key not in cache:
-                cache[key] = expm(self._matrix*step)
+                cache[key] = _second_order_transition(
+                    self._wn, self._zeta, step
+                )
             transition = cache[key]
             relative = angle-equilibrium
             next_angle = transition[0, 0]*relative+transition[0, 1]*angular+equilibrium
@@ -360,8 +395,49 @@ class ModelBasedBrakingController:
             return self._result("fallback", str(error), now, started)
         elapsed = self._clock()-started
         if elapsed > self.config["max_compute_s"]:
-            return self._result("fallback", "prediction_compute_budget_exceeded", now, started,
-                                candidate_count=forecast["candidate_count"])
+            # The prediction is late and therefore cannot authorize a newly
+            # selected pulse. Continuing the original fixed brake is safer
+            # than immediately leveling at high forward speed, but it remains
+            # bounded by the original deadline and is explicitly *not* a
+            # terminal-constraint result.
+            if observed[2] > 0 and remaining > 0 and not self.level_latched:
+                yaw, sign = observed[5], self.direction_xy[1]
+                tilt = -math.radians(self.config["brake_tilt_deg"])
+                tilt_deg = math.degrees(tilt)
+                return self._result(
+                    "brake",
+                    "prediction_compute_budget_exceeded_continue_bounded_original_brake",
+                    now,
+                    started,
+                    projected_tilt_rad=tilt,
+                    roll_deg=float(-tilt_deg*sign*math.cos(yaw)),
+                    pitch_deg=float(-tilt_deg*sign*math.sin(yaw)),
+                    candidate_count=forecast["candidate_count"],
+                    selected_pulse_s=float(remaining),
+                    fallback_to_original_brake=True,
+                    terminal_constraints_evaluated=False,
+                    hard_terminal_constraints_satisfied=None,
+                    terminal_velocity_constraint_satisfied=None,
+                    terminal_tilt_constraint_satisfied=None,
+                )
+            if self.config["calibration_one_way_latch"]:
+                self.level_latched = True
+            return self._result(
+                "level",
+                "prediction_compute_budget_exceeded_level_for_nonpositive_velocity",
+                now,
+                started,
+                projected_tilt_rad=0.,
+                roll_deg=0.,
+                pitch_deg=0.,
+                candidate_count=forecast["candidate_count"],
+                selected_pulse_s=0.,
+                fallback_to_original_brake=False,
+                terminal_constraints_evaluated=False,
+                hard_terminal_constraints_satisfied=None,
+                terminal_velocity_constraint_satisfied=None,
+                terminal_tilt_constraint_satisfied=None,
+            )
         target = float(self.target_position_xy @ self.direction_xy)
         # Position and zero-crossing error are separate from reverse motion.
         # A predicted zero is not declared a stable stop; all tail velocities
@@ -439,6 +515,8 @@ class ModelBasedBrakingController:
                 terminal_tilt_ok[selected]
             ),
             hard_terminal_constraints_satisfied=bool(feasible[selected]),
+            terminal_constraints_evaluated=True,
+            fallback_to_original_brake=False,
             hard_feasible_candidate_count=int(np.count_nonzero(feasible)),
             terminal_candidate_grid_refined=refined,
             model_train_segment_ids=copy.deepcopy(self.model.get("train_segment_ids", [])))
