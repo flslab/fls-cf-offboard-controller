@@ -793,6 +793,7 @@ def identify_planar_braking_response(
         maximum_direction_gain_ratio=1.25,
         maximum_repeat_gain_deviation=0.20,
         maximum_acceleration_extrapolation_ratio=1.25,
+        raise_on_quality_failure=True,
 ) -> dict:
     """Fit attitude-command delay, lag, and horizontal acceleration scale.
 
@@ -1429,8 +1430,9 @@ def identify_planar_braking_response(
             minimum_validation_r_squared
         ),
         "direction_quality": direction_quality,
+        "quality_failures": list(quality_failures),
     }
-    if not usable:
+    if not usable and raise_on_quality_failure:
         raise ValueError(
             "planar braking response fit failed quality gates: "
             + "; ".join(quality_failures)

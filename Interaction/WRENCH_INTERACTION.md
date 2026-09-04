@@ -92,6 +92,12 @@ levels for 0.20 seconds, brakes at the opposite 20 degrees for T, levels for
 Equal opposite command pulses cancel velocity only in an ideal symmetric
 model; delay, drag and initial velocity can produce residual motion or reversal.
 Zero tilt is not XY position hold. Inspect measured velocity after braking.
+By default, the first opposed pair keeps those fixed pulses and later pairs may
+level early using a frozen model fitted from earlier pairs. This adaptive stage
+can only shorten the configured brake; it cannot increase angle, duration, or
+the safety envelope. Use `--no-adaptive-braking-calibration` to retain fixed
+brake durations for every trial. The positive
+`--adaptive-braking-calibration` spelling remains accepted for compatibility.
 The second fit identifies attitude-command delay, first-order response time,
 and planar acceleration scale. Strict gates require enough windows in every
 trial, acceptable training and validation R-squared and normalized RMSE in
@@ -100,6 +106,24 @@ durations, and agreement between +Y/-Y at every individual level. Poor or
 incomplete trials fail without overwriting a usable calibration. The fits and
 the exact trial protocol are atomically saved per drone in the same
 `Interaction/wrench_calibration.json`.
+
+During adaptive calibration, a candidate is eligible only if its predicted
+horizon endpoint has absolute projected velocity at most 0.05 m/s and absolute
+projected tilt at most 3 degrees, in addition to the reverse-motion gate. These
+are configurable hard constraints, not score weights. A bounded, single-pass
+vectorized 10 ms duration grid refines the coarse pulse schedule without
+repeating the time integration. If no candidate passes all gates, the adapter levels and logs the failed
+constraint state rather than accepting the least-bad candidate.
+
+Adaptive prediction persistence is independent of that legacy planar-fit gate.
+If an adaptive run produces a validated prediction model but its modified pulse
+schedule fails the legacy planar quality gate, a current previously saved
+planar fit is retained and the validated prediction model may still be saved.
+The log records `Adaptive Planar Calibration Fit Preserved` and the final save
+event identifies the fit source. No threshold is relaxed. If no current planar
+fit exists yet, first run the fixed baseline with
+`--calibrate --no-adaptive-braking-calibration`; otherwise the adaptive save is
+rejected.
 
 Before each planar trial, the existing position-recovery interval is followed
 by a bounded **nominal-position hold**, not an extended zero-tilt command.

@@ -107,7 +107,12 @@ class ModelBasedBrakingTests(unittest.TestCase):
         a, b = controller(), controller()
         b.record_command(-.01, -.35)  # not yet effective at t=0; cannot discard
         da, db = a.decide(0., state(v=.2)), b.decide(0., state(v=.2))
-        self.assertGreater(abs(da['predicted_terminal_velocity_m_s']-db['predicted_terminal_velocity_m_s']), .02)
+        # The hard terminal constraint makes both selected outcomes converge
+        # near zero velocity; the pending command is reflected by selecting a
+        # different remaining pulse instead of by leaving a terminal error.
+        self.assertNotEqual(da['selected_pulse_s'], db['selected_pulse_s'])
+        self.assertTrue(da['hard_terminal_constraints_satisfied'])
+        self.assertTrue(db['hard_terminal_constraints_satisfied'])
 
     def test_budget_is_visible_fallback(self):
         item = controller()
@@ -129,12 +134,51 @@ class ModelBasedBrakingTests(unittest.TestCase):
     def test_workload_bound_and_unidentified_tilt(self):
         item = controller()
         result = item.decide(0., state())
-        self.assertLessEqual(result['candidate_count'], 9)
+        self.assertLessEqual(result['candidate_count'], 64)
         self.assertLessEqual(result['integration_steps'], 370)
         invalid = controller(brake_tilt_deg=25.)
         self.assertEqual(invalid.decide(0., state())['reason'], 'brake_tilt_exceeds_observed_command')
         with self.assertRaises(ValueError):
             controller(max_state_age_s=1e6)
+        for config in (
+            dict(terminal_velocity_tolerance_m_s=.11),
+            dict(terminal_tilt_tolerance_deg=5.1),
+        ):
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                controller(**config)
+
+    def test_terminal_velocity_and_tilt_are_hard_constraints(self):
+        velocity_limited = controller(
+            terminal_velocity_tolerance_m_s=.001,
+        ).decide(0., state())
+        self.assertEqual(velocity_limited['action'], 'level')
+        self.assertEqual(
+            velocity_limited['reason'],
+            'no_candidate_satisfies_terminal_state_constraints_level_to_remove_brake',
+        )
+        self.assertEqual(
+            velocity_limited['hard_feasible_candidate_count'], 0
+        )
+        self.assertFalse(
+            velocity_limited['hard_terminal_constraints_satisfied']
+        )
+
+        tilt_limited = controller(
+            prediction_horizon_s=.1,
+            terminal_velocity_tolerance_m_s=.10,
+            terminal_tilt_tolerance_deg=.01,
+        ).decide(0., state(v=.05))
+        self.assertEqual(tilt_limited['action'], 'level')
+        self.assertEqual(tilt_limited['hard_feasible_candidate_count'], 0)
+        self.assertFalse(tilt_limited['terminal_tilt_constraint_satisfied'])
+
+    def test_selected_brake_candidate_satisfies_all_hard_constraints(self):
+        result = controller().decide(0., state())
+        self.assertGreater(result['hard_feasible_candidate_count'], 0)
+        self.assertTrue(result['hard_terminal_constraints_satisfied'])
+        self.assertTrue(result['terminal_velocity_constraint_satisfied'])
+        self.assertTrue(result['terminal_tilt_constraint_satisfied'])
+        self.assertTrue(result['terminal_candidate_grid_refined'])
 
     def test_closed_loop_shortens_brake_and_reduces_synthetic_reverse(self):
         adaptive, control = self.simulate(True), self.simulate(False)

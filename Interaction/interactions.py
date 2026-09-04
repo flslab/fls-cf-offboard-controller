@@ -39,6 +39,7 @@ from Interaction.wrench_model_calibration import (
     apply_drone_calibration,
     identify_planar_braking_response,
     identify_xyz_alignment,
+    load_drone_calibration,
     planar_braking_fit_is_current,
     save_drone_calibration,
 )
@@ -46,6 +47,41 @@ from Interaction.wrench_model_calibration import (
 # from Interaction.collision_avoidance.simulation import apf_velocity
 
 logger = logging.getLogger(__name__)
+
+
+def _planar_fit_for_calibration_save(
+        attempted_fit, adaptive_enabled, drone_id, calibration_path):
+    """Choose the legacy fit independently from adaptive model persistence."""
+    if attempted_fit is None:
+        return None, None, None
+    # Older callers and test doubles predate the explicit usability field;
+    # only an explicit False denotes a quality-gated diagnostic result.
+    if attempted_fit.get('usable', True):
+        return attempted_fit, 'current_run', None
+    if not adaptive_enabled:
+        # The identifier normally raises before this point. Keep this guard so
+        # a diagnostic result can never silently weaken fixed-baseline mode.
+        failures = attempted_fit.get('quality_failures', [])
+        raise ValueError(
+            'planar braking response fit failed quality gates: '
+            + '; '.join(str(item) for item in failures)
+        )
+    previous_entry = load_drone_calibration(drone_id, calibration_path)
+    previous_fit = (
+        previous_entry.get('planar_braking_fit')
+        if isinstance(previous_entry, dict) else None
+    )
+    if not planar_braking_fit_is_current(previous_fit):
+        raise ValueError(
+            'adaptive planar braking fit failed quality gates and no current '
+            'legacy planar fit is available to preserve; first run '
+            '--calibrate --no-adaptive-braking-calibration'
+        )
+    return (
+        None,
+        'preserved_previous_after_adaptive_quality_rejection',
+        previous_fit,
+    )
 
 
 def prediction_calibration_report_path(calibration_path, drone_id):
@@ -8632,6 +8668,7 @@ class InteractionsControl:
                 window_s=float(config['impulse_estimator']['window_s']),
             )
             planar_braking_fit = None
+            planar_braking_fit_source = None
             if planar_braking_plan.enabled:
                 planar_braking_fit = identify_planar_braking_response(
                     planar_braking_samples,
@@ -8701,6 +8738,7 @@ class InteractionsControl:
                             'maximum_acceleration_extrapolation_ratio'
                         ]
                     ),
+                    raise_on_quality_failure=not adaptive_braking.enabled,
                 )
                 planar_braking_fit['protocol'] = {
                     **planar_braking_plan.timing_protocol(),
@@ -8776,6 +8814,41 @@ class InteractionsControl:
                             braking_battery_samples
                         )), 4),
                     }
+                attempted_planar_braking_fit = planar_braking_fit
+                (
+                    planar_braking_fit,
+                    planar_braking_fit_source,
+                    preserved_planar_braking_fit,
+                ) = _planar_fit_for_calibration_save(
+                    attempted_planar_braking_fit,
+                    adaptive_braking.enabled,
+                    self.drone_id,
+                    calibration_path,
+                )
+                if preserved_planar_braking_fit is not None:
+                    self._log_event(
+                        'Adaptive Planar Calibration Fit Preserved', {
+                            'reason': (
+                                'planar braking response fit failed quality gates: '
+                                + '; '.join(
+                                    attempted_planar_braking_fit.get(
+                                        'quality_failures', []
+                                    )
+                                )
+                            ),
+                            'quality_failures': attempted_planar_braking_fit.get(
+                                'quality_failures', []
+                            ),
+                            'attempted_fit': attempted_planar_braking_fit,
+                            'preserved_planar_braking_fit': (
+                                preserved_planar_braking_fit
+                            ),
+                            'previous_calibration_preserved': True,
+                            'prediction_model_save_continues': True,
+                            'path': str(calibration_path),
+                            'state_source': 'crazyflie_state_estimate',
+                        }
+                    )
             position_capture_fit = None
             if position_capture_plan.enabled:
                 position_capture_fit = position_capture_plan.summarize(
@@ -8852,7 +8925,8 @@ class InteractionsControl:
                 'impulse_estimator': saved_entry['impulse_estimator'],
                 'fit': fit,
                 'control_handoff': saved_entry.get('control_handoff'),
-                'planar_braking_fit': planar_braking_fit,
+                'planar_braking_fit': saved_entry.get('planar_braking_fit'),
+                'planar_braking_fit_source': planar_braking_fit_source,
                 'position_capture_fit': position_capture_fit,
             })
             logger.info('CALIBRATED %s', saved_path)

@@ -104,7 +104,12 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
     "adaptive_braking_calibration": {
         "enabled": False,
         "target_distance_m": 0.30,
-        "model_based_braking": {"max_compute_s": 0.008},
+        "model_based_braking": {
+            "max_compute_s": 0.008,
+            "candidate_refinement_step_s": 0.01,
+            "terminal_velocity_tolerance_m_s": 0.05,
+            "terminal_tilt_tolerance_deg": 3.0,
+        },
     },
     "online_prediction_calibration": {
         "enabled": False,

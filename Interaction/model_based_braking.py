@@ -5,7 +5,7 @@ chain. It consumes a *frozen* second-order fit, measured state and actual sent
 commands. It does not fit parameters, authorize deployment, move the target or
 claim that a POSITION controller has been identified.
 
-Calibration use is explicitly opt-in. Its one-way mode may shorten the original
+Use is explicitly calibration-scoped. Its one-way mode may shorten the original
 constant brake pulse, but cannot extend it or restart braking after leveling.
 The caller must log/send a decision, then record_command only after that send
 succeeds. A fallback contains NO command: the caller must level/abort the
@@ -29,6 +29,7 @@ DEFAULTS = {
     "prediction_horizon_s": .8,
     "prediction_step_s": .01,
     "candidate_pulse_s": (.02, .04, .08, .12),
+    "candidate_refinement_step_s": .01,
     "command_valid_for_s": .03,
     "max_compute_s": .02,
     "max_state_age_s": .04,
@@ -41,6 +42,8 @@ DEFAULTS = {
     "max_battery_margin_V": .15,
     "reverse_tolerance_m_s": .02,
     "overshoot_tolerance_m": .03,
+    "terminal_velocity_tolerance_m_s": .05,
+    "terminal_tilt_tolerance_deg": 3.,
     "position_scale_m": .05,
     "velocity_scale_m_s": .08,
     "max_history_entries": 64,
@@ -112,7 +115,7 @@ class ModelBasedBrakingController:
     battery_voltage_V. All times are the same host clock. Positive projected
     tilt/velocity is along direction_xy, which currently must be exactly ±Y.
 
-    The numerical workload is at most 9 candidates × 369 time intervals,
+    The numerical workload is at most 64 candidates × 369 time intervals,
     with at most 64 retained historical command transitions. Deadline/budget
     checks reject late results; this is not a hard-real-time scheduling claim.
     """
@@ -135,10 +138,22 @@ class ModelBasedBrakingController:
             raise ValueError("prediction horizon must be in [.1, 1.5] s")
         if not .005 <= self.config["prediction_step_s"] <= .02:
             raise ValueError("prediction step must be in [.005, .02] s")
+        if not .01 <= self.config["candidate_refinement_step_s"] <= .02:
+            raise ValueError(
+                "candidate refinement step must be in [.01, .02] s"
+            )
         if self.config["max_state_age_s"] > .1 or self.config["max_state_group_skew_s"] > .03:
             raise ValueError("state age/skew limits cannot exceed .1/.03 s")
         if self.config["max_tilt_deg"] >= 30:
             raise ValueError("max_tilt_deg must stay below 30")
+        if self.config["terminal_velocity_tolerance_m_s"] > .10:
+            raise ValueError(
+                "terminal_velocity_tolerance_m_s cannot exceed .10"
+            )
+        if self.config["terminal_tilt_tolerance_deg"] > 5.:
+            raise ValueError(
+                "terminal_tilt_tolerance_deg cannot exceed 5"
+            )
         if self.config["max_history_entries"] != int(self.config["max_history_entries"]) or not 2 <= self.config["max_history_entries"] <= 64:
             raise ValueError("max_history_entries must be an integer in [2,64]")
         pulses = tuple(_number(x, "candidate_pulse_s") for x in self.config["candidate_pulse_s"])
@@ -304,7 +319,8 @@ class ModelBasedBrakingController:
             angle, velocity, position, last_acc = next_angle, next_velocity, next_position, acceleration
         if not np.isfinite(np.r_[position, velocity, min_velocity, max_position]).all():
             raise ValueError("nonfinite_prediction")
-        return dict(position=position, velocity=velocity, min_velocity=min_velocity,
+        return dict(position=position, velocity=velocity, angle=angle,
+                    min_velocity=min_velocity,
                     max_position=max_position, zero_position=zero_position,
                     candidate_count=count, integration_steps=len(grid)-1,
                     prediction_end_time_s=end)
@@ -322,9 +338,23 @@ class ModelBasedBrakingController:
         try:
             observed = self._state(state, now)
             remaining = max(0., self.brake_deadline_s-now)
-            durations = np.unique(np.r_[0., np.minimum(self.config["candidate_pulse_s"], remaining)])
+            durations = np.unique(np.r_[
+                0.,
+                np.minimum(self.config["candidate_pulse_s"], remaining),
+                remaining,
+            ])
             if self.level_latched or remaining <= 0:
                 durations = np.array([0.])
+            refined = False
+            if len(durations) > 1:
+                step = self.config["candidate_refinement_step_s"]
+                fine = np.arange(step, remaining, step)
+                durations = np.unique(np.r_[durations, fine])
+                refined = len(fine) > 0
+            if len(durations) > 64:
+                raise ValueError("candidate_grid_exceeds_bound")
+            # One vectorized forecast avoids repeating the time integration;
+            # candidate count changes array width, not the number of steps.
             forecast = self._forecast(observed, now, durations)
         except (KeyError, TypeError, ValueError, OverflowError) as error:
             return self._result("fallback", str(error), now, started)
@@ -339,6 +369,17 @@ class ModelBasedBrakingController:
         endpoint = np.where(np.isfinite(forecast["zero_position"]), forecast["zero_position"], forecast["position"])
         reverse = np.maximum(0., -forecast["min_velocity"])
         overshoot = np.maximum(0., forecast["max_position"]-target)
+        terminal_tilt_deg = np.degrees(forecast["angle"])
+        terminal_velocity_ok = (
+            np.abs(forecast["velocity"])
+            <= self.config["terminal_velocity_tolerance_m_s"]
+        )
+        terminal_tilt_ok = (
+            np.abs(terminal_tilt_deg)
+            <= self.config["terminal_tilt_tolerance_deg"]
+        )
+        no_reverse = reverse <= self.config["reverse_tolerance_m_s"]
+        feasible = no_reverse & terminal_velocity_ok & terminal_tilt_ok
         score = ((endpoint-target)/self.config["position_scale_m"])**2
         score += (forecast["velocity"]/self.config["velocity_scale_m_s"])**2
         score += 100.*(reverse/self.config["reverse_tolerance_m_s"])**2
@@ -351,10 +392,15 @@ class ModelBasedBrakingController:
             selected = 0
             reason = "already_level_latched" if self.level_latched else (
                 "original_brake_deadline" if remaining <= 0 else "measured_nonpositive_velocity")
-        elif np.all(reverse > self.config["reverse_tolerance_m_s"]):
+        elif not np.any(no_reverse):
             selected, reason = 0, "unavoidable_predicted_reverse_level_to_remove_brake"
+        elif not np.any(feasible):
+            selected = 0
+            reason = (
+                "no_candidate_satisfies_terminal_state_constraints_"
+                "level_to_remove_brake"
+            )
         else:
-            feasible = reverse <= self.config["reverse_tolerance_m_s"]
             selected = int(np.argmin(np.where(feasible, score, np.inf)))
             reason = "rolling_prediction_selected_level" if durations[selected] == 0 else "rolling_prediction_continue_brake"
         tilt = -math.radians(self.config["brake_tilt_deg"]) if durations[selected] > 0 else 0.
@@ -371,6 +417,7 @@ class ModelBasedBrakingController:
             level_latched=self.level_latched, candidate_count=forecast["candidate_count"],
             selected_pulse_s=float(durations[selected]), integration_steps=forecast["integration_steps"],
             predicted_terminal_velocity_m_s=float(forecast["velocity"][selected]),
+            predicted_terminal_tilt_deg=float(terminal_tilt_deg[selected]),
             predicted_peak_reverse_m_s=float(reverse[selected]),
             predicted_overshoot_m=float(overshoot[selected]),
             predicted_first_zero_position_m=(None if not math.isfinite(forecast["zero_position"][selected]) else float(forecast["zero_position"][selected])),
@@ -378,5 +425,20 @@ class ModelBasedBrakingController:
             target_projected_position_m=target,
             state_extrapolates_training_range=observed[6],
             prediction_horizon_s=self.config["prediction_horizon_s"],
-            no_reverse_prediction=bool(reverse[selected] <= self.config["reverse_tolerance_m_s"]),
+            no_reverse_prediction=bool(no_reverse[selected]),
+            terminal_velocity_tolerance_m_s=self.config[
+                "terminal_velocity_tolerance_m_s"
+            ],
+            terminal_tilt_tolerance_deg=self.config[
+                "terminal_tilt_tolerance_deg"
+            ],
+            terminal_velocity_constraint_satisfied=bool(
+                terminal_velocity_ok[selected]
+            ),
+            terminal_tilt_constraint_satisfied=bool(
+                terminal_tilt_ok[selected]
+            ),
+            hard_terminal_constraints_satisfied=bool(feasible[selected]),
+            hard_feasible_candidate_count=int(np.count_nonzero(feasible)),
+            terminal_candidate_grid_refined=refined,
             model_train_segment_ids=copy.deepcopy(self.model.get("train_segment_ids", [])))

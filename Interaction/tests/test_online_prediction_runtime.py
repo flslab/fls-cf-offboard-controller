@@ -5,7 +5,10 @@ import unittest
 from unittest.mock import Mock, patch
 
 from Interaction.braking_response_calibration import PlanarBrakingCalibration
-from Interaction.interactions import prediction_calibration_report_path
+from Interaction.interactions import (
+    _planar_fit_for_calibration_save,
+    prediction_calibration_report_path,
+)
 from Interaction.online_dynamics_model import build_tilt_trials
 from Interaction.tests import test_calibration_trial_wait_runtime as wait_fixture
 
@@ -36,6 +39,52 @@ class FakeSession:
 
 
 class OnlinePredictionRuntimeTests(unittest.TestCase):
+    def test_adaptive_fit_rejection_preserves_current_legacy_fit(self):
+        rejected = {
+            'usable': False,
+            'quality_failures': ['positive NRMSE too high'],
+        }
+        previous = {'usable': True, 'fit_schema_version': 2}
+        with (
+            patch('Interaction.interactions.load_drone_calibration',
+                  return_value={'planar_braking_fit': previous}),
+            patch('Interaction.interactions.planar_braking_fit_is_current',
+                  return_value=True),
+        ):
+            selected, source, preserved = _planar_fit_for_calibration_save(
+                rejected, True, 'lb11', '/tmp/cal.json'
+            )
+        self.assertIsNone(selected)
+        self.assertEqual(
+            source,
+            'preserved_previous_after_adaptive_quality_rejection',
+        )
+        self.assertIs(preserved, previous)
+
+    def test_adaptive_fit_rejection_requires_previous_legacy_fit(self):
+        rejected = {
+            'usable': False,
+            'quality_failures': ['positive NRMSE too high'],
+        }
+        with patch(
+                'Interaction.interactions.load_drone_calibration',
+                return_value=None):
+            with self.assertRaisesRegex(
+                    ValueError, '--no-adaptive-braking-calibration'):
+                _planar_fit_for_calibration_save(
+                    rejected, True, 'lb11', '/tmp/cal.json'
+                )
+
+    def test_fixed_fit_rejection_stays_strict(self):
+        rejected = {
+            'usable': False,
+            'quality_failures': ['positive NRMSE too high'],
+        }
+        with self.assertRaisesRegex(ValueError, 'positive NRMSE too high'):
+            _planar_fit_for_calibration_save(
+                rejected, False, 'lb11', '/tmp/cal.json'
+            )
+
     def fixture(self):
         runtime = list(wait_fixture.CalibrationTrialWaitRuntimeTests().make_runtime())
         config = runtime[4]['planar_braking_calibration']

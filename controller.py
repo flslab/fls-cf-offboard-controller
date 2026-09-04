@@ -1335,7 +1335,14 @@ class Controller:
     def calibration_switch(self):
         """Run contact-free calibration or the data-only attitude repeat test."""
         try:
-            adaptive_braking = getattr(self.args, 'adaptive_braking_calibration', False)
+            adaptive_selection = getattr(
+                self.args, 'adaptive_braking_calibration', None
+            )
+            adaptive_braking = (
+                bool(getattr(self.args, 'calibrate', False))
+                if adaptive_selection is None
+                else bool(adaptive_selection)
+            )
             if adaptive_braking and (
                     not getattr(self.args, 'calibrate', False)
                     or getattr(self.args, 'braking_test', False)
@@ -1348,14 +1355,21 @@ class Controller:
                 self._safe_sleep(1)
                 return
             calibration_mission = self.mission
-            if adaptive_braking:
-                # This is an explicit per-run flight-control opt-in. Do not
-                # mutate the shared mission or enable it for later interaction.
+            if getattr(self.args, 'calibrate', False):
+                # Calibration defaults to adaptive braking, but the choice is
+                # scoped to an independent mission copy and never leaks into a
+                # later interaction.  Explicit --no-adaptive-braking-calibration
+                # also overrides a stale mission-level true value.
                 calibration_mission = deepcopy(self.mission)
                 wrench_config = calibration_mission.setdefault('Interaction', {}).setdefault(
                     'config', {}).setdefault('wrench_interaction', {})
-                wrench_config.setdefault('adaptive_braking_calibration', {})['enabled'] = True
-                wrench_config.setdefault('online_prediction_calibration', {})['enabled'] = True
+                wrench_config.setdefault('adaptive_braking_calibration', {})[
+                    'enabled'
+                ] = adaptive_braking
+                if adaptive_braking:
+                    wrench_config.setdefault('online_prediction_calibration', {})[
+                        'enabled'
+                    ] = True
             controller = InteractionsControl(
                 self.cf,
                 self._safe_sleep,
@@ -2347,9 +2361,12 @@ if __name__ == '__main__':
         ),
     )
     ap.add_argument(
-        "--adaptive-braking-calibration", action="store_true",
-        help=("opt in to online-model-guided attitude braking during --calibrate; "
-              "not available during --interaction or --braking-test"),
+        "--adaptive-braking-calibration",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=("use online-model-guided attitude braking during --calibrate "
+              "(default: enabled; use --no-adaptive-braking-calibration for "
+              "fixed-duration baseline trials)"),
     )
     ap.add_argument(
         "--braking-test", action="store_true",
@@ -2433,10 +2450,10 @@ if __name__ == '__main__':
         ap.error(str(error))
     if args.interaction and args.calibrate:
         ap.error('--interaction and --calibrate are mutually exclusive')
-    if args.adaptive_braking_calibration and (
+    if args.adaptive_braking_calibration is not None and (
             not args.calibrate or args.interaction or args.braking_test):
         ap.error(
-            '--adaptive-braking-calibration requires --calibrate '
+            '--[no-]adaptive-braking-calibration requires --calibrate '
             'without --interaction or --braking-test'
         )
     if args.sense and not args.log:

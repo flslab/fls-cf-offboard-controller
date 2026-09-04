@@ -4,9 +4,9 @@
 使用现有校准飞行的姿态指令、实际姿态/角速度、速度、位置、电池电压和时间戳，
 每完成一对 ±Y 试验，就在后台更新一个预测模型。
 
-当前仅拟合 **姿态指令 → 实际倾角 → 速度/位置**。不增加飞行动作，
-不恢复之前删除的位置接管试验，不修改 contact/release/coasting 控制。
-XYZ 校准及旧制动参数仍按原流程计算；新模型不替换它们。
+当前仅拟合 **姿态指令 → 实际倾角 → 速度/位置**。普通 interaction 中不增加
+飞行动作，也不修改 contact/release/coasting 控制。`--calibrate` 默认允许冻结的
+早期模型缩短后续 calibration brake pulse；第一对仍保持固定脉冲。
 
 ## 模型是什么
 
@@ -48,7 +48,7 @@ spawn 进程中执行，队列有界；控制循环不等待 **新增** 的优�
 本地 fake-clock 测试比较了在线开/关时完整的 Commander 调用序列，两者一致；
 这不是 Pi 上硬实时性能的证明。
 
-## 怎么启用
+## 怎么运行
 
 LightBender 的 `Interaction/SFL/translation_inertia.yaml` 已添加：
 
@@ -62,7 +62,8 @@ online_prediction_calibration:
 ```
 
 位置：`Interaction.config.wrench_interaction` 下。
-库默认关闭；只有 `--calibrate` 使用它，普通 `--interaction` 和 `--braking-test` 不启动拟合。
+库配置默认关闭，由 controller 的 `--calibrate` 在独立 mission 副本上临时开启。
+普通 `--interaction` 和 `--braking-test` 不启动 adaptive braking。
 不需要 Arduino，也不应追加 `--sense`。
 
 同步此 controller 的新文件/修改文件及上述 YAML 后，确认 orchestrator
@@ -82,6 +83,11 @@ cd orchestrator
 python3 orchestrator.py --calibrate --skip-record
 ```
 
+上面的普通 calibration 默认启用 model-guided braking。若要收集原始固定
+160/240/320 ms 制动基线，显式使用
+`--no-adaptive-braking-calibration`。旧的正向
+`--adaptive-braking-calibration` 参数仍可用，但已不再是必需参数。
+
 **这是实际飞行命令，本次开发没有执行。** 保留人工起飞确认；保持原有净空、
 边界、速度、倾角、定位新鲜度和 trial readiness 保护。
 
@@ -89,6 +95,15 @@ python3 orchestrator.py --calibrate --skip-record
 `Online Prediction Candidate Validated`、`Online Prediction Calibration Finished`。
 判断完成看 `status` 与 `data_complete`，判断误差看每次 held-out trial，
 不要只看 `candidate_fitted`。
+
+自适应飞行会分别判断两类结果：预测模型使用自己独立的 held-out 验证门；
+旧的一阶 planar braking fit 继续使用原来的严格门限。如果后者在自适应动作下
+失败，但校准文件中已有一份当前格式且合格的 planar fit，保存时会保留旧 fit，
+仍允许新的独立验证预测模型写入。日志会记录
+`Adaptive Planar Calibration Fit Preserved`，最终保存事件中的
+`planar_braking_fit_source` 会明确标为保留旧值。首次校准若没有可保留的旧 fit，
+仍需先运行一次 `--calibrate --no-adaptive-braking-calibration` 固定基线；任何门限
+都不会因此被放宽。
 
 ## 保存与失败行为
 
@@ -114,7 +129,14 @@ python3 orchestrator.py --calibrate --skip-record
 可用完整飞行日志离线重放。退出时有界关闭后台进程，不无限等待。
 独立报告不会自动由现有 orchestrator 下载；完整飞行日志仍可用于下面的重放。
 
-所有新模型始终 `runtime_enabled=false`、`deployment_approved=false` / `flight_approved=false`。
+保存的新模型始终 `runtime_enabled=false`、`deployment_approved=false` /
+`flight_approved=false`；calibration 内存中的冻结候选仅能缩短当前试验的制动脉冲，
+不会因此批准普通 interaction 使用模型。
+候选制动动作还必须同时满足预测窗口末端
+`|velocity| <= 0.05 m/s` 和 `|tilt| <= 3 deg` 两个硬约束；它们不是位置误差
+评分的权重。原来的粗候选会补充单次向量化的 10 ms 制动时长网格（最多 64 个
+候选），避免因为候选离散过粗而漏掉可稳定停止的动作。没有合格候选时会明确
+level，并在 decision 日志中记录 hard-constraint 状态，不会把不合格候选标为成功。
 0.06 m / 0.06 m/s 是这版 **诊断误差门**，不是准许飞行或保证停准的标准。
 要用于真实 release 后的控制，还需独立重复数据、状态/电量覆盖和控制策略验证。
 

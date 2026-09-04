@@ -456,6 +456,14 @@ class WrenchModelCalibrationTests(unittest.TestCase):
                 expected_maneuver_count=4,
             )
 
+        diagnostic = identify_planar_braking_response(
+            asymmetric_samples,
+            expected_maneuver_count=4,
+            raise_on_quality_failure=False,
+        )
+        self.assertFalse(diagnostic['usable'])
+        self.assertTrue(diagnostic['quality_failures'])
+
     def test_rejects_unrepeatable_direction_gain(self):
         unrepeatable_samples = self._synthetic_planar_samples(
             segment_gains=[1.35, 1.35, 0.70, 1.35]

@@ -1,4 +1,4 @@
-"""Opt-in adapter that can only shorten an existing calibration brake pulse.
+"""Calibration-only adapter that can only shorten an existing brake pulse.
 
 The first opposed pair remains the original identification maneuver. At each
 later pair's first trial start, freeze the latest earlier-trial candidate. No
@@ -9,7 +9,9 @@ latches instead of continuing an obsolete braking instruction.
 The caller must validate/start the online worker before enabling this adapter,
 call modify only for an admitted control cycle, and call record_sent only after
 the actual send succeeds. The adapter performs no I/O except its event callback.
-It is calibration-only, never an interaction or POSITION-controller adapter.
+The controller CLI enables it by default for ``--calibrate`` and provides
+``--no-adaptive-braking-calibration`` for fixed-pulse baseline collection.  It
+is never an interaction or POSITION-controller adapter.
 """
 from __future__ import annotations
 

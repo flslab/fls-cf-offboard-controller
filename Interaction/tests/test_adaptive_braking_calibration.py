@@ -90,6 +90,14 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
                        dict(target_distance_m=float('nan')), dict(target_distance_m=True),
                        dict(target_distance_m=1.1), dict(model_based_braking=[]),
                        dict(model_based_braking=dict(max_xy_speed_m_s=2.)),
+                       dict(model_based_braking=dict(
+                           terminal_velocity_tolerance_m_s=.11)),
+                       dict(model_based_braking=dict(
+                           terminal_tilt_tolerance_deg=5.1)),
+                       dict(model_based_braking=dict(
+                           candidate_refinement_step_s=.1)),
+                       dict(model_based_braking=dict(
+                           candidate_refinement_step_s=.005)),
                        dict(model_based_braking=dict(prediction_step_s=.1))]:
             with self.subTest(config=config), self.assertRaises((ValueError, TypeError)):
                 self.adapter(config)
