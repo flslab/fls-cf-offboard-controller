@@ -1,0 +1,5362 @@
+{
+  "created_utc": "2026-09-04T16:11:32Z",
+  "task_version": "coast_v2",
+  "offline_only": true,
+  "position_model_identified": false,
+  "frozen_report": {
+    "path": "/Users/shuqinzhu/Documents/FLS_Research/lightbender/orchestrator/logs/translation_inertia_2026-09-03_16-47-29/repeat_summary/frozen_validation/report.json",
+    "sha256": "cd288fd7a256a3396401144c37a27cade07a8abeefa71efaf9dac9aad30ed0c2"
+  },
+  "population_seed": 19001,
+  "config": {
+    "control_period_s": 0.01,
+    "max_brake_s": 0.5,
+    "history_length": 12,
+    "horizon_s": 3.0,
+    "terminal_window_s": 0.3,
+    "position_control_period_s": 0.02,
+    "stable_dwell_s": 0.3,
+    "position_tolerance_m": 0.03,
+    "velocity_tolerance_m_s": 0.04,
+    "tilt_tolerance_deg": 3.0,
+    "rate_tolerance_deg_s": 5.0
+  },
+  "cases": [
+    {
+      "name": "development:19001:0",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0000",
+          "model": {
+            "delay_s": 0.03475164221614263,
+            "wn_rad_s": 15.642673558443418,
+            "zeta": 1.1659044287762814,
+            "command_gain": 1.0518244434015989,
+            "motion_gain": 1.0415342512801586,
+            "projected_bias_rad": 0.00035860669207957207
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.339659993871276,
+            "tilt_rad": 0.19018956329706665,
+            "tilt_rate_rad_s": -1.228128017927226
+          },
+          "command_history": [
+            [
+              -1.2732505391799938,
+              0.0
+            ],
+            [
+              -0.27325053917999376,
+              0.3490658503988659
+            ],
+            [
+              -0.12061264537442895,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.016210498617683797,
+          "transport_delay_s": 0.015081607125285447,
+          "velocity_bias_m_s": -0.0003586646727836162,
+          "tilt_bias_deg": 0.48874585514330204,
+          "rate_bias_deg_s": 2.9996439430666824
+        },
+        "target_distance_m": 0.16629925121586467,
+        "direction_sign": -1,
+        "position_kp_s2": 3.9616451349406407,
+        "position_kd_s": 3.8618269220155006,
+        "position_accel_limit_m_s2": 1.7574467973154748,
+        "position_extra_measurement_delay_s": 0.02770517234835591,
+        "takeover_activation_delay_s": 0.04914069872843764,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1526378938055648,
+          "level_duration_s": 0.12061264537442894,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.27325053917999376,
+            "position_m": 0.02673160530474145,
+            "velocity_m_s": 0.339659993871276,
+            "tilt_rad": 0.19018956329706665,
+            "tilt_rate_rad_s": -1.228128017927226
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:1",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0001",
+          "model": {
+            "delay_s": 0.038874173353437666,
+            "wn_rad_s": 13.092091727685853,
+            "zeta": 0.731359875290505,
+            "command_gain": 0.9554963169926323,
+            "motion_gain": 1.1404515411467806,
+            "projected_bias_rad": 0.00011272655225868372
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.7712602720722042,
+            "tilt_rad": 0.20596822525749517,
+            "tilt_rate_rad_s": -1.887991684478736
+          },
+          "command_history": [
+            [
+              -1.3796948308895882,
+              0.0
+            ],
+            [
+              -0.3796948308895882,
+              0.3490658503988659
+            ],
+            [
+              -0.14204462460741862,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.017124146696070777,
+          "transport_delay_s": 0.007072749116775867,
+          "velocity_bias_m_s": -0.014184533274171811,
+          "tilt_bias_deg": 0.13131132658942735,
+          "rate_bias_deg_s": -2.2351223611838265
+        },
+        "target_distance_m": 0.3181996679761625,
+        "direction_sign": 1,
+        "position_kp_s2": 2.2398140631274,
+        "position_kd_s": 2.6528211106038033,
+        "position_accel_limit_m_s2": 1.834502566800645,
+        "position_extra_measurement_delay_s": 0.027957747839858122,
+        "takeover_activation_delay_s": 0.0017490270007120047,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.2376502062821696,
+          "level_duration_s": 0.14204462460741865,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3796948308895882,
+            "position_m": 0.09499782481799408,
+            "velocity_m_s": 0.7712602720722042,
+            "tilt_rad": 0.20596822525749517,
+            "tilt_rate_rad_s": -1.887991684478736
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:2",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0002",
+          "model": {
+            "delay_s": 0.043318344877662895,
+            "wn_rad_s": 14.766541485827199,
+            "zeta": 1.140167356540095,
+            "command_gain": 0.953112033673405,
+            "motion_gain": 0.9030345482566785,
+            "projected_bias_rad": 5.530602708178579e-05
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.2715022978716988,
+            "tilt_rad": 0.25300165364058924,
+            "tilt_rate_rad_s": -0.13414179010064228
+          },
+          "command_history": [
+            [
+              -1.2778592693205002,
+              0.0
+            ],
+            [
+              -0.2778592693205002,
+              0.3490658503988659
+            ],
+            [
+              -0.07139888953419532,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.006468276297534314,
+          "transport_delay_s": 0.014810156341758886,
+          "velocity_bias_m_s": -0.0013937702441733223,
+          "tilt_bias_deg": -0.07643437909088957,
+          "rate_bias_deg_s": 2.808418628641398
+        },
+        "target_distance_m": 0.14985034300164438,
+        "direction_sign": 1,
+        "position_kp_s2": 2.565763172846039,
+        "position_kd_s": 2.445795365166645,
+        "position_accel_limit_m_s2": 1.6431890905582862,
+        "position_extra_measurement_delay_s": 0.013662490958983295,
+        "takeover_activation_delay_s": 0.06872254646494108,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.20646037978630488,
+          "level_duration_s": 0.0713988895341953,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.2778592693205002,
+            "position_m": 0.019416333757251807,
+            "velocity_m_s": 0.2715022978716988,
+            "tilt_rad": 0.25300165364058924,
+            "tilt_rate_rad_s": -0.13414179010064228
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:3",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0003",
+          "model": {
+            "delay_s": 0.03264740944188782,
+            "wn_rad_s": 14.786561007993445,
+            "zeta": 1.1797841684617678,
+            "command_gain": 1.0680110247053016,
+            "motion_gain": 1.2896060560935343,
+            "projected_bias_rad": 0.0027008353653867343
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.31490546099309547,
+            "tilt_rad": 0.11084336031733363,
+            "tilt_rate_rad_s": -0.7672944451963963
+          },
+          "command_history": [
+            [
+              -1.2722283417881186,
+              0.0
+            ],
+            [
+              -0.27222834178811856,
+              0.3490658503988659
+            ],
+            [
+              -0.16985412778895215,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.01947002585322923,
+          "transport_delay_s": 0.017965798411686475,
+          "velocity_bias_m_s": 0.0006585806837174646,
+          "tilt_bias_deg": -0.15807531025080912,
+          "rate_bias_deg_s": -2.6418410865810493
+        },
+        "target_distance_m": 0.14944532109488226,
+        "direction_sign": -1,
+        "position_kp_s2": 5.3470076349744176,
+        "position_kd_s": 3.7441497132147594,
+        "position_accel_limit_m_s2": 2.4910592915206538,
+        "position_extra_measurement_delay_s": 0.018538331149949575,
+        "takeover_activation_delay_s": 0.028991045381264416,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.10237421399916641,
+          "level_duration_s": 0.16985412778895215,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.27222834178811856,
+            "position_m": 0.02740406016961378,
+            "velocity_m_s": 0.31490546099309547,
+            "tilt_rad": 0.11084336031733363,
+            "tilt_rate_rad_s": -0.7672944451963963
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:4",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0004",
+          "model": {
+            "delay_s": 0.03980976427762916,
+            "wn_rad_s": 12.896847564939117,
+            "zeta": 1.0885460957118829,
+            "command_gain": 1.045501227762898,
+            "motion_gain": 1.179160705506784,
+            "projected_bias_rad": 0.0002534964096271473
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.42947382900824005,
+            "tilt_rad": 0.12186258694998431,
+            "tilt_rate_rad_s": -0.8427103105805782
+          },
+          "command_history": [
+            [
+              -1.322247350107558,
+              0.0
+            ],
+            [
+              -0.322247350107558,
+              0.3490658503988659
+            ],
+            [
+              -0.17921467537054087,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.017629459726245012,
+          "transport_delay_s": 7.040419303661728e-05,
+          "velocity_bias_m_s": -0.01478299791776401,
+          "tilt_bias_deg": -0.19143065753053345,
+          "rate_bias_deg_s": -1.6466386278368783
+        },
+        "target_distance_m": 0.30035610093422604,
+        "direction_sign": -1,
+        "position_kp_s2": 3.1319312502110663,
+        "position_kd_s": 3.9861440453175963,
+        "position_accel_limit_m_s2": 2.490353718695716,
+        "position_extra_measurement_delay_s": 0.008222157844522675,
+        "takeover_activation_delay_s": 0.016031917057812813,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.14303267473701714,
+          "level_duration_s": 0.1792146753705409,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.322247350107558,
+            "position_m": 0.047596844253576756,
+            "velocity_m_s": 0.42947382900824005,
+            "tilt_rad": 0.12186258694998431,
+            "tilt_rate_rad_s": -0.8427103105805782
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:5",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0005",
+          "model": {
+            "delay_s": 0.033836595083997556,
+            "wn_rad_s": 13.013710590650998,
+            "zeta": 0.7769371763571421,
+            "command_gain": 0.8760007499623885,
+            "motion_gain": 0.9576752639676354,
+            "projected_bias_rad": 0.0032174843261157937
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.630150399332731,
+            "tilt_rad": 0.16161241538483095,
+            "tilt_rate_rad_s": -1.5672202444972427
+          },
+          "command_history": [
+            [
+              -1.3936901420650056,
+              0.0
+            ],
+            [
+              -0.39369014206500563,
+              0.3490658503988659
+            ],
+            [
+              -0.1498023651521166,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.009321782395117603,
+          "transport_delay_s": 0.0014405867860996736,
+          "velocity_bias_m_s": -0.00934030873968591,
+          "tilt_bias_deg": 0.11490861448576084,
+          "rate_bias_deg_s": 3.4372697928432583
+        },
+        "target_distance_m": 0.09075620574845386,
+        "direction_sign": -1,
+        "position_kp_s2": 3.368478827901677,
+        "position_kd_s": 3.5467316022930606,
+        "position_accel_limit_m_s2": 2.5031833194270514,
+        "position_extra_measurement_delay_s": 0.0085706374807577,
+        "takeover_activation_delay_s": 0.04545191364397125,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.24388777691288904,
+          "level_duration_s": 0.14980236515211656,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.39369014206500563,
+            "position_m": 0.08669064942896189,
+            "velocity_m_s": 0.630150399332731,
+            "tilt_rad": 0.16161241538483095,
+            "tilt_rate_rad_s": -1.5672202444972427
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:6",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0006",
+          "model": {
+            "delay_s": 0.041991209002079866,
+            "wn_rad_s": 10.378665721873832,
+            "zeta": 1.081179514492468,
+            "command_gain": 0.952412807848566,
+            "motion_gain": 0.9148025202689493,
+            "projected_bias_rad": 0.00069300601800025
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.3354997194060085,
+            "tilt_rad": 0.1486703827409651,
+            "tilt_rate_rad_s": -0.6995445074064556
+          },
+          "command_history": [
+            [
+              -1.3535543798872907,
+              0.0
+            ],
+            [
+              -0.35355437988729066,
+              0.3490658503988659
+            ],
+            [
+              -0.16919501470925505,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.006396568528537885,
+          "transport_delay_s": 0.005259340954105287,
+          "velocity_bias_m_s": -0.00916134835058287,
+          "tilt_bias_deg": -0.19389460259164004,
+          "rate_bias_deg_s": 1.5716617307942604
+        },
+        "target_distance_m": 0.34453198856764955,
+        "direction_sign": -1,
+        "position_kp_s2": 2.9493731770317773,
+        "position_kd_s": 4.232188544222007,
+        "position_accel_limit_m_s2": 1.3829662228404103,
+        "position_extra_measurement_delay_s": 0.022850982073668043,
+        "takeover_activation_delay_s": 0.016931668748994246,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1843593651780356,
+          "level_duration_s": 0.16919501470925502,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.35355437988729066,
+            "position_m": 0.036762149379240626,
+            "velocity_m_s": 0.3354997194060085,
+            "tilt_rad": 0.1486703827409651,
+            "tilt_rate_rad_s": -0.6995445074064556
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:7",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0007",
+          "model": {
+            "delay_s": 0.04682336436748896,
+            "wn_rad_s": 11.231932631342065,
+            "zeta": 0.9559173221261231,
+            "command_gain": 0.8281143243975547,
+            "motion_gain": 1.1993848714210944,
+            "projected_bias_rad": -0.0021225879204122876
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.16807798806169316,
+            "tilt_rad": 0.1182766356480271,
+            "tilt_rate_rad_s": -0.38549979066196455
+          },
+          "command_history": [
+            [
+              -1.2460231993577058,
+              0.0
+            ],
+            [
+              -0.24602319935770578,
+              0.3490658503988659
+            ],
+            [
+              -0.1359147700941787,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.0026199103118174417,
+          "transport_delay_s": 0.008757883424862112,
+          "velocity_bias_m_s": -0.008828796135223617,
+          "tilt_bias_deg": -0.15441646539612164,
+          "rate_bias_deg_s": 1.8451530495540536
+        },
+        "target_distance_m": 0.3587670888488064,
+        "direction_sign": 1,
+        "position_kp_s2": 3.623433858348867,
+        "position_kd_s": 3.1552251893801317,
+        "position_accel_limit_m_s2": 2.3801984567162693,
+        "position_extra_measurement_delay_s": 0.03290167746469209,
+        "takeover_activation_delay_s": 0.07023201747420277,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.11010842926352707,
+          "level_duration_s": 0.1359147700941787,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.24602319935770578,
+            "position_m": 0.010446816336603364,
+            "velocity_m_s": 0.16807798806169316,
+            "tilt_rad": 0.1182766356480271,
+            "tilt_rate_rad_s": -0.38549979066196455
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:8",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0008",
+          "model": {
+            "delay_s": 0.01801337524576185,
+            "wn_rad_s": 12.253800606779997,
+            "zeta": 0.7363740304488544,
+            "command_gain": 1.2128391220425214,
+            "motion_gain": 1.1318708663439465,
+            "projected_bias_rad": 0.003014775973718949
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.8262022036742603,
+            "tilt_rad": 0.3210429987788081,
+            "tilt_rate_rad_s": -1.958848928328438
+          },
+          "command_history": [
+            [
+              -1.3302811627275366,
+              0.0
+            ],
+            [
+              -0.3302811627275366,
+              0.3490658503988659
+            ],
+            [
+              -0.10285896874964054,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.0039432199517592335,
+          "transport_delay_s": 0.010960803322316321,
+          "velocity_bias_m_s": 0.003455964996267676,
+          "tilt_bias_deg": 0.21806977195670219,
+          "rate_bias_deg_s": -1.4442927327770982
+        },
+        "target_distance_m": 0.3384781225073238,
+        "direction_sign": -1,
+        "position_kp_s2": 4.8333876829975075,
+        "position_kd_s": 3.925535874122621,
+        "position_accel_limit_m_s2": 1.3776624348484203,
+        "position_extra_measurement_delay_s": 0.02614132336006428,
+        "takeover_activation_delay_s": 0.0735293180323415,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.22742219397789606,
+          "level_duration_s": 0.10285896874964054,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3302811627275366,
+            "position_m": 0.08525833865801724,
+            "velocity_m_s": 0.8262022036742603,
+            "tilt_rad": 0.3210429987788081,
+            "tilt_rate_rad_s": -1.958848928328438
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:9",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0009",
+          "model": {
+            "delay_s": 0.018727929731657537,
+            "wn_rad_s": 11.094838131117356,
+            "zeta": 1.2373168043351712,
+            "command_gain": 1.0122372759905602,
+            "motion_gain": 0.8917568001041116,
+            "projected_bias_rad": 0.00044464606517163776
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.4929812992213752,
+            "tilt_rad": 0.16412618888970137,
+            "tilt_rate_rad_s": -0.8058122423871383
+          },
+          "command_history": [
+            [
+              -1.3913706151135399,
+              0.0
+            ],
+            [
+              -0.39137061511353993,
+              0.3490658503988659
+            ],
+            [
+              -0.14932806815811417,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.0035950925776561094,
+          "transport_delay_s": 0.001182855788425694,
+          "velocity_bias_m_s": 0.01250890411037697,
+          "tilt_bias_deg": -0.20000850353738187,
+          "rate_bias_deg_s": 2.343040512213107
+        },
+        "target_distance_m": 0.13678304670743588,
+        "direction_sign": -1,
+        "position_kp_s2": 3.8306787694621756,
+        "position_kd_s": 3.7451020093996075,
+        "position_accel_limit_m_s2": 2.405816824716811,
+        "position_extra_measurement_delay_s": 0.007589889925549911,
+        "takeover_activation_delay_s": 0.0023432349299861424,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.24204254695542576,
+          "level_duration_s": 0.14932806815811417,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.39137061511353993,
+            "position_m": 0.06817885769110063,
+            "velocity_m_s": 0.4929812992213752,
+            "tilt_rad": 0.16412618888970137,
+            "tilt_rate_rad_s": -0.8058122423871383
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:10",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0010",
+          "model": {
+            "delay_s": 0.03173220095012326,
+            "wn_rad_s": 11.430901596569825,
+            "zeta": 1.0232552250914342,
+            "command_gain": 0.8452640099665588,
+            "motion_gain": 1.1272674835883973,
+            "projected_bias_rad": 0.0004921425593608843
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.5057087591973134,
+            "tilt_rad": 0.110815547262021,
+            "tilt_rate_rad_s": -0.7460146304421111
+          },
+          "command_history": [
+            [
+              -1.3919874236412224,
+              0.0
+            ],
+            [
+              -0.3919874236412225,
+              0.3490658503988659
+            ],
+            [
+              -0.19114042057367886,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.01634935472804189,
+          "transport_delay_s": 0.0009172415324103844,
+          "velocity_bias_m_s": -0.013964651200701853,
+          "tilt_bias_deg": -0.3669027222615241,
+          "rate_bias_deg_s": -3.6761284865490684
+        },
+        "target_distance_m": 0.04628802241125348,
+        "direction_sign": -1,
+        "position_kp_s2": 5.570282124243966,
+        "position_kd_s": 2.494651008980514,
+        "position_accel_limit_m_s2": 1.8467335608442215,
+        "position_extra_measurement_delay_s": 0.007551275194201841,
+        "takeover_activation_delay_s": 0.04713623016117189,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.20084700306754366,
+          "level_duration_s": 0.19114042057367886,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3919874236412225,
+            "position_m": 0.07156843881278697,
+            "velocity_m_s": 0.5057087591973134,
+            "tilt_rad": 0.110815547262021,
+            "tilt_rate_rad_s": -0.7460146304421111
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:11",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0011",
+          "model": {
+            "delay_s": 0.05327030978101056,
+            "wn_rad_s": 12.49024409655419,
+            "zeta": 0.7952270316267452,
+            "command_gain": 0.8528418710096729,
+            "motion_gain": 0.9139000821878007,
+            "projected_bias_rad": -0.001973483827430034
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.2554008659558752,
+            "tilt_rad": 0.2133093087555584,
+            "tilt_rate_rad_s": -0.7479952760803249
+          },
+          "command_history": [
+            [
+              -1.2874173549017496,
+              0.0
+            ],
+            [
+              -0.2874173549017495,
+              0.3490658503988659
+            ],
+            [
+              -0.11577878757843182,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.01085269184566633,
+          "transport_delay_s": 0.010381529101064917,
+          "velocity_bias_m_s": -0.009117549319658476,
+          "tilt_bias_deg": 0.1257726035451353,
+          "rate_bias_deg_s": -1.2378701609167064
+        },
+        "target_distance_m": 0.3303445890206438,
+        "direction_sign": 1,
+        "position_kp_s2": 4.72447953997234,
+        "position_kd_s": 3.7351289256421634,
+        "position_accel_limit_m_s2": 1.1100063744680544,
+        "position_extra_measurement_delay_s": 0.024088101136737067,
+        "takeover_activation_delay_s": 0.016746734436470963,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1716385673233177,
+          "level_duration_s": 0.11577878757843182,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.2874173549017495,
+            "position_m": 0.018198150978319023,
+            "velocity_m_s": 0.2554008659558752,
+            "tilt_rad": 0.2133093087555584,
+            "tilt_rate_rad_s": -0.7479952760803249
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:12",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0012",
+          "model": {
+            "delay_s": 0.019313575796176007,
+            "wn_rad_s": 12.219197711280518,
+            "zeta": 1.1915345326336488,
+            "command_gain": 0.9301916789243965,
+            "motion_gain": 0.9265067958940988,
+            "projected_bias_rad": 0.003230026175001833
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.22657302214864466,
+            "tilt_rad": 0.1746279522393215,
+            "tilt_rate_rad_s": -0.5943213190221451
+          },
+          "command_history": [
+            [
+              -1.2478761774116436,
+              0.0
+            ],
+            [
+              -0.24787617741164358,
+              0.3490658503988659
+            ],
+            [
+              -0.0815580959731414,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.007662477558609271,
+          "transport_delay_s": 0.0020575503535697837,
+          "velocity_bias_m_s": -0.008956581269396312,
+          "tilt_bias_deg": -0.2978417822359797,
+          "rate_bias_deg_s": 3.858751010064335
+        },
+        "target_distance_m": 0.10996945351114415,
+        "direction_sign": -1,
+        "position_kp_s2": 2.5219247260198214,
+        "position_kd_s": 3.753840811521275,
+        "position_accel_limit_m_s2": 2.736770751642518,
+        "position_extra_measurement_delay_s": 0.0177509522857638,
+        "takeover_activation_delay_s": 0.07235302604257637,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.16631808143850219,
+          "level_duration_s": 0.08155809597314141,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.24787617741164358,
+            "position_m": 0.016896637062445406,
+            "velocity_m_s": 0.22657302214864466,
+            "tilt_rad": 0.1746279522393215,
+            "tilt_rate_rad_s": -0.5943213190221451
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:13",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0013",
+          "model": {
+            "delay_s": 0.020791886819636417,
+            "wn_rad_s": 15.316386664743566,
+            "zeta": 1.1383394439749157,
+            "command_gain": 1.1337385376713514,
+            "motion_gain": 1.1328227831831412,
+            "projected_bias_rad": 0.0030754487620484696
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.31435494815505244,
+            "tilt_rad": 0.27046219641914565,
+            "tilt_rate_rad_s": -0.47876805050961474
+          },
+          "command_history": [
+            [
+              -1.2173593412843207,
+              0.0
+            ],
+            [
+              -0.21735934128432075,
+              0.3490658503988659
+            ],
+            [
+              -0.052253421647863646,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.002262408675841918,
+          "transport_delay_s": 0.008302814848042121,
+          "velocity_bias_m_s": 0.0014440880870100203,
+          "tilt_bias_deg": 0.15864842453253325,
+          "rate_bias_deg_s": 2.4136479527897157
+        },
+        "target_distance_m": 0.2058958243707077,
+        "direction_sign": -1,
+        "position_kp_s2": 3.8722875240770516,
+        "position_kd_s": 3.49114104309017,
+        "position_accel_limit_m_s2": 1.9480685635950783,
+        "position_extra_measurement_delay_s": 0.030357436999020757,
+        "takeover_activation_delay_s": 0.011068990938055476,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1651059196364571,
+          "level_duration_s": 0.05225342164786364,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.21735934128432075,
+            "position_m": 0.018949104495357878,
+            "velocity_m_s": 0.31435494815505244,
+            "tilt_rad": 0.27046219641914565,
+            "tilt_rate_rad_s": -0.47876805050961474
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:14",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0014",
+          "model": {
+            "delay_s": 0.034018475447070935,
+            "wn_rad_s": 14.327697795034933,
+            "zeta": 0.7472835111784225,
+            "command_gain": 0.8332588223880957,
+            "motion_gain": 1.215193972018209,
+            "projected_bias_rad": -0.0002531898665385922
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.3430249370695748,
+            "tilt_rad": 0.06694624543737698,
+            "tilt_rate_rad_s": -0.9438638516006109
+          },
+          "command_history": [
+            [
+              -1.3050110256393332,
+              0.0
+            ],
+            [
+              -0.30501102563933324,
+              0.3490658503988659
+            ],
+            [
+              -0.19828310342627756,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.018658260312935028,
+          "transport_delay_s": 0.007127882392596869,
+          "velocity_bias_m_s": 0.0055319925521070045,
+          "tilt_bias_deg": -0.2802456209238816,
+          "rate_bias_deg_s": -4.12657068651837
+        },
+        "target_distance_m": 0.29626976606479216,
+        "direction_sign": -1,
+        "position_kp_s2": 4.2647536282412934,
+        "position_kd_s": 3.668132062250984,
+        "position_accel_limit_m_s2": 2.086689747720932,
+        "position_extra_measurement_delay_s": 0.019584395284395654,
+        "takeover_activation_delay_s": 0.06763045729017758,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.10672792221305569,
+          "level_duration_s": 0.19828310342627753,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.30501102563933324,
+            "position_m": 0.03859271288461734,
+            "velocity_m_s": 0.3430249370695748,
+            "tilt_rad": 0.06694624543737698,
+            "tilt_rate_rad_s": -0.9438638516006109
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:15",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0015",
+          "model": {
+            "delay_s": 0.052799211469599705,
+            "wn_rad_s": 12.658114295093542,
+            "zeta": 1.0199950737222783,
+            "command_gain": 1.1713930853835477,
+            "motion_gain": 1.093087066233619,
+            "projected_bias_rad": -0.0003948133002130924
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.43797132644002046,
+            "tilt_rad": 0.3239172052679647,
+            "tilt_rate_rad_s": 0.7452666153452127
+          },
+          "command_history": [
+            [
+              -1.3035900500151678,
+              0.0
+            ],
+            [
+              -0.3035900500151677,
+              0.3490658503988659
+            ],
+            [
+              -0.0663957081745494,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.01559192718771686,
+          "transport_delay_s": 0.01323198711829011,
+          "velocity_bias_m_s": 0.00768810357722469,
+          "tilt_bias_deg": -0.0503408019352658,
+          "rate_bias_deg_s": -4.139479143261569
+        },
+        "target_distance_m": 0.16427981056069765,
+        "direction_sign": 1,
+        "position_kp_s2": 5.226587969649443,
+        "position_kd_s": 3.291962638492366,
+        "position_accel_limit_m_s2": 2.1667036357561447,
+        "position_extra_measurement_delay_s": 0.034566588693592325,
+        "takeover_activation_delay_s": 0.012228629849127648,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.2371943418406183,
+          "level_duration_s": 0.06639570817454939,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3035900500151677,
+            "position_m": 0.033140052050474496,
+            "velocity_m_s": 0.43797132644002046,
+            "tilt_rad": 0.3239172052679647,
+            "tilt_rate_rad_s": 0.7452666153452127
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:16",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0016",
+          "model": {
+            "delay_s": 0.04795466590642879,
+            "wn_rad_s": 18.140589718257775,
+            "zeta": 1.0880477177444843,
+            "command_gain": 1.0478508948159955,
+            "motion_gain": 1.119456418592032,
+            "projected_bias_rad": 0.002210779845280726
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.4817385420826399,
+            "tilt_rad": 0.16779686148854372,
+            "tilt_rate_rad_s": -1.6052695907314394
+          },
+          "command_history": [
+            [
+              -1.30195704684336,
+              0.0
+            ],
+            [
+              -0.3019570468433602,
+              0.3490658503988659
+            ],
+            [
+              -0.14419733615514949,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.005940509215922396,
+          "transport_delay_s": 0.007447730617238911,
+          "velocity_bias_m_s": 0.014825482476682812,
+          "tilt_bias_deg": 0.030333384682177944,
+          "rate_bias_deg_s": 1.7742175428203566
+        },
+        "target_distance_m": 0.3504650003651701,
+        "direction_sign": -1,
+        "position_kp_s2": 4.106015057690529,
+        "position_kd_s": 2.466022549584563,
+        "position_accel_limit_m_s2": 2.358072911762408,
+        "position_extra_measurement_delay_s": 0.027203660894714567,
+        "takeover_activation_delay_s": 0.04901212624970726,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.15775971068821074,
+          "level_duration_s": 0.1441973361551495,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3019570468433602,
+            "position_m": 0.045637109872740333,
+            "velocity_m_s": 0.4817385420826399,
+            "tilt_rad": 0.16779686148854372,
+            "tilt_rate_rad_s": -1.6052695907314394
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:17",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0017",
+          "model": {
+            "delay_s": 0.019441159758136147,
+            "wn_rad_s": 12.117518725302876,
+            "zeta": 0.7104283185453926,
+            "command_gain": 1.137152601979649,
+            "motion_gain": 1.2842733879512178,
+            "projected_bias_rad": -0.000950448325046805
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.7882132927596854,
+            "tilt_rad": 0.37372800978810156,
+            "tilt_rate_rad_s": -0.926013210555769
+          },
+          "command_history": [
+            [
+              -1.3128379919313824,
+              0.0
+            ],
+            [
+              -0.3128379919313824,
+              0.3490658503988659
+            ],
+            [
+              -0.06511461161632798,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.016653046071098666,
+          "transport_delay_s": 0.014996211338186478,
+          "velocity_bias_m_s": 0.014951689067745454,
+          "tilt_bias_deg": -0.16747187941098385,
+          "rate_bias_deg_s": 1.323360728263433
+        },
+        "target_distance_m": 0.15306754296070002,
+        "direction_sign": 1,
+        "position_kp_s2": 2.4782582232733508,
+        "position_kd_s": 4.3445529167801125,
+        "position_accel_limit_m_s2": 1.8989777638322318,
+        "position_extra_measurement_delay_s": 0.022639633331512615,
+        "takeover_activation_delay_s": 0.07011832707250303,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.24772338031505442,
+          "level_duration_s": 0.06511461161632796,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3128379919313824,
+            "position_m": 0.07100104507934803,
+            "velocity_m_s": 0.7882132927596854,
+            "tilt_rad": 0.37372800978810156,
+            "tilt_rate_rad_s": -0.926013210555769
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:18",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0018",
+          "model": {
+            "delay_s": 0.04007529449505302,
+            "wn_rad_s": 11.368967235613717,
+            "zeta": 1.2518762487682367,
+            "command_gain": 1.111314563436904,
+            "motion_gain": 1.1086957365110142,
+            "projected_bias_rad": -0.0011939374240971926
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.5821615559964113,
+            "tilt_rad": 0.21312109263282497,
+            "tilt_rate_rad_s": -0.9313123235028116
+          },
+          "command_history": [
+            [
+              -1.3749321384824136,
+              0.0
+            ],
+            [
+              -0.3749321384824136,
+              0.3490658503988659
+            ],
+            [
+              -0.1355231808566656,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.01861702428798769,
+          "transport_delay_s": 0.0058183556604398555,
+          "velocity_bias_m_s": 0.011886425842475618,
+          "tilt_bias_deg": -0.17163060660878804,
+          "rate_bias_deg_s": -0.8075758615263884
+        },
+        "target_distance_m": 0.049163122176214546,
+        "direction_sign": 1,
+        "position_kp_s2": 3.633845441470903,
+        "position_kd_s": 3.9738697482820817,
+        "position_accel_limit_m_s2": 1.7580147571196592,
+        "position_extra_measurement_delay_s": 0.02843849596462195,
+        "takeover_activation_delay_s": 0.06744079619043905,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.239408957625748,
+          "level_duration_s": 0.13552318085666562,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3749321384824136,
+            "position_m": 0.06719136851640137,
+            "velocity_m_s": 0.5821615559964113,
+            "tilt_rad": 0.21312109263282497,
+            "tilt_rate_rad_s": -0.9313123235028116
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:19",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0019",
+          "model": {
+            "delay_s": 0.021044518441180562,
+            "wn_rad_s": 10.360643084685957,
+            "zeta": 0.7839187700023411,
+            "command_gain": 0.9651360258889644,
+            "motion_gain": 1.1636002899271531,
+            "projected_bias_rad": 1.1888535649890808e-05
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.21076580949191667,
+            "tilt_rad": 0.12989883566049712,
+            "tilt_rate_rad_s": -0.4815565872084182
+          },
+          "command_history": [
+            [
+              -1.2349318396994922,
+              0.0
+            ],
+            [
+              -0.23493183969949222,
+              0.3490658503988659
+            ],
+            [
+              -0.13538309046769173,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.018366664455163474,
+          "transport_delay_s": 0.006736134861121501,
+          "velocity_bias_m_s": -0.008106014607227317,
+          "tilt_bias_deg": 0.4786625708974167,
+          "rate_bias_deg_s": -2.6999256600861576
+        },
+        "target_distance_m": 0.22355363165693495,
+        "direction_sign": -1,
+        "position_kp_s2": 5.103120081270116,
+        "position_kd_s": 2.9846270903031638,
+        "position_accel_limit_m_s2": 2.738961038213694,
+        "position_extra_measurement_delay_s": 0.03704181827223677,
+        "takeover_activation_delay_s": 0.007938484193603036,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.09954874923180049,
+          "level_duration_s": 0.13538309046769173,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.23493183969949222,
+            "position_m": 0.014767227541520527,
+            "velocity_m_s": 0.21076580949191667,
+            "tilt_rad": 0.12989883566049712,
+            "tilt_rate_rad_s": -0.4815565872084182
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:20",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0020",
+          "model": {
+            "delay_s": 0.04226905718283696,
+            "wn_rad_s": 12.600608692214001,
+            "zeta": 1.0038488499680902,
+            "command_gain": 0.9711920639941636,
+            "motion_gain": 1.043550980068642,
+            "projected_bias_rad": 0.0026593437684705136
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.19258220836066053,
+            "tilt_rad": 0.18654695679748334,
+            "tilt_rate_rad_s": -0.38273294202844665
+          },
+          "command_history": [
+            [
+              -1.236147888260195,
+              0.0
+            ],
+            [
+              -0.23614788826019514,
+              0.3490658503988659
+            ],
+            [
+              -0.10238746245915709,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.010447306726361485,
+          "transport_delay_s": 0.013817012825800352,
+          "velocity_bias_m_s": -0.014097249008615836,
+          "tilt_bias_deg": -0.007767476112695237,
+          "rate_bias_deg_s": -4.2477736849231595
+        },
+        "target_distance_m": 0.2893651174834416,
+        "direction_sign": -1,
+        "position_kp_s2": 2.8208847249254454,
+        "position_kd_s": 2.415637107444465,
+        "position_accel_limit_m_s2": 1.963999782728625,
+        "position_extra_measurement_delay_s": 0.018873283319928307,
+        "takeover_activation_delay_s": 0.024655840879079776,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.13376042580103806,
+          "level_duration_s": 0.10238746245915709,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.23614788826019514,
+            "position_m": 0.010891338603789462,
+            "velocity_m_s": 0.19258220836066053,
+            "tilt_rad": 0.18654695679748334,
+            "tilt_rate_rad_s": -0.38273294202844665
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:21",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0021",
+          "model": {
+            "delay_s": 0.037638786189689404,
+            "wn_rad_s": 10.374676378714508,
+            "zeta": 0.9978288012423362,
+            "command_gain": 1.2044455807080707,
+            "motion_gain": 1.0045261068534965,
+            "projected_bias_rad": 0.0026282068560830336
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.34429690615529807,
+            "tilt_rad": 0.19644972628197233,
+            "tilt_rate_rad_s": -0.7676421711519034
+          },
+          "command_history": [
+            [
+              -1.3063875671491871,
+              0.0
+            ],
+            [
+              -0.30638756714918725,
+              0.3490658503988659
+            ],
+            [
+              -0.15329713304483272,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.0009935767613445635,
+          "transport_delay_s": 0.016691892130341796,
+          "velocity_bias_m_s": 0.008072246424369647,
+          "tilt_bias_deg": -0.4374790049057956,
+          "rate_bias_deg_s": 0.36880862699326444
+        },
+        "target_distance_m": 0.1560542393049835,
+        "direction_sign": -1,
+        "position_kp_s2": 3.052666725897585,
+        "position_kd_s": 2.1023335560540857,
+        "position_accel_limit_m_s2": 2.541619272804984,
+        "position_extra_measurement_delay_s": 0.02025322407100031,
+        "takeover_activation_delay_s": 0.06382535233765778,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.15309043410435452,
+          "level_duration_s": 0.1532971330448327,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.30638756714918725,
+            "position_m": 0.029407557393055596,
+            "velocity_m_s": 0.34429690615529807,
+            "tilt_rad": 0.19644972628197233,
+            "tilt_rate_rad_s": -0.7676421711519034
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:22",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0022",
+          "model": {
+            "delay_s": 0.031568568683775236,
+            "wn_rad_s": 16.511129058064544,
+            "zeta": 0.7263024155824548,
+            "command_gain": 0.8485626667245235,
+            "motion_gain": 1.2765322002194368,
+            "projected_bias_rad": -0.0018058259354100656
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.37058206510777186,
+            "tilt_rad": 0.2807275877346514,
+            "tilt_rate_rad_s": -0.2123046295736668
+          },
+          "command_history": [
+            [
+              -1.233711194771963,
+              0.0
+            ],
+            [
+              -0.23371119477196306,
+              0.3490658503988659
+            ],
+            [
+              -0.0532743202509858,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.008697539439738921,
+          "transport_delay_s": 0.010358356105454426,
+          "velocity_bias_m_s": -0.014833281532488866,
+          "tilt_bias_deg": -0.4984179958176781,
+          "rate_bias_deg_s": 2.754266632236403
+        },
+        "target_distance_m": 0.17955027735545653,
+        "direction_sign": 1,
+        "position_kp_s2": 5.8287107025611755,
+        "position_kd_s": 4.364871813930267,
+        "position_accel_limit_m_s2": 2.2621008679092265,
+        "position_extra_measurement_delay_s": 0.026933498733365424,
+        "takeover_activation_delay_s": 0.00998711643252979,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.18043687452097726,
+          "level_duration_s": 0.053274320250985795,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.23371119477196306,
+            "position_m": 0.02264901467670303,
+            "velocity_m_s": 0.37058206510777186,
+            "tilt_rad": 0.2807275877346514,
+            "tilt_rate_rad_s": -0.2123046295736668
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:23",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0023",
+          "model": {
+            "delay_s": 0.05336854565225454,
+            "wn_rad_s": 17.13862598665436,
+            "zeta": 1.1083590130588878,
+            "command_gain": 0.8922647093022834,
+            "motion_gain": 0.9369581589010094,
+            "projected_bias_rad": 0.0010475680150982768
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.24163248396458376,
+            "tilt_rad": 0.13338165701005242,
+            "tilt_rate_rad_s": -1.1166451708296457
+          },
+          "command_history": [
+            [
+              -1.2811184822049655,
+              0.0
+            ],
+            [
+              -0.2811184822049654,
+              0.3490658503988659
+            ],
+            [
+              -0.15520743388748676,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.009472087044525854,
+          "transport_delay_s": 0.01571338972509884,
+          "velocity_bias_m_s": 0.0058687561347036295,
+          "tilt_bias_deg": 0.019883526798726625,
+          "rate_bias_deg_s": 2.517942252080264
+        },
+        "target_distance_m": 0.20620209150963126,
+        "direction_sign": -1,
+        "position_kp_s2": 2.590929744271003,
+        "position_kd_s": 2.5469951315534787,
+        "position_accel_limit_m_s2": 1.6559686637750455,
+        "position_extra_measurement_delay_s": 0.007173276821005317,
+        "takeover_activation_delay_s": 0.03406774939391976,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.12591104831747862,
+          "level_duration_s": 0.15520743388748673,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.2811184822049654,
+            "position_m": 0.019104881315823295,
+            "velocity_m_s": 0.24163248396458376,
+            "tilt_rad": 0.13338165701005242,
+            "tilt_rate_rad_s": -1.1166451708296457
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:24",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0024",
+          "model": {
+            "delay_s": 0.04945112577301958,
+            "wn_rad_s": 11.268680689768832,
+            "zeta": 1.150042193390109,
+            "command_gain": 1.032875768931326,
+            "motion_gain": 1.1082136483768164,
+            "projected_bias_rad": 0.002066672554405535
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.41143285140529046,
+            "tilt_rad": 0.1506040826895807,
+            "tilt_rate_rad_s": -0.7561514127495427
+          },
+          "command_history": [
+            [
+              -1.3553875123497605,
+              0.0
+            ],
+            [
+              -0.35538751234976057,
+              0.3490658503988659
+            ],
+            [
+              -0.18472676390785084,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.007757331573333288,
+          "transport_delay_s": 0.014101203066162785,
+          "velocity_bias_m_s": 0.013126048038582954,
+          "tilt_bias_deg": -0.24244965030381338,
+          "rate_bias_deg_s": 0.4723078618248766
+        },
+        "target_distance_m": 0.3632646151807508,
+        "direction_sign": -1,
+        "position_kp_s2": 3.99317465429545,
+        "position_kd_s": 3.6846375636445603,
+        "position_accel_limit_m_s2": 1.9905496398172415,
+        "position_extra_measurement_delay_s": 0.01774269614293124,
+        "takeover_activation_delay_s": 0.028284408862846916,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.17066074844190973,
+          "level_duration_s": 0.18472676390785084,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.35538751234976057,
+            "position_m": 0.0438522572067141,
+            "velocity_m_s": 0.41143285140529046,
+            "tilt_rad": 0.1506040826895807,
+            "tilt_rate_rad_s": -0.7561514127495427
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:25",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0025",
+          "model": {
+            "delay_s": 0.04192920207082975,
+            "wn_rad_s": 12.77680197051279,
+            "zeta": 0.9781499643107779,
+            "command_gain": 0.9273948976806243,
+            "motion_gain": 1.1845146850835004,
+            "projected_bias_rad": -0.003057313618253862
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.14967288704331871,
+            "tilt_rad": 0.18695937882453784,
+            "tilt_rate_rad_s": 0.9093646968957964
+          },
+          "command_history": [
+            [
+              -1.2124126153520516,
+              0.0
+            ],
+            [
+              -0.21241261535205155,
+              0.3490658503988659
+            ],
+            [
+              -0.06522442596736686,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.010492181826905039,
+          "transport_delay_s": 0.018231212273501555,
+          "velocity_bias_m_s": -0.006852891832231299,
+          "tilt_bias_deg": -0.09098463238554322,
+          "rate_bias_deg_s": -0.040269308333837905
+        },
+        "target_distance_m": 0.0708450606400003,
+        "direction_sign": 1,
+        "position_kp_s2": 4.767427267978597,
+        "position_kd_s": 2.9582492831914045,
+        "position_accel_limit_m_s2": 2.871317863716926,
+        "position_extra_measurement_delay_s": 0.002322657429275292,
+        "takeover_activation_delay_s": 0.02653143119393861,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1471881893846847,
+          "level_duration_s": 0.06522442596736686,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.21241261535205155,
+            "position_m": 0.006688587913771925,
+            "velocity_m_s": 0.14967288704331871,
+            "tilt_rad": 0.18695937882453784,
+            "tilt_rate_rad_s": 0.9093646968957964
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:26",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0026",
+          "model": {
+            "delay_s": 0.040079581234519705,
+            "wn_rad_s": 13.559715780465778,
+            "zeta": 1.1331941207709109,
+            "command_gain": 0.8499680041663698,
+            "motion_gain": 1.0461588523950793,
+            "projected_bias_rad": -7.67605916524724e-05
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.10414847984151396,
+            "tilt_rad": 0.11947455908720131,
+            "tilt_rate_rad_s": -0.29024488049870034
+          },
+          "command_history": [
+            [
+              -1.1923481773075477,
+              0.0
+            ],
+            [
+              -0.19234817730754783,
+              0.3490658503988659
+            ],
+            [
+              -0.09622846585731656,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.002910234780171466,
+          "transport_delay_s": 0.005593057815356448,
+          "velocity_bias_m_s": -0.0012288784125632057,
+          "tilt_bias_deg": 0.23142997629283046,
+          "rate_bias_deg_s": 3.8725147535331073
+        },
+        "target_distance_m": 0.2659269019088931,
+        "direction_sign": -1,
+        "position_kp_s2": 5.253986709998742,
+        "position_kd_s": 3.2586626309802975,
+        "position_accel_limit_m_s2": 1.2272803640259342,
+        "position_extra_measurement_delay_s": 0.02440955095628583,
+        "takeover_activation_delay_s": 0.01811980387053663,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.09611971145023127,
+          "level_duration_s": 0.09622846585731655,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.19234817730754783,
+            "position_m": 0.004844017094052118,
+            "velocity_m_s": 0.10414847984151396,
+            "tilt_rad": 0.11947455908720131,
+            "tilt_rate_rad_s": -0.29024488049870034
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:27",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0027",
+          "model": {
+            "delay_s": 0.03330111195246121,
+            "wn_rad_s": 10.785179827145345,
+            "zeta": 0.7338217923355145,
+            "command_gain": 1.1679448958862442,
+            "motion_gain": 1.0206147984489886,
+            "projected_bias_rad": 0.002617915690727773
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.18174849125903803,
+            "tilt_rad": 0.24888317241479746,
+            "tilt_rate_rad_s": 0.8894575311988159
+          },
+          "command_history": [
+            [
+              -1.197066097497129,
+              0.0
+            ],
+            [
+              -0.19706609749712892,
+              0.3490658503988659
+            ],
+            [
+              -0.05246363073258267,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.019934356252148785,
+          "transport_delay_s": 0.00020360074730771282,
+          "velocity_bias_m_s": -0.0128767938902167,
+          "tilt_bias_deg": 0.33099726294515364,
+          "rate_bias_deg_s": 1.637927681287934
+        },
+        "target_distance_m": 0.3362630541707239,
+        "direction_sign": -1,
+        "position_kp_s2": 4.250268439677324,
+        "position_kd_s": 3.004656813084695,
+        "position_accel_limit_m_s2": 1.479941151475529,
+        "position_extra_measurement_delay_s": 0.026742603648386255,
+        "takeover_activation_delay_s": 0.026539953668271866,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.14460246676454624,
+          "level_duration_s": 0.05246363073258268,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.19706609749712892,
+            "position_m": 0.008545615477777227,
+            "velocity_m_s": 0.18174849125903803,
+            "tilt_rad": 0.24888317241479746,
+            "tilt_rate_rad_s": 0.8894575311988159
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:28",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0028",
+          "model": {
+            "delay_s": 0.022442500761938718,
+            "wn_rad_s": 12.877194318200786,
+            "zeta": 1.2617589721625884,
+            "command_gain": 1.0828308975914207,
+            "motion_gain": 1.1846592109569336,
+            "projected_bias_rad": 0.0002169014652852884
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.21241287826263136,
+            "tilt_rad": 0.14472211480306757,
+            "tilt_rate_rad_s": -0.5762488725491696
+          },
+          "command_history": [
+            [
+              -1.2241277302916762,
+              0.0
+            ],
+            [
+              -0.22412773029167626,
+              0.3490658503988659
+            ],
+            [
+              -0.11036080267523947,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.01359463378214662,
+          "transport_delay_s": 0.01524952972603339,
+          "velocity_bias_m_s": -0.0007625735520310484,
+          "tilt_bias_deg": -0.3015169583136704,
+          "rate_bias_deg_s": -4.4745857448424795
+        },
+        "target_distance_m": 0.053157748199059655,
+        "direction_sign": 1,
+        "position_kp_s2": 4.1353392190171245,
+        "position_kd_s": 3.0971955640159607,
+        "position_accel_limit_m_s2": 2.929407053382947,
+        "position_extra_measurement_delay_s": 0.005897063513144571,
+        "takeover_activation_delay_s": 0.05762763298729841,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1137669276164368,
+          "level_duration_s": 0.11036080267523948,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.22412773029167626,
+            "position_m": 0.013358165940618822,
+            "velocity_m_s": 0.21241287826263136,
+            "tilt_rad": 0.14472211480306757,
+            "tilt_rate_rad_s": -0.5762488725491696
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:29",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0029",
+          "model": {
+            "delay_s": 0.021448403001546566,
+            "wn_rad_s": 15.888652205614584,
+            "zeta": 0.8311008315323618,
+            "command_gain": 0.9462877622883595,
+            "motion_gain": 1.0769093803850376,
+            "projected_bias_rad": -0.0004462882265460857
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.6308437509612013,
+            "tilt_rad": 0.26185684436584067,
+            "tilt_rate_rad_s": -1.9665838053223974
+          },
+          "command_history": [
+            [
+              -1.312538097852934,
+              0.0
+            ],
+            [
+              -0.31253809785293396,
+              0.3490658503988659
+            ],
+            [
+              -0.07633282779425277,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.0005117511317029133,
+          "transport_delay_s": 0.004508477849208701,
+          "velocity_bias_m_s": 0.014825759850245594,
+          "tilt_bias_deg": -0.36237016054257687,
+          "rate_bias_deg_s": -4.979402789610123
+        },
+        "target_distance_m": 0.04499199265183126,
+        "direction_sign": -1,
+        "position_kp_s2": 2.3734404208048083,
+        "position_kd_s": 2.476003713319457,
+        "position_accel_limit_m_s2": 2.503555936674791,
+        "position_extra_measurement_delay_s": 0.018654473315006376,
+        "takeover_activation_delay_s": 0.04072662433153882,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.2362052700586812,
+          "level_duration_s": 0.07633282779425278,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.31253809785293396,
+            "position_m": 0.06448267182857736,
+            "velocity_m_s": 0.6308437509612013,
+            "tilt_rad": 0.26185684436584067,
+            "tilt_rate_rad_s": -1.9665838053223974
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:30",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0030",
+          "model": {
+            "delay_s": 0.03657395903039311,
+            "wn_rad_s": 16.824274918769774,
+            "zeta": 1.0295723068591405,
+            "command_gain": 0.9626035503173359,
+            "motion_gain": 0.9654862134454943,
+            "projected_bias_rad": 0.0009695197784553164
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.23986181978465101,
+            "tilt_rad": 0.1265853620607597,
+            "tilt_rate_rad_s": -1.1425133353319334
+          },
+          "command_history": [
+            [
+              -1.242856333973359,
+              0.0
+            ],
+            [
+              -0.24285633397335882,
+              0.3490658503988659
+            ],
+            [
+              -0.13474649241905062,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.01997254942102083,
+          "transport_delay_s": 0.0026556364947536992,
+          "velocity_bias_m_s": -0.006186638775217948,
+          "tilt_bias_deg": -0.4772294578933248,
+          "rate_bias_deg_s": 3.7777686228895058
+        },
+        "target_distance_m": 0.2957945476568753,
+        "direction_sign": -1,
+        "position_kp_s2": 5.169147655842474,
+        "position_kd_s": 3.8735430501560986,
+        "position_accel_limit_m_s2": 1.619538069868302,
+        "position_extra_measurement_delay_s": 0.034982379626968124,
+        "takeover_activation_delay_s": 0.030728105573844457,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.10810984155430818,
+          "level_duration_s": 0.13474649241905065,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.24285633397335882,
+            "position_m": 0.018538303517481754,
+            "velocity_m_s": 0.23986181978465101,
+            "tilt_rad": 0.1265853620607597,
+            "tilt_rate_rad_s": -1.1425133353319334
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:31",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0031",
+          "model": {
+            "delay_s": 0.04320239018284934,
+            "wn_rad_s": 17.816014619089227,
+            "zeta": 0.8968530471948098,
+            "command_gain": 0.9084576987623297,
+            "motion_gain": 0.9309437003346879,
+            "projected_bias_rad": -8.881589478823473e-05
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.1588287123920228,
+            "tilt_rad": 0.24284479532342812,
+            "tilt_rate_rad_s": 0.5857435111223995
+          },
+          "command_history": [
+            [
+              -1.1955172098805091,
+              0.0
+            ],
+            [
+              -0.19551720988050902,
+              0.3490658503988659
+            ],
+            [
+              -0.058306561709556864,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.005268085487834491,
+          "transport_delay_s": 0.008724221395404842,
+          "velocity_bias_m_s": 0.014979461125096466,
+          "tilt_bias_deg": 0.4598435001965713,
+          "rate_bias_deg_s": 0.09733062391668379
+        },
+        "target_distance_m": 0.19358700775740365,
+        "direction_sign": 1,
+        "position_kp_s2": 3.542109912346328,
+        "position_kd_s": 2.960542218905523,
+        "position_accel_limit_m_s2": 1.1217611260191684,
+        "position_extra_measurement_delay_s": 0.0031448969541051676,
+        "takeover_activation_delay_s": 0.05072536662409501,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.13721064817095216,
+          "level_duration_s": 0.058306561709556864,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.19551720988050902,
+            "position_m": 0.007029603991020475,
+            "velocity_m_s": 0.1588287123920228,
+            "tilt_rad": 0.24284479532342812,
+            "tilt_rate_rad_s": 0.5857435111223995
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:32",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0032",
+          "model": {
+            "delay_s": 0.02296894515668034,
+            "wn_rad_s": 17.803868665615582,
+            "zeta": 1.054625818204299,
+            "command_gain": 0.9587557676893735,
+            "motion_gain": 1.2401900078402837,
+            "projected_bias_rad": 0.000862700091306315
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.26737078900308026,
+            "tilt_rad": 0.14107467226506998,
+            "tilt_rate_rad_s": -1.209212166784614
+          },
+          "command_history": [
+            [
+              -1.216440310557001,
+              0.0
+            ],
+            [
+              -0.21644031055700108,
+              0.3490658503988659
+            ],
+            [
+              -0.11335883123522528,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.005063541204581046,
+          "transport_delay_s": 0.013317289859395865,
+          "velocity_bias_m_s": -0.004931348771160086,
+          "tilt_bias_deg": 0.11054833441397804,
+          "rate_bias_deg_s": -4.308262355433861
+        },
+        "target_distance_m": 0.14240493178549557,
+        "direction_sign": -1,
+        "position_kp_s2": 5.839084612955709,
+        "position_kd_s": 3.105791535743215,
+        "position_accel_limit_m_s2": 1.112318132194399,
+        "position_extra_measurement_delay_s": 0.0014832440097331423,
+        "takeover_activation_delay_s": 0.027394621085662135,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1030814793217758,
+          "level_duration_s": 0.11335883123522528,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.21644031055700108,
+            "position_m": 0.01753852419134125,
+            "velocity_m_s": 0.26737078900308026,
+            "tilt_rad": 0.14107467226506998,
+            "tilt_rate_rad_s": -1.209212166784614
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:33",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0033",
+          "model": {
+            "delay_s": 0.023078029191495573,
+            "wn_rad_s": 13.595243389032095,
+            "zeta": 1.2313953690151194,
+            "command_gain": 0.9880384344460775,
+            "motion_gain": 1.2937287316697135,
+            "projected_bias_rad": -1.4626460468709825e-05
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.6179837480708054,
+            "tilt_rad": 0.15757326595019452,
+            "tilt_rate_rad_s": -0.9750397142461374
+          },
+          "command_history": [
+            [
+              -1.3446055258662084,
+              0.0
+            ],
+            [
+              -0.3446055258662085,
+              0.3490658503988659
+            ],
+            [
+              -0.13773742229173183,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.004783420566589247,
+          "transport_delay_s": 0.0028783507882974013,
+          "velocity_bias_m_s": -0.011928181158656204,
+          "tilt_bias_deg": -0.4432002378127542,
+          "rate_bias_deg_s": -0.261034349306023
+        },
+        "target_distance_m": 0.13747303062929095,
+        "direction_sign": 1,
+        "position_kp_s2": 2.7020478070340164,
+        "position_kd_s": 4.011114043488255,
+        "position_accel_limit_m_s2": 1.1685432781561698,
+        "position_extra_measurement_delay_s": 0.017292192449731857,
+        "takeover_activation_delay_s": 0.07829525864889195,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.20686810357447669,
+          "level_duration_s": 0.1377374222917318,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3446055258662085,
+            "position_m": 0.07433545914325213,
+            "velocity_m_s": 0.6179837480708054,
+            "tilt_rad": 0.15757326595019452,
+            "tilt_rate_rad_s": -0.9750397142461374
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:34",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0034",
+          "model": {
+            "delay_s": 0.047610451889894614,
+            "wn_rad_s": 16.40178759924437,
+            "zeta": 0.9054693672381503,
+            "command_gain": 0.9308732252648322,
+            "motion_gain": 1.0630729895780104,
+            "projected_bias_rad": -0.001579519203353885
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.4363626513890059,
+            "tilt_rad": 0.1459693903817016,
+            "tilt_rate_rad_s": -1.5811580064301938
+          },
+          "command_history": [
+            [
+              -1.3189506526151735,
+              0.0
+            ],
+            [
+              -0.3189506526151734,
+              0.3490658503988659
+            ],
+            [
+              -0.1589995792447906,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.013733158556344658,
+          "transport_delay_s": 0.013267090653322385,
+          "velocity_bias_m_s": 0.007775094300262092,
+          "tilt_bias_deg": 0.39167728709623606,
+          "rate_bias_deg_s": 0.4517962353087934
+        },
+        "target_distance_m": 0.3237819619635623,
+        "direction_sign": 1,
+        "position_kp_s2": 3.7882650570417664,
+        "position_kd_s": 3.4346530278032357,
+        "position_accel_limit_m_s2": 1.578823907566754,
+        "position_extra_measurement_delay_s": 0.02919186828318132,
+        "takeover_activation_delay_s": 0.04508844681493211,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1599510733703828,
+          "level_duration_s": 0.1589995792447906,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3189506526151734,
+            "position_m": 0.04312218039754918,
+            "velocity_m_s": 0.4363626513890059,
+            "tilt_rad": 0.1459693903817016,
+            "tilt_rate_rad_s": -1.5811580064301938
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:35",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0035",
+          "model": {
+            "delay_s": 0.030740755706144287,
+            "wn_rad_s": 18.275060900142375,
+            "zeta": 0.954033527268406,
+            "command_gain": 1.1052538196583586,
+            "motion_gain": 0.9276093985474347,
+            "projected_bias_rad": 0.002896903657520416
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.24580112323583694,
+            "tilt_rad": 0.24625021298172092,
+            "tilt_rate_rad_s": -1.5635356483600402
+          },
+          "command_history": [
+            [
+              -1.205100587778649,
+              0.0
+            ],
+            [
+              -0.20510058777864892,
+              0.3490658503988659
+            ],
+            [
+              -0.08332456998322198,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.010385123719177655,
+          "transport_delay_s": 0.00891824061177148,
+          "velocity_bias_m_s": -0.006725484663167831,
+          "tilt_bias_deg": 0.39226115441803033,
+          "rate_bias_deg_s": 3.6259840042238114
+        },
+        "target_distance_m": 0.25270921356402887,
+        "direction_sign": -1,
+        "position_kp_s2": 3.4982292962359427,
+        "position_kd_s": 2.4950989489719317,
+        "position_accel_limit_m_s2": 2.0884104380571022,
+        "position_extra_measurement_delay_s": 0.035643053074291754,
+        "takeover_activation_delay_s": 0.044768614777887045,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.12177601779542695,
+          "level_duration_s": 0.08332456998322198,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.20510058777864892,
+            "position_m": 0.013490782869071091,
+            "velocity_m_s": 0.24580112323583694,
+            "tilt_rad": 0.24625021298172092,
+            "tilt_rate_rad_s": -1.5635356483600402
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:36",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0036",
+          "model": {
+            "delay_s": 0.029049682744629247,
+            "wn_rad_s": 11.49796836602929,
+            "zeta": 1.0909268731788135,
+            "command_gain": 0.8322170791393378,
+            "motion_gain": 1.2718230551466805,
+            "projected_bias_rad": 0.001542508494697451
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.43831391299603695,
+            "tilt_rad": 0.16005707901578864,
+            "tilt_rate_rad_s": -0.7548526891975987
+          },
+          "command_history": [
+            [
+              -1.3241979454896722,
+              0.0
+            ],
+            [
+              -0.3241979454896721,
+              0.3490658503988659
+            ],
+            [
+              -0.12114734369961344,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.01718268238135632,
+          "transport_delay_s": 0.002233129112254848,
+          "velocity_bias_m_s": 0.007864444637819845,
+          "tilt_bias_deg": -0.09625476486499551,
+          "rate_bias_deg_s": -1.4531083647956822
+        },
+        "target_distance_m": 0.39183068567714585,
+        "direction_sign": -1,
+        "position_kp_s2": 4.1771215620086135,
+        "position_kd_s": 3.636213916086334,
+        "position_accel_limit_m_s2": 1.2513079855770328,
+        "position_extra_measurement_delay_s": 0.025642200024625673,
+        "takeover_activation_delay_s": 0.07927284492617466,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.20305060179005868,
+          "level_duration_s": 0.12114734369961343,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3241979454896721,
+            "position_m": 0.0446148036860252,
+            "velocity_m_s": 0.43831391299603695,
+            "tilt_rad": 0.16005707901578864,
+            "tilt_rate_rad_s": -0.7548526891975987
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:37",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0037",
+          "model": {
+            "delay_s": 0.022930056102830956,
+            "wn_rad_s": 13.596442718406156,
+            "zeta": 0.8451370340285587,
+            "command_gain": 1.1803849687493344,
+            "motion_gain": 1.2492988934091318,
+            "projected_bias_rad": 0.0029019511294792423
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 1.005268113428613,
+            "tilt_rad": 0.17569107757201738,
+            "tilt_rate_rad_s": -1.8033638529355942
+          },
+          "command_history": [
+            [
+              -1.3796719923723022,
+              0.0
+            ],
+            [
+              -0.37967199237230215,
+              0.3490658503988659
+            ],
+            [
+              -0.15976466470564357,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.012380823942970702,
+          "transport_delay_s": 0.007128152416294576,
+          "velocity_bias_m_s": -0.00797609049086163,
+          "tilt_bias_deg": 0.009354717075520269,
+          "rate_bias_deg_s": 2.0628581734365126
+        },
+        "target_distance_m": 0.29969853491212123,
+        "direction_sign": -1,
+        "position_kp_s2": 4.610348238855317,
+        "position_kd_s": 4.3981051689539505,
+        "position_accel_limit_m_s2": 1.010342112467432,
+        "position_extra_measurement_delay_s": 0.023135125489550747,
+        "takeover_activation_delay_s": 0.002763753889636229,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.21990732766665858,
+          "level_duration_s": 0.15976466470564357,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.37967199237230215,
+            "position_m": 0.1394715438648941,
+            "velocity_m_s": 1.005268113428613,
+            "tilt_rad": 0.17569107757201738,
+            "tilt_rate_rad_s": -1.8033638529355942
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:38",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0038",
+          "model": {
+            "delay_s": 0.03890238128225575,
+            "wn_rad_s": 14.816129063085874,
+            "zeta": 0.9501810023455858,
+            "command_gain": 1.1209283408722555,
+            "motion_gain": 1.3106606317133092,
+            "projected_bias_rad": 0.0003547112240778693
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.6415395929408316,
+            "tilt_rad": 0.3523705812269695,
+            "tilt_rate_rad_s": 0.530996910701129
+          },
+          "command_history": [
+            [
+              -1.2987574696600879,
+              0.0
+            ],
+            [
+              -0.29875746966008776,
+              0.3490658503988659
+            ],
+            [
+              -0.04934267564333347,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.010096435542532405,
+          "transport_delay_s": 0.014211971720342722,
+          "velocity_bias_m_s": 0.012495067079576027,
+          "tilt_bias_deg": -0.30038859270097384,
+          "rate_bias_deg_s": -0.31183521878974885
+        },
+        "target_distance_m": 0.14888978983500806,
+        "direction_sign": 1,
+        "position_kp_s2": 5.682383546270103,
+        "position_kd_s": 2.3194043648300875,
+        "position_accel_limit_m_s2": 2.313554183461714,
+        "position_extra_measurement_delay_s": 0.027398805693744147,
+        "takeover_activation_delay_s": 0.07456736921106932,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.2494147940167543,
+          "level_duration_s": 0.0493426756433335,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.29875746966008776,
+            "position_m": 0.05211653109743917,
+            "velocity_m_s": 0.6415395929408316,
+            "tilt_rad": 0.3523705812269695,
+            "tilt_rate_rad_s": 0.530996910701129
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:39",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0039",
+          "model": {
+            "delay_s": 0.047438762247951814,
+            "wn_rad_s": 15.8462471912184,
+            "zeta": 0.6910794545962966,
+            "command_gain": 1.061750068135843,
+            "motion_gain": 1.0497784821654155,
+            "projected_bias_rad": 0.0008827919289970055
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.29101925969611087,
+            "tilt_rad": 0.3376170299662646,
+            "tilt_rate_rad_s": 1.2341690840200739
+          },
+          "command_history": [
+            [
+              -1.2184810102104882,
+              0.0
+            ],
+            [
+              -0.21848101021048819,
+              0.3490658503988659
+            ],
+            [
+              -0.04836309471540701,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.0069512429037161105,
+          "transport_delay_s": 0.004240778469041202,
+          "velocity_bias_m_s": -0.0013230210225669413,
+          "tilt_bias_deg": 0.2195844477220158,
+          "rate_bias_deg_s": -3.739299203874987
+        },
+        "target_distance_m": 0.29132659341089484,
+        "direction_sign": -1,
+        "position_kp_s2": 4.335362905326416,
+        "position_kd_s": 2.7481527344848,
+        "position_accel_limit_m_s2": 2.3248503266610934,
+        "position_extra_measurement_delay_s": 0.01832386324670435,
+        "takeover_activation_delay_s": 0.01643843520120818,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.17011791549508118,
+          "level_duration_s": 0.048363094715407,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.21848101021048819,
+            "position_m": 0.014833204461532296,
+            "velocity_m_s": 0.29101925969611087,
+            "tilt_rad": 0.3376170299662646,
+            "tilt_rate_rad_s": 1.2341690840200739
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:40",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0040",
+          "model": {
+            "delay_s": 0.04086613460755704,
+            "wn_rad_s": 14.211561210532409,
+            "zeta": 0.7826882546568086,
+            "command_gain": 1.0926181702211402,
+            "motion_gain": 1.1794837863695617,
+            "projected_bias_rad": 0.0007730028474912041
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.37217922114904467,
+            "tilt_rad": 0.25148592776698875,
+            "tilt_rate_rad_s": -1.2872873577051618
+          },
+          "command_history": [
+            [
+              -1.2415158317282786,
+              0.0
+            ],
+            [
+              -0.24151583172827867,
+              0.3490658503988659
+            ],
+            [
+              -0.10325918426100109,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.00016512891729936863,
+          "transport_delay_s": 0.0037558778651025394,
+          "velocity_bias_m_s": -0.0024484339275503684,
+          "tilt_bias_deg": -0.44691347037780005,
+          "rate_bias_deg_s": 2.369375275844212
+        },
+        "target_distance_m": 0.10168493755922961,
+        "direction_sign": -1,
+        "position_kp_s2": 2.5673014316001286,
+        "position_kd_s": 3.497390242824631,
+        "position_accel_limit_m_s2": 1.5520683789237861,
+        "position_extra_measurement_delay_s": 0.03609179827175818,
+        "takeover_activation_delay_s": 0.028515432811993396,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1382566474672776,
+          "level_duration_s": 0.10325918426100109,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.24151583172827867,
+            "position_m": 0.023855710509818405,
+            "velocity_m_s": 0.37217922114904467,
+            "tilt_rad": 0.25148592776698875,
+            "tilt_rate_rad_s": -1.2872873577051618
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:41",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0041",
+          "model": {
+            "delay_s": 0.02997415439144771,
+            "wn_rad_s": 15.772506546960205,
+            "zeta": 1.0741726358111943,
+            "command_gain": 1.0067299894117976,
+            "motion_gain": 0.8980440866622087,
+            "projected_bias_rad": 0.0024750142632744892
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.26376014889422195,
+            "tilt_rad": 0.20452215049280126,
+            "tilt_rate_rad_s": -1.225826578228074
+          },
+          "command_history": [
+            [
+              -1.2366273695385677,
+              0.0
+            ],
+            [
+              -0.23662736953856775,
+              0.3490658503988659
+            ],
+            [
+              -0.08896183461603543,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.007973249645402983,
+          "transport_delay_s": 0.000610673955103318,
+          "velocity_bias_m_s": 0.002248099589634904,
+          "tilt_bias_deg": 0.11218676999480592,
+          "rate_bias_deg_s": -2.85889528148025
+        },
+        "target_distance_m": 0.07742498170457164,
+        "direction_sign": -1,
+        "position_kp_s2": 4.933711583131099,
+        "position_kd_s": 2.7346618214485727,
+        "position_accel_limit_m_s2": 1.5861507929554064,
+        "position_extra_measurement_delay_s": 0.008193699678143021,
+        "takeover_activation_delay_s": 0.005124667227362024,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.14766553492253232,
+          "level_duration_s": 0.08896183461603543,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.23662736953856775,
+            "position_m": 0.01853512943071172,
+            "velocity_m_s": 0.26376014889422195,
+            "tilt_rad": 0.20452215049280126,
+            "tilt_rate_rad_s": -1.225826578228074
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:42",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0042",
+          "model": {
+            "delay_s": 0.019502709804210004,
+            "wn_rad_s": 14.359495699983471,
+            "zeta": 0.7704002385997448,
+            "command_gain": 1.0976766332059031,
+            "motion_gain": 1.2915169719731057,
+            "projected_bias_rad": -0.002911293230414548
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.8477777692292654,
+            "tilt_rad": 0.19463803198645593,
+            "tilt_rate_rad_s": -2.1240847461192023
+          },
+          "command_history": [
+            [
+              -1.341157258749438,
+              0.0
+            ],
+            [
+              -0.34115725874943803,
+              0.3490658503988659
+            ],
+            [
+              -0.14096342749540738,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.007219661232620118,
+          "transport_delay_s": 0.017978732069311765,
+          "velocity_bias_m_s": -0.014242408289395835,
+          "tilt_bias_deg": 0.15741674952119977,
+          "rate_bias_deg_s": 4.651030789332307
+        },
+        "target_distance_m": 0.0836625493127693,
+        "direction_sign": 1,
+        "position_kp_s2": 2.8503359979318414,
+        "position_kd_s": 2.399613951216126,
+        "position_accel_limit_m_s2": 2.9797808864160804,
+        "position_extra_measurement_delay_s": 0.029669510168974424,
+        "takeover_activation_delay_s": 0.014171734938876118,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.20019383125403065,
+          "level_duration_s": 0.14096342749540736,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.34115725874943803,
+            "position_m": 0.09748238901769453,
+            "velocity_m_s": 0.8477777692292654,
+            "tilt_rad": 0.19463803198645593,
+            "tilt_rate_rad_s": -2.1240847461192023
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:43",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0043",
+          "model": {
+            "delay_s": 0.037806689280212906,
+            "wn_rad_s": 14.141500899606683,
+            "zeta": 1.2297078234854664,
+            "command_gain": 1.1905486602171986,
+            "motion_gain": 0.9868000952268564,
+            "projected_bias_rad": -0.0016304532760804185
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.45745427456833815,
+            "tilt_rad": 0.22583340750551034,
+            "tilt_rate_rad_s": -1.2740340161880057
+          },
+          "command_history": [
+            [
+              -1.3190530094661062,
+              0.0
+            ],
+            [
+              -0.3190530094661061,
+              0.3490658503988659
+            ],
+            [
+              -0.12697708508085054,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.00953590066098258,
+          "transport_delay_s": 0.0139451308398879,
+          "velocity_bias_m_s": -0.013141738623559357,
+          "tilt_bias_deg": 0.3583983102847992,
+          "rate_bias_deg_s": -4.05732738985658
+        },
+        "target_distance_m": 0.36612562827218387,
+        "direction_sign": 1,
+        "position_kp_s2": 4.936600726439135,
+        "position_kd_s": 2.998477482185613,
+        "position_accel_limit_m_s2": 1.5778661123447977,
+        "position_extra_measurement_delay_s": 0.003027146412795383,
+        "takeover_activation_delay_s": 0.032827749236660306,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.19207592438525556,
+          "level_duration_s": 0.12697708508085054,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3190530094661061,
+            "position_m": 0.043101183460243817,
+            "velocity_m_s": 0.45745427456833815,
+            "tilt_rad": 0.22583340750551034,
+            "tilt_rate_rad_s": -1.2740340161880057
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:44",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0044",
+          "model": {
+            "delay_s": 0.015065256188766777,
+            "wn_rad_s": 16.009047905005115,
+            "zeta": 1.252741691117995,
+            "command_gain": 0.9278967372829658,
+            "motion_gain": 0.9774093931485447,
+            "projected_bias_rad": -0.0032897594967529874
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.3208056574504659,
+            "tilt_rad": 0.14974884110469558,
+            "tilt_rate_rad_s": -1.0553467090846818
+          },
+          "command_history": [
+            [
+              -1.274411025856213,
+              0.0
+            ],
+            [
+              -0.2744110258562129,
+              0.3490658503988659
+            ],
+            [
+              -0.10972215556204773,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.0023334784908216923,
+          "transport_delay_s": 0.009247725093656936,
+          "velocity_bias_m_s": -0.010175335785468715,
+          "tilt_bias_deg": 0.1625376719293804,
+          "rate_bias_deg_s": -0.8147260197254957
+        },
+        "target_distance_m": 0.2523471351282959,
+        "direction_sign": 1,
+        "position_kp_s2": 5.31550175050679,
+        "position_kd_s": 3.691208647730744,
+        "position_accel_limit_m_s2": 2.9742783140368196,
+        "position_extra_measurement_delay_s": 0.0068275602796961455,
+        "takeover_activation_delay_s": 0.019128258013000173,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.16468887029416518,
+          "level_duration_s": 0.10972215556204772,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.2744110258562129,
+            "position_m": 0.02955650745255945,
+            "velocity_m_s": 0.3208056574504659,
+            "tilt_rad": 0.14974884110469558,
+            "tilt_rate_rad_s": -1.0553467090846818
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:45",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0045",
+          "model": {
+            "delay_s": 0.04315573800649661,
+            "wn_rad_s": 15.274877603636405,
+            "zeta": 0.7028499195202291,
+            "command_gain": 0.8329518002593173,
+            "motion_gain": 0.9868046510154233,
+            "projected_bias_rad": -0.001815454602925347
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.4233228684497777,
+            "tilt_rad": 0.16332644606734886,
+            "tilt_rate_rad_s": -1.872086957041135
+          },
+          "command_history": [
+            [
+              -1.3126607962218282,
+              0.0
+            ],
+            [
+              -0.3126607962218283,
+              0.3490658503988659
+            ],
+            [
+              -0.13859364735382607,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.010394783755469818,
+          "transport_delay_s": 0.0058840862833116825,
+          "velocity_bias_m_s": -0.01001229295525597,
+          "tilt_bias_deg": -0.03320000738511664,
+          "rate_bias_deg_s": 4.1925029847053485
+        },
+        "target_distance_m": 0.2240863861291948,
+        "direction_sign": 1,
+        "position_kp_s2": 4.885391068619721,
+        "position_kd_s": 3.4538419219686056,
+        "position_accel_limit_m_s2": 1.7029727027937362,
+        "position_extra_measurement_delay_s": 0.0009372831445917118,
+        "takeover_activation_delay_s": 0.0625531092608618,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.17406714886800223,
+          "level_duration_s": 0.13859364735382604,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3126607962218283,
+            "position_m": 0.041100241677301134,
+            "velocity_m_s": 0.4233228684497777,
+            "tilt_rad": 0.16332644606734886,
+            "tilt_rate_rad_s": -1.872086957041135
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:46",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0046",
+          "model": {
+            "delay_s": 0.036089262147529985,
+            "wn_rad_s": 12.604696676469677,
+            "zeta": 0.7438750362000647,
+            "command_gain": 0.8374011646734997,
+            "motion_gain": 1.072443003029775,
+            "projected_bias_rad": -0.0008380613919758455
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.2784628242707667,
+            "tilt_rad": 0.12402618389181265,
+            "tilt_rate_rad_s": -0.9877848303637996
+          },
+          "command_history": [
+            [
+              -1.287089310310368,
+              0.0
+            ],
+            [
+              -0.2870893103103681,
+              0.3490658503988659
+            ],
+            [
+              -0.16757701644857878,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.007763612426169932,
+          "transport_delay_s": 0.014192479580482855,
+          "velocity_bias_m_s": 0.006822742385494923,
+          "tilt_bias_deg": 0.40674260860727507,
+          "rate_bias_deg_s": -2.0854333713932602
+        },
+        "target_distance_m": 0.12430555664622586,
+        "direction_sign": 1,
+        "position_kp_s2": 2.809423884145303,
+        "position_kd_s": 3.9176165752684673,
+        "position_accel_limit_m_s2": 1.4227918474568317,
+        "position_extra_measurement_delay_s": 0.030753599707283173,
+        "takeover_activation_delay_s": 0.04382651009794108,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.11951229386178933,
+          "level_duration_s": 0.16757701644857878,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.2870893103103681,
+            "position_m": 0.024027116371402122,
+            "velocity_m_s": 0.2784628242707667,
+            "tilt_rad": 0.12402618389181265,
+            "tilt_rate_rad_s": -0.9877848303637996
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:47",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0047",
+          "model": {
+            "delay_s": 0.04305385689389534,
+            "wn_rad_s": 14.723482457500797,
+            "zeta": 1.2026226267273425,
+            "command_gain": 0.9071772361012574,
+            "motion_gain": 0.9198536574469236,
+            "projected_bias_rad": 0.002160266268099998
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.22918685070449965,
+            "tilt_rad": 0.1395771302357739,
+            "tilt_rate_rad_s": -0.8500468489523169
+          },
+          "command_history": [
+            [
+              -1.273582857689776,
+              0.0
+            ],
+            [
+              -0.27358285768977614,
+              0.3490658503988659
+            ],
+            [
+              -0.13623078798971144,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.008890891391819764,
+          "transport_delay_s": 0.0077361508682124306,
+          "velocity_bias_m_s": 0.011048784760731904,
+          "tilt_bias_deg": -0.4749223687477355,
+          "rate_bias_deg_s": -2.0422757857008165
+        },
+        "target_distance_m": 0.3612958955075588,
+        "direction_sign": -1,
+        "position_kp_s2": 5.995300163245359,
+        "position_kd_s": 2.09066955861186,
+        "position_accel_limit_m_s2": 2.938998869568085,
+        "position_extra_measurement_delay_s": 0.03247851361223763,
+        "takeover_activation_delay_s": 0.05591307944308969,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1373520697000647,
+          "level_duration_s": 0.13623078798971144,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.27358285768977614,
+            "position_m": 0.018366329526862554,
+            "velocity_m_s": 0.22918685070449965,
+            "tilt_rad": 0.1395771302357739,
+            "tilt_rate_rad_s": -0.8500468489523169
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:48",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0048",
+          "model": {
+            "delay_s": 0.04508240838650976,
+            "wn_rad_s": 12.349676916859552,
+            "zeta": 0.6981268068496183,
+            "command_gain": 1.0314363006899379,
+            "motion_gain": 0.937003719685515,
+            "projected_bias_rad": 0.00023247893217191859
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.3542035979283636,
+            "tilt_rad": 0.2639867932546046,
+            "tilt_rate_rad_s": -1.146486198439619
+          },
+          "command_history": [
+            [
+              -1.2896560164264974,
+              0.0
+            ],
+            [
+              -0.2896560164264974,
+              0.3490658503988659
+            ],
+            [
+              -0.12284270403439937,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.008129711560146928,
+          "transport_delay_s": 0.014458386849693191,
+          "velocity_bias_m_s": -0.010500134315087279,
+          "tilt_bias_deg": -0.28842506041341487,
+          "rate_bias_deg_s": -4.606861476192487
+        },
+        "target_distance_m": 0.059196494783799514,
+        "direction_sign": -1,
+        "position_kp_s2": 4.441651263421466,
+        "position_kd_s": 3.2537514953622795,
+        "position_accel_limit_m_s2": 2.161118340879626,
+        "position_extra_measurement_delay_s": 0.019112751627192927,
+        "takeover_activation_delay_s": 0.010503673967507225,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.16681331239209804,
+          "level_duration_s": 0.12284270403439937,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.2896560164264974,
+            "position_m": 0.02625034313333933,
+            "velocity_m_s": 0.3542035979283636,
+            "tilt_rad": 0.2639867932546046,
+            "tilt_rate_rad_s": -1.146486198439619
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:49",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0049",
+          "model": {
+            "delay_s": 0.025125244416957973,
+            "wn_rad_s": 18.61024622793839,
+            "zeta": 0.902626223002913,
+            "command_gain": 1.1080433158244434,
+            "motion_gain": 1.1763910856960038,
+            "projected_bias_rad": 0.0030239741206245837
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.3133251532141798,
+            "tilt_rad": 0.3035148288820001,
+            "tilt_rate_rad_s": -0.8495123951239948
+          },
+          "command_history": [
+            [
+              -1.1939365328679141,
+              0.0
+            ],
+            [
+              -0.1939365328679142,
+              0.3490658503988659
+            ],
+            [
+              -0.05689921028327699,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.010169467490519543,
+          "transport_delay_s": 0.010659410551945532,
+          "velocity_bias_m_s": -0.005135867720562317,
+          "tilt_bias_deg": -0.2725482191240083,
+          "rate_bias_deg_s": 2.6881425430399695
+        },
+        "target_distance_m": 0.18790295772605206,
+        "direction_sign": -1,
+        "position_kp_s2": 2.191195922961576,
+        "position_kd_s": 2.118089390846174,
+        "position_accel_limit_m_s2": 2.4860199605037754,
+        "position_extra_measurement_delay_s": 0.02595647035472589,
+        "takeover_activation_delay_s": 0.031931727664438816,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.13703732258463722,
+          "level_duration_s": 0.05689921028327699,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.1939365328679142,
+            "position_m": 0.01580463255425614,
+            "velocity_m_s": 0.3133251532141798,
+            "tilt_rad": 0.3035148288820001,
+            "tilt_rate_rad_s": -0.8495123951239948
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:50",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0050",
+          "model": {
+            "delay_s": 0.025783462120866924,
+            "wn_rad_s": 18.055077521646687,
+            "zeta": 1.178860899500348,
+            "command_gain": 1.1015412637469526,
+            "motion_gain": 0.9641605890369033,
+            "projected_bias_rad": 0.0008242456648159353
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.2346080507573805,
+            "tilt_rad": 0.07085468937609221,
+            "tilt_rate_rad_s": -0.6713849066384469
+          },
+          "command_history": [
+            [
+              -1.2742569679256153,
+              0.0
+            ],
+            [
+              -0.2742569679256152,
+              0.3490658503988659
+            ],
+            [
+              -0.19202806149903814,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.014623789421664826,
+          "transport_delay_s": 0.019153440785946396,
+          "velocity_bias_m_s": -0.010218826053785652,
+          "tilt_bias_deg": 0.3299136577396139,
+          "rate_bias_deg_s": 3.7537072590865304
+        },
+        "target_distance_m": 0.34193361946582873,
+        "direction_sign": -1,
+        "position_kp_s2": 5.345533454616614,
+        "position_kd_s": 4.150286467043796,
+        "position_accel_limit_m_s2": 2.2931314650219146,
+        "position_extra_measurement_delay_s": 0.0024182582063932536,
+        "takeover_activation_delay_s": 0.057695486979887134,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.08222890642657707,
+          "level_duration_s": 0.19202806149903814,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.2742569679256152,
+            "position_m": 0.024230725608527372,
+            "velocity_m_s": 0.2346080507573805,
+            "tilt_rad": 0.07085468937609221,
+            "tilt_rate_rad_s": -0.6713849066384469
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:51",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0051",
+          "model": {
+            "delay_s": 0.024443121962552466,
+            "wn_rad_s": 14.285759939421663,
+            "zeta": 1.1616058281508008,
+            "command_gain": 1.1152020146329051,
+            "motion_gain": 1.0682045400135045,
+            "projected_bias_rad": 0.0009659182921792044
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.31120550986823087,
+            "tilt_rad": 0.27509229988645373,
+            "tilt_rate_rad_s": 0.04532305869653446
+          },
+          "command_history": [
+            [
+              -1.230482349875218,
+              0.0
+            ],
+            [
+              -0.230482349875218,
+              0.3490658503988659
+            ],
+            [
+              -0.040408053982925074,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.0036187237449669517,
+          "transport_delay_s": 0.0031042477783002156,
+          "velocity_bias_m_s": -0.000995261260104051,
+          "tilt_bias_deg": 0.1665087543399829,
+          "rate_bias_deg_s": -1.4451419490499606
+        },
+        "target_distance_m": 0.08706462222502533,
+        "direction_sign": -1,
+        "position_kp_s2": 5.18385363600439,
+        "position_kd_s": 2.0055343481512176,
+        "position_accel_limit_m_s2": 1.8036337208052913,
+        "position_extra_measurement_delay_s": 0.03966323243288801,
+        "takeover_activation_delay_s": 0.014903362946148366,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.19007429589229294,
+          "level_duration_s": 0.040408053982925074,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.230482349875218,
+            "position_m": 0.020142498911007965,
+            "velocity_m_s": 0.31120550986823087,
+            "tilt_rad": 0.27509229988645373,
+            "tilt_rate_rad_s": 0.04532305869653446
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:52",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0052",
+          "model": {
+            "delay_s": 0.039014574672332755,
+            "wn_rad_s": 14.35705045945965,
+            "zeta": 0.890687999212269,
+            "command_gain": 1.0078090545443752,
+            "motion_gain": 1.0017317923985827,
+            "projected_bias_rad": -0.0002265240018610058
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.3370078230166229,
+            "tilt_rad": 0.12791294274273032,
+            "tilt_rate_rad_s": -1.2034147092839542
+          },
+          "command_history": [
+            [
+              -1.2934758004651157,
+              0.0
+            ],
+            [
+              -0.2934758004651157,
+              0.3490658503988659
+            ],
+            [
+              -0.16834658927200696,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.01953767044312365,
+          "transport_delay_s": 0.00858514407876189,
+          "velocity_bias_m_s": 0.008712334615844985,
+          "tilt_bias_deg": 0.2692434104208782,
+          "rate_bias_deg_s": 3.0956685947680427
+        },
+        "target_distance_m": 0.20892553501373082,
+        "direction_sign": -1,
+        "position_kp_s2": 5.798384390765602,
+        "position_kd_s": 3.1971131907417956,
+        "position_accel_limit_m_s2": 1.1371630267561361,
+        "position_extra_measurement_delay_s": 0.006199372151386347,
+        "takeover_activation_delay_s": 0.05431955755146198,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1251292111931087,
+          "level_duration_s": 0.16834658927200694,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.2934758004651157,
+            "position_m": 0.03206498013199154,
+            "velocity_m_s": 0.3370078230166229,
+            "tilt_rad": 0.12791294274273032,
+            "tilt_rate_rad_s": -1.2034147092839542
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:53",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0053",
+          "model": {
+            "delay_s": 0.036830147756013364,
+            "wn_rad_s": 14.436680038040352,
+            "zeta": 0.8173774163059159,
+            "command_gain": 1.0725509170090177,
+            "motion_gain": 1.1057938350314713,
+            "projected_bias_rad": -0.0005896338546430482
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.5121881619930433,
+            "tilt_rad": 0.34567529967906685,
+            "tilt_rate_rad_s": -0.41242309170255487
+          },
+          "command_history": [
+            [
+              -1.2937041299880039,
+              0.0
+            ],
+            [
+              -0.293704129988004,
+              0.3490658503988659
+            ],
+            [
+              -0.07111453752629177,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.012997333873374537,
+          "transport_delay_s": 0.01998693155844764,
+          "velocity_bias_m_s": 0.014912343172545136,
+          "tilt_bias_deg": -0.03984328068995602,
+          "rate_bias_deg_s": -4.161103270972868
+        },
+        "target_distance_m": 0.38854766495098797,
+        "direction_sign": 1,
+        "position_kp_s2": 4.542921064303036,
+        "position_kd_s": 2.5536788705538784,
+        "position_accel_limit_m_s2": 1.7238597628243775,
+        "position_extra_measurement_delay_s": 0.010926419324917292,
+        "takeover_activation_delay_s": 0.030013475813586342,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.22258959246171223,
+          "level_duration_s": 0.07111453752629178,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.293704129988004,
+            "position_m": 0.039462264239669004,
+            "velocity_m_s": 0.5121881619930433,
+            "tilt_rad": 0.34567529967906685,
+            "tilt_rate_rad_s": -0.41242309170255487
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:54",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0054",
+          "model": {
+            "delay_s": 0.043972990248473356,
+            "wn_rad_s": 17.29574566229046,
+            "zeta": 1.0564606585684102,
+            "command_gain": 1.017464212850344,
+            "motion_gain": 1.1214876795384447,
+            "projected_bias_rad": -0.0002409583908264438
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.65299403977323,
+            "tilt_rad": 0.2081733117362236,
+            "tilt_rate_rad_s": -1.8599121104144851
+          },
+          "command_history": [
+            [
+              -1.3563140299960113,
+              0.0
+            ],
+            [
+              -0.35631402999601136,
+              0.3490658503988659
+            ],
+            [
+              -0.13848387008756113,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.0132611991827538,
+          "transport_delay_s": 0.019855053909970416,
+          "velocity_bias_m_s": -0.010009129689804379,
+          "tilt_bias_deg": -0.2890880637842318,
+          "rate_bias_deg_s": 3.4102687491164705
+        },
+        "target_distance_m": 0.18798551850044884,
+        "direction_sign": 1,
+        "position_kp_s2": 4.050845467045443,
+        "position_kd_s": 3.5624147944679594,
+        "position_accel_limit_m_s2": 2.5057764141821988,
+        "position_extra_measurement_delay_s": 0.0308747525991657,
+        "takeover_activation_delay_s": 0.07997805064857254,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.21783015990845023,
+          "level_duration_s": 0.1384838700875611,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.35631402999601136,
+            "position_m": 0.07167780952046644,
+            "velocity_m_s": 0.65299403977323,
+            "tilt_rad": 0.2081733117362236,
+            "tilt_rate_rad_s": -1.8599121104144851
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:55",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0055",
+          "model": {
+            "delay_s": 0.04927085085122179,
+            "wn_rad_s": 10.694123214308066,
+            "zeta": 0.8669712742621802,
+            "command_gain": 1.047092452484065,
+            "motion_gain": 1.0705023054167024,
+            "projected_bias_rad": 0.00028500853159353417
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.15454163115191502,
+            "tilt_rad": 0.19319482527503792,
+            "tilt_rate_rad_s": 0.402868554859927
+          },
+          "command_history": [
+            [
+              -1.2326943885801567,
+              0.0
+            ],
+            [
+              -0.23269438858015673,
+              0.3490658503988659
+            ],
+            [
+              -0.09755390684512241,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.0082480805839413,
+          "transport_delay_s": 0.01965426658173033,
+          "velocity_bias_m_s": -0.005170681364414457,
+          "tilt_bias_deg": 0.16920288413035167,
+          "rate_bias_deg_s": -3.8288391134656417
+        },
+        "target_distance_m": 0.33550869529079635,
+        "direction_sign": 1,
+        "position_kp_s2": 5.430023692291064,
+        "position_kd_s": 2.3593680454446133,
+        "position_accel_limit_m_s2": 1.4820517602292862,
+        "position_extra_measurement_delay_s": 0.027503141956708155,
+        "takeover_activation_delay_s": 0.057360977286675593,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.13514048173503432,
+          "level_duration_s": 0.0975539068451224,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.23269438858015673,
+            "position_m": 0.0073894417653692255,
+            "velocity_m_s": 0.15454163115191502,
+            "tilt_rad": 0.19319482527503792,
+            "tilt_rate_rad_s": 0.402868554859927
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:56",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0056",
+          "model": {
+            "delay_s": 0.036816324667618056,
+            "wn_rad_s": 18.79396258937216,
+            "zeta": 1.1072454429497334,
+            "command_gain": 1.2211817666073264,
+            "motion_gain": 0.9635574992124036,
+            "projected_bias_rad": -0.0008605908209073164
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.34651948548821254,
+            "tilt_rad": 0.146940453457321,
+            "tilt_rate_rad_s": -1.5046553605592847
+          },
+          "command_history": [
+            [
+              -1.272223629255313,
+              0.0
+            ],
+            [
+              -0.2722236292553132,
+              0.3490658503988659
+            ],
+            [
+              -0.1563899433474918,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.019586445275201626,
+          "transport_delay_s": 0.01959822645774497,
+          "velocity_bias_m_s": 0.0012470917834011652,
+          "tilt_bias_deg": 0.37912263286659664,
+          "rate_bias_deg_s": 4.477011378769974
+        },
+        "target_distance_m": 0.3506070612770036,
+        "direction_sign": 1,
+        "position_kp_s2": 2.0137117094583497,
+        "position_kd_s": 4.044532844396787,
+        "position_accel_limit_m_s2": 1.694240758967755,
+        "position_extra_measurement_delay_s": 0.008575565121996847,
+        "takeover_activation_delay_s": 0.01317366117717751,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1158336859078214,
+          "level_duration_s": 0.15638994334749182,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.2722236292553132,
+            "position_m": 0.029695530330547715,
+            "velocity_m_s": 0.34651948548821254,
+            "tilt_rad": 0.146940453457321,
+            "tilt_rate_rad_s": -1.5046553605592847
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:57",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0057",
+          "model": {
+            "delay_s": 0.0415235185860203,
+            "wn_rad_s": 15.851801516362896,
+            "zeta": 1.2190094146466144,
+            "command_gain": 1.1680376219213306,
+            "motion_gain": 0.9690347928909673,
+            "projected_bias_rad": 0.0020188666594149027
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.3881202984927959,
+            "tilt_rad": 0.11821562295986787,
+            "tilt_rate_rad_s": -0.9123604750570963
+          },
+          "command_history": [
+            [
+              -1.332173720831228,
+              0.0
+            ],
+            [
+              -0.33217372083122804,
+              0.3490658503988659
+            ],
+            [
+              -0.1991835243393687,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.008212907888014296,
+          "transport_delay_s": 0.018865973343855483,
+          "velocity_bias_m_s": 0.01088795388504019,
+          "tilt_bias_deg": -0.12557703871323977,
+          "rate_bias_deg_s": -4.394008230894029
+        },
+        "target_distance_m": 0.2637952586906871,
+        "direction_sign": -1,
+        "position_kp_s2": 2.3299645892700585,
+        "position_kd_s": 2.684976957952476,
+        "position_accel_limit_m_s2": 1.6672244011067525,
+        "position_extra_measurement_delay_s": 0.0037248224029147892,
+        "takeover_activation_delay_s": 0.01730256848514296,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.13299019649185934,
+          "level_duration_s": 0.1991835243393687,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.33217372083122804,
+            "position_m": 0.043926801456965224,
+            "velocity_m_s": 0.3881202984927959,
+            "tilt_rad": 0.11821562295986787,
+            "tilt_rate_rad_s": -0.9123604750570963
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:58",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0058",
+          "model": {
+            "delay_s": 0.04360105932626985,
+            "wn_rad_s": 17.041078642888042,
+            "zeta": 1.0237452399522335,
+            "command_gain": 1.1817709168287818,
+            "motion_gain": 1.036586439738326,
+            "projected_bias_rad": -0.0033674403993560528
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.42788338585117164,
+            "tilt_rad": 0.08340575785760579,
+            "tilt_rate_rad_s": -0.992988015738119
+          },
+          "command_history": [
+            [
+              -1.3182038714523032,
+              0.0
+            ],
+            [
+              -0.3182038714523031,
+              0.3490658503988659
+            ],
+            [
+              -0.19894966124305685,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.014948605109626908,
+          "transport_delay_s": 0.00069647387718065,
+          "velocity_bias_m_s": 0.006622440378959492,
+          "tilt_bias_deg": -0.06736489722645078,
+          "rate_bias_deg_s": -0.4517326430252966
+        },
+        "target_distance_m": 0.38690869254393334,
+        "direction_sign": 1,
+        "position_kp_s2": 2.6250701046244993,
+        "position_kd_s": 4.265603462244798,
+        "position_accel_limit_m_s2": 2.211368637910444,
+        "position_extra_measurement_delay_s": 0.017359429754614464,
+        "takeover_activation_delay_s": 0.056727340150690586,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.11925421020924627,
+          "level_duration_s": 0.19894966124305685,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3182038714523031,
+            "position_m": 0.052524220990170276,
+            "velocity_m_s": 0.42788338585117164,
+            "tilt_rad": 0.08340575785760579,
+            "tilt_rate_rad_s": -0.992988015738119
+          },
+          "world_travel_direction_y": 1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:59",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0059",
+          "model": {
+            "delay_s": 0.03275513834899775,
+            "wn_rad_s": 18.456871930708665,
+            "zeta": 1.0245890008054017,
+            "command_gain": 0.9625925150046538,
+            "motion_gain": 1.027157633777223,
+            "projected_bias_rad": 0.0007986907292916199
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.4285917345422766,
+            "tilt_rad": 0.1649647351005348,
+            "tilt_rate_rad_s": -1.703981656622833
+          },
+          "command_history": [
+            [
+              -1.286642711469157,
+              0.0
+            ],
+            [
+              -0.2866427114691569,
+              0.3490658503988659
+            ],
+            [
+              -0.12316382504531492,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.003649489458881403,
+          "transport_delay_s": 0.007800652894234488,
+          "velocity_bias_m_s": 0.0043510342764610495,
+          "tilt_bias_deg": 0.3804262204170967,
+          "rate_bias_deg_s": 2.7149148573453674
+        },
+        "target_distance_m": 0.2062585978398833,
+        "direction_sign": -1,
+        "position_kp_s2": 5.874026106086494,
+        "position_kd_s": 2.252378220631011,
+        "position_accel_limit_m_s2": 2.998559878132471,
+        "position_extra_measurement_delay_s": 0.01991709020391515,
+        "takeover_activation_delay_s": 0.0029990403156308254,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.16347888642384195,
+          "level_duration_s": 0.12316382504531494,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.2866427114691569,
+            "position_m": 0.040166534890879055,
+            "velocity_m_s": 0.4285917345422766,
+            "tilt_rad": 0.1649647351005348,
+            "tilt_rate_rad_s": -1.703981656622833
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:60",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0060",
+          "model": {
+            "delay_s": 0.04306137533496136,
+            "wn_rad_s": 15.684760973414402,
+            "zeta": 0.9754121118784442,
+            "command_gain": 1.2246273121953795,
+            "motion_gain": 0.9890472181156158,
+            "projected_bias_rad": 0.0016046622315538455
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.35790192433731116,
+            "tilt_rad": 0.12012978570923326,
+            "tilt_rate_rad_s": -1.2050314401583286
+          },
+          "command_history": [
+            [
+              -1.3004691878081027,
+              0.0
+            ],
+            [
+              -0.3004691878081028,
+              0.3490658503988659
+            ],
+            [
+              -0.1929160333311118,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.011424093247112948,
+          "transport_delay_s": 0.017944182301970615,
+          "velocity_bias_m_s": -0.00747263430456776,
+          "tilt_bias_deg": 0.3535541816322435,
+          "rate_bias_deg_s": 3.509564518123438
+        },
+        "target_distance_m": 0.11315164085602694,
+        "direction_sign": -1,
+        "position_kp_s2": 2.7275558108690445,
+        "position_kd_s": 2.0041264459100416,
+        "position_accel_limit_m_s2": 2.6633955778300535,
+        "position_extra_measurement_delay_s": 0.03213122983723664,
+        "takeover_activation_delay_s": 0.02974226338807875,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.10755315447699097,
+          "level_duration_s": 0.1929160333311118,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.3004691878081028,
+            "position_m": 0.035291976006015836,
+            "velocity_m_s": 0.35790192433731116,
+            "tilt_rad": 0.12012978570923326,
+            "tilt_rate_rad_s": -1.2050314401583286
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:61",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0061",
+          "model": {
+            "delay_s": 0.03890401678421521,
+            "wn_rad_s": 10.535053626101586,
+            "zeta": 0.8023803968165302,
+            "command_gain": 1.0789635221863907,
+            "motion_gain": 1.054485459293598,
+            "projected_bias_rad": 0.002706462478650834
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.16307312558632997,
+            "tilt_rad": 0.21148909069118,
+            "tilt_rate_rad_s": 0.614118966266005
+          },
+          "command_history": [
+            [
+              -1.218844731678466,
+              0.0
+            ],
+            [
+              -0.21884473167846596,
+              0.3490658503988659
+            ],
+            [
+              -0.07867168979998768,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 6.217924672498043e-05,
+          "transport_delay_s": 0.015706840686315594,
+          "velocity_bias_m_s": -0.0024058614350368043,
+          "tilt_bias_deg": 0.4406195032425593,
+          "rate_bias_deg_s": -3.8671049866989082
+        },
+        "target_distance_m": 0.25398967727829197,
+        "direction_sign": -1,
+        "position_kp_s2": 3.3052427752248983,
+        "position_kd_s": 3.833243852510648,
+        "position_accel_limit_m_s2": 1.9670302867837435,
+        "position_extra_measurement_delay_s": 0.013370448309064007,
+        "takeover_activation_delay_s": 0.07403234478743592,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.1401730418784783,
+          "level_duration_s": 0.07867168979998768,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.21884473167846596,
+            "position_m": 0.007771737582086231,
+            "velocity_m_s": 0.16307312558632997,
+            "tilt_rad": 0.21148909069118,
+            "tilt_rate_rad_s": 0.614118966266005
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:62",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0062",
+          "model": {
+            "delay_s": 0.042814930227252954,
+            "wn_rad_s": 12.23867362377116,
+            "zeta": 0.7244468437618916,
+            "command_gain": 0.9037502943624458,
+            "motion_gain": 0.9477387637874535,
+            "projected_bias_rad": 0.0020625877705441006
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.15719911342906231,
+            "tilt_rad": 0.16543777545498178,
+            "tilt_rate_rad_s": -0.45843478651970293
+          },
+          "command_history": [
+            [
+              -1.2204304843282523,
+              0.0
+            ],
+            [
+              -0.22043048432825238,
+              0.3490658503988659
+            ],
+            [
+              -0.1162639918422782,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.019830621604422193,
+          "transport_delay_s": 0.004926765731382026,
+          "velocity_bias_m_s": 0.008176205883289978,
+          "tilt_bias_deg": -0.465396530438425,
+          "rate_bias_deg_s": -0.9813148037905606
+        },
+        "target_distance_m": 0.37218559184977007,
+        "direction_sign": -1,
+        "position_kp_s2": 3.6928387894332864,
+        "position_kd_s": 3.1295985078811075,
+        "position_accel_limit_m_s2": 2.196929816272992,
+        "position_extra_measurement_delay_s": 0.022253041667942997,
+        "takeover_activation_delay_s": 0.026262015064800873,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.10416649248597418,
+          "level_duration_s": 0.1162639918422782,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.22043048432825238,
+            "position_m": 0.008605671971753276,
+            "velocity_m_s": 0.15719911342906231,
+            "tilt_rad": 0.16543777545498178,
+            "tilt_rate_rad_s": -0.45843478651970293
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:19001:63",
+      "population": "development",
+      "scenario": {
+        "braking": {
+          "name": "coast_development_0063",
+          "model": {
+            "delay_s": 0.023904149284947166,
+            "wn_rad_s": 15.780668599176813,
+            "zeta": 0.7678830349315945,
+            "command_gain": 1.0436304968083248,
+            "motion_gain": 0.9017156625089752,
+            "projected_bias_rad": 0.0009718311404270572
+          },
+          "snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.13518276837680268,
+            "tilt_rad": 0.23396081996979826,
+            "tilt_rate_rad_s": 0.047631663296392845
+          },
+          "command_history": [
+            [
+              -1.1743519491347179,
+              0.0
+            ],
+            [
+              -0.1743519491347178,
+              0.3490658503988659
+            ],
+            [
+              -0.07030469803148366,
+              0.0
+            ]
+          ],
+          "first_decision_s": 0.0,
+          "measurement_delay_s": 0.008467728002148754,
+          "transport_delay_s": 0.019576034766838404,
+          "velocity_bias_m_s": 0.00015338256373611302,
+          "tilt_bias_deg": -0.23925342221950263,
+          "rate_bias_deg_s": -4.290443810893337
+        },
+        "target_distance_m": 0.1334625713103264,
+        "direction_sign": -1,
+        "position_kp_s2": 3.6256533314475705,
+        "position_kd_s": 3.5225111579391943,
+        "position_accel_limit_m_s2": 2.5388349701611315,
+        "position_extra_measurement_delay_s": 0.015510630293598414,
+        "takeover_activation_delay_s": 0.007372685792020137,
+        "prelude": {
+          "kind": "synthetic_physically_integrated_prelude",
+          "acceleration_duration_s": 0.10404725110323414,
+          "level_duration_s": 0.07030469803148368,
+          "command_tilt_deg": 20.0,
+          "initial_snapshot": {
+            "time_s": 0.0,
+            "position_m": 0.0,
+            "velocity_m_s": 0.0,
+            "tilt_rad": 0.0,
+            "tilt_rate_rad_s": 0.0
+          },
+          "endpoint_before_rebase": {
+            "time_s": 0.1743519491347178,
+            "position_m": 0.005283426152672372,
+            "velocity_m_s": 0.13518276837680268,
+            "tilt_rad": 0.23396081996979826,
+            "tilt_rate_rad_s": 0.047631663296392845
+          },
+          "world_travel_direction_y": -1,
+          "measured_trajectory": false,
+          "target_source": "independent_virtual_coast_gap",
+          "position_model_calibrated": false
+        }
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    }
+  ],
+  "sources": [],
+  "checkpoints": [
+    {
+      "label": "v1_ppo_position_adapter",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round3_seed33/model_best.zip",
+      "sha256": "601aafbc2b1853236c85e84404caef134440718e1fcd78b36edc8a568f1b65d0",
+      "legacy_semantics_adapted": true
+    }
+  ],
+  "source_sha256": {
+    "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+    "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+    "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+    "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+    "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+    "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+    "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+    "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+    "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+    "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4",
+    "Interaction/rl_coast_env.py": "49386aa38637fee721962fd7a9bdd848e32fb3723c8f55c8217b99410e2d653e",
+    "Interaction/train_rl_coast.py": "ea65b2048b3f895ec1b7ea4de2c7d36437c53b99fbba0896acd57d01a25045c6",
+    "Interaction/evaluate_rl_coast.py": "bf48c0fb5da42c8201f2c43829b464d9eba9615aba2ce29e14c5804e90123100"
+  }
+}

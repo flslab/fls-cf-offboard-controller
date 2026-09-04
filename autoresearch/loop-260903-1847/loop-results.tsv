@@ -1,0 +1,6 @@
+# metric_direction: lower_is_better
+iteration	timestamp	commit	metric	delta	guard	guard-metric	status	description
+0	2026-09-03	uncommitted-source-hashes	0.38553804514983414	0.0	pass	69	baseline	original predictor margin0.08 on64 fixed development cases
+1	2026-09-03	checkpoint-sha256-in-metadata	0.12980875276759363	-0.2557292923822405	pass	69	keep	three65536stepseeds; validation-selected lineage22; allseeds retained
+2	2026-09-03	checkpoint-sha256-in-metadata	0.12202333778751673	-0.0077854149800769	pass	70	keep	budgetonly +131072steps perlineage; reward/domain/evaluation unchanged
+3	2026-09-03	checkpoint-sha256-in-metadata	0.10628886556930878	-0.01573447221820795	pass	70	keep	final +196608steps perlineage; all three selections frozen before final evaluation

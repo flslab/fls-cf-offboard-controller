@@ -99,6 +99,15 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # 8-degree step response; the configured 5 m/s^2 remains an upper bound.
         "maximum_acceleration_extrapolation_ratio": 1.25,
     },
+    # Identification only: fitting runs in a separate process during existing
+    # calibration trials. New model parameters never activate flight control.
+    "online_prediction_calibration": {
+        "enabled": False,
+        "max_sample_gap_s": 0.06,
+        "max_velocity_rmse_m_s": 0.06,
+        "max_terminal_abs_error_m_s": 0.06,
+        "max_endpoint_abs_error_m": 0.06,
+    },
     "observer": {
         "position_measurement_std": [0.004, 0.004, 0.006],
         "orientation_measurement_std": [0.015, 0.015, 0.020],

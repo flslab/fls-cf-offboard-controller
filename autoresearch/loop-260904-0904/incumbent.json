@@ -1,0 +1,8 @@
+{
+  "development_mean_loss": 7.1891224781806535,
+  "method": "ppo_lineage63",
+  "source": "round2_seed63/model_best.metadata.json",
+  "iteration": 2,
+  "guard": "104 relevant tests passed",
+  "selection_split": "development only"
+}

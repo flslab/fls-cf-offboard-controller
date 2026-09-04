@@ -1,0 +1,4 @@
+# Optional background calibration fitter; no RL / PyTorch dependencies.
+numpy
+scipy
+threadpoolctl

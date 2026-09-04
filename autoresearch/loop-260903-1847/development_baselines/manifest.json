@@ -1,0 +1,2722 @@
+{
+  "frozen_report": "/Users/shuqinzhu/Documents/FLS_Research/lightbender/orchestrator/logs/translation_inertia_2026-09-03_16-47-29/repeat_summary/frozen_validation/report.json",
+  "frozen_report_sha256": "cd288fd7a256a3396401144c37a27cade07a8abeefa71efaf9dac9aad30ed0c2",
+  "population_seed": 9001,
+  "population": "development",
+  "config": {
+    "control_period_s": 0.01,
+    "max_brake_s": 0.5,
+    "tail_observation_s": 1.5,
+    "history_length": 12,
+    "target_tail_speed_m_s": 0.025,
+    "reverse_weight": 4.0,
+    "rollback_weight": 2.0,
+    "duration_weight": 0.03
+  },
+  "cases": [
+    {
+      "name": "development:9001:0",
+      "population": "development",
+      "scenario": {
+        "name": "9001:0",
+        "model": {
+          "delay_s": 0.018554684497612363,
+          "wn_rad_s": 13.74031124253612,
+          "zeta": 0.9188418288678635,
+          "command_gain": 0.9590257664960172,
+          "motion_gain": 1.2576835192313696,
+          "projected_bias_rad": -0.0019466331106456438
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.7013510857232679,
+          "tilt_rad": 0.11406498386942102,
+          "tilt_rate_rad_s": -1.1245260138517263
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.014873699773945521,
+        "transport_delay_s": 0.01908759147441025,
+        "velocity_bias_m_s": 0.013629467916494081,
+        "tilt_bias_deg": -0.46375530153911626,
+        "rate_bias_deg_s": -1.9138976786265272
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:1",
+      "population": "development",
+      "scenario": {
+        "name": "9001:1",
+        "model": {
+          "delay_s": 0.034612623179103005,
+          "wn_rad_s": 12.098381239276886,
+          "zeta": 1.2768400581486177,
+          "command_gain": 0.9239142501744345,
+          "motion_gain": 1.045778755442891,
+          "projected_bias_rad": -0.0021769529778818304
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.8876537055056357,
+          "tilt_rad": 0.08223627356200619,
+          "tilt_rate_rad_s": 0.08210078596803147
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.01905116444443715,
+        "transport_delay_s": 0.013270821036037859,
+        "velocity_bias_m_s": -0.003161681163778077,
+        "tilt_bias_deg": 0.3709730104768264,
+        "rate_bias_deg_s": 4.430864128010155
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:2",
+      "population": "development",
+      "scenario": {
+        "name": "9001:2",
+        "model": {
+          "delay_s": 0.025098136214878778,
+          "wn_rad_s": 11.834001665980908,
+          "zeta": 0.7346522974979821,
+          "command_gain": 0.9167709512322012,
+          "motion_gain": 0.9403499392170702,
+          "projected_bias_rad": -0.0019652798040746653
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.8087708618200755,
+          "tilt_rad": 0.0560759506820695,
+          "tilt_rate_rad_s": -0.07526885032414983
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.004212955300945916,
+        "transport_delay_s": 0.014308850059294232,
+        "velocity_bias_m_s": -0.005487011736877382,
+        "tilt_bias_deg": 0.331331522934038,
+        "rate_bias_deg_s": 2.23545000000834
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:3",
+      "population": "development",
+      "scenario": {
+        "name": "9001:3",
+        "model": {
+          "delay_s": 0.043175010538918354,
+          "wn_rad_s": 16.17883827988443,
+          "zeta": 0.7391321821450468,
+          "command_gain": 1.1688712548110682,
+          "motion_gain": 1.102457288552784,
+          "projected_bias_rad": -0.0024474565815632596
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.22139425902903298,
+          "tilt_rad": 0.04076072333028517,
+          "tilt_rate_rad_s": -0.03895602906096057
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.018481393552271904,
+        "transport_delay_s": 0.004502119050070705,
+        "velocity_bias_m_s": 0.009399146746551321,
+        "tilt_bias_deg": 0.10811503526733712,
+        "rate_bias_deg_s": 4.483720172004995
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:4",
+      "population": "development",
+      "scenario": {
+        "name": "9001:4",
+        "model": {
+          "delay_s": 0.034179849516680946,
+          "wn_rad_s": 16.44209874474762,
+          "zeta": 0.8840050472050619,
+          "command_gain": 1.1338250953138338,
+          "motion_gain": 0.8814199622827904,
+          "projected_bias_rad": -0.0005749758488388597
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.6800773204314612,
+          "tilt_rad": 0.09486408185110742,
+          "tilt_rate_rad_s": -1.3084818045018163
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.008444136815359217,
+        "transport_delay_s": 0.010419586620655057,
+        "velocity_bias_m_s": 0.0031460109217188157,
+        "tilt_bias_deg": 0.10085294864884209,
+        "rate_bias_deg_s": 4.162451970751368
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:5",
+      "population": "development",
+      "scenario": {
+        "name": "9001:5",
+        "model": {
+          "delay_s": 0.027107904312936637,
+          "wn_rad_s": 18.362883212466272,
+          "zeta": 0.9369403987901649,
+          "command_gain": 1.1410508086752567,
+          "motion_gain": 1.2494751610692305,
+          "projected_bias_rad": -0.0009596332802633849
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.9070537889655976,
+          "tilt_rad": 0.13579418340811533,
+          "tilt_rate_rad_s": -0.9959463780935718
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.012702178255831165,
+        "transport_delay_s": 0.01003904169135052,
+        "velocity_bias_m_s": -0.005442265540792914,
+        "tilt_bias_deg": -0.3125580296663416,
+        "rate_bias_deg_s": 0.9902948944209233
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:6",
+      "population": "development",
+      "scenario": {
+        "name": "9001:6",
+        "model": {
+          "delay_s": 0.019852456798237935,
+          "wn_rad_s": 10.690549101630562,
+          "zeta": 0.9321454231408718,
+          "command_gain": 1.1915656350871346,
+          "motion_gain": 1.060054771741874,
+          "projected_bias_rad": -0.0007666005612625513
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.871104176382762,
+          "tilt_rad": 0.060345235529425244,
+          "tilt_rate_rad_s": -0.04876665213437671
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.013615158312768123,
+        "transport_delay_s": 0.015134487544421076,
+        "velocity_bias_m_s": -0.007883921012455136,
+        "tilt_bias_deg": -0.34798818051869074,
+        "rate_bias_deg_s": 0.626204910230761
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:7",
+      "population": "development",
+      "scenario": {
+        "name": "9001:7",
+        "model": {
+          "delay_s": 0.02710237805196095,
+          "wn_rad_s": 14.731459964062768,
+          "zeta": 1.2129279542233689,
+          "command_gain": 1.1138855651091781,
+          "motion_gain": 1.1344647891919715,
+          "projected_bias_rad": -0.0010860334966331132
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.7420985149773226,
+          "tilt_rad": 0.040772742941313486,
+          "tilt_rate_rad_s": 0.008235275526385045
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.014482352458513046,
+        "transport_delay_s": 0.019261648697543123,
+        "velocity_bias_m_s": 0.01361258140846948,
+        "tilt_bias_deg": 0.050113826846004184,
+        "rate_bias_deg_s": 0.5222270733515
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:8",
+      "population": "development",
+      "scenario": {
+        "name": "9001:8",
+        "model": {
+          "delay_s": 0.03314943305173742,
+          "wn_rad_s": 17.681211323835626,
+          "zeta": 0.8068801711609535,
+          "command_gain": 0.8722186175131007,
+          "motion_gain": 1.0171841627946943,
+          "projected_bias_rad": -0.0011749106448552477
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.3909281073254989,
+          "tilt_rad": 0.03608212896166693,
+          "tilt_rate_rad_s": -0.021712600319541794
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.009952169499523744,
+        "transport_delay_s": 0.0017184663566095582,
+        "velocity_bias_m_s": 0.01168343207989177,
+        "tilt_bias_deg": -0.10235416489910698,
+        "rate_bias_deg_s": -4.4783465366164155
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:9",
+      "population": "development",
+      "scenario": {
+        "name": "9001:9",
+        "model": {
+          "delay_s": 0.05452749350809295,
+          "wn_rad_s": 11.923283715366242,
+          "zeta": 1.189860086652842,
+          "command_gain": 1.0483735929265623,
+          "motion_gain": 1.0904085553076417,
+          "projected_bias_rad": -0.0009660402117127049
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.7336495527813607,
+          "tilt_rad": 0.06538774456729733,
+          "tilt_rate_rad_s": -0.09127466994075242
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.010002921954118562,
+        "transport_delay_s": 0.018095038363095516,
+        "velocity_bias_m_s": 0.011734647835478645,
+        "tilt_bias_deg": -0.34277243912548405,
+        "rate_bias_deg_s": -2.172096248264946
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:10",
+      "population": "development",
+      "scenario": {
+        "name": "9001:10",
+        "model": {
+          "delay_s": 0.043524109148751336,
+          "wn_rad_s": 18.710227854688167,
+          "zeta": 0.9104683848220385,
+          "command_gain": 0.85981244193332,
+          "motion_gain": 0.9206647054218223,
+          "projected_bias_rad": -0.0027402864324954828
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.7791688956755305,
+          "tilt_rad": 0.11444362456772504,
+          "tilt_rate_rad_s": -0.7762113968463099
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0013420719232570977,
+        "transport_delay_s": 0.009983623803860028,
+        "velocity_bias_m_s": 0.002378136695606082,
+        "tilt_bias_deg": -0.4136913259538386,
+        "rate_bias_deg_s": -3.846340382987999
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:11",
+      "population": "development",
+      "scenario": {
+        "name": "9001:11",
+        "model": {
+          "delay_s": 0.018202092830503794,
+          "wn_rad_s": 16.15755076171661,
+          "zeta": 1.0003735909717417,
+          "command_gain": 1.0474314042526394,
+          "motion_gain": 1.1444239223844723,
+          "projected_bias_rad": -0.0002391186343234891
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.37470716078712124,
+          "tilt_rad": 0.12538684656470933,
+          "tilt_rate_rad_s": -0.3927212461540913
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.018296554822150167,
+        "transport_delay_s": 9.302560425755279e-05,
+        "velocity_bias_m_s": -0.004539343713188024,
+        "tilt_bias_deg": -0.2767185122326259,
+        "rate_bias_deg_s": -3.3759366584707373
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:12",
+      "population": "development",
+      "scenario": {
+        "name": "9001:12",
+        "model": {
+          "delay_s": 0.03181490275984403,
+          "wn_rad_s": 13.869896589440724,
+          "zeta": 0.7292955606887017,
+          "command_gain": 1.0842022502560213,
+          "motion_gain": 1.253972241959829,
+          "projected_bias_rad": 9.611494985172029e-05
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.5757825351822825,
+          "tilt_rad": 0.1393543943202421,
+          "tilt_rate_rad_s": -0.8294629437562882
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.002748499471282566,
+        "transport_delay_s": 0.0023449893882259176,
+        "velocity_bias_m_s": 0.003487103795380876,
+        "tilt_bias_deg": 0.37749172230743056,
+        "rate_bias_deg_s": 3.3425137602160735
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:13",
+      "population": "development",
+      "scenario": {
+        "name": "9001:13",
+        "model": {
+          "delay_s": 0.03627034156908902,
+          "wn_rad_s": 17.799524545167536,
+          "zeta": 1.1524856504563654,
+          "command_gain": 0.9979208039515528,
+          "motion_gain": 1.00743272436649,
+          "projected_bias_rad": -6.3435650282033e-05
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.7832082981926952,
+          "tilt_rad": 0.07657772694271284,
+          "tilt_rate_rad_s": -1.140446450255778
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0026697196584288883,
+        "transport_delay_s": 0.012458329897155451,
+        "velocity_bias_m_s": -0.009581913335529628,
+        "tilt_bias_deg": -0.4350283421740435,
+        "rate_bias_deg_s": 2.480393064862514
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:14",
+      "population": "development",
+      "scenario": {
+        "name": "9001:14",
+        "model": {
+          "delay_s": 0.043502628909819,
+          "wn_rad_s": 11.149151348160464,
+          "zeta": 0.8327468322634282,
+          "command_gain": 1.2325106119069502,
+          "motion_gain": 0.8797757590950637,
+          "projected_bias_rad": -0.0021727229272663733
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.8653453905495496,
+          "tilt_rad": 0.052820457204288046,
+          "tilt_rate_rad_s": -0.09126768768685771
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0022153736090583798,
+        "transport_delay_s": 0.0008237590209153534,
+        "velocity_bias_m_s": -0.00821483451674149,
+        "tilt_bias_deg": -0.011892649879792327,
+        "rate_bias_deg_s": -3.3233778390578683
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:15",
+      "population": "development",
+      "scenario": {
+        "name": "9001:15",
+        "model": {
+          "delay_s": 0.025079377303153468,
+          "wn_rad_s": 10.239022550044083,
+          "zeta": 1.0750424308823607,
+          "command_gain": 1.0432286455753779,
+          "motion_gain": 1.1972770602941953,
+          "projected_bias_rad": -0.0012389765864086095
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.2814583483964464,
+          "tilt_rad": 0.05732383976975796,
+          "tilt_rate_rad_s": -0.641420091418764
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.004891357863402164,
+        "transport_delay_s": 0.006441286751400082,
+        "velocity_bias_m_s": -0.01062056021271169,
+        "tilt_bias_deg": 0.2753469829536205,
+        "rate_bias_deg_s": 2.918281422247093
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:16",
+      "population": "development",
+      "scenario": {
+        "name": "9001:16",
+        "model": {
+          "delay_s": 0.029609263146877573,
+          "wn_rad_s": 13.16952043407173,
+          "zeta": 1.22128271363666,
+          "command_gain": 1.1828071817626997,
+          "motion_gain": 1.1340357765326938,
+          "projected_bias_rad": -0.0004884127317025498
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.6867446420186735,
+          "tilt_rad": 0.009541101944078255,
+          "tilt_rate_rad_s": -0.4897161169779249
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.014310294645465996,
+        "transport_delay_s": 0.003135291021131015,
+        "velocity_bias_m_s": 0.006633397213157988,
+        "tilt_bias_deg": -0.1670859687415831,
+        "rate_bias_deg_s": 3.5215946583665483
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:17",
+      "population": "development",
+      "scenario": {
+        "name": "9001:17",
+        "model": {
+          "delay_s": 0.025617385562338724,
+          "wn_rad_s": 11.133717132006016,
+          "zeta": 1.1598034031891826,
+          "command_gain": 0.8668985485990777,
+          "motion_gain": 0.8764836986880519,
+          "projected_bias_rad": -0.000507304725415499
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.9089666304505217,
+          "tilt_rad": 0.13925988948766563,
+          "tilt_rate_rad_s": -0.6937672336763359
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.011510672222242824,
+        "transport_delay_s": 0.013615099348331848,
+        "velocity_bias_m_s": 0.006447774715101253,
+        "tilt_bias_deg": 0.2109787603353659,
+        "rate_bias_deg_s": 1.976892866326171
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:18",
+      "population": "development",
+      "scenario": {
+        "name": "9001:18",
+        "model": {
+          "delay_s": 0.01731335924816177,
+          "wn_rad_s": 16.26666780650207,
+          "zeta": 1.1954331746247766,
+          "command_gain": 0.9851723464388523,
+          "motion_gain": 0.9414719587346793,
+          "projected_bias_rad": -0.0028433937742455093
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.9045539278269993,
+          "tilt_rad": 0.03396797756262886,
+          "tilt_rate_rad_s": -0.24556201380016984
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0007561291734680364,
+        "transport_delay_s": 0.013785055464263656,
+        "velocity_bias_m_s": -0.013207829159838166,
+        "tilt_bias_deg": -0.48283038556699254,
+        "rate_bias_deg_s": 0.5689158570421093
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:19",
+      "population": "development",
+      "scenario": {
+        "name": "9001:19",
+        "model": {
+          "delay_s": 0.03825523208381925,
+          "wn_rad_s": 17.481117113482927,
+          "zeta": 1.0546839331266737,
+          "command_gain": 0.8541177638298136,
+          "motion_gain": 1.0796452874820262,
+          "projected_bias_rad": -8.147018837722066e-05
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.7779584624177431,
+          "tilt_rad": 0.009882363161396785,
+          "tilt_rate_rad_s": -0.14875230684832838
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.006129433924448233,
+        "transport_delay_s": 0.00928590098127958,
+        "velocity_bias_m_s": 0.009761184305618531,
+        "tilt_bias_deg": -0.34953517064379025,
+        "rate_bias_deg_s": -1.9552631421340927
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:20",
+      "population": "development",
+      "scenario": {
+        "name": "9001:20",
+        "model": {
+          "delay_s": 0.05324105194095992,
+          "wn_rad_s": 12.283464522167957,
+          "zeta": 1.1691756080518414,
+          "command_gain": 0.9630459101350363,
+          "motion_gain": 1.2700457461680343,
+          "projected_bias_rad": -0.0013916628964847886
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.9660517648957108,
+          "tilt_rad": 0.12953214636481483,
+          "tilt_rate_rad_s": -0.4041785096478463
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.00038678081491091645,
+        "transport_delay_s": 0.01302018070827953,
+        "velocity_bias_m_s": -0.0005534679481833715,
+        "tilt_bias_deg": 0.327934984355856,
+        "rate_bias_deg_s": 1.9131118331647257
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:21",
+      "population": "development",
+      "scenario": {
+        "name": "9001:21",
+        "model": {
+          "delay_s": 0.04910350296616365,
+          "wn_rad_s": 18.86390629296163,
+          "zeta": 0.947598557742266,
+          "command_gain": 1.1000402660543467,
+          "motion_gain": 1.3117004438458324,
+          "projected_bias_rad": -0.0025779429470205485
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.6441563007962672,
+          "tilt_rad": 0.020653203560491766,
+          "tilt_rate_rad_s": -0.8871214553363811
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.006995473081049006,
+        "transport_delay_s": 0.0019931904112348176,
+        "velocity_bias_m_s": -0.012853773017738903,
+        "tilt_bias_deg": -0.10822107661312652,
+        "rate_bias_deg_s": 0.9166595398454713
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:22",
+      "population": "development",
+      "scenario": {
+        "name": "9001:22",
+        "model": {
+          "delay_s": 0.02260796376360574,
+          "wn_rad_s": 11.534665902276572,
+          "zeta": 1.194971473330624,
+          "command_gain": 0.9803984925043251,
+          "motion_gain": 1.1552386252176623,
+          "projected_bias_rad": -0.003348159546862091
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.2811726807266321,
+          "tilt_rad": 0.12995656082859108,
+          "tilt_rate_rad_s": -0.6662399955615138
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.015412384689811303,
+        "transport_delay_s": 0.003734661753440698,
+        "velocity_bias_m_s": 0.005011759385192662,
+        "tilt_bias_deg": 0.11951078803173742,
+        "rate_bias_deg_s": -4.698392258003396
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:23",
+      "population": "development",
+      "scenario": {
+        "name": "9001:23",
+        "model": {
+          "delay_s": 0.041167761512123126,
+          "wn_rad_s": 14.335969000819533,
+          "zeta": 1.2351434186159727,
+          "command_gain": 0.9174256935815718,
+          "motion_gain": 1.1536884031840904,
+          "projected_bias_rad": -0.00026179341861897257
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.42071985831270614,
+          "tilt_rad": 0.028645483559296483,
+          "tilt_rate_rad_s": -1.1020185519486716
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.006417878820173517,
+        "transport_delay_s": 0.006438900476636418,
+        "velocity_bias_m_s": -0.014330743145391317,
+        "tilt_bias_deg": -0.08972245978229487,
+        "rate_bias_deg_s": 1.7932206837624487
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:24",
+      "population": "development",
+      "scenario": {
+        "name": "9001:24",
+        "model": {
+          "delay_s": 0.050014536997167826,
+          "wn_rad_s": 16.65944941997021,
+          "zeta": 1.1079204394207245,
+          "command_gain": 1.1292512176072063,
+          "motion_gain": 1.0272328140872113,
+          "projected_bias_rad": -0.002589491877373151
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.27579008023765283,
+          "tilt_rad": 0.040156122950745214,
+          "tilt_rate_rad_s": -0.07178789622759985
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.012808142901228597,
+        "transport_delay_s": 0.005221794839177523,
+        "velocity_bias_m_s": 0.006200081003607848,
+        "tilt_bias_deg": 0.17741549472511364,
+        "rate_bias_deg_s": 1.608914390193551
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:25",
+      "population": "development",
+      "scenario": {
+        "name": "9001:25",
+        "model": {
+          "delay_s": 0.03243238096927737,
+          "wn_rad_s": 10.397832109829894,
+          "zeta": 0.9153882037040078,
+          "command_gain": 0.9328915196284656,
+          "motion_gain": 1.3093826695166149,
+          "projected_bias_rad": -0.0016672496088681037
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.7013007692304986,
+          "tilt_rad": 0.024098468044278926,
+          "tilt_rate_rad_s": -0.6848654988553389
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.01855900260027149,
+        "transport_delay_s": 0.005064906374710634,
+        "velocity_bias_m_s": -0.014906604044874006,
+        "tilt_bias_deg": 0.014506738581239631,
+        "rate_bias_deg_s": -0.8569964728883561
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:26",
+      "population": "development",
+      "scenario": {
+        "name": "9001:26",
+        "model": {
+          "delay_s": 0.017314772853718855,
+          "wn_rad_s": 16.84912284737655,
+          "zeta": 1.1315587488595065,
+          "command_gain": 0.9964039379946148,
+          "motion_gain": 1.2404804861008556,
+          "projected_bias_rad": -0.003062433150763533
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.31897116655933344,
+          "tilt_rad": 0.05450664951308133,
+          "tilt_rate_rad_s": -0.6918004010820452
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.006373856065036658,
+        "transport_delay_s": 0.010303480422101195,
+        "velocity_bias_m_s": 0.011194447169444035,
+        "tilt_bias_deg": 0.34352631810003975,
+        "rate_bias_deg_s": 2.8940643318925616
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:27",
+      "population": "development",
+      "scenario": {
+        "name": "9001:27",
+        "model": {
+          "delay_s": 0.05235557865843244,
+          "wn_rad_s": 10.358622750108239,
+          "zeta": 1.1181662827269403,
+          "command_gain": 0.9591104431311331,
+          "motion_gain": 1.1351547712495462,
+          "projected_bias_rad": 0.00040946419681708044
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.760109638722644,
+          "tilt_rad": 0.0467920883871329,
+          "tilt_rate_rad_s": -0.8635195795711372
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.011057530028313499,
+        "transport_delay_s": 0.013855936937061554,
+        "velocity_bias_m_s": 0.004280987114953988,
+        "tilt_bias_deg": 0.34022341429124514,
+        "rate_bias_deg_s": -4.138761060101311
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:28",
+      "population": "development",
+      "scenario": {
+        "name": "9001:28",
+        "model": {
+          "delay_s": 0.034103872991454225,
+          "wn_rad_s": 17.84374658002968,
+          "zeta": 1.0599586194401962,
+          "command_gain": 0.8592807842522623,
+          "motion_gain": 1.2192010013055803,
+          "projected_bias_rad": -0.0007773919548130308
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.8522453689055399,
+          "tilt_rad": 0.08263099223849625,
+          "tilt_rate_rad_s": -0.6833637792304312
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.011074783579952778,
+        "transport_delay_s": 0.010049599413225611,
+        "velocity_bias_m_s": 0.004490499671956652,
+        "tilt_bias_deg": -0.21997734113940615,
+        "rate_bias_deg_s": 2.8822734663418634
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:29",
+      "population": "development",
+      "scenario": {
+        "name": "9001:29",
+        "model": {
+          "delay_s": 0.0422764971850734,
+          "wn_rad_s": 15.398620400397567,
+          "zeta": 1.02875341510989,
+          "command_gain": 1.0945876487887363,
+          "motion_gain": 1.2480574056480902,
+          "projected_bias_rad": -0.00022358880614738175
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.4965688213052789,
+          "tilt_rad": 0.10303885761043792,
+          "tilt_rate_rad_s": -1.1280649319286824
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.017530549606751905,
+        "transport_delay_s": 0.012526583965892929,
+        "velocity_bias_m_s": 0.010096958478645833,
+        "tilt_bias_deg": -0.20130757007446598,
+        "rate_bias_deg_s": 4.865458627637964
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:30",
+      "population": "development",
+      "scenario": {
+        "name": "9001:30",
+        "model": {
+          "delay_s": 0.036191832835504006,
+          "wn_rad_s": 15.364271531713994,
+          "zeta": 0.7806740161215581,
+          "command_gain": 0.9463668879363945,
+          "motion_gain": 1.2148200128358937,
+          "projected_bias_rad": -0.002000786981890987
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.5565138323330991,
+          "tilt_rad": 0.08931965718697786,
+          "tilt_rate_rad_s": -0.5821835552895351
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.011567002813929033,
+        "transport_delay_s": 0.001065330522673953,
+        "velocity_bias_m_s": -0.003381566501436671,
+        "tilt_bias_deg": -0.11036533268832749,
+        "rate_bias_deg_s": -3.455126189796051
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:31",
+      "population": "development",
+      "scenario": {
+        "name": "9001:31",
+        "model": {
+          "delay_s": 0.026909401676737506,
+          "wn_rad_s": 18.21312133529446,
+          "zeta": 0.9999447380716369,
+          "command_gain": 1.2149430617940173,
+          "motion_gain": 1.168717953842542,
+          "projected_bias_rad": 0.0003185955101617662
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.43677954392723817,
+          "tilt_rad": 0.0062930523598057455,
+          "tilt_rate_rad_s": -0.7079760455336395
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.01677379223786531,
+        "transport_delay_s": 0.010074356261840245,
+        "velocity_bias_m_s": -0.002298729896170417,
+        "tilt_bias_deg": -0.4977579918615427,
+        "rate_bias_deg_s": 4.150620264305301
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:32",
+      "population": "development",
+      "scenario": {
+        "name": "9001:32",
+        "model": {
+          "delay_s": 0.03857314309893296,
+          "wn_rad_s": 12.057901522592585,
+          "zeta": 1.2176174656282945,
+          "command_gain": 1.0930058647050185,
+          "motion_gain": 0.8966183380800553,
+          "projected_bias_rad": -8.710794714082465e-05
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.7314908760370468,
+          "tilt_rad": 0.13918827282270668,
+          "tilt_rate_rad_s": -0.7673375084125191
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.014768026352961618,
+        "transport_delay_s": 0.018917434536657986,
+        "velocity_bias_m_s": -0.010328919942112755,
+        "tilt_bias_deg": -0.4337431728796082,
+        "rate_bias_deg_s": -1.9994806375999308
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:33",
+      "population": "development",
+      "scenario": {
+        "name": "9001:33",
+        "model": {
+          "delay_s": 0.053019180200196935,
+          "wn_rad_s": 12.7963904074788,
+          "zeta": 1.1870014369635182,
+          "command_gain": 0.8700243152619184,
+          "motion_gain": 0.9883040982441572,
+          "projected_bias_rad": -0.00021949739079045049
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.2815617817316531,
+          "tilt_rad": 0.053631911863235245,
+          "tilt_rate_rad_s": -0.1473640316952046
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.004090168327626331,
+        "transport_delay_s": 0.015101726103386044,
+        "velocity_bias_m_s": -0.00020097911791040366,
+        "tilt_bias_deg": -0.3697328144450981,
+        "rate_bias_deg_s": -2.970707684062832
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:34",
+      "population": "development",
+      "scenario": {
+        "name": "9001:34",
+        "model": {
+          "delay_s": 0.02391488161366102,
+          "wn_rad_s": 16.451850041012122,
+          "zeta": 1.1719913360968168,
+          "command_gain": 0.8800205874619664,
+          "motion_gain": 0.9132806998406681,
+          "projected_bias_rad": -0.0008255528354194433
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.8372200493839003,
+          "tilt_rad": 0.10710843388326217,
+          "tilt_rate_rad_s": -0.05931474691674291
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.012742681011478253,
+        "transport_delay_s": 0.005280945166764761,
+        "velocity_bias_m_s": 0.01136626081955961,
+        "tilt_bias_deg": 0.39674872474918665,
+        "rate_bias_deg_s": -4.7278226669102885
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:35",
+      "population": "development",
+      "scenario": {
+        "name": "9001:35",
+        "model": {
+          "delay_s": 0.04240931959373621,
+          "wn_rad_s": 16.879734149399965,
+          "zeta": 0.7400690806079069,
+          "command_gain": 1.2292835421690853,
+          "motion_gain": 1.1697319640487531,
+          "projected_bias_rad": -0.002108308025663883
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.9367006130031479,
+          "tilt_rad": 0.04141556852471829,
+          "tilt_rate_rad_s": -1.3837344819019766
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.015631730668717567,
+        "transport_delay_s": 0.015458521420433831,
+        "velocity_bias_m_s": 0.014794305528410058,
+        "tilt_bias_deg": -0.21049507930082156,
+        "rate_bias_deg_s": -2.0908987696360604
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:36",
+      "population": "development",
+      "scenario": {
+        "name": "9001:36",
+        "model": {
+          "delay_s": 0.038221125813873616,
+          "wn_rad_s": 16.16992206526544,
+          "zeta": 1.1542415461618485,
+          "command_gain": 1.0774796066063788,
+          "motion_gain": 1.112227977944834,
+          "projected_bias_rad": -0.0016539070345642929
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.8329543916635411,
+          "tilt_rad": 0.02875568596367261,
+          "tilt_rate_rad_s": -1.0513055617272111
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.006048169664277148,
+        "transport_delay_s": 0.011051481773163332,
+        "velocity_bias_m_s": 0.001279779874191168,
+        "tilt_bias_deg": -0.10274487296190093,
+        "rate_bias_deg_s": -1.8722361964386314
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:37",
+      "population": "development",
+      "scenario": {
+        "name": "9001:37",
+        "model": {
+          "delay_s": 0.033030832045513485,
+          "wn_rad_s": 14.726058530969185,
+          "zeta": 0.7796209236381801,
+          "command_gain": 1.226480973505094,
+          "motion_gain": 1.1253465810042185,
+          "projected_bias_rad": -0.0002891563884691742
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.8630056928687844,
+          "tilt_rad": 0.07267741099847333,
+          "tilt_rate_rad_s": -0.6477466134369251
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.010676753304623593,
+        "transport_delay_s": 0.008617901088179702,
+        "velocity_bias_m_s": -0.0013172603698222473,
+        "tilt_bias_deg": -0.4700577608565756,
+        "rate_bias_deg_s": 3.328133718412528
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:38",
+      "population": "development",
+      "scenario": {
+        "name": "9001:38",
+        "model": {
+          "delay_s": 0.01764733407149989,
+          "wn_rad_s": 16.652853799975716,
+          "zeta": 1.2116129687672115,
+          "command_gain": 1.0858750771914187,
+          "motion_gain": 1.067606527397519,
+          "projected_bias_rad": -0.0008468638085744888
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.6781075312099549,
+          "tilt_rad": 0.10758755475472775,
+          "tilt_rate_rad_s": -0.6455826291795597
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.01833724968400969,
+        "transport_delay_s": 0.015939681952564552,
+        "velocity_bias_m_s": 0.011176605691985917,
+        "tilt_bias_deg": 0.1798139761245715,
+        "rate_bias_deg_s": -4.848194107362035
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:39",
+      "population": "development",
+      "scenario": {
+        "name": "9001:39",
+        "model": {
+          "delay_s": 0.03847642452223981,
+          "wn_rad_s": 10.262628088508059,
+          "zeta": 0.8306423074860896,
+          "command_gain": 1.1212804568312347,
+          "motion_gain": 1.227423898617005,
+          "projected_bias_rad": -0.0003941113044423467
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.33063758760974554,
+          "tilt_rad": 0.02747939992574774,
+          "tilt_rate_rad_s": -0.1339086756651626
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0016601466532193566,
+        "transport_delay_s": 0.002508820100797018,
+        "velocity_bias_m_s": 0.0013753833863834719,
+        "tilt_bias_deg": -0.3112279761983856,
+        "rate_bias_deg_s": -1.642488140867372
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:40",
+      "population": "development",
+      "scenario": {
+        "name": "9001:40",
+        "model": {
+          "delay_s": 0.028587341500998124,
+          "wn_rad_s": 15.561255279825627,
+          "zeta": 0.9731807564577665,
+          "command_gain": 1.2228623400544678,
+          "motion_gain": 0.9761302487052754,
+          "projected_bias_rad": -0.0019155413262831591
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.5943325494504925,
+          "tilt_rad": 0.041939846977120415,
+          "tilt_rate_rad_s": -0.9355518758280598
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.00519177168414491,
+        "transport_delay_s": 0.0021570645557372936,
+        "velocity_bias_m_s": 0.011393580798225913,
+        "tilt_bias_deg": -0.4984313919638229,
+        "rate_bias_deg_s": -1.1316467441181377
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:41",
+      "population": "development",
+      "scenario": {
+        "name": "9001:41",
+        "model": {
+          "delay_s": 0.036151025699544405,
+          "wn_rad_s": 17.846632139262333,
+          "zeta": 0.8513012824362582,
+          "command_gain": 1.0805568665613532,
+          "motion_gain": 1.23820583716343,
+          "projected_bias_rad": -0.0008627316819157349
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.20262011738596666,
+          "tilt_rad": 0.04704309710696665,
+          "tilt_rate_rad_s": -1.3364475839337067
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.01858311918616266,
+        "transport_delay_s": 0.013285386025968394,
+        "velocity_bias_m_s": 0.014099682232752004,
+        "tilt_bias_deg": 0.18907772006406443,
+        "rate_bias_deg_s": 1.2588885535742977
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:42",
+      "population": "development",
+      "scenario": {
+        "name": "9001:42",
+        "model": {
+          "delay_s": 0.03266190927172482,
+          "wn_rad_s": 11.692571015824482,
+          "zeta": 1.086353368723051,
+          "command_gain": 0.9246529498796897,
+          "motion_gain": 0.9837203386955241,
+          "projected_bias_rad": -0.00040268183736185954
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.5988843499473108,
+          "tilt_rad": 0.10063407382659853,
+          "tilt_rate_rad_s": -1.2337053889563097
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.01634725860224262,
+        "transport_delay_s": 0.006215134382039047,
+        "velocity_bias_m_s": -0.009624433606092424,
+        "tilt_bias_deg": -0.07995263905490446,
+        "rate_bias_deg_s": -1.5951282450706716
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:43",
+      "population": "development",
+      "scenario": {
+        "name": "9001:43",
+        "model": {
+          "delay_s": 0.028834766144134653,
+          "wn_rad_s": 10.301342195500757,
+          "zeta": 1.2606077215315432,
+          "command_gain": 1.2220742617212443,
+          "motion_gain": 1.033658018016023,
+          "projected_bias_rad": -0.002316021590118157
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.8722622837241774,
+          "tilt_rad": 0.07750298057578384,
+          "tilt_rate_rad_s": -1.3433978977916143
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0194790684881785,
+        "transport_delay_s": 0.0037297802520148073,
+        "velocity_bias_m_s": -0.010297199714799227,
+        "tilt_bias_deg": 0.4866017211143111,
+        "rate_bias_deg_s": 4.038780554862549
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:44",
+      "population": "development",
+      "scenario": {
+        "name": "9001:44",
+        "model": {
+          "delay_s": 0.051388418633594245,
+          "wn_rad_s": 17.370303612705996,
+          "zeta": 1.1407182826100848,
+          "command_gain": 1.0932287838700379,
+          "motion_gain": 1.2208389763571326,
+          "projected_bias_rad": -0.0024342938251790814
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.9646856545279175,
+          "tilt_rad": 0.06830449900324433,
+          "tilt_rate_rad_s": -0.860089579180286
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.006862490992671375,
+        "transport_delay_s": 0.01220760018388395,
+        "velocity_bias_m_s": -0.007465213063708117,
+        "tilt_bias_deg": -0.19250507862093857,
+        "rate_bias_deg_s": 0.8117218009047644
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:45",
+      "population": "development",
+      "scenario": {
+        "name": "9001:45",
+        "model": {
+          "delay_s": 0.03242323523064036,
+          "wn_rad_s": 16.64169708416492,
+          "zeta": 0.987718149140144,
+          "command_gain": 1.0687848174075545,
+          "motion_gain": 1.0735574819438964,
+          "projected_bias_rad": -0.002479331022878762
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.41963511726551883,
+          "tilt_rad": 0.03996208975113632,
+          "tilt_rate_rad_s": -0.8912981199248846
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.000740059237120887,
+        "transport_delay_s": 0.019126155070154215,
+        "velocity_bias_m_s": 0.005827320907824761,
+        "tilt_bias_deg": 0.07868051673467946,
+        "rate_bias_deg_s": 4.046991030855921
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:46",
+      "population": "development",
+      "scenario": {
+        "name": "9001:46",
+        "model": {
+          "delay_s": 0.0389313371744144,
+          "wn_rad_s": 14.548759357178307,
+          "zeta": 1.2231744581084236,
+          "command_gain": 1.0983242888161644,
+          "motion_gain": 1.130852196496618,
+          "projected_bias_rad": -6.158392432598948e-05
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.316739041618733,
+          "tilt_rad": 0.057910009969982086,
+          "tilt_rate_rad_s": -1.1419513766246479
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.003819137661541725,
+        "transport_delay_s": 0.008541127085389217,
+        "velocity_bias_m_s": -0.011350452591640716,
+        "tilt_bias_deg": 0.3129459156678336,
+        "rate_bias_deg_s": 3.9511226045772894
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:47",
+      "population": "development",
+      "scenario": {
+        "name": "9001:47",
+        "model": {
+          "delay_s": 0.04338114158480866,
+          "wn_rad_s": 10.538048363730462,
+          "zeta": 1.2117785618142216,
+          "command_gain": 0.9319151721238026,
+          "motion_gain": 1.3084532634173838,
+          "projected_bias_rad": -0.0033039976258843144
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.20486652218794987,
+          "tilt_rad": 0.13498004721617532,
+          "tilt_rate_rad_s": -0.734618802596086
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.017667193232215366,
+        "transport_delay_s": 0.019403627406116154,
+        "velocity_bias_m_s": 0.005641183012645546,
+        "tilt_bias_deg": 0.2541441741662944,
+        "rate_bias_deg_s": -2.8482346711835325
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:48",
+      "population": "development",
+      "scenario": {
+        "name": "9001:48",
+        "model": {
+          "delay_s": 0.02612512057929452,
+          "wn_rad_s": 14.088235788771932,
+          "zeta": 1.2015328031092143,
+          "command_gain": 0.8357545214448321,
+          "motion_gain": 1.2102357397329868,
+          "projected_bias_rad": -0.0009765336633140789
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.22426607930926956,
+          "tilt_rad": 0.10564743430924482,
+          "tilt_rate_rad_s": -1.1026779441920913
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.019011860268217794,
+        "transport_delay_s": 0.01600957403363177,
+        "velocity_bias_m_s": -0.009915578423826696,
+        "tilt_bias_deg": -0.18359168448614038,
+        "rate_bias_deg_s": 2.4203299033213765
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:49",
+      "population": "development",
+      "scenario": {
+        "name": "9001:49",
+        "model": {
+          "delay_s": 0.042251339547945174,
+          "wn_rad_s": 10.851213820119199,
+          "zeta": 0.7227773943549861,
+          "command_gain": 0.940794263419492,
+          "motion_gain": 0.9120293573577501,
+          "projected_bias_rad": -0.0023228888237487905
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.3545350857966029,
+          "tilt_rad": 0.08547107593411922,
+          "tilt_rate_rad_s": -0.22394945789443724
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.015620664368842475,
+        "transport_delay_s": 0.009320115694786262,
+        "velocity_bias_m_s": 0.01004457242730469,
+        "tilt_bias_deg": -0.3140869756991178,
+        "rate_bias_deg_s": -0.7351469183879478
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:50",
+      "population": "development",
+      "scenario": {
+        "name": "9001:50",
+        "model": {
+          "delay_s": 0.052909190190405145,
+          "wn_rad_s": 11.072018998225381,
+          "zeta": 0.931135506336854,
+          "command_gain": 0.8674241342735961,
+          "motion_gain": 1.0483736466564721,
+          "projected_bias_rad": -0.0001535019611280785
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.22922941083019338,
+          "tilt_rad": 0.0032116629116875927,
+          "tilt_rate_rad_s": 0.08230798563020357
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.013081556059429542,
+        "transport_delay_s": 0.008383081138867772,
+        "velocity_bias_m_s": 0.004594403602957622,
+        "tilt_bias_deg": 0.4806346776102639,
+        "rate_bias_deg_s": 2.1940364522107423
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:51",
+      "population": "development",
+      "scenario": {
+        "name": "9001:51",
+        "model": {
+          "delay_s": 0.028476945199222413,
+          "wn_rad_s": 16.153431550853114,
+          "zeta": 0.9277745290918841,
+          "command_gain": 0.8495058778090022,
+          "motion_gain": 1.0423828137814248,
+          "projected_bias_rad": -0.001886637821810797
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.29562297368092655,
+          "tilt_rad": 0.10060858582806308,
+          "tilt_rate_rad_s": -0.8868461665404858
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0038302416161374708,
+        "transport_delay_s": 0.01266516334553078,
+        "velocity_bias_m_s": 0.0030833308447848484,
+        "tilt_bias_deg": -0.11784930208811972,
+        "rate_bias_deg_s": -2.3976910813262875
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:52",
+      "population": "development",
+      "scenario": {
+        "name": "9001:52",
+        "model": {
+          "delay_s": 0.020655100594847795,
+          "wn_rad_s": 16.220645445468527,
+          "zeta": 1.0833535294341339,
+          "command_gain": 1.0163946314436112,
+          "motion_gain": 1.0042676331340061,
+          "projected_bias_rad": -0.0013323777457764899
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.672170847363097,
+          "tilt_rad": 0.011236762036950043,
+          "tilt_rate_rad_s": -1.1055164773468302
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0067723525871686485,
+        "transport_delay_s": 0.010479290610092654,
+        "velocity_bias_m_s": -0.014918495552613936,
+        "tilt_bias_deg": 0.4005357113620538,
+        "rate_bias_deg_s": 1.453590400596536
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:53",
+      "population": "development",
+      "scenario": {
+        "name": "9001:53",
+        "model": {
+          "delay_s": 0.02883479756889183,
+          "wn_rad_s": 11.737749520666034,
+          "zeta": 0.9866296108998794,
+          "command_gain": 1.0825921982086977,
+          "motion_gain": 1.1955423145212383,
+          "projected_bias_rad": -0.0012675795642761523
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.7933921503969334,
+          "tilt_rad": 0.035894848543641694,
+          "tilt_rate_rad_s": -0.839756684394243
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.011008778491284376,
+        "transport_delay_s": 0.011068690103957763,
+        "velocity_bias_m_s": -0.0038347814046681716,
+        "tilt_bias_deg": -0.03525052631482406,
+        "rate_bias_deg_s": -4.013451168934933
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:54",
+      "population": "development",
+      "scenario": {
+        "name": "9001:54",
+        "model": {
+          "delay_s": 0.042468674671534284,
+          "wn_rad_s": 18.449563690854177,
+          "zeta": 1.0794881743040565,
+          "command_gain": 1.0872471736771787,
+          "motion_gain": 0.9046412534693228,
+          "projected_bias_rad": -0.00023564418540803107
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.714400384163931,
+          "tilt_rad": 0.083080181647884,
+          "tilt_rate_rad_s": -0.5115102211025716
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.006073235775083627,
+        "transport_delay_s": 0.00505476321293173,
+        "velocity_bias_m_s": 0.005625955211337325,
+        "tilt_bias_deg": -0.13384902584801306,
+        "rate_bias_deg_s": -4.989540560346814
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:55",
+      "population": "development",
+      "scenario": {
+        "name": "9001:55",
+        "model": {
+          "delay_s": 0.02111618084925336,
+          "wn_rad_s": 13.838901437623825,
+          "zeta": 1.1466746519404447,
+          "command_gain": 0.856938065359715,
+          "motion_gain": 1.241879306013312,
+          "projected_bias_rad": -0.001991541902244486
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.3167296556664214,
+          "tilt_rad": 0.050449112329710215,
+          "tilt_rate_rad_s": -1.0768886674375486
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.018217006735379977,
+        "transport_delay_s": 0.01765427987349097,
+        "velocity_bias_m_s": -0.011424301574472358,
+        "tilt_bias_deg": 0.06429322495624523,
+        "rate_bias_deg_s": 4.148413823256715
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:56",
+      "population": "development",
+      "scenario": {
+        "name": "9001:56",
+        "model": {
+          "delay_s": 0.026414341218460206,
+          "wn_rad_s": 10.846427651292377,
+          "zeta": 0.7246425947992243,
+          "command_gain": 0.9746576180600073,
+          "motion_gain": 1.2175808125788012,
+          "projected_bias_rad": -0.0006089503794780649
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.8979960254100373,
+          "tilt_rad": 0.13157327832752827,
+          "tilt_rate_rad_s": -1.3177016717047105
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0030432601066200694,
+        "transport_delay_s": 0.018355951766131324,
+        "velocity_bias_m_s": 0.0015252072295813635,
+        "tilt_bias_deg": -0.32309813863693104,
+        "rate_bias_deg_s": -2.089093856014413
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:57",
+      "population": "development",
+      "scenario": {
+        "name": "9001:57",
+        "model": {
+          "delay_s": 0.04122844401188683,
+          "wn_rad_s": 18.00587936968592,
+          "zeta": 1.0298701838649134,
+          "command_gain": 1.2052326306005354,
+          "motion_gain": 1.3141195860510482,
+          "projected_bias_rad": -0.002067309077514162
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.531473190712603,
+          "tilt_rad": 0.07759458289243523,
+          "tilt_rate_rad_s": -1.3870185556274728
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.012479744734394914,
+        "transport_delay_s": 0.004932028480122466,
+        "velocity_bias_m_s": 0.006008297663378473,
+        "tilt_bias_deg": 0.11924717143346253,
+        "rate_bias_deg_s": -3.149642346100064
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:58",
+      "population": "development",
+      "scenario": {
+        "name": "9001:58",
+        "model": {
+          "delay_s": 0.03830054017755613,
+          "wn_rad_s": 18.25967583804978,
+          "zeta": 0.848654162082773,
+          "command_gain": 0.9772932962482794,
+          "motion_gain": 1.182459844262293,
+          "projected_bias_rad": -0.002590926688309397
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.4126028967931977,
+          "tilt_rad": 0.08250044403222143,
+          "tilt_rate_rad_s": -1.0548245611450187
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.013323701123608716,
+        "transport_delay_s": 0.007671748090541238,
+        "velocity_bias_m_s": 0.00915701590096691,
+        "tilt_bias_deg": -0.03557252766521257,
+        "rate_bias_deg_s": 1.0250648204719193
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:59",
+      "population": "development",
+      "scenario": {
+        "name": "9001:59",
+        "model": {
+          "delay_s": 0.037883057174456176,
+          "wn_rad_s": 15.386790521097133,
+          "zeta": 1.1492602401429977,
+          "command_gain": 1.1437048970958947,
+          "motion_gain": 1.1190472934804618,
+          "projected_bias_rad": -0.003224042633204444
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.4500096379391047,
+          "tilt_rad": 0.06571244678413761,
+          "tilt_rate_rad_s": -0.04569803188438773
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.010974373072360391,
+        "transport_delay_s": 0.006349125994386842,
+        "velocity_bias_m_s": -0.0005009606906097885,
+        "tilt_bias_deg": 0.47868279872919073,
+        "rate_bias_deg_s": 1.1164689367941916
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:60",
+      "population": "development",
+      "scenario": {
+        "name": "9001:60",
+        "model": {
+          "delay_s": 0.0495443440736966,
+          "wn_rad_s": 14.759329577487334,
+          "zeta": 1.2403407763225516,
+          "command_gain": 1.2124106398857117,
+          "motion_gain": 0.9944008973522991,
+          "projected_bias_rad": -0.0022713399417990283
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.40662893958553126,
+          "tilt_rad": 0.11977210946731506,
+          "tilt_rate_rad_s": -0.8356097782672581
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0033490638948242913,
+        "transport_delay_s": 0.005465111620805539,
+        "velocity_bias_m_s": -0.00014281255186025078,
+        "tilt_bias_deg": -0.2520667852756553,
+        "rate_bias_deg_s": 3.175430346892869
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:61",
+      "population": "development",
+      "scenario": {
+        "name": "9001:61",
+        "model": {
+          "delay_s": 0.031302246726336656,
+          "wn_rad_s": 14.202505877270584,
+          "zeta": 0.772033744407494,
+          "command_gain": 1.077998400306082,
+          "motion_gain": 0.9924854770546678,
+          "projected_bias_rad": -0.002573386595281876
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.9671173785371088,
+          "tilt_rad": 0.001689586325206489,
+          "tilt_rate_rad_s": -1.283641462708053
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.01569545937573665,
+        "transport_delay_s": 0.003851463081706821,
+        "velocity_bias_m_s": 0.012473193536119732,
+        "tilt_bias_deg": 0.17491974980025238,
+        "rate_bias_deg_s": -0.7775840449135363
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:62",
+      "population": "development",
+      "scenario": {
+        "name": "9001:62",
+        "model": {
+          "delay_s": 0.04906966125144028,
+          "wn_rad_s": 10.469398683454198,
+          "zeta": 0.7474176472054447,
+          "command_gain": 0.8798982193689278,
+          "motion_gain": 1.0132707938819394,
+          "projected_bias_rad": -0.0005004140658002984
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.6661391723897834,
+          "tilt_rad": 0.02149672240811548,
+          "tilt_rate_rad_s": -0.09530826090876751
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.009942623602319829,
+        "transport_delay_s": 0.012937330080870094,
+        "velocity_bias_m_s": 0.012595932585795836,
+        "tilt_bias_deg": 0.24797020518377788,
+        "rate_bias_deg_s": -3.3948534498170524
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    },
+    {
+      "name": "development:9001:63",
+      "population": "development",
+      "scenario": {
+        "name": "9001:63",
+        "model": {
+          "delay_s": 0.015540245026370112,
+          "wn_rad_s": 15.694434881768524,
+          "zeta": 0.8516122835820016,
+          "command_gain": 1.12597141476124,
+          "motion_gain": 1.297552661395561,
+          "projected_bias_rad": -0.00021983374927514172
+        },
+        "snapshot": {
+          "time_s": 0.0,
+          "position_m": 0.0,
+          "velocity_m_s": 0.9690816416967931,
+          "tilt_rad": 0.06022747955803153,
+          "tilt_rate_rad_s": -0.2950391037818603
+        },
+        "command_history": [
+          [
+            -1.0,
+            0.0
+          ]
+        ],
+        "first_decision_s": 0.0,
+        "measurement_delay_s": 0.0007029777614168453,
+        "transport_delay_s": 0.011668342266388599,
+        "velocity_bias_m_s": 0.010107063822887518,
+        "tilt_bias_deg": -0.05508884603516995,
+        "rate_bias_deg_s": 4.649146917179177
+      },
+      "nominal_model": {
+        "delay_s": 0.0253699167330055,
+        "wn_rad_s": 14.563081936060067,
+        "zeta": 0.9866363098697236,
+        "command_gain": 1.0345673103996114,
+        "motion_gain": 1.0954087248022135,
+        "projected_bias_rad": -0.0014832332913454936
+      }
+    }
+  ],
+  "source_logs": [],
+  "exclusions": [],
+  "checkpoints": [],
+  "source_sha256": {
+    "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+    "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+    "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+    "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+    "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+    "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+    "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+    "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+    "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+    "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4",
+    "Interaction/evaluate_rl_braking.py": "5da49cae7c1659264239acba2a78dd15dda38d1bbeb54afd7fa7243acd60eaf1"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "version": "2.1.0",
+  "source": "loop",
+  "timestamp": "2026-09-04T02:09:42Z",
+  "status": "BOUNDED",
+  "task_complete": true,
+  "stop_reason": "Completed the preregistered three development rounds and one frozen final evaluation; no fourth round or test-driven checkpoint selection.",
+  "results_tsv": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/loop-results.tsv",
+  "findings": [
+    "Trained three PPO lineages locally for 1179648 total sampled decision steps; original flight environment and runtime controller were not changed.",
+    "Development mean loss improved from the original predictor baseline 0.3855380451 to 0.1062888656. All three development rounds were kept as checkpoints, not git commits.",
+    "Primary ppo_lineage33 was frozen using development loss before final test. Its selected checkpoint has 360448 model timesteps and SHA256 601aafbc2b1853236c85e84404caef134440718e1fcd78b36edc8a568f1b65d0.",
+    "Final evaluation contains 2376 paired rows: 6 methods over 256 held-out synthetic cases plus 7 previously seen nominal initial states and 133 stress regressions.",
+    "On synthetic holdout, primary PPO reduced reversals from 115/256 to 34/256 against predictive margin 0.08, but near-stationary cases fell from 32 to 21 and mean absolute tail speed rose from 0.0997 to 0.1219 m/s.",
+    "On seven nominal measured initial states, primary PPO had zero simulated reversals but zero near-stationary cases, leaving mean tail speed 0.1399 m/s. These are simulated rollouts from measured states, not new flights.",
+    "This is simulator-trained PPO, not fixed-dataset-only offline RL. It learns a binary braking-release time and has no final-position objective or position handoff model.",
+    "The main limitation is a reversal-versus-residual-motion tradeoff, with additional distribution mismatch in prior command histories and motion directions. More training on the same objective cannot be assumed to solve position stopping.",
+    "70 focused tests passed with optional RL dependencies. Related base-environment tests are recorded in verification.md. No deployment, SSH, flight, commit, or push was performed."
+  ],
+  "config": {
+    "goal": "Build and execute bounded local offline training for release braking, and report both improvements and failures.",
+    "scope": "Independent RK4 simulator, Gymnasium environment, CPU PPO, frozen development/test populations, provenance and local artifacts only.",
+    "metric": "Mean terminal loss on the 64 fixed development scenarios generated with seed 9001",
+    "direction": "lower_is_better",
+    "verify": ".codex_tmp/braking-rl-venv/bin/python -m Interaction.rl_experiment_ledger --run autoresearch/loop-260903-1847 --metric",
+    "max_development_rounds": 3,
+    "selection": "selection.json",
+    "report": "RESULTS_zh.md",
+    "flight_approved": false
+  }
+}

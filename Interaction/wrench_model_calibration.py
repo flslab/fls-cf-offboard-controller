@@ -1637,6 +1637,228 @@ def apply_drone_calibration(
     return resolved, calibration
 
 
+# Keep this lightweight persistence contract independent of the SciPy fitting
+# module: calibration save must still work when a diagnostic worker is absent.
+# A regression test checks that these bounds match online_dynamics_model.
+_PREDICTION_PARAMETER_BOUNDS = {
+    "delay_s": (0., .15), "wn_rad_s": (5., 100.), "zeta": (.2, 2.),
+    "gain": (.7, 1.3), "bias_world_y_rad": (-.035, .035),
+}
+_PREDICTION_GATE_MAXIMA = {
+    "velocity_rmse_m_s": .5, "terminal_error_m_s": .5,
+    "end_position_error_m": .5,
+}
+
+
+def _prediction_number(value, name):
+    if (isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, float, np.integer, np.floating))
+            or not np.isfinite(value)):
+        raise ValueError(f"{name} must be a finite number")
+    return float(value)
+
+
+def _prediction_segment_ids(value, name):
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{name} must be a nonempty segment list")
+    if any(isinstance(item, bool) or not isinstance(item, int) or item < 0 for item in value):
+        raise ValueError(f"{name} must contain nonnegative integer IDs")
+    if len(set(value)) != len(value):
+        raise ValueError(f"{name} contains duplicate IDs")
+    return value
+
+
+def _validated_online_prediction(report, drone_id):
+    """Recheck frozen held-out evidence; never select the all-data refit.
+
+    Raises only inside the optional diagnostic branch. The caller preserves
+    the prior prediction model and saves its ordinary calibration on rejection.
+    These gates authorize diagnostic persistence, never controller activation.
+    """
+    if not isinstance(report, dict):
+        raise ValueError("online prediction report must be a dictionary")
+    if (type(report.get("schema_version")) is not int or report["schema_version"] != 1
+            or report.get("kind") != "online_prediction_calibration"):
+        raise ValueError("unsupported online prediction report schema")
+    if str(report.get("drone_id")) != str(drone_id):
+        raise ValueError("online prediction report belongs to another drone")
+    if (report.get("status") != "completed" or report.get("data_complete") is not True
+            or report.get("validation_passed") is not True):
+        raise ValueError("online prediction report is incomplete or validation failed")
+    if (report.get("runtime_enabled") is not False or report.get("flight_approved") is not False
+            or report.get("deployment_approved", False) is not False or report.get("worker_error")):
+        raise ValueError("online prediction report is not an intact diagnostic-only result")
+    expected = _prediction_segment_ids(report.get("expected_segment_ids"), "expected_segment_ids")
+    received = _prediction_segment_ids(report.get("received_segment_ids"), "received_segment_ids")
+    if expected != received or len(received) < 4 or len(received) % 2:
+        raise ValueError("all complete training and held-out trial pairs are required")
+    submissions = report.get("submission_summary", {})
+    if (report.get("rejected_trials") != [] or report.get("missing_segment_ids") != []
+            or not isinstance(submissions, dict)
+            or submissions.get("accepted_submissions") != len(received)
+            or submissions.get("rejected_submissions") != 0):
+        raise ValueError("online prediction trial submission was incomplete")
+
+    validated = report.get("validated_candidate")
+    if not isinstance(validated, dict):
+        raise ValueError("no independently validated candidate")
+    if (validated.get("independent_validation") is not True
+            or validated.get("validation_passed") is not True
+            or validated.get("runtime_enabled") is not False
+            or validated.get("flight_approved") is not False):
+        raise ValueError("candidate is not independently validated diagnostic evidence")
+    training = _prediction_segment_ids(validated.get("training_segment_ids"), "training_segment_ids")
+    held = _prediction_segment_ids(validated.get("validation_segment_ids"), "validation_segment_ids")
+    if training != received[:-2] or held != received[-2:] or set(training) & set(held):
+        raise ValueError("validation must use the latest pair held out from the training prefix")
+    gates = validated.get("gates")
+    if not isinstance(gates, dict) or not gates or any(value is not True for value in gates.values()):
+        raise ValueError("candidate reports failed or missing validation gates")
+
+    model = validated.get("model")
+    if not isinstance(model, dict):
+        raise ValueError("validated candidate has no fitted model")
+    if (type(model.get("schema_version")) is not int or model["schema_version"] != 1
+            or model.get("kind") != "delayed_second_order_planar_prediction"
+            or model.get("clock_scope") != "host_receive_effective_delay"
+            or model.get("prediction_scope") != "attitude_command_only"
+            or model.get("runtime_enabled") is not False
+            or model.get("deployment_approved") is not False):
+        raise ValueError("unsupported or non-diagnostic prediction model")
+    if _prediction_segment_ids(model.get("train_segment_ids"), "model training IDs") != training:
+        raise ValueError("model training provenance disagrees with held-out split")
+    fit = model.get("attitude_fit", {})
+    if not isinstance(fit, dict) or fit.get("model") != "second_order":
+        raise ValueError("a second-order attitude model is required")
+    if (_prediction_segment_ids(fit.get("training_segments"), "attitude training IDs") != training
+            or fit.get("active_bounds") != [0, 0, 0, 0, 0]):
+        raise ValueError("attitude fit provenance or bound flags are invalid")
+    for name, (lower, upper) in _PREDICTION_PARAMETER_BOUNDS.items():
+        value = _prediction_number(fit.get(name), name)
+        if not lower <= value <= upper:
+            raise ValueError(f"{name} is outside supported fit bounds")
+        if min(value-lower, upper-value) <= (upper-lower)*1e-4:
+            raise ValueError(f"{name} reached an active fit bound")
+    training_rmse = _prediction_number(fit.get("train_rmse_deg"), "training theta RMSE")
+    costs = fit.get("seed_costs")
+    if not isinstance(costs, list) or not costs:
+        raise ValueError("finite optimizer seed costs are required")
+    costs = [_prediction_number(cost, "optimizer seed cost") for cost in costs]
+    if (training_rmse < 0 or min(costs) < 0
+            or not np.isclose(np.radians(training_rmse)**2, min(costs), rtol=1e-5, atol=1e-12)):
+        raise ValueError("optimizer objective metadata is invalid or inconsistent")
+    gain = _prediction_number(model.get("motion_gain"), "motion_gain")
+    if not .2 < gain < 2.5:
+        raise ValueError("motion_gain is outside supported fit bounds")
+    identifiability = model.get("identifiability", {})
+    if (not isinstance(identifiability, dict) or identifiability.get("identifiable") is not True
+            or identifiability.get("bound_active_parameters") != []
+            or identifiability.get("rank") != 5):
+        raise ValueError("prediction parameters are not identifiable or have active bounds")
+    condition = _prediction_number(identifiability.get("condition_number"), "condition_number")
+    if not 0 < condition < 1e6:
+        raise ValueError("prediction parameter sensitivity is ill-conditioned")
+    singular_values = identifiability.get("singular_values")
+    if (not isinstance(singular_values, list) or len(singular_values) != 5
+            or min(_prediction_number(value, "singular value") for value in singular_values) < 1e-5):
+        raise ValueError("prediction parameter excitation is insufficient")
+    ranges = model.get("data_ranges")
+    if (not isinstance(ranges, list) or len(ranges) != len(training)
+            or any(not isinstance(row, dict) for row in ranges)
+            or _prediction_segment_ids([row.get("segment_id") for row in ranges], "data range IDs") != training
+            or {_prediction_number(row.get("direction_y"), "training direction") for row in ranges} != {-1., 1.}):
+        raise ValueError("training data must contain both world-Y directions with matching IDs")
+
+    metrics = validated.get("metrics")
+    if (not isinstance(metrics, dict) or type(metrics.get("schema_version")) is not int
+            or metrics["schema_version"] != 1
+            or _prediction_segment_ids(metrics.get("validation_segment_ids"), "metrics validation IDs") != held
+            or _prediction_segment_ids(metrics.get("train_segment_ids"), "metrics training IDs") != training
+            or metrics.get("future_measurements_used_for_prediction") is not False
+            or metrics.get("model_parameters_updated") is not False
+            or metrics.get("evaluation_scope") != "conditional_on_executed_command_schedule"):
+        raise ValueError("validation provenance is incomplete or not a frozen causal prediction")
+    rows = metrics.get("per_trial")
+    if (not isinstance(rows, list) or len(rows) != 2
+            or any(not isinstance(row, dict) for row in rows)
+            or _prediction_segment_ids([row.get("segment_id") for row in rows], "per-trial validation IDs") != held
+            or {_prediction_number(row.get("direction_y"), "validation direction") for row in rows} != {-1., 1.}):
+        raise ValueError("held-out metrics must match the final opposed world-Y pair")
+    limits = validated.get("limits")
+    if not isinstance(limits, dict):
+        raise ValueError("validation limits are missing")
+    for field, maximum in _PREDICTION_GATE_MAXIMA.items():
+        limit = _prediction_number(limits.get(field), field + " limit")
+        if not 0 < limit <= maximum:
+            raise ValueError(f"{field} limit is not finite, positive, and reasonably bounded")
+        for row in rows:
+            value = _prediction_number(row.get(field), field)
+            if abs(value) > limit or (field == "velocity_rmse_m_s" and value < 0):
+                raise ValueError(f"held-out {field} exceeds its declared limit")
+    for row in rows:
+        if _prediction_number(row.get("theta_rmse_deg"), "theta_rmse_deg") < 0:
+            raise ValueError("theta RMSE must be nonnegative")
+        if (type(row.get("actual_reverse")) is not bool or type(row.get("predicted_reverse")) is not bool
+                or row["actual_reverse"] != row["predicted_reverse"]):
+            raise ValueError("held-out reversal classifications disagree")
+    # Reject nonfinite and unserializable nested evidence before copying any
+    # of it into the ordinary calibration document. Never repair NaN to zero.
+    json.dumps(model, allow_nan=False)
+    json.dumps(metrics, allow_nan=False)
+    selected = deepcopy(model)
+    selected.update({
+        "runtime_enabled": False, "deployment_approved": False,
+        "independent_validation_complete": True,
+        "candidate_status": "independently_validated_diagnostic_only",
+        "validation": {
+            "training_segment_ids": list(training), "validation_segment_ids": list(held),
+            "independent_validation": True, "validation_passed": True,
+            "gates": deepcopy(gates), "limits": deepcopy(limits),
+            "per_trial": deepcopy(rows), "aggregates": deepcopy(metrics.get("aggregates", {})),
+            "rolling_horizon_aggregates": deepcopy(metrics.get("rolling_horizon_aggregates", [])),
+            "evaluation_scope": "conditional_on_executed_command_schedule",
+            "runtime_enabled": False, "deployment_approved": False,
+        },
+    })
+    source_path = report.get("report_path")
+    if isinstance(source_path, str):
+        selected["validation"]["report_path"] = source_path[:2048]
+    return selected
+
+
+def _online_prediction_attempt(report, updated, reason):
+    """Small JSON-safe attempt record, even when worker output is malformed."""
+    source = report if isinstance(report, dict) else {}
+    attempt = {
+        "schema_version": 1, "kind": "online_prediction_attempt",
+        "attempted_at": datetime.now(timezone.utc).isoformat(),
+        "status": source.get("status") if isinstance(source.get("status"), str) else "invalid_report",
+        "data_complete": source.get("data_complete") is True,
+        "reported_validation_passed": source.get("validation_passed") is True,
+        "prediction_model_updated": bool(updated), "selection_reason": str(reason)[:500],
+        "runtime_enabled": False, "deployment_approved": False,
+    }
+    attempt["status"] = attempt["status"][:100]
+    for key in ("report_path", "raw_samples_path"):
+        if isinstance(source.get(key), str):
+            attempt[key] = source[key][:2048]
+    for key in ("expected_segment_ids", "received_segment_ids"):
+        values = source.get(key)
+        if isinstance(values, list):
+            attempt[key] = [value for value in values[:256] if type(value) is int and value >= 0]
+    for key in ("fit_errors", "rejected_trials"):
+        values = source.get(key)
+        if isinstance(values, list):
+            attempt[key + "_count"] = len(values)
+    validated = source.get("validated_candidate")
+    if isinstance(validated, dict):
+        for key in ("training_segment_ids", "validation_segment_ids"):
+            values = validated.get(key)
+            if isinstance(values, list):
+                attempt[key] = [value for value in values[:256] if type(value) is int and value >= 0]
+    return attempt
+
+
 def save_drone_calibration(
         drone_id,
         fit,
@@ -1644,6 +1866,7 @@ def save_drone_calibration(
         path=DEFAULT_CALIBRATION_PATH,
         planar_braking_fit=None,
         position_capture_fit=None,
+        online_prediction_report=None,
 ):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1727,6 +1950,19 @@ def save_drone_calibration(
         # of the open-loop attitude gain. Do not map it to aMax or silently
         # activate an unvalidated continuous runtime capture envelope.
         entry["position_capture_fit"] = deepcopy(position_capture_fit)
+    if online_prediction_report is not None:
+        # A failed optional diagnostic must not discard a valid legacy fit or
+        # overwrite prior prediction evidence. Do not map any of these fields
+        # into control_handoff, impulse_estimator, or position-capture settings.
+        try:
+            prediction = _validated_online_prediction(online_prediction_report, drone_id)
+        except Exception as error:
+            entry["online_prediction_attempt"] = _online_prediction_attempt(
+                online_prediction_report, False, f"preserved_previous_model: {type(error).__name__}: {error}")
+        else:
+            entry["prediction_model"] = prediction
+            entry["online_prediction_attempt"] = _online_prediction_attempt(
+                online_prediction_report, True, "selected_latest_independently_validated_frozen_candidate")
     # entry starts as a copy, so older/partial callers retain this evidence.
     document.setdefault("drones", {})[str(drone_id)] = entry
     descriptor, temporary_name = tempfile.mkstemp(

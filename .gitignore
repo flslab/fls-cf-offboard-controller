@@ -4,6 +4,11 @@ metrics/
 .codex_tmp/
 Interaction/wrench_calibration.json
 
+# Local-only simulator-trained RL checkpoints and per-episode audit streams.
+# Keep experiment plans/summary reports visible; never upload weights by accident.
+autoresearch/loop-*/round*_seed*/
+autoresearch/loop-*/**/trajectories.json
+
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python
 

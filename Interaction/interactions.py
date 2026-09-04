@@ -3,6 +3,9 @@ import threading
 import time
 import traceback
 from copy import deepcopy
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
 
 import cflib.crazyflie
 import numpy as np
@@ -20,6 +23,7 @@ from Interaction.braking_repeat_test import (
     resolve_repeat_test_selection,
 )
 from Interaction.position_capture_calibration import PositionCaptureCalibration
+from Interaction.online_prediction_calibration import OnlinePredictionCalibration
 from Interaction.calibration_trial_readiness import CalibrationTrialReadinessGate
 from Interaction.flight_behaviors import load_commands
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
@@ -40,6 +44,27 @@ from Interaction.wrench_model_calibration import (
 # from Interaction.collision_avoidance.simulation import apf_velocity
 
 logger = logging.getLogger(__name__)
+
+
+def prediction_calibration_report_path(calibration_path, drone_id):
+    """Unique diagnostic output; never replace the active calibration file."""
+    safe_id = ''.join(c if c.isalnum() or c in '-_' else '_'
+                      for c in str(drone_id))[:40] or 'drone'
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
+    return (Path(calibration_path).expanduser().resolve().parent
+            / 'prediction_calibration_runs'
+            / f'{safe_id}_{stamp}_{uuid4().hex[:8]}' / 'report.json')
+
+
+def poll_prediction_calibration(session, log_event):
+    """Nonblocking delivery; fit failures do not change control ownership."""
+    if session is None:
+        return
+    for item in session.poll():
+        event = 'Online Prediction ' + item['event'].replace('_', ' ').title()
+        data = item['data']
+        log_event(event, data)
+        logger.info('%s: %s', event, data)
 
 
 def velocity_inertia_mass_class(current_mass, virtual_mass, mass_tolerance=1e-6):
@@ -3898,6 +3923,7 @@ class InteractionsControl:
     def _run_translation(self, calibration_mode=False, braking_test_mode=False,
                          braking_test_direction=None, braking_test_repetitions=None) -> None:
         """Run model-based interaction, with a legacy velocity-mode fallback."""
+        prediction_session = None
         try:
             if braking_test_mode and not calibration_mode:
                 raise ValueError('braking repeat test requires the calibration control path')
@@ -4086,6 +4112,9 @@ class InteractionsControl:
                     wrench_config.setdefault('calibration_excitation', {})[
                         'enabled'
                     ] = False
+                    wrench_config.setdefault('online_prediction_calibration', {})[
+                        'enabled'
+                    ] = False
                     interaction_duration = translation_setting['duration']
                     if saved_calibration is None:
                         logger.warning(
@@ -4137,6 +4166,52 @@ class InteractionsControl:
                     if detection_method == 'momentum_impulse'
                     else self.interaction_wrench_admittance
                 )
+                prediction_config = dict(
+                    (wrench_config.get('online_prediction_calibration') or {})
+                    if calibration_mode and not braking_test_mode else {}
+                )
+                prediction_enabled = prediction_config.get('enabled', False)
+                if type(prediction_enabled) is not bool:
+                    raise ValueError('online_prediction_calibration.enabled must be boolean')
+                if calibration_mode and not braking_test_mode and prediction_enabled:
+                    if (len(braking_plan.trial_directions) < 4
+                            or np.any(np.abs(braking_plan.directions[:, 0]) > 1e-6)
+                            or np.any(np.abs(braking_plan.directions[:, 1]) < .999)):
+                        raise ValueError(
+                            'online prediction calibration currently requires '
+                            'at least four complete opposed world-Y trials'
+                        )
+                    report_path = prediction_calibration_report_path(
+                        calibration_path, self.drone_id,
+                    )
+                    prediction_session = OnlinePredictionCalibration(
+                        prediction_config, report_path, self.drone_id,
+                        expected_segment_ids=list(range(len(braking_plan.trial_directions))),
+                        metadata={
+                            'nominal_position_m': list(target[:3]),
+                            'nominal_yaw_deg': float(nominal_yaw),
+                            'control_rate_hz': float(self.ctrl_rate),
+                            'protocol': braking_plan.timing_protocol(),
+                            'clock_scope': 'host_receive_effective_delay',
+                            'prediction_scope': 'attitude_command_only',
+                            'position_capture_model_identified': False,
+                        },
+                    )
+                    prediction_worker_started = prediction_session.start()
+                    self._log_event('Online Prediction Calibration Started', {
+                        'report_path': str(report_path),
+                        'fit_scope': 'attitude_command_to_tilt_velocity_position',
+                        'runtime_enabled': False,
+                        'worker_started': bool(prediction_worker_started),
+                        'fit_updates': 'completed opposed trial pairs',
+                    })
+                    if prediction_worker_started:
+                        logger.info('Online prediction fitting enabled in a background '
+                                    'process; existing flight commands unchanged. Report: %s',
+                                    report_path)
+                    else:
+                        logger.warning('Online prediction worker could not start; '
+                                       'continuing the unchanged calibration protocol.')
                 interaction_function(
                     duration=interaction_duration,
                     nominal_position=target[:3],
@@ -4149,6 +4224,8 @@ class InteractionsControl:
                     rearm_delay_s=translation_setting.get('grace_time', 0),
                     calibration_mode=calibration_mode,
                     calibration_path=calibration_path,
+                    **({'prediction_calibration': prediction_session}
+                       if prediction_session is not None else {}),
                     **({
                         'braking_test_mode': True,
                         'braking_test_direction': braking_test_direction,
@@ -4200,7 +4277,11 @@ class InteractionsControl:
                     logger.exception(
                         'Could not send level attitude while ending calibration'
                     )
-            self.lo_commander.send_notify_setpoint_stop()
+            try:
+                self.lo_commander.send_notify_setpoint_stop()
+            finally:
+                if prediction_session is not None:
+                    prediction_session.close()
 
     @staticmethod
     def _contact_log(decision):
@@ -4914,6 +4995,7 @@ class InteractionsControl:
             braking_test_mode=False,
             braking_test_direction=None,
             braking_test_repetitions=None,
+            prediction_calibration=None,
     ):
         """Run wrench interaction from synchronized onboard state estimates.
 
@@ -4921,6 +5003,8 @@ class InteractionsControl:
         The original full-pose mocap/Kalman observer path remains available by
         selecting ``state_source: mocap``.
         """
+        if prediction_calibration is not None and (not calibration_mode or braking_test_mode):
+            raise ValueError('online prediction fitting is only supported by --calibrate')
         if braking_test_mode:
             if not calibration_mode or self.ctrl_rate < 50:
                 raise ValueError('braking repeat test needs calibration mode and at least 50 Hz')
@@ -5576,6 +5660,8 @@ class InteractionsControl:
         excitation_finished = False
         model_calibration_samples = []
         planar_braking_samples = []
+        prediction_submitted_segments = set()
+        prediction_finish_requested = False
         active_planar_braking_command = None
         active_planar_braking_command_since = None
         last_planar_braking_phase = None
@@ -6073,6 +6159,8 @@ class InteractionsControl:
                     'actual_attitude_rpy_rad': (
                         output.estimate.orientation_rpy.tolist()
                     ),
+                    'angular_velocity_rad_s': state['angular_velocity'].tolist(),
+                    'state_group_skew_s': float(state_group_skew),
                     'velocity_xy': output.estimate.velocity[:2].tolist(),
                     'position_xy': position[:2].tolist(),
                     'battery_voltage_V': battery_voltage,
@@ -7852,6 +7940,33 @@ class InteractionsControl:
                 last_command_yaw = float(command_yaw)
                 translation_control.send(self.lo_commander)
 
+            if prediction_calibration is not None:
+                # Only a fully ended attitude trial is eligible. Send the
+                # recovery POSITION command above before copying/enqueuing it;
+                # optimization never extends an open-loop attitude phase.
+                if (not calibration_wait_this_cycle
+                        and planar_braking_command is not None
+                        and planar_braking_command.phase == 'recovery'
+                        and command_position is not None
+                        and planar_braking_command.segment_id
+                        not in prediction_submitted_segments):
+                    completed_id = planar_braking_command.segment_id
+                    completed_samples = [sample for sample in planar_braking_samples
+                                         if sample['segment_id'] == completed_id]
+                    accepted = prediction_calibration.submit_trial(completed_samples)
+                    prediction_submitted_segments.add(completed_id)
+                    self._log_event('Online Prediction Trial Submitted', {
+                        'segment_id': completed_id,
+                        'sample_count': len(completed_samples),
+                        'accepted': bool(accepted),
+                        'recovery_position_command_sent': True,
+                    })
+                if (len(prediction_submitted_segments)
+                        == len(planar_braking_plan.trial_directions)
+                        and not prediction_finish_requested):
+                    prediction_finish_requested = prediction_calibration.request_finish()
+                poll_prediction_calibration(prediction_calibration, self._log_event)
+
             estimate = output.estimate
             raw = output.raw_estimate
             calibration_attitude_command = (
@@ -8618,6 +8733,12 @@ class InteractionsControl:
                         'previous calibration file was preserved; inspect '
                         'Position Capture Calibration Evaluated in the flight log'
                     )
+            prediction_report = None
+            if prediction_calibration is not None:
+                # Optimizers are never joined here. A late or rejected result
+                # remains a separate diagnostic artifact, not a live model.
+                poll_prediction_calibration(prediction_calibration, self._log_event)
+                prediction_report = prediction_calibration.latest_report
             saved_path, saved_entry = save_drone_calibration(
                 self.drone_id,
                 fit,
@@ -8625,6 +8746,8 @@ class InteractionsControl:
                 calibration_path,
                 planar_braking_fit=planar_braking_fit,
                 position_capture_fit=position_capture_fit,
+                **({'online_prediction_report': prediction_report}
+                   if prediction_report is not None else {}),
             )
             self._log_event('Wrench Model Calibration Saved', {
                 'state_source': 'crazyflie_state_estimate',
