@@ -121,7 +121,8 @@ python3 orchestrator.py --calibrate --skip-record
 原 `Interaction/wrench_calibration.json` 的该无人机条目增加：
 
 - `online_prediction_attempt`：最近一次诊断状态和报告路径。
-- `prediction_model`：仅当完整报告已在保存前返回，且最后冻结模型通过独立数值门时更新。
+- `prediction_model`：只要完整、有限值的报告已在保存前返回，就保存最后冻结模型；
+  `control_eligible` 明确决定它能否用于实验 calibration 控制。
 
 新候选保留共享参数作为旧读取器的兼容证据，但 calibration 控制实际按运动方向选择
 `directional_models.positive_y` 或 `directional_models.negative_y`。每个方向独立拟合
@@ -131,8 +132,9 @@ delay、ωn、ζ、倾角 gain、bias 和 motion gain，并分别通过可辨识
 `|predicted velocity| + direction margin <= tolerance`，而不是只检查点预测。
 第一候选尚无 held-out 数据，margin 明确为零；不能把它解释成已知零误差。
 
-不完整、缺样本、拟合失败、不可辨识、碰到参数边界或误差过大时，
-保留旧 `prediction_model`，不妨碍原校准保存。
+held-out 数值门失败、不可辨识、碰到参数边界或误差过大时仍保存本次模型和
+`failed_gates`，但写入 `control_eligible: false`。只有报告不完整、缺样本、含 NaN、
+来源不一致或结构损坏时才保留旧 `prediction_model`，且不妨碍原校准保存。
 如果上一候选的 held-out validation 失败，下一对 calibration 自动保持原固定制动
 脉冲继续采数，不允许失败模型改变动作。如果某方向的误差裕量已经等于或超过终端
 速度容差，也同样退回固定脉冲；不会在开始制动后才因模型不可用而提前 level。

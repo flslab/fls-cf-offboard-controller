@@ -1671,11 +1671,11 @@ def _prediction_segment_ids(value, name):
 
 
 def _validated_online_prediction(report, drone_id):
-    """Recheck frozen held-out evidence; never select the all-data refit.
+    """Recheck and package frozen held-out evidence, passed or failed.
 
-    Raises only inside the optional diagnostic branch. The caller preserves
-    the prior prediction model and saves its ordinary calibration on rejection.
-    These gates authorize diagnostic persistence, never controller activation.
+    A complete finite failed result is persisted with ``control_eligible``
+    false. Malformed or incomplete reports are still rejected. This flag only
+    permits experimental calibration use; deployment keeps a separate gate.
     """
     if not isinstance(report, dict):
         raise ValueError("online prediction report must be a dictionary")
@@ -1685,8 +1685,8 @@ def _validated_online_prediction(report, drone_id):
     if str(report.get("drone_id")) != str(drone_id):
         raise ValueError("online prediction report belongs to another drone")
     if (report.get("status") != "completed" or report.get("data_complete") is not True
-            or report.get("validation_passed") is not True):
-        raise ValueError("online prediction report is incomplete or validation failed")
+            or type(report.get("validation_passed")) is not bool):
+        raise ValueError("online prediction report is incomplete or lacks a validation result")
     if (report.get("runtime_enabled") is not False or report.get("flight_approved") is not False
             or report.get("deployment_approved", False) is not False or report.get("worker_error")):
         raise ValueError("online prediction report is not an intact diagnostic-only result")
@@ -1705,17 +1705,22 @@ def _validated_online_prediction(report, drone_id):
     if not isinstance(validated, dict):
         raise ValueError("no independently validated candidate")
     if (validated.get("independent_validation") is not True
-            or validated.get("validation_passed") is not True
+            or type(validated.get("validation_passed")) is not bool
             or validated.get("runtime_enabled") is not False
             or validated.get("flight_approved") is not False):
-        raise ValueError("candidate is not independently validated diagnostic evidence")
+        raise ValueError("candidate lacks independent validation evidence")
     training = _prediction_segment_ids(validated.get("training_segment_ids"), "training_segment_ids")
     held = _prediction_segment_ids(validated.get("validation_segment_ids"), "validation_segment_ids")
     if training != received[:-2] or held != received[-2:] or set(training) & set(held):
         raise ValueError("validation must use the latest pair held out from the training prefix")
     gates = validated.get("gates")
-    if not isinstance(gates, dict) or not gates or any(value is not True for value in gates.values()):
-        raise ValueError("candidate reports failed or missing validation gates")
+    if (not isinstance(gates, dict) or not gates
+            or any(type(value) is not bool for value in gates.values())):
+        raise ValueError("candidate reports malformed or missing validation gates")
+    control_eligible = all(gates.values())
+    if (validated["validation_passed"] is not control_eligible
+            or report["validation_passed"] is not control_eligible):
+        raise ValueError("reported validation flag disagrees with gate results")
 
     model = validated.get("model")
     if not isinstance(model, dict):
@@ -1732,15 +1737,16 @@ def _validated_online_prediction(report, drone_id):
     fit = model.get("attitude_fit", {})
     if not isinstance(fit, dict) or fit.get("model") != "second_order":
         raise ValueError("a second-order attitude model is required")
+    active_bounds = fit.get("active_bounds")
     if (_prediction_segment_ids(fit.get("training_segments"), "attitude training IDs") != training
-            or fit.get("active_bounds") != [0, 0, 0, 0, 0]):
-        raise ValueError("attitude fit provenance or bound flags are invalid")
+            or not isinstance(active_bounds, list) or len(active_bounds) != 5
+            or any(type(value) is not int or value not in (0, 1)
+                   for value in active_bounds)):
+        raise ValueError("attitude fit provenance or bound flags are malformed")
     for name, (lower, upper) in _PREDICTION_PARAMETER_BOUNDS.items():
         value = _prediction_number(fit.get(name), name)
         if not lower <= value <= upper:
             raise ValueError(f"{name} is outside supported fit bounds")
-        if min(value-lower, upper-value) <= (upper-lower)*1e-4:
-            raise ValueError(f"{name} reached an active fit bound")
     training_rmse = _prediction_number(fit.get("train_rmse_deg"), "training theta RMSE")
     costs = fit.get("seed_costs")
     if not isinstance(costs, list) or not costs:
@@ -1753,17 +1759,21 @@ def _validated_online_prediction(report, drone_id):
     if not .2 < gain < 2.5:
         raise ValueError("motion_gain is outside supported fit bounds")
     identifiability = model.get("identifiability", {})
-    if (not isinstance(identifiability, dict) or identifiability.get("identifiable") is not True
-            or identifiability.get("bound_active_parameters") != []
-            or identifiability.get("rank") != 5):
-        raise ValueError("prediction parameters are not identifiable or have active bounds")
+    bound_parameters = identifiability.get("bound_active_parameters")
+    rank = identifiability.get("rank")
+    if (not isinstance(identifiability, dict)
+            or type(identifiability.get("identifiable")) is not bool
+            or not isinstance(bound_parameters, list)
+            or any(not isinstance(value, str) for value in bound_parameters)
+            or type(rank) is not int or not 0 <= rank <= 5):
+        raise ValueError("prediction identifiability metadata is malformed")
     condition = _prediction_number(identifiability.get("condition_number"), "condition_number")
-    if not 0 < condition < 1e6:
-        raise ValueError("prediction parameter sensitivity is ill-conditioned")
+    if condition <= 0:
+        raise ValueError("prediction parameter condition number must be positive")
     singular_values = identifiability.get("singular_values")
     if (not isinstance(singular_values, list) or len(singular_values) != 5
-            or min(_prediction_number(value, "singular value") for value in singular_values) < 1e-5):
-        raise ValueError("prediction parameter excitation is insufficient")
+            or min(_prediction_number(value, "singular value") for value in singular_values) < 0):
+        raise ValueError("prediction singular values are malformed")
     ranges = model.get("data_ranges")
     if (not isinstance(ranges, list) or len(ranges) != len(training)
             or any(not isinstance(row, dict) for row in ranges)
@@ -1789,42 +1799,54 @@ def _validated_online_prediction(report, drone_id):
             component_fit = component.get("attitude_fit")
             expected_ids = [segment for segment in training
                             if range_signs[segment] == sign]
+            component_active_bounds = (
+                component_fit.get("active_bounds")
+                if isinstance(component_fit, dict) else None
+            )
             if (not isinstance(component_fit, dict)
                     or component_fit.get("model") != "second_order"
                     or _prediction_segment_ids(
                         component_fit.get("training_segments"),
                         label + " attitude training IDs",
                     ) != expected_ids
-                    or component_fit.get("active_bounds") != [0, 0, 0, 0, 0]):
-                raise ValueError(label + " fit provenance or bounds are invalid")
+                    or not isinstance(component_active_bounds, list)
+                    or len(component_active_bounds) != 5
+                    or any(type(value) is not int or value not in (0, 1)
+                           for value in component_active_bounds)):
+                raise ValueError(label + " fit provenance or bounds are malformed")
             for name, (lower, upper) in _PREDICTION_PARAMETER_BOUNDS.items():
                 value = _prediction_number(component_fit.get(name), label + " " + name)
                 if not lower <= value <= upper:
                     raise ValueError(label + " parameter is outside supported bounds")
-                if min(value-lower, upper-value) <= (upper-lower)*1e-4:
-                    raise ValueError(label + " parameter reached an active fit bound")
             component_gain = _prediction_number(
                 component.get("motion_gain"), label + " motion_gain"
             )
             if not .2 < component_gain < 2.5:
                 raise ValueError(label + " motion_gain is outside supported bounds")
             component_identifiability = component.get("identifiability", {})
+            component_bound_parameters = component_identifiability.get(
+                "bound_active_parameters"
+            )
+            component_rank = component_identifiability.get("rank")
             if (not isinstance(component_identifiability, dict)
-                    or component_identifiability.get("identifiable") is not True
-                    or component_identifiability.get("bound_active_parameters") != []
-                    or component_identifiability.get("rank") != 5):
-                raise ValueError(label + " parameters are not identifiable")
+                    or type(component_identifiability.get("identifiable")) is not bool
+                    or not isinstance(component_bound_parameters, list)
+                    or any(not isinstance(value, str)
+                           for value in component_bound_parameters)
+                    or type(component_rank) is not int
+                    or not 0 <= component_rank <= 5):
+                raise ValueError(label + " identifiability metadata is malformed")
             component_condition = _prediction_number(
                 component_identifiability.get("condition_number"),
                 label + " condition_number",
             )
             component_singular = component_identifiability.get("singular_values")
-            if (not 0 < component_condition < 1e6
+            if (not 0 < component_condition
                     or not isinstance(component_singular, list)
                     or len(component_singular) != 5
                     or min(_prediction_number(value, label + " singular value")
-                           for value in component_singular) < 1e-5):
-                raise ValueError(label + " parameter excitation is insufficient")
+                           for value in component_singular) < 0):
+                raise ValueError(label + " sensitivity metadata is malformed")
             margin = _prediction_number(
                 component.get("terminal_velocity_error_margin_m_s"),
                 label + " terminal velocity error margin",
@@ -1856,26 +1878,93 @@ def _validated_online_prediction(report, drone_id):
             raise ValueError(f"{field} limit is not finite, positive, and reasonably bounded")
         for row in rows:
             value = _prediction_number(row.get(field), field)
-            if abs(value) > limit or (field == "velocity_rmse_m_s" and value < 0):
-                raise ValueError(f"held-out {field} exceeds its declared limit")
+            if field == "velocity_rmse_m_s" and value < 0:
+                raise ValueError("held-out velocity RMSE must be nonnegative")
     for row in rows:
         if _prediction_number(row.get("theta_rmse_deg"), "theta_rmse_deg") < 0:
             raise ValueError("theta RMSE must be nonnegative")
-        if (type(row.get("actual_reverse")) is not bool or type(row.get("predicted_reverse")) is not bool
-                or row["actual_reverse"] != row["predicted_reverse"]):
-            raise ValueError("held-out reversal classifications disagree")
+        if (type(row.get("actual_reverse")) is not bool
+                or type(row.get("predicted_reverse")) is not bool):
+            raise ValueError("held-out reversal classifications are malformed")
+    # Failed quality gates are persistable, but gate booleans must remain an
+    # honest derivation of the finite model/metrics rather than a way to label
+    # corrupted or out-of-limit data as usable.
+    expected_gates = {
+        "at_least_two_trials": len(rows) >= 2,
+        "both_y_directions": {row["direction_y"] for row in rows} == {-1, 1},
+        "reported_segment_ids_match": metrics["validation_segment_ids"] == held,
+        "complete_per_trial_results": len(rows) == len(held),
+        "per_trial_ids_match": [row["segment_id"] for row in rows] == held,
+        "per_trial_directions_match": {
+            row["direction_y"] for row in rows
+        } == {-1, 1},
+        "parameters_identifiable": bool(
+            identifiability["identifiable"] and rank == 5
+            and condition < 1e6
+            and min(float(value) for value in singular_values) >= 1e-5
+        ),
+        "no_active_parameter_bounds": bool(
+            bound_parameters == [] and active_bounds == [0, 0, 0, 0, 0]
+            and all(
+                min(float(fit[name])-lower, upper-float(fit[name]))
+                > (upper-lower)*1e-4
+                for name, (lower, upper) in _PREDICTION_PARAMETER_BOUNDS.items()
+            )
+        ),
+    }
+    for field in _PREDICTION_GATE_MAXIMA:
+        expected_gates[field] = all(
+            (field != "velocity_rmse_m_s" or row[field] >= 0)
+            and abs(row[field]) <= limits[field]
+            for row in rows
+        )
+    expected_gates["no_reversal_misses_or_false_alarms"] = all(
+        row["actual_reverse"] == row["predicted_reverse"] for row in rows
+    )
+    if directional is not None:
+        qualities = [directional[label]["identifiability"]
+                     for label in ("positive_y", "negative_y")]
+        fits = [directional[label]["attitude_fit"]
+                for label in ("positive_y", "negative_y")]
+        expected_gates["directional_parameters_identifiable"] = all(
+            quality["identifiable"] and quality["rank"] == 5
+            and quality["condition_number"] < 1e6
+            and min(quality["singular_values"]) >= 1e-5
+            for quality in qualities
+        )
+        expected_gates["directional_no_active_parameter_bounds"] = all(
+            quality["bound_active_parameters"] == []
+            and component_fit["active_bounds"] == [0, 0, 0, 0, 0]
+            and all(
+                min(float(component_fit[name])-lower,
+                    upper-float(component_fit[name])) > (upper-lower)*1e-4
+                for name, (lower, upper) in _PREDICTION_PARAMETER_BOUNDS.items()
+            )
+            for quality, component_fit in zip(qualities, fits)
+        )
+    for name, expected in expected_gates.items():
+        if gates.get(name) is not expected:
+            raise ValueError(name + " gate disagrees with persisted evidence")
     # Reject nonfinite and unserializable nested evidence before copying any
     # of it into the ordinary calibration document. Never repair NaN to zero.
     json.dumps(model, allow_nan=False)
     json.dumps(metrics, allow_nan=False)
     selected = deepcopy(model)
     selected.update({
+        "control_eligible": control_eligible,
+        "validation_passed": control_eligible,
         "runtime_enabled": False, "deployment_approved": False,
         "independent_validation_complete": True,
-        "candidate_status": "independently_validated_diagnostic_only",
+        "candidate_status": (
+            "independently_validated_experimental_control_eligible"
+            if control_eligible else
+            "independently_validated_failed_not_control_eligible"
+        ),
         "validation": {
             "training_segment_ids": list(training), "validation_segment_ids": list(held),
-            "independent_validation": True, "validation_passed": True,
+            "independent_validation": True, "validation_passed": control_eligible,
+            "control_eligible": control_eligible,
+            "failed_gates": [name for name, passed in gates.items() if not passed],
             "gates": deepcopy(gates), "limits": deepcopy(limits),
             "per_trial": deepcopy(rows), "aggregates": deepcopy(metrics.get("aggregates", {})),
             "rolling_horizon_aggregates": deepcopy(metrics.get("rolling_horizon_aggregates", [])),
@@ -2014,9 +2103,10 @@ def save_drone_calibration(
         # activate an unvalidated continuous runtime capture envelope.
         entry["position_capture_fit"] = deepcopy(position_capture_fit)
     if online_prediction_report is not None:
-        # A failed optional diagnostic must not discard a valid legacy fit or
-        # overwrite prior prediction evidence. Do not map any of these fields
-        # into control_handoff, impulse_estimator, or position-capture settings.
+        # Complete finite passed and failed diagnostics both replace the prior
+        # prediction evidence. The embedded control_eligible flag is the
+        # explicit experimental-use gate; malformed/incomplete reports preserve the
+        # previous entry. Never map this into unrelated control settings.
         try:
             prediction = _validated_online_prediction(online_prediction_report, drone_id)
         except Exception as error:
@@ -2024,8 +2114,11 @@ def save_drone_calibration(
                 online_prediction_report, False, f"preserved_previous_model: {type(error).__name__}: {error}")
         else:
             entry["prediction_model"] = prediction
+            eligible = prediction["control_eligible"]
             entry["online_prediction_attempt"] = _online_prediction_attempt(
-                online_prediction_report, True, "selected_latest_independently_validated_frozen_candidate")
+                online_prediction_report, True,
+                "saved_latest_frozen_candidate_control_eligible" if eligible
+                else "saved_latest_frozen_candidate_control_ineligible")
     # entry starts as a copy, so older/partial callers retain this evidence.
     document.setdefault("drones", {})[str(drone_id)] = entry
     descriptor, temporary_name = tempfile.mkstemp(

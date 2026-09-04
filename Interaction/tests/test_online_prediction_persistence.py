@@ -223,6 +223,38 @@ class OnlinePredictionPersistenceTests(unittest.TestCase):
         self.assertFalse(saved["online_prediction_attempt"]["prediction_model_updated"])
         self.assertFalse(saved["online_prediction_attempt"]["reported_validation_passed"])
 
+    def test_complete_failed_validation_is_saved_but_marked_ineligible(self):
+        report = copy.deepcopy(self.report)
+        validated = report["validated_candidate"]
+        report["validation_passed"] = False
+        validated["validation_passed"] = False
+        validated["gates"]["terminal_error_m_s"] = False
+        row = validated["metrics"]["per_trial"][0]
+        row["terminal_error_m_s"] = .20
+        label = "positive_y" if row["direction_y"] > 0 else "negative_y"
+        validated["model"]["directional_models"][label][
+            "terminal_velocity_error_margin_m_s"
+        ] = .20
+
+        saved = self.save(report)
+        selected = saved["prediction_model"]
+        self.assertFalse(selected["control_eligible"])
+        self.assertFalse(selected["validation_passed"])
+        self.assertFalse(selected["validation"]["control_eligible"])
+        self.assertEqual(
+            selected["validation"]["failed_gates"],
+            ["terminal_error_m_s"],
+        )
+        self.assertEqual(
+            selected["candidate_status"],
+            "independently_validated_failed_not_control_eligible",
+        )
+        self.assertTrue(saved["online_prediction_attempt"]["prediction_model_updated"])
+        self.assertEqual(
+            saved["online_prediction_attempt"]["selection_reason"],
+            "saved_latest_frozen_candidate_control_ineligible",
+        )
+
     def test_bad_attempt_without_previous_model_does_not_create_one(self):
         self.path.unlink()
         entry = self.save({"status": "failed"})

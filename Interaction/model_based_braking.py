@@ -104,6 +104,8 @@ def _validated_model(model, experimental, direction_y):
             model.get("kind") != "delayed_second_order_planar_prediction" or
             model.get("prediction_scope") != "attitude_command_only"):
         raise ValueError("unsupported_model")
+    if "control_eligible" in model and model.get("control_eligible") is not True:
+        raise ValueError("model_marked_control_ineligible")
     if not experimental and not (
             model.get("deployment_approved") is True and
             model.get("independent_validation_complete") is True):

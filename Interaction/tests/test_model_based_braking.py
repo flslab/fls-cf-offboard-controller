@@ -69,6 +69,19 @@ class ModelBasedBrakingTests(unittest.TestCase):
             self.assertEqual(result['reason'], reason)
             self.assertIsNone(result['roll_deg'])
 
+    def test_persisted_control_eligibility_flag_is_enforced(self):
+        source = model()
+        source['control_eligible'] = False
+        item = ModelBasedBrakingController(
+            source, target_position_xy=[0., .15], direction_xy=[0., 1.],
+            brake_deadline_s=.32,
+            config=dict(enabled=True, experimental_calibration=True),
+        )
+        self.assertEqual(
+            item.decide(0., state())['reason'],
+            'model_marked_control_ineligible',
+        )
+
     def test_direction_and_actual_sent_history(self):
         item = controller()
         item.history = []
