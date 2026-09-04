@@ -12,6 +12,8 @@ import numpy as np
 import zmq
 
 from Interaction.command_wrapper import CommandWrapper
+from Interaction.commander_handoff import HandoffError, handoff_to_high_level
+from Interaction.adaptive_braking_calibration import AdaptiveBrakingCalibration
 from Interaction.braking_response_calibration import (
     PlanarBrakingCalibration,
 )
@@ -3924,6 +3926,8 @@ class InteractionsControl:
                          braking_test_direction=None, braking_test_repetitions=None) -> None:
         """Run model-based interaction, with a legacy velocity-mode fallback."""
         prediction_session = None
+        self._translation_exit_target = None
+        self._translation_high_level_active = False
         try:
             if braking_test_mode and not calibration_mode:
                 raise ValueError('braking repeat test requires the calibration control path')
@@ -4049,6 +4053,15 @@ class InteractionsControl:
                     wrench_config.pop('position_capture_calibration', None)
                     # Validate readiness timing before entering any maneuver.
                     CalibrationTrialReadinessGate(braking_config)
+                    adaptive_options = wrench_config.get('adaptive_braking_calibration', {})
+                    adaptive_preflight = AdaptiveBrakingCalibration(
+                        adaptive_options, braking_plan, getattr(self, 'ctrl_rate', 0.0), None,
+                    )
+                    if adaptive_preflight.enabled:
+                        if braking_test_mode:
+                            raise ValueError('adaptive braking is only available with --calibrate, not --braking-test')
+                        AdaptiveBrakingCalibration.validate_online_worker_config(
+                            wrench_config.get('online_prediction_calibration'))
                     interaction_duration = braking_plan.end_s + 0.5
                 else:
                     wrench_config, saved_calibration = apply_drone_calibration(
@@ -4141,11 +4154,13 @@ class InteractionsControl:
                                 'the nominal hover point'
                             )
                     logger.warning(
-                        'Calibration includes %d open-loop planar trials at '
+                        'Calibration includes %d %s trials at '
                         'tilt levels %s deg (maximum %.1f); keep the full '
                         '%.2f m XY safety radius clear and do not touch the '
                         'vehicle.',
                         len(braking_plan.trial_directions),
+                        ('bounded adaptive-eligible attitude' if adaptive_preflight.enabled
+                         else 'open-loop planar'),
                         ', '.join(
                             f'{value:g}'
                             for value in braking_plan.tilt_levels_deg
@@ -4154,13 +4169,22 @@ class InteractionsControl:
                         braking_plan.max_displacement_m,
                     )
                     logger.warning(
-                        'Calibration uses paired acceleration/braking durations '
+                        'Calibration schedules maximum acceleration/braking durations '
                         '%s s; total scheduled motion time %.1fs plus startup '
                         'bias collection and readiness holds. No position '
                         'capture trials are run.',
                         braking_plan.trial_accelerate_s.tolist(),
                         interaction_duration,
                     )
+                    if adaptive_preflight.enabled:
+                        logger.warning(
+                            'ACTIVE MODEL-GUIDED CALIBRATION: first opposed pair '
+                            'uses fixed pulses; later pairs can shorten braking '
+                            'using an earlier frozen model. Experimental target '
+                            'is %.2fm ahead of brake start; it is not a new '
+                            'POSITION command. Existing safety limits remain active.',
+                            adaptive_preflight.target_distance_m,
+                        )
                 interaction_function = (
                     self.interaction_onboard_wrench_admittance
                     if detection_method == 'momentum_impulse'
@@ -4195,21 +4219,27 @@ class InteractionsControl:
                             'clock_scope': 'host_receive_effective_delay',
                             'prediction_scope': 'attitude_command_only',
                             'position_capture_model_identified': False,
+                            'adaptive_braking_calibration': deepcopy(adaptive_options),
                         },
                     )
                     prediction_worker_started = prediction_session.start()
                     self._log_event('Online Prediction Calibration Started', {
                         'report_path': str(report_path),
                         'fit_scope': 'attitude_command_to_tilt_velocity_position',
-                        'runtime_enabled': False,
+                        'runtime_enabled': adaptive_preflight.enabled,
+                        'runtime_scope': ('adaptive_calibration_only'
+                                          if adaptive_preflight.enabled else 'diagnostic_only'),
                         'worker_started': bool(prediction_worker_started),
                         'fit_updates': 'completed opposed trial pairs',
                     })
                     if prediction_worker_started:
                         logger.info('Online prediction fitting enabled in a background '
-                                    'process; existing flight commands unchanged. Report: %s',
+                                    'process; adaptive braking=%s. Report: %s',
+                                    adaptive_preflight.enabled,
                                     report_path)
                     else:
+                        if adaptive_preflight.enabled:
+                            raise RuntimeError('adaptive calibration requires a running prediction worker')
                         logger.warning('Online prediction worker could not start; '
                                        'continuing the unchanged calibration protocol.')
                 interaction_function(
@@ -4265,23 +4295,52 @@ class InteractionsControl:
             if calibration_mode:
                 raise
         finally:
-            if calibration_mode:
-                try:
-                    target_z = float(
-                        self.mission['drones'][self.drone_id]['target'][2]
-                    )
-                    self.lo_commander.send_zdistance_setpoint(
-                        0.0, 0.0, 0.0, target_z
-                    )
-                except Exception:
-                    logger.exception(
-                        'Could not send level attitude while ending calibration'
-                    )
             try:
-                self.lo_commander.send_notify_setpoint_stop()
+                exit_target = self._translation_exit_target
+                if exit_target is not None:
+                    self._handoff_translation_hold(*exit_target)
+                elif not calibration_mode:
+                    # Legacy paths have their own control lifecycle.
+                    self.lo_commander.send_notify_setpoint_stop()
             finally:
                 if prediction_session is not None:
                     prediction_session.close()
+
+    def _handoff_translation_hold(self, position, yaw_deg):
+        """Transfer ownership once, before blocking fits or leaving translation.
+
+        Never send another LL setpoint after this: firmware would stop the HLC
+        planner. A failed acknowledgement propagates to Controller.land(),
+        which can perform a continuously streamed LL descent.
+        """
+        if getattr(self, '_translation_high_level_active', False):
+            return
+        low, high = self.lo_commander, self.hl_commander
+        if isinstance(low, CommandWrapper):
+            low = low.for_safety_cleanup()
+        if isinstance(high, CommandWrapper):
+            high = high.for_safety_cleanup()
+        try:
+            result = handoff_to_high_level(
+                low, high, 'go_to', *position, float(np.radians(yaw_deg)),
+                1.0, relative=False,
+                dry_run=all(isinstance(c, CommandWrapper) and c.execution is False
+                            for c in (low, high)),
+            )
+        except HandoffError:
+            # The HLC command might have started even though its reply was
+            # lost. Reassert LL ownership immediately and refresh the
+            # watchdog before closing the prediction worker or unwinding.
+            low.send_position_setpoint(
+                *position, float(yaw_deg),
+            )
+            raise
+        self._translation_high_level_active = True
+        # Ownership is already safe even if writing this event fails.
+        self._log_event('Translation High Level Hold Acquired', {
+            'position_m': list(position), 'yaw_deg': float(yaw_deg),
+            'handoff': result,
+        })
 
     @staticmethod
     def _contact_log(decision):
@@ -4513,6 +4572,8 @@ class InteractionsControl:
             name='Wrench Interaction Config',
         )
 
+        self._translation_exit_target = (nominal_position.tolist(), nominal_yaw_deg)
+        self._translation_high_level_active = False
         self.hl_commander.go_to(
             nominal_position[0], nominal_position[1], nominal_position[2],
             nominal_yaw_deg, 2.0, relative=False,
@@ -5506,6 +5567,8 @@ class InteractionsControl:
             name='Onboard Wrench Interaction Config',
         )
 
+        self._translation_exit_target = (nominal_position.tolist(), nominal_yaw_deg)
+        self._translation_high_level_active = False
         self.hl_commander.go_to(
             nominal_position[0], nominal_position[1], nominal_position[2],
             nominal_yaw_deg, 2.0, relative=False,
@@ -5660,6 +5723,12 @@ class InteractionsControl:
         excitation_finished = False
         model_calibration_samples = []
         planar_braking_samples = []
+        adaptive_braking = AdaptiveBrakingCalibration(
+            config.get('adaptive_braking_calibration', {}) if calibration_mode else {},
+            planar_braking_plan, self.ctrl_rate, self._log_event,
+        )
+        if adaptive_braking.enabled and (prediction_calibration is None or braking_test_mode):
+            raise ValueError('adaptive braking requires --calibrate with an online prediction worker')
         prediction_submitted_segments = set()
         prediction_finish_requested = False
         active_planar_braking_command = None
@@ -6035,6 +6104,9 @@ class InteractionsControl:
 
             position = state['position']
             self.check_interaction_boundary(position)
+            # An interaction can finish far from nominal. Exit into a hold at
+            # the latest valid position; do not introduce a new return motion.
+            self._translation_exit_target = (position.tolist(), nominal_yaw_deg)
             motor_state = state['motor_state']
             motor_pwm = [motor_state.get(f'motor.m{i}') for i in range(1, 5)]
             if not OnboardMomentumWrenchPipeline.motor_data_available(motor_pwm):
@@ -7621,6 +7693,18 @@ class InteractionsControl:
                     calibration_elapsed_s,
                     np.degrees(output.estimate.orientation_rpy[2]),
                 )
+                if adaptive_braking.enabled:
+                    planar_braking_command = adaptive_braking.modify(
+                        planar_braking_command, time.time(), {
+                            'time_s': state_time,
+                            'position_xy': position[:2],
+                            'velocity_xy': output.estimate.velocity[:2],
+                            'orientation_rpy_rad': output.estimate.orientation_rpy,
+                            'angular_velocity_rad_s': state['angular_velocity'],
+                            'state_group_skew_s': state_group_skew,
+                            'battery_voltage_V': battery_voltage,
+                        }, prediction_calibration.latest_report,
+                    )
                 phase_marker = (
                     planar_braking_command.segment_id,
                     planar_braking_command.phase,
@@ -7886,6 +7970,7 @@ class InteractionsControl:
                     0.0,
                     float(nominal_position[2]),
                 )
+                adaptive_braking.record_sent(planar_braking_command, command_sent_at)
                 command_position = None
                 command_yaw = nominal_yaw_deg
                 if (
@@ -8524,6 +8609,12 @@ class InteractionsControl:
                         next_elapsed_s = min(next_elapsed_s, boundary_s)
                 calibration_elapsed_s = next_elapsed_s
 
+        # Legacy final identification/save can take seconds. The onboard HLC
+        # must own a live hover trajectory BEFORE the LL stream stops, not in
+        # an outer finally after those calculations have finished.
+        if calibration_mode:
+            self._handoff_translation_hold(nominal_position, nominal_yaw_deg)
+
         if braking_test_mode:
             result = repeat_test_result(
                 planar_braking_plan, planar_braking_config,
@@ -8613,6 +8704,12 @@ class InteractionsControl:
                 )
                 planar_braking_fit['protocol'] = {
                     **planar_braking_plan.timing_protocol(),
+                    'adaptive_braking_calibration': {
+                        'enabled': adaptive_braking.enabled,
+                        'target_distance_m': adaptive_braking.config.get('target_distance_m'),
+                        'timing_values_are_maximum_scheduled_pulses': adaptive_braking.enabled,
+                        'actual_commands_recorded_in_samples': True,
+                    },
                     'directions_xy': (
                         planar_braking_plan.directions.tolist()
                     ),

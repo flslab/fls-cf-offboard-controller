@@ -160,9 +160,13 @@ class OnlinePredictionRuntimeTests(unittest.TestCase):
 
     def test_worker_closed_even_if_notify_stop_raises(self):
         controller = self.entry_fixture(True)
+        # Enter the real control path before testing its exit handoff. A
+        # preflight failure must not relax priority on an unstarted aircraft.
+        controller.interaction_onboard_wrench_admittance.side_effect = (
+            lambda **kwargs: setattr(controller, '_translation_exit_target', ([0., 0., 1.], 0.)))
         controller.lo_commander.send_notify_setpoint_stop = Mock(side_effect=RuntimeError('notify error'))
         with patch('Interaction.interactions.OnlinePredictionCalibration') as worker:
-            with self.assertRaisesRegex(RuntimeError, 'notify error'):
+            with self.assertRaisesRegex(RuntimeError, 'handoff failed'):
                 controller.run_calibration()
             worker.return_value.close.assert_called_once()
 

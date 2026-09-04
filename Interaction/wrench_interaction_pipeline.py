@@ -101,6 +101,11 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
     },
     # Identification only: fitting runs in a separate process during existing
     # calibration trials. New model parameters never activate flight control.
+    "adaptive_braking_calibration": {
+        "enabled": False,
+        "target_distance_m": 0.30,
+        "model_based_braking": {"max_compute_s": 0.008},
+    },
     "online_prediction_calibration": {
         "enabled": False,
         "max_sample_gap_s": 0.06,

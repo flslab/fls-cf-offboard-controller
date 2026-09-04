@@ -1,11 +1,13 @@
 """Logging diagnostics must not disable existing landing and cleanup behavior."""
 import ast
+import math
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
 from Interaction.command_wrapper import CommandWrapper
+from Interaction.commander_handoff import HandoffError
 from Interaction.live_logger import LiveLoggerError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,8 +22,24 @@ def methods(names, **namespace):
 
 
 class LoggingCleanupTests(unittest.TestCase):
+    def test_emergency_prepare_never_touches_peripherals_or_flight_control(self):
+        namespace = methods({'_prepare_for_emergency_landing'})
+        controller = SimpleNamespace(
+            _set_safe_servo_angles=Mock(), led=Mock(), ll_commander=Mock())
+        namespace['_prepare_for_emergency_landing'](controller)
+        controller._set_safe_servo_angles.assert_not_called()
+        controller.led.show_single_color.assert_not_called()
+        controller.ll_commander.send_notify_setpoint_stop.assert_not_called()
+        self.assertTrue(controller._emergency_landing_requested)
+
     def test_sticky_logger_failure_does_not_block_existing_landing(self):
-        namespace = methods({'land'}, time=Mock(), logger=Mock(), CommandWrapper=CommandWrapper)
+        def handoff(low, high, name, *args, **kwargs):
+            kwargs.pop('dry_run', None)
+            getattr(high, name)(*args, **kwargs)
+            low.send_notify_setpoint_stop()
+        namespace = methods({'land'}, time=Mock(), math=math, logger=Mock(),
+                            CommandWrapper=CommandWrapper, HandoffError=HandoffError,
+                            handoff_to_high_level=handoff)
         failure = LiveLoggerError('disk failed')
         record = Mock(side_effect=failure)
         high, low = Mock(), Mock()
@@ -39,7 +57,7 @@ class LoggingCleanupTests(unittest.TestCase):
         original_logger = controller.hl_commander.log_function
         with self.assertLogs('Interaction.command_wrapper', level='ERROR'):
             namespace['land'](controller)
-        low.send_notify_setpoint_stop.assert_called_once_with()
+        self.assertEqual(low.send_notify_setpoint_stop.call_count, 2)
         high.go_to.assert_called_once()
         high.land.assert_called_once_with(.1, 2.)
         high.stop.assert_called_once_with()
@@ -49,6 +67,47 @@ class LoggingCleanupTests(unittest.TestCase):
         with self.assertRaises(LiveLoggerError):
             controller.hl_commander.takeoff(1, 2)
         high.takeoff.assert_not_called()
+
+    def test_handoff_timeout_uses_low_level_fallback_not_high_level_stop(self):
+        helper = Mock(side_effect=HandoffError('missing ACK'))
+        namespace = methods({'land'}, time=Mock(), math=math, logger=Mock(),
+                            CommandWrapper=CommandWrapper, HandoffError=HandoffError,
+                            handoff_to_high_level=helper)
+        logs = Mock()
+        logs.get_latest_cf_log_data.side_effect = [0.1, .2, 1.] * 2
+        controller = SimpleNamespace(
+            args=SimpleNamespace(skip_landing=False, takeoff_altitude=1., init_yaw=0., vicon=True),
+            hl_commander=Mock(), ll_commander=Mock(), cf=Mock(), log_manager=logs,
+            voltage=7.4, init_coord=[0, 0, 0], flying=True,
+            mission={'takeoff_speed': .5}, use_flowdeck=False,
+            _land_with_low_level=Mock(), _send_landing_confirmation=Mock())
+        namespace['land'](controller)
+        controller._land_with_low_level.assert_called_once_with(
+            controller.ll_commander, .1, .2, 1., .1, 2.)
+        controller.hl_commander.stop.assert_not_called()
+        controller.ll_commander.send_notify_setpoint_stop.assert_not_called()
+
+    def test_low_level_fallback_streams_through_descent_and_settling(self):
+        for position in ((.1, .2, 1.), (None, None, None)):
+            with self.subTest(position=position):
+                clock = [0.]
+                sent = []
+                low = Mock()
+                low.send_position_setpoint.side_effect = lambda *args: sent.append((clock[0], args[2]))
+                low.send_zdistance_setpoint.side_effect = lambda *args: sent.append((clock[0], args[3]))
+                namespace = methods(
+                    {'_land_with_low_level'}, math=math,
+                    time=SimpleNamespace(monotonic=lambda: clock[0],
+                                         sleep=lambda dt: clock.__setitem__(0, clock[0]+dt)))
+                controller = SimpleNamespace(args=SimpleNamespace(takeoff_altitude=1., init_yaw=0.))
+                namespace['_land_with_low_level'](controller, low, *position, .1, 2.)
+                self.assertGreaterEqual(len(sent), 150)
+                self.assertLessEqual(max(b[0]-a[0] for a, b in zip(sent, sent[1:])), .020001)
+                self.assertTrue(all(b[1] <= a[1]+1e-9 for a, b in zip(sent, sent[1:])))
+                self.assertAlmostEqual(sent[-1][1], .1)
+                self.assertGreaterEqual(sent[-1][0], 3.)
+                low.send_notify_setpoint_stop.assert_not_called()
+                low.send_stop_setpoint.assert_called_once_with()
 
     def test_close_failure_reaches_disconnect_and_is_still_reported(self):
         namespace = methods({'stop'}, time=SimpleNamespace(time=lambda: 10), logger=Mock())

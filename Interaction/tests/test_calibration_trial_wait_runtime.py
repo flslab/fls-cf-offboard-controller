@@ -8,7 +8,7 @@ from Interaction.braking_response_calibration import PlanarBrakingCalibration
 from Interaction.position_capture_calibration import PositionCaptureCalibration
 from Interaction.interactions import InteractionsControl, StaleLocalizationError
 from Interaction.tests.test_wrench_interactions_integration import (
-    FakeCommander, FakeOnboardLogManager,
+    FakeCommander, FakeOnboardLogManager, FakeHandoffCF,
 )
 
 
@@ -27,6 +27,7 @@ class CalibrationTrialWaitRuntimeTests(unittest.TestCase):
         controller.bounds = None
         controller.lo_commander = FakeCommander()
         controller.hl_commander = FakeCommander()
+        controller.lo_commander._cf = controller.hl_commander._cf = FakeHandoffCF()
         command_times = []
 
         def sleep(_seconds):

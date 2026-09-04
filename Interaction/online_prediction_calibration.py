@@ -104,6 +104,9 @@ class _CalibrationAccumulator:
             "fit_errors": [], "validation_history": [],
             "candidate": None, "validated_candidate": None,
             "validation_passed": False, "runtime_enabled": False,
+            "runtime_scope": "normal_interaction_not_enabled",
+            "calibration_control_enabled": bool(
+                (metadata or {}).get('adaptive_braking_calibration', {}).get('enabled', False)),
             "flight_approved": False, "output_path": str(self.path),
             "report_path": str(self.path),
             "raw_samples_path": str(self.raw_path), "events_dropped": 0,
@@ -112,6 +115,7 @@ class _CalibrationAccumulator:
                 "The latest all-data refit has no independent validation.",
                 "Sequential maneuver amplitude/duration may confound time and battery.",
                 "Queued samples interrupted before worker receipt remain in flight logs.",
+                "Adaptive calibration, when enabled in context, changes actual brake timing; runtime_enabled refers only to normal interaction deployment.",
             ],
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)

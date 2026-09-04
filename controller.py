@@ -4,6 +4,7 @@ from turtle import forward
 from cflib import crazyflie
 from cflib import crazyflie
 import argparse
+from copy import deepcopy
 import datetime
 import json
 from typing import Callable
@@ -30,6 +31,7 @@ from cflib.utils.reset_estimator import reset_estimator
 
 from Interaction.interactions import InteractionsControl
 from Interaction.command_wrapper import CommandWrapper
+from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.braking_repeat_test import validate_repeat_test_options
 
 from mocap import Mocap
@@ -552,20 +554,16 @@ class Controller:
         commander = self.hl_commander
         if isinstance(commander, CommandWrapper):
             commander = commander.for_safety_cleanup()
-        live_logger = getattr(self.log_manager, 'live_logger', None)
-        if live_logger is not None and live_logger.stats_snapshot()['error'] is not None:
-            # Earlier finally-block notification may itself have failed to log.
-            # Release low-level ownership before the existing high-level landing.
-            low_level = self.ll_commander
-            if isinstance(low_level, CommandWrapper):
-                low_level = low_level.for_safety_cleanup()
-            if low_level is not None:
-                low_level.send_notify_setpoint_stop()
+        low_level = self.ll_commander
+        if isinstance(low_level, CommandWrapper):
+            low_level = low_level.for_safety_cleanup()
+        handoff_dry_run = all(isinstance(c, CommandWrapper) and c.execution is False
+                              for c in (low_level, commander))
         self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
         voltage = self.voltage
         voltage_str = f"{voltage:.2f}V" if voltage is not None else "NA"
         logger.info(f"Landing... Battery: {voltage_str}")
-        z = self.args.takeoff_altitude
+        current_x = current_y = current_z = None
 
         if self.log_manager:
             current_x = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.x")
@@ -574,26 +572,67 @@ class Controller:
         elif self.mocap:
             current_x, current_y, current_z = self._get_latest_mocap_frame()["tvec"]
 
-        if self.init_coord and None not in [current_x, current_y, current_z]:
-            initial_x, initial_y, _ = self.init_coord
-            dist = ((initial_x - current_x) ** 2 + (initial_y - current_y) ** 2) ** 0.5
-            dt = 2 * dist + 0.1
-
-            commander.go_to(initial_x, initial_y, current_z, self.args.init_yaw, dt, relative=False)
-            time.sleep(dt + 0.5)
-
         if self.flying:
-            # dt = current_z * 6
             takeoff_speed = self.mission.get("takeoff_speed", 0.5)
             dt = self.args.takeoff_altitude / takeoff_speed
             height = 0.1 if self.args.vicon or self.use_flowdeck else 0.02
-            commander.land(height, dt)
-            logger.info(f"Landing duration: {dt} seconds")
-            time.sleep(dt + 1)
-            commander.stop()
+            try:
+                if (self.init_coord is not None
+                        and all(v is not None and math.isfinite(v)
+                                for v in (current_x, current_y, current_z))):
+                    initial_x, initial_y, _ = self.init_coord
+                    dist = ((initial_x - current_x) ** 2 + (initial_y - current_y) ** 2) ** 0.5
+                    return_duration = max(1.0, 2 * dist + 0.1)
+                    # Pre-arm the HLC plan and wait for its firmware ACK BEFORE
+                    # lowering LL priority. notify alone is not a hover command.
+                    handoff_to_high_level(
+                        low_level, commander, 'go_to', initial_x, initial_y,
+                        current_z, math.radians(self.args.init_yaw),
+                        return_duration, relative=False, dry_run=handoff_dry_run,
+                    )
+                    time.sleep(return_duration + 0.5)
+                handoff_to_high_level(low_level, commander, 'land', height, dt,
+                                      dry_run=handoff_dry_run)
+                logger.info(f"Landing duration: {dt} seconds")
+                time.sleep(dt + 1)
+                commander.stop()
+            except HandoffError:
+                logger.exception('HLC handoff failed; using streamed low-level descent')
+                # A return-to-origin trajectory might already have completed.
+                # Do not reuse its entry XY for fallback position control.
+                if self.log_manager:
+                    current_x = self.log_manager.get_latest_cf_log_data('VEL_POS', 'stateEstimate.x')
+                    current_y = self.log_manager.get_latest_cf_log_data('VEL_POS', 'stateEstimate.y')
+                    current_z = self.log_manager.get_latest_cf_log_data('VEL_POS', 'stateEstimate.z')
+                self._land_with_low_level(
+                    low_level, current_x, current_y, current_z, height, dt,
+                )
             self.flying = False
 
         self._send_landing_confirmation(voltage)
+
+    def _land_with_low_level(self, commander, x, y, z, height, duration):
+        """Bounded fallback when the HLC cannot acknowledge a landing plan.
+
+        Keep sending at 50 Hz, including the settling second. Never notify or
+        wait for a high-level trajectory in this path. Link/send failures still
+        propagate: successful host execution is not proof of physical landing.
+        """
+        position_valid = all(v is not None and math.isfinite(v) for v in (x, y, z))
+        start_z = float(z) if z is not None and math.isfinite(z) else float(self.args.takeoff_altitude)
+        duration = max(float(duration), 2.0)
+        started = time.monotonic()
+        while True:
+            elapsed = time.monotonic() - started
+            z_command = start_z + (height - start_z) * min(elapsed / duration, 1.0)
+            if position_valid:
+                commander.send_position_setpoint(x, y, z_command, self.args.init_yaw)
+            else:
+                commander.send_zdistance_setpoint(0.0, 0.0, 0.0, z_command)
+            if elapsed >= duration + 1.0:
+                break
+            time.sleep(0.02)
+        commander.send_stop_setpoint()
 
     def _recap_takeoff(self):
         """Takeoff for a Recap iteration (flight-only, no log-start side-effects)."""
@@ -1296,14 +1335,32 @@ class Controller:
     def calibration_switch(self):
         """Run contact-free calibration or the data-only attitude repeat test."""
         try:
+            adaptive_braking = getattr(self.args, 'adaptive_braking_calibration', False)
+            if adaptive_braking and (
+                    not getattr(self.args, 'calibrate', False)
+                    or getattr(self.args, 'braking_test', False)
+                    or getattr(self.args, 'interaction', False)):
+                raise ValueError(
+                    '--adaptive-braking-calibration requires --calibrate '
+                    'without --interaction or --braking-test'
+                )
             if self.args.ground_test:
                 self._safe_sleep(1)
                 return
+            calibration_mission = self.mission
+            if adaptive_braking:
+                # This is an explicit per-run flight-control opt-in. Do not
+                # mutate the shared mission or enable it for later interaction.
+                calibration_mission = deepcopy(self.mission)
+                wrench_config = calibration_mission.setdefault('Interaction', {}).setdefault(
+                    'config', {}).setdefault('wrench_interaction', {})
+                wrench_config.setdefault('adaptive_braking_calibration', {})['enabled'] = True
+                wrench_config.setdefault('online_prediction_calibration', {})['enabled'] = True
             controller = InteractionsControl(
                 self.cf,
                 self._safe_sleep,
                 self.log_manager,
-                self.mission,
+                calibration_mission,
                 self.args.smooth_controller_rate,
                 drone_id=self.args.drone_id,
                 orchestrator_ip=(
@@ -1328,9 +1385,6 @@ class Controller:
                 traceback.format_exc(),
             )
             raise
-        finally:
-            self.ll_commander.send_notify_setpoint_stop()
-
     def run_multiple_orchestrated_missions(self):
         for i in range(len(self.missions)):
             self.orchestrated_mission(i)
@@ -1934,14 +1988,16 @@ class Controller:
             raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
 
     def _prepare_for_emergency_landing(self):
-        self._set_safe_servo_angles()
-        time.sleep(0.6)
-        # if self.smooth_controller:
-        #     self.smooth_controller.stop()
-        if self.led:
-            self.led.show_single_color((230, 20, 20))
-        self.ll_commander.send_notify_setpoint_stop()
-        time.sleep(0.01)
+        """Mark the request without blocking or changing control ownership.
+
+        The caller immediately raises into ``Controller.__exit__`` and
+        ``stop() -> land()``. Peripheral targets are handled once by stop().
+        Sleeping here used to leave the current LL
+        setpoint unrefreshed for 0.6 s, then notify before any HLC plan existed.
+        Both actions can destabilize the aircraft. The centralized landing
+        path now owns the acknowledged HLC transfer or streamed LL fallback.
+        """
+        self._emergency_landing_requested = True
 
     def _safe_sleep_orchestrated(self, duration):
         end_time = time.time() + duration
@@ -2291,6 +2347,11 @@ if __name__ == '__main__':
         ),
     )
     ap.add_argument(
+        "--adaptive-braking-calibration", action="store_true",
+        help=("opt in to online-model-guided attitude braking during --calibrate; "
+              "not available during --interaction or --braking-test"),
+    )
+    ap.add_argument(
         "--braking-test", action="store_true",
         help=("data-only attitude repeat test: 20 deg, paired 0.24s pulses, "
               "default alternating -Y/+Y three times; skip XYZ and preserve calibration"),
@@ -2372,6 +2433,12 @@ if __name__ == '__main__':
         ap.error(str(error))
     if args.interaction and args.calibrate:
         ap.error('--interaction and --calibrate are mutually exclusive')
+    if args.adaptive_braking_calibration and (
+            not args.calibrate or args.interaction or args.braking_test):
+        ap.error(
+            '--adaptive-braking-calibration requires --calibrate '
+            'without --interaction or --braking-test'
+        )
     if args.sense and not args.log:
         ap.error('--sense requires --log so sensor and estimate data are recorded')
     if args.calibrate and not args.log:

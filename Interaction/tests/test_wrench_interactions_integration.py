@@ -1,6 +1,7 @@
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -472,12 +473,33 @@ class CalibrationStateDropoutTests(unittest.TestCase):
         )
 
 
+class FakeHandoffCF:
+    """Single simulated aircraft with the firmware HLC reply interface."""
+    def __init__(self):
+        self.callbacks = []
+        self.platform = SimpleNamespace(get_protocol_version=lambda: 8)
+
+    def add_port_callback(self, port, callback):
+        self.callbacks.append(callback)
+
+    def remove_port_callback(self, port, callback):
+        self.callbacks.remove(callback)
+
+    def acknowledge_go_to(self):
+        for callback in list(self.callbacks):
+            callback(SimpleNamespace(port=8, channel=0, data=bytes([12, 0, 0, 0])))
+
+
 class FakeCommander:
+    _default_cf = FakeHandoffCF()
+
     def __init__(self):
         self.calls = []
+        self._cf = self._default_cf
 
     def go_to(self, *args, **kwargs):
         self.calls.append(('go_to', args, kwargs))
+        self._cf.acknowledge_go_to()
 
     def send_position_setpoint(self, *args):
         self.calls.append(('position', args, {}))
