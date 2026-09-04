@@ -30,7 +30,7 @@ class CalibrationControlContinuityTests(unittest.TestCase):
             'model_based_braking': {'max_compute_s': 1.},
         }
         config['planar_braking_calibration'].update(
-            tilt_levels_deg=[20], repetitions_per_tilt=2,
+            tilt_levels_deg=[20], repetitions_per_tilt=3,
             level_before_acceleration_s=.12, accelerate_s=.16,
             level_before_brake_s=.12, brake_s=.16,
             level_after_brake_s=.20, recovery_s=.20)
@@ -66,13 +66,28 @@ class CalibrationControlContinuityTests(unittest.TestCase):
         submit = session.submit_trial
         def submit_and_publish(samples):
             result = submit(samples)
-            if len(session.trials) == 2:
+            if len(session.trials) == 4:
                 candidate_model = model()
+                candidate_model['directional_models'] = {
+                    label: {
+                        'direction_y': sign,
+                        'attitude_fit': dict(candidate_model['attitude_fit']),
+                        'motion_gain': candidate_model['motion_gain'],
+                        'identifiability': dict(candidate_model['identifiability']),
+                        'terminal_velocity_error_margin_m_s': .01,
+                    }
+                    for label, sign in (('positive_y', 1), ('negative_y', -1))
+                }
                 for row in candidate_model['data_ranges']:
                     row['battery_voltage_V'] = [7.9, 8.1]
-                session.latest_report = {'candidate': {
+                session.latest_report = {'validated_control_candidate': {
                     'version': 1, 'training_segment_ids': [0, 1],
+                    'validation_segment_ids': [2, 3],
                     'model': candidate_model,
+                    'independent_validation': True,
+                    'validation_passed': True,
+                    'control_eligible': True,
+                    'control_eligibility_reason': 'own_held_out_validation_passed',
                 }}
             return result
         session.submit_trial = submit_and_publish
@@ -182,16 +197,16 @@ class CalibrationControlContinuityTests(unittest.TestCase):
         self.assertTrue(all(row['action'] != 'fallback' for row in decisions), decisions)
         self.assertTrue(any(row['action'] == 'level' for row in decisions))
         frozen = self.events(logs, 'Adaptive Braking Pair Frozen')
-        self.assertEqual([row['adaptive'] for row in frozen], [False, True])
-        self.assertEqual(frozen[1]['training_segment_ids'], [0, 1])
-        self.assertEqual(len(session.trials), 4)
+        self.assertEqual([row['adaptive'] for row in frozen], [False, False, True])
+        self.assertEqual(frozen[2]['training_segment_ids'], [0, 1])
+        self.assertEqual(len(session.trials), 6)
         for segment, rows in enumerate(session.trials):
             baseline_rows = baseline[1].trials[segment]
             self.assertEqual(len(build_tilt_trials(rows)), 1)
             levels = [s for s in rows if s['phase'] == 'level_after_brake']
             baseline_levels = [s for s in baseline_rows if s['phase'] == 'level_after_brake']
             phase_time = levels[0]['command_started_at']
-            if segment < 2:
+            if segment < 4:
                 self.assertEqual(rows, baseline_rows)
             else:
                 self.assertLess(phase_time, baseline_levels[0]['command_started_at'])

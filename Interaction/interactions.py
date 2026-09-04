@@ -4214,9 +4214,10 @@ class InteractionsControl:
                     )
                     if adaptive_preflight.enabled:
                         logger.warning(
-                            'ACTIVE MODEL-GUIDED CALIBRATION: first opposed pair '
-                            'uses fixed pulses; later pairs can shorten braking '
-                            'using an earlier frozen model. Experimental target '
+                            'ACTIVE MODEL-GUIDED CALIBRATION: a frozen model '
+                            'may shorten braking only after its own later opposed '
+                            'pair validates it, and only for directions inside '
+                            'the terminal-error margin. Experimental target '
                             'is %.2fm ahead of brake start; it is not a new '
                             'POSITION command. Existing safety limits remain active.',
                             adaptive_preflight.target_distance_m,

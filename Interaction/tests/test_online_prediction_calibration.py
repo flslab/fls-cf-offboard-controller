@@ -126,7 +126,20 @@ class CalibrationAccumulatorTests(unittest.TestCase):
         self.assertEqual(report["validated_candidate"]["validation_segment_ids"], [4, 5])
         self.assertFalse(report["runtime_enabled"])
         self.assertFalse(report["flight_approved"])
-        self.assertTrue(report["candidate"]["control_eligible"])
+        self.assertFalse(report["candidate"]["control_eligible"])
+        self.assertEqual(
+            report["candidate"]["control_eligibility_reason"],
+            "awaiting_own_held_out_validation",
+        )
+        self.assertTrue(report["validated_control_candidate"]["control_eligible"])
+        self.assertEqual(
+            report["validated_control_candidate"]["training_segment_ids"],
+            [0, 1, 2, 3],
+        )
+        self.assertEqual(
+            report["validated_control_candidate"]["validation_segment_ids"],
+            [4, 5],
+        )
         self.assertEqual(
             report["validated_candidate"][
                 "terminal_velocity_error_margins_m_s"
@@ -150,7 +163,7 @@ class CalibrationAccumulatorTests(unittest.TestCase):
         self.assertFalse(state.report["validation_history"][0]["validation_passed"])
         self.assertTrue(state.report["validation_passed"])
 
-    def test_failed_prior_validation_makes_next_candidate_control_ineligible(self):
+    def test_failed_validation_is_not_reused_as_a_control_candidate(self):
         def evaluate(model, samples, **kwargs):
             result = _fake_evaluate(model, samples, **kwargs)
             result["per_trial"][0]["terminal_error_m_s"] = -.2
@@ -162,7 +175,13 @@ class CalibrationAccumulatorTests(unittest.TestCase):
         self.assertFalse(candidate["control_eligible"])
         self.assertEqual(
             candidate["control_eligibility_reason"],
-            "previous_frozen_candidate_failed_held_out_validation",
+            "awaiting_own_held_out_validation",
+        )
+        validated = state.report["validated_control_candidate"]
+        self.assertFalse(validated["control_eligible"])
+        self.assertEqual(
+            validated["control_eligibility_reason"],
+            "own_held_out_validation_failed",
         )
         self.assertEqual(
             candidate["model"]["terminal_velocity_error_margin_m_s"], .2
@@ -183,7 +202,16 @@ class CalibrationAccumulatorTests(unittest.TestCase):
         self.assertFalse(state.report["candidate"]["control_eligible"])
         self.assertEqual(
             state.report["candidate"]["control_eligibility_reason"],
-            "previous_frozen_candidate_failed_held_out_validation",
+            "awaiting_own_held_out_validation",
+        )
+        self.assertFalse(
+            state.report["validated_control_candidate"]["control_eligible"]
+        )
+        self.assertEqual(
+            state.report["validated_control_candidate"][
+                "control_eligibility_reason"
+            ],
+            "held_out_validation_error",
         )
 
     def test_fitting_exception_preserves_previous_candidate_and_records_failure(self):

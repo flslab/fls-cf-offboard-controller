@@ -1,10 +1,12 @@
 """Calibration-only adapter that can only shorten an existing brake pulse.
 
-The first opposed pair remains the original identification maneuver. At each
-later pair's first trial start, freeze the latest earlier-trial candidate. No
-model update can change an in-progress pair. A missing candidate leaves that
-whole pair baseline, with an explicit event. A failed prediction levels and
-latches instead of continuing an obsolete braking instruction.
+The first opposed pair remains the original identification maneuver. A fitted
+model may control only after its own later opposed pair independently validates
+it, and then only in directions whose held-out terminal-speed margin is below
+the controller tolerance. At each later pair's first trial start, freeze that
+validated snapshot. No model update can change an in-progress pair. A missing
+or ineligible direction keeps its scheduled fixed pulse. A failed online
+prediction levels and latches instead of continuing an obsolete instruction.
 
 The caller must validate/start the online worker before enabling this adapter,
 call modify only for an admitted control cycle, and call record_sent only after
@@ -124,65 +126,90 @@ class AdaptiveBrakingCalibration:
         if pair in self._pair_models:
             return
         candidate = None
+        direction_eligible = {"positive_y": False, "negative_y": False}
+        direction_reasons = {
+            "positive_y": "no_validated_control_candidate",
+            "negative_y": "no_validated_control_candidate",
+        }
         reason = "initial_opposed_pair_identification"
         if pair > 0:
-            reason = "candidate_unavailable_at_pair_start"
+            reason = "validated_control_candidate_unavailable_at_pair_start"
             if segment % 2 or command.phase != "level_before_acceleration":
                 reason = "pair_start_not_observed"
-            elif isinstance(report, dict) and isinstance(report.get("candidate"), dict):
-                source = report["candidate"]
+            elif (isinstance(report, dict)
+                  and isinstance(report.get("validated_control_candidate"), dict)):
+                source = report["validated_control_candidate"]
                 training = source.get("training_segment_ids")
+                validation = source.get("validation_segment_ids")
                 model = source.get("model")
                 version = source.get("version")
                 if (isinstance(training, list) and len(training) >= 2 and not len(training) % 2
+                        and isinstance(validation, list) and len(validation) == 2
                         and all(type(value) is int for value in training)
-                        and training == list(range(segment))
+                        and all(type(value) is int for value in validation)
+                        and training + validation == list(range(segment))
+                        and validation == [segment-2, segment-1]
                         and isinstance(model, dict) and model.get("train_segment_ids") == training
                         and type(version) is int and version > 0):
-                    eligible = source.get("control_eligible", True)
+                    eligible = source.get("control_eligible") is True
                     tolerance = float(self.model_config.get(
                         "terminal_velocity_tolerance_m_s", .05
                     ))
                     directional = model.get("directional_models", {})
-                    margins = [
-                        component.get(
-                            "terminal_velocity_error_margin_m_s", 0.
-                        )
-                        for component in directional.values()
-                        if isinstance(component, dict)
-                    ]
                     if (model.get("candidate_status") not in
                             (None, "requires_held_out_validation")):
                         reason = "candidate_fit_not_identifiable_or_at_bounds"
                     elif directional and set(directional) != {
                             "positive_y", "negative_y"}:
                         reason = "candidate_directional_model_set_invalid"
-                    elif eligible is not True:
+                    elif not eligible:
                         reason = source.get(
                             "control_eligibility_reason",
-                            "candidate_failed_prior_held_out_validation",
+                            "validated_candidate_not_control_eligible",
                         )
-                    elif margins and (any(
-                            isinstance(value, bool)
-                            or not isinstance(value, (int, float))
-                            or not math.isfinite(value)
-                            or value < 0 for value in margins)
-                            or max(margins) >= tolerance):
-                        reason = "candidate_uncertainty_exceeds_terminal_tolerance"
                     else:
                         candidate = copy.deepcopy(source)
-                        reason = "earlier_trial_candidate_frozen"
+                        reason = "validated_candidate_frozen"
+                        for label in direction_eligible:
+                            component = directional.get(label)
+                            margin = (None if not isinstance(component, dict)
+                                      else component.get(
+                                          "terminal_velocity_error_margin_m_s"
+                                      ))
+                            if (isinstance(margin, (int, float))
+                                    and not isinstance(margin, bool)
+                                    and math.isfinite(margin)
+                                    and 0 <= margin < tolerance):
+                                direction_eligible[label] = True
+                                direction_reasons[label] = (
+                                    "validated_direction_margin_within_tolerance"
+                                )
+                            else:
+                                direction_reasons[label] = (
+                                    "direction_uncertainty_exceeds_terminal_tolerance"
+                                )
+                        candidate["direction_control_eligible"] = copy.deepcopy(
+                            direction_eligible
+                        )
+                        if not any(direction_eligible.values()):
+                            candidate = None
+                            reason = "all_direction_uncertainties_exceed_tolerance"
                 else:
                     reason = "candidate_provenance_invalid_or_not_causal"
         self._pair_models[pair] = candidate
         self._emit("Adaptive Braking Pair Frozen", {
             "pair_index": pair, "segment_ids": [pair*2, pair*2+1],
-            "adaptive": candidate is not None, "reason": reason,
+            "adaptive": bool(candidate is not None and any(direction_eligible.values())),
+            "adaptive_directions": copy.deepcopy(direction_eligible),
+            "direction_reasons": copy.deepcopy(direction_reasons),
+            "reason": reason,
             "model_version": None if candidate is None else candidate["version"],
             "training_segment_ids": [] if candidate is None else candidate["training_segment_ids"],
             "experimental_target_distance_m": self.target_distance_m,
             "target_source": "explicit_brake_start_forward_distance",
-            "matched_pulse_protocol": candidate is None,
+            "matched_pulse_protocol": not bool(
+                candidate is not None and any(direction_eligible.values())
+            ),
         })
 
     @staticmethod
@@ -203,7 +230,15 @@ class AdaptiveBrakingCalibration:
             raise ValueError("adaptive segment is outside the original protocol")
         self._freeze_pair(command, latest_report)
         candidate = self._pair_models[segment // 2]
-        if candidate is None or command.phase != "brake":
+        direction_label = (
+            "positive_y" if float(command.direction_xy[1]) > 0
+            else "negative_y"
+        )
+        if (candidate is None
+                or candidate.get("direction_control_eligible", {}).get(
+                    direction_label
+                ) is not True
+                or command.phase != "brake"):
             return command
         if segment in self._latched:
             return self._level(command)

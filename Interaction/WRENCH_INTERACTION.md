@@ -84,16 +84,17 @@ calibration point does not change the apparatus-aligned interaction target.
 shadow mode and commands the bounded XYZ position chirp used by the wrench
 observer. It then performs bounded planar attitude trials with the sequence
 level -> accelerate -> level -> equal-duration opposite brake -> level ->
-position recovery.  The current Y-mounted experiment fixes tilt at 20 degrees and tests paired
-acceleration/braking durations of 0.16, 0.24 and 0.32 seconds in both +Y and -Y
-(six trials total). Each trial levels for 0.20 seconds, accelerates for T,
+position recovery. The current Y-mounted experiment fixes tilt at 20 degrees and tests paired
+acceleration/braking durations of 0.16, 0.24, 0.32 and a repeated 0.32 seconds
+in both +Y and -Y (eight trials total). Each trial levels for 0.20 seconds, accelerates for T,
 levels for 0.20 seconds, brakes at the opposite 20 degrees for T, levels for
 0.65 seconds, then recovers with position control for 2 seconds.
 Equal opposite command pulses cancel velocity only in an ideal symmetric
 model; delay, drag and initial velocity can produce residual motion or reversal.
 Zero tilt is not XY position hold. Inspect measured velocity after braking.
-By default, the first opposed pair keeps those fixed pulses and later pairs may
-level early using a frozen model fitted from earlier pairs. This adaptive stage
+By default, initial opposed pairs keep those fixed pulses. A later pair may
+level early only with a frozen model that has passed its own independent
+held-out opposed pair; eligibility is checked separately for +Y and -Y. This adaptive stage
 can only shorten the configured brake; it cannot increase angle, duration, or
 the safety envelope. Use `--no-adaptive-braking-calibration` to retain fixed
 brake durations for every trial. The positive
@@ -120,10 +121,14 @@ attitude and motion-gain components; the shared component remains only for
 backward-compatible evidence. Held-out terminal-speed absolute error is carried
 forward separately for each direction, and a runtime candidate must satisfy
 `abs(predicted terminal speed) + direction error margin <= tolerance`.
-Only a bootstrap first candidate or a candidate following a passed held-out
-pair may alter calibration braking. A failed validation, an unidentifiable fit,
-an active parameter bound, or a margin as large as the tolerance makes the next
-pair use the original fixed pulse instead.
+A model may alter calibration braking only after that exact frozen version has
+passed its own later held-out opposed pair. A newly refitted all-data candidate
+cannot inherit the preceding version's pass. Direction eligibility is separate:
+an unidentifiable fit, an active parameter bound, a failed global validation,
+or a direction margin as large as the tolerance keeps that direction on the
+original fixed pulse without disabling an independently safe opposite direction.
+The recommended duration sweep repeats the high-speed pair (`0.32, 0.32`): the
+first pair validates the model and the second permits the validated model to act.
 
 Complete finite frozen candidates are persisted whether those gates pass or
 fail. `prediction_model.control_eligible` is the experimental calibration-use

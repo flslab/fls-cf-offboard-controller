@@ -30,10 +30,26 @@ class PlanarBrakingCalibrationTests(unittest.TestCase):
         self.assertEqual(plan.timing_protocol()['accelerate_durations_s'], [.16, .24, .32])
 
     def test_duration_sweep_rejects_invalid_durations(self):
-        for durations in ([], [0], [-1], [float('nan')], [.2, .1], [.1, .1]):
+        for durations in ([], [0], [-1], [float('nan')], [.2, .1]):
             with self.subTest(durations=durations), self.assertRaises(ValueError):
                 PlanarBrakingCalibration({'tilt_levels_deg': [20],
                                          'accelerate_durations_s': durations})
+
+    def test_duration_sweep_allows_repeated_held_out_pair(self):
+        plan = PlanarBrakingCalibration({
+            'enabled': True,
+            'tilt_levels_deg': [20],
+            'accelerate_durations_s': [.16, .24, .32, .32],
+        })
+        self.assertEqual(len(plan.trial_directions), 8)
+        np.testing.assert_allclose(
+            plan.trial_accelerate_s,
+            [.16, .16, .24, .24, .32, .32, .32, .32],
+        )
+        self.assertEqual(
+            plan.timing_protocol()['accelerate_durations_s'],
+            [.16, .24, .32, .32],
+        )
 
     def setUp(self):
         self.plan = PlanarBrakingCalibration({

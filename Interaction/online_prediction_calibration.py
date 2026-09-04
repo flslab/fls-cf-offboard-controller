@@ -150,6 +150,7 @@ class _CalibrationAccumulator:
             "received_segment_ids": [], "rejected_trials": [],
             "fit_errors": [], "validation_history": [],
             "candidate": None, "validated_candidate": None,
+            "validated_control_candidate": None,
             "validation_passed": False, "runtime_enabled": False,
             "runtime_scope": "normal_interaction_not_enabled",
             "calibration_control_enabled": bool(
@@ -307,6 +308,20 @@ class _CalibrationAccumulator:
                 self.latest_validation_passed = validation["validation_passed"]
                 self.latest_validation_source = margin_source
                 self.report["validated_candidate"] = copy.deepcopy(validation)
+                self.report["validated_control_candidate"] = {
+                    "version": frozen["version"],
+                    "training_segment_ids": list(frozen["training_segment_ids"]),
+                    "validation_segment_ids": list(pair_ids),
+                    "model": copy.deepcopy(validation["model"]),
+                    "independent_validation": True,
+                    "validation_passed": validation["validation_passed"],
+                    "control_eligible": validation["validation_passed"],
+                    "control_eligibility_reason": (
+                        "own_held_out_validation_passed"
+                        if validation["validation_passed"] else
+                        "own_held_out_validation_failed"
+                    ),
+                }
                 events.append(("candidate_validated", {
                     "candidate_version": frozen["version"],
                     "training_segment_ids": frozen["training_segment_ids"],
@@ -329,6 +344,17 @@ class _CalibrationAccumulator:
                     "validation_passed": False,
                 }
                 self.report["validated_candidate"] = copy.deepcopy(validation)
+                self.report["validated_control_candidate"] = {
+                    "version": frozen["version"],
+                    "training_segment_ids": list(frozen["training_segment_ids"]),
+                    "validation_segment_ids": list(pair_ids),
+                    "model": copy.deepcopy(frozen["model"]),
+                    "independent_validation": True,
+                    "validation_passed": False,
+                    "control_eligible": False,
+                    "control_eligibility_reason": "held_out_validation_error",
+                    "validation_error": validation["error"],
+                }
                 events.append(("validation_failed", {
                     "candidate_version": frozen["version"],
                     "validation_segment_ids": pair_ids, "error": validation["error"],
@@ -375,18 +401,13 @@ class _CalibrationAccumulator:
                          "fit_elapsed_s": time.monotonic()-fitting_started,
                          "validation_passed": False, "runtime_enabled": False,
                          "flight_approved": False,
-                         "control_eligible": bool(
-                             self.latest_validation_passed is not False
-                             and fit_quality_ok
-                         ),
+                         # A newly refitted model never controls a trial before
+                         # its own later opposed pair has validated it.
+                         "control_eligible": False,
                          "control_eligibility_reason": (
                              "candidate_fit_not_identifiable_or_at_bounds"
                              if not fit_quality_ok else
-                             "bootstrap_first_frozen_candidate"
-                             if self.latest_validation_passed is None else
-                             "previous_frozen_candidate_passed_held_out_validation"
-                             if self.latest_validation_passed else
-                             "previous_frozen_candidate_failed_held_out_validation"
+                             "awaiting_own_held_out_validation"
                          )}
             self.report["candidate"] = candidate
             events.append(("candidate_fitted", {

@@ -94,10 +94,13 @@ class PlanarBrakingCalibration:
             repeats = config.get("repetitions_per_duration", 1)
             if (durations.ndim != 1 or len(durations) == 0
                     or not np.all(np.isfinite(durations))
-                    or np.any(durations <= 0) or np.any(np.diff(durations) <= 0)
+                    or np.any(durations <= 0) or np.any(np.diff(durations) < 0)
                     or isinstance(repeats, bool) or not np.isfinite(float(repeats))
                     or int(repeats) != repeats or repeats <= 0):
-                raise ValueError("acceleration durations must be positive, increasing with integer repeats")
+                raise ValueError(
+                    "acceleration durations must be positive, nondecreasing "
+                    "with integer repeats"
+                )
             if len(self.tilt_levels_deg) != 1:
                 raise ValueError("duration sweep requires one fixed tilt angle")
             self.accelerate_durations_s = durations.copy()

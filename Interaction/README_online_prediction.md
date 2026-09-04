@@ -127,17 +127,22 @@ python3 orchestrator.py --calibrate --skip-record
 新候选保留共享参数作为旧读取器的兼容证据，但 calibration 控制实际按运动方向选择
 `directional_models.positive_y` 或 `directional_models.negative_y`。每个方向独立拟合
 delay、ωn、ζ、倾角 gain、bias 和 motion gain，并分别通过可辨识性/参数边界检查。
-上一冻结模型在 held-out ±Y pair 上得到的每方向末端速度绝对误差，会作为下一候选的
-`terminal_velocity_error_margin_m_s`。硬约束实际检查
+冻结模型在它自己的下一组 held-out ±Y pair 上得到的每方向末端速度绝对误差，会写入
+`terminal_velocity_error_margin_m_s`。只有通过这次独立验证的同一个冻结模型，才可能在
+再下一组试验中控制；刚刚用全部已有数据重拟合的新候选仍标记为等待自己的 held-out
+验证，不能借用前一版本的验证结果。硬约束实际检查
 `|predicted velocity| + direction margin <= tolerance`，而不是只检查点预测。
-第一候选尚无 held-out 数据，margin 明确为零；不能把它解释成已知零误差。
+每个方向单独放行：例如 −Y margin 合格而 +Y 不合格时，−Y 可以缩短脉冲，+Y 仍执行
+原固定脉冲。第一候选尚无 held-out 数据时绝不参与控制。
 
 held-out 数值门失败、不可辨识、碰到参数边界或误差过大时仍保存本次模型和
 `failed_gates`，但写入 `control_eligible: false`。只有报告不完整、缺样本、含 NaN、
 来源不一致或结构损坏时才保留旧 `prediction_model`，且不妨碍原校准保存。
-如果上一候选的 held-out validation 失败，下一对 calibration 自动保持原固定制动
-脉冲继续采数，不允许失败模型改变动作。如果某方向的误差裕量已经等于或超过终端
-速度容差，也同样退回固定脉冲；不会在开始制动后才因模型不可用而提前 level。
+如果某候选自己的 held-out validation 失败，下一对 calibration 自动保持原固定制动
+脉冲继续采数，不允许失败模型改变动作。如果只有某方向的误差裕量等于或超过终端
+速度容差，则仅该方向退回固定脉冲；不会在开始制动后才因模型不可用而提前 level。
+推荐的 20 度 duration sweep 为 `[0.16, 0.24, 0.32, 0.32]`：第一组 0.32 s
+提供高速 held-out 证据，重复的第二组 0.32 s 才让已经验证的高速模型实际接管。
 若后台尚未完成，不延长控制阶段等待；独立目录保留 partial/collecting 证据，
 可用完整飞行日志离线重放。退出时有界关闭后台进程，不无限等待。
 独立报告不会自动由现有 orchestrator 下载；完整飞行日志仍可用于下面的重放。
