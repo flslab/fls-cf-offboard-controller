@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
+from Interaction.commander_handoff import HandoffError
 from Interaction.online_dynamics_model import build_tilt_trials
 from Interaction.tests import test_calibration_trial_wait_runtime as wait_fixture
 from Interaction.tests.test_model_based_braking import model
@@ -137,6 +138,38 @@ class CalibrationControlContinuityTests(unittest.TestCase):
         self.assertEqual(trace[-1][0], 'fit_failure')
         self.assertEqual(sum(row[0] == 'notify' for row in trace), 1)
         self.assertTrue(controller._translation_high_level_active)
+
+    def test_failed_hlc_handoff_reasserts_low_level_before_worker_close(self):
+        fixture = self.fixture()
+        runtime, session, trace = fixture
+        controller, _logs, clock, _times, _config, _duration = runtime
+        session.close.side_effect = lambda: trace.append(('worker_close', clock[0], ()))
+
+        def reject_handoff(*_args, **_kwargs):
+            trace.append(('handoff_rejected', clock[0], ()))
+            raise HandoffError('synthetic HLC rejection')
+
+        with (
+            patch('Interaction.interactions.time.time', lambda: clock[0]),
+            patch('Interaction.interactions.OnlinePredictionCalibration', return_value=session),
+            patch('Interaction.interactions.identify_xyz_alignment', return_value={}),
+            patch('Interaction.interactions.identify_planar_braking_response', return_value={}),
+            patch('Interaction.interactions.handoff_to_high_level', side_effect=reject_handoff),
+        ):
+            with self.assertRaisesRegex(HandoffError, 'synthetic HLC rejection'):
+                controller.run_calibration()
+
+        names = [row[0] for row in trace]
+        rejected = [i for i, name in enumerate(names) if name == 'handoff_rejected']
+        self.assertTrue(rejected)
+        for index in rejected:
+            self.assertEqual(names[index+1], 'LL_position')
+            self.assertEqual(trace[index+1][2], (0., 0., 1., 0.))
+        close = names.index('worker_close')
+        self.assertLess(rejected[0]+1, close)
+        self.assertTrue(all(name != 'notify' for name in names[rejected[0]:close]))
+        session.close.assert_called_once()
+        self.assertFalse(controller._translation_high_level_active)
 
     def test_real_predictor_early_level_changes_sent_commands_and_raw_trials(self):
         baseline, adaptive = self.fixture(), self.fixture(adaptive=True)
