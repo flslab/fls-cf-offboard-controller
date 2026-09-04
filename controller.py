@@ -268,18 +268,23 @@ class Controller:
         if self.rpi_power_monitor:
             self.rpi_power_monitor.stop()
 
+        logging_shutdown_error = None
         if self.log_manager:
-            self.log_manager.stop(
-                log_dir=self.args.log_dir,
-                tag=self.args.tag,
-                start_times=self.animation_start_times,
-                end_times=self.animation_stop_times,
-                viewpoint_offsets=self.viewpoint_offsets,
-                reference_offsets=self.reference_offsets,
-                mission_start_time=self.mission_start_time,
-                mission_duration=self.mission_duration,
-                args=vars(self.args),
-            )
+            try:
+                self.log_manager.stop(
+                    log_dir=self.args.log_dir,
+                    tag=self.args.tag,
+                    start_times=self.animation_start_times,
+                    end_times=self.animation_stop_times,
+                    viewpoint_offsets=self.viewpoint_offsets,
+                    reference_offsets=self.reference_offsets,
+                    mission_start_time=self.mission_start_time,
+                    mission_duration=self.mission_duration,
+                    args=vars(self.args),
+                )
+            except Exception as error:
+                logging_shutdown_error = error
+                logger.exception('Log shutdown failed; continuing resource cleanup and disconnect.')
             
         if self.tracker_process:
             self.smooth_controller.remove_update_callback(self.fuse_latest_imu_camera_data)
@@ -307,6 +312,8 @@ class Controller:
             del self.servo
 
         self.disconnect()
+        if logging_shutdown_error is not None:
+            raise logging_shutdown_error
 
     def load_manifest(self):
         if not self.args.orchestrated:
@@ -424,7 +431,13 @@ class Controller:
         else:
             on_pose = self._send_position
 
-        self.mocap = Mocap(mode=self.args.vicon_mode)
+        self._last_extpos_send_monotonic_s = None
+        timing_callback = None
+        if self.log_manager is not None:
+            self.log_manager.add_log_group('mocap_timing')
+            timing_callback = self._log_mocap_timing
+        self.mocap = Mocap(mode=self.args.vicon_mode,
+                           timing_callback=timing_callback)
 
         if self.args.vicon_mode == "rigidbody":
             logger.info(f"Subscribing to RigidBody: {self.args.obj_name}")
@@ -533,6 +546,21 @@ class Controller:
             self._send_landing_confirmation(self.voltage)
             return
 
+        # A sticky flight-log failure must abort the experiment, not prevent
+        # its existing landing commands from reaching the vehicle. The clone
+        # preserves payload/offset/execute semantics; normal commands still fail.
+        commander = self.hl_commander
+        if isinstance(commander, CommandWrapper):
+            commander = commander.for_safety_cleanup()
+        live_logger = getattr(self.log_manager, 'live_logger', None)
+        if live_logger is not None and live_logger.stats_snapshot()['error'] is not None:
+            # Earlier finally-block notification may itself have failed to log.
+            # Release low-level ownership before the existing high-level landing.
+            low_level = self.ll_commander
+            if isinstance(low_level, CommandWrapper):
+                low_level = low_level.for_safety_cleanup()
+            if low_level is not None:
+                low_level.send_notify_setpoint_stop()
         self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
         voltage = self.voltage
         voltage_str = f"{voltage:.2f}V" if voltage is not None else "NA"
@@ -551,7 +579,7 @@ class Controller:
             dist = ((initial_x - current_x) ** 2 + (initial_y - current_y) ** 2) ** 0.5
             dt = 2 * dist + 0.1
 
-            self.hl_commander.go_to(initial_x, initial_y, current_z, self.args.init_yaw, dt, relative=False)
+            commander.go_to(initial_x, initial_y, current_z, self.args.init_yaw, dt, relative=False)
             time.sleep(dt + 0.5)
 
         if self.flying:
@@ -559,10 +587,10 @@ class Controller:
             takeoff_speed = self.mission.get("takeoff_speed", 0.5)
             dt = self.args.takeoff_altitude / takeoff_speed
             height = 0.1 if self.args.vicon or self.use_flowdeck else 0.02
-            self.hl_commander.land(height, dt)
+            commander.land(height, dt)
             logger.info(f"Landing duration: {dt} seconds")
             time.sleep(dt + 1)
-            self.hl_commander.stop()
+            commander.stop()
             self.flying = False
 
         self._send_landing_confirmation(voltage)
@@ -2114,13 +2142,55 @@ class Controller:
         self.cf.extpos.send_extpos(*frame['tvec'])
 
     def _send_position(self, frame):
+        frame = self._prepare_mocap_forward_timing(frame)
         if self.send_vicon_to_cf:
+            started = time.monotonic()
             self.cf.extpos.send_extpos(*frame['tvec'])
+            self._finish_mocap_forward_timing(frame, started)
         self._log_mocap(frame)
 
     def _send_position_orientation(self, frame):
+        frame = self._prepare_mocap_forward_timing(frame)
+        started = time.monotonic()
         self.cf.extpos.send_extpose(*frame['tvec'], *frame['quat'])
+        self._finish_mocap_forward_timing(frame, started)
         self._log_mocap(frame)
+
+    def _prepare_mocap_forward_timing(self, frame):
+        # Add diagnostics only; frame['time'] and extpos payload stay unchanged.
+        copied = dict(frame)
+        copied['mocap_timing'] = dict(frame.get('mocap_timing', {}))
+        copied['mocap_timing']['extpos_send_called'] = False
+        return copied
+
+    def _finish_mocap_forward_timing(self, frame, started):
+        finished = time.monotonic()
+        previous = getattr(self, '_last_extpos_send_monotonic_s', None)
+        self._last_extpos_send_monotonic_s = started
+        timing = frame['mocap_timing']
+        returned = timing.get('wait_return_monotonic_s')
+        timing.update(
+            extpos_send_called=True,
+            extpos_send_start_monotonic_s=started,
+            extpos_send_duration_s=finished-started,
+            extpos_send_interval_s=None if previous is None else started-previous,
+            wait_return_to_send_s=None if returned is None else started-returned,
+        )
+        # This measures only a local API call, not radio delivery or estimator use.
+
+    def _log_mocap_timing(self, timing):
+        if self.log_manager is None:
+            return
+        # Sample queue health once per second, without flushing or waiting on I/O.
+        now = time.monotonic()
+        previous = getattr(self, '_last_mocap_queue_stats_s', None)
+        if previous is None or now-previous >= 1.0:
+            live_logger = getattr(self.log_manager, 'live_logger', None)
+            stats = getattr(live_logger, 'stats_snapshot', None)
+            if stats is not None:
+                timing = dict(timing, logger_queue=stats())
+            self._last_mocap_queue_stats_s = now
+        self.log_manager.add_log_entry('mocap_timing', timing)
 
     def _log_mocap(self, frame, group_name='frames'):
         self.log_manager.add_log_entry(group_name, frame)

@@ -1,8 +1,15 @@
 import datetime
+import copy
 import functools
+import logging
 import time
 
 import numpy as np
+
+from Interaction.live_logger import LiveLoggerError
+
+
+logger = logging.getLogger(__name__)
 
 
 class CommandWrapper:
@@ -19,6 +26,34 @@ class CommandWrapper:
         if not timestamp:
             timestamp = time.time()
         self.start_time = timestamp
+
+    def for_safety_cleanup(self):
+        """Clone for shutdown commands that must survive a failed flight log.
+
+        This is exclusively for the landing/stop cleanup path, never normal
+        flight control. The original wrapper remains fail-fast. Only the
+        explicit storage/queue failure type is bypassed; programming mistakes
+        in logging and errors from the actual command still propagate.
+        """
+        original_log = self.log_function
+
+        def safety_log(*args, **kwargs):
+            try:
+                return original_log(*args, **kwargs)
+            except LiveLoggerError:
+                logger.error(
+                    "Flight logging failed during safety cleanup; continuing "
+                    "with the landing/stop command without a flight-log record",
+                    exc_info=True,
+                )
+
+        return CommandWrapper(
+            self._wrapped_instance,
+            safety_log if original_log else None,
+            execute=self.execution,
+            offset=copy.copy(self.offset),
+            start_time=self.start_time,
+        )
 
     def __getattr__(self, name):
         # Get the attribute from the base class safely
