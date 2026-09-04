@@ -126,6 +126,13 @@ class CalibrationAccumulatorTests(unittest.TestCase):
         self.assertEqual(report["validated_candidate"]["validation_segment_ids"], [4, 5])
         self.assertFalse(report["runtime_enabled"])
         self.assertFalse(report["flight_approved"])
+        self.assertTrue(report["candidate"]["control_eligible"])
+        self.assertEqual(
+            report["validated_candidate"][
+                "terminal_velocity_error_margins_m_s"
+            ],
+            {"positive_y": .01, "negative_y": .01},
+        )
         rows = [json.loads(line) for line in state.raw_path.read_text().splitlines()]
         self.assertEqual(len(rows), 6)
         self.assertEqual(rows[5]["samples"], _samples(5))
@@ -143,6 +150,24 @@ class CalibrationAccumulatorTests(unittest.TestCase):
         self.assertFalse(state.report["validation_history"][0]["validation_passed"])
         self.assertTrue(state.report["validation_passed"])
 
+    def test_failed_prior_validation_makes_next_candidate_control_ineligible(self):
+        def evaluate(model, samples, **kwargs):
+            result = _fake_evaluate(model, samples, **kwargs)
+            result["per_trial"][0]["terminal_error_m_s"] = -.2
+            return result
+        state = self.accumulator(evaluate=evaluate, expected=range(4))
+        for segment in range(4):
+            state.receive(_samples(segment))
+        candidate = state.report["candidate"]
+        self.assertFalse(candidate["control_eligible"])
+        self.assertEqual(
+            candidate["control_eligibility_reason"],
+            "previous_frozen_candidate_failed_held_out_validation",
+        )
+        self.assertEqual(
+            candidate["model"]["terminal_velocity_error_margin_m_s"], .2
+        )
+
     def test_last_validation_exception_never_reuses_earlier_success(self):
         def evaluate(model, samples, **kwargs):
             if samples[0]["segment_id"] == 4:
@@ -155,6 +180,11 @@ class CalibrationAccumulatorTests(unittest.TestCase):
         self.assertFalse(state.report["validation_passed"])
         self.assertEqual(state.report["validated_candidate"]["validation_segment_ids"], [4, 5])
         self.assertIn("bad final data", state.report["validated_candidate"]["error"])
+        self.assertFalse(state.report["candidate"]["control_eligible"])
+        self.assertEqual(
+            state.report["candidate"]["control_eligibility_reason"],
+            "previous_frozen_candidate_failed_held_out_validation",
+        )
 
     def test_fitting_exception_preserves_previous_candidate_and_records_failure(self):
         def fit(samples, **kwargs):
@@ -282,7 +312,10 @@ class CalibrationSessionTests(unittest.TestCase):
                 OnlinePredictionCalibration({}, "unused.json", "lb11", [0, 1],
                                             context=multiprocessing.get_context("fork"))
         for config in ({"queue_size": 0}, {"queue_size": 33},
-                       {"max_samples_per_trial": 999999}, {"max_sample_gap_s": float("nan")}):
+                       {"max_samples_per_trial": 999999},
+                       {"max_sample_gap_s": float("nan")},
+                       {"terminal_velocity_error_margin_scale": .9},
+                       {"terminal_velocity_error_margin_scale": 3.1}):
             with self.assertRaises(ValueError):
                 OnlinePredictionCalibration(config, "unused.json", "lb11", [0, 1])
 

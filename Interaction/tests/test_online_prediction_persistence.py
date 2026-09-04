@@ -134,7 +134,9 @@ class OnlinePredictionPersistenceTests(unittest.TestCase):
 
     def test_unidentifiable_active_bounds_and_out_of_bounds_are_rejected(self):
         for which in ("unidentifiable", "bound_flag", "active_mask", "bound_value", "outside",
-                      "nan", "infinite_gain", "weak_singular_values", "bad_condition"):
+                      "nan", "infinite_gain", "weak_singular_values", "bad_condition",
+                      "directional_margin", "directional_sign",
+                      "directional_unidentifiable"):
             report = copy.deepcopy(self.report)
             model = report["validated_candidate"]["model"]
             if which == "unidentifiable":
@@ -153,8 +155,18 @@ class OnlinePredictionPersistenceTests(unittest.TestCase):
                 model["motion_gain"] = float("inf")
             elif which == "weak_singular_values":
                 model["identifiability"]["singular_values"][-1] = 1e-8
-            else:
+            elif which == "bad_condition":
                 model["identifiability"]["condition_number"] = 1e10
+            elif which == "directional_margin":
+                model["directional_models"]["negative_y"][
+                    "terminal_velocity_error_margin_m_s"
+                ] = float("nan")
+            elif which == "directional_sign":
+                model["directional_models"]["negative_y"]["direction_y"] = 1
+            else:
+                model["directional_models"]["positive_y"][
+                    "identifiability"
+                ]["identifiable"] = False
             with self.subTest(which=which):
                 self.assert_preserved(self.save(report))
 

@@ -90,6 +90,26 @@ class OnlineDynamicsModelTests(unittest.TestCase):
             else:
                 self.assertAlmostEqual(self.model["attitude_fit"][key], FIT[key], delta=2e-4)
         self.assertAlmostEqual(self.model["motion_gain"], MOTION_GAIN, delta=.003)
+        self.assertEqual(
+            set(self.model["directional_models"]),
+            {"positive_y", "negative_y"},
+        )
+        for label, sign in (("positive_y", 1), ("negative_y", -1)):
+            component = self.model["directional_models"][label]
+            self.assertEqual(component["direction_y"], sign)
+            for key in FIT:
+                if key == "model":
+                    self.assertEqual(component["attitude_fit"][key], FIT[key])
+                else:
+                    self.assertAlmostEqual(
+                        component["attitude_fit"][key], FIT[key], delta=3e-4
+                    )
+            self.assertAlmostEqual(
+                component["motion_gain"], MOTION_GAIN, delta=.003
+            )
+            self.assertEqual(
+                component["terminal_velocity_error_margin_m_s"], 0.
+            )
         self.assertEqual(self.model["train_segment_ids"], [0, 1])
         self.assertTrue(self.model["identifiability"]["identifiable"])
         self.assertFalse(self.model["runtime_enabled"])
@@ -211,7 +231,25 @@ class OnlineDynamicsModelTests(unittest.TestCase):
         with mock.patch("Interaction.online_dynamics_model.motion_gain", wraps=__import__(
                 "Interaction.braking_split_diagnostic", fromlist=["motion_gain"]).motion_gain) as fitted:
             fit_predictive_model(self.training)
-        self.assertEqual([item.trial.segment for item in fitted.call_args.args[0]], [0, 1])
+        calls = [
+            [item.trial.segment for item in call.args[0]]
+            for call in fitted.call_args_list
+        ]
+        self.assertEqual(calls, [[0, 1], [0], [1]])
+
+    def test_prediction_selects_the_matching_direction_component(self):
+        directional = copy.deepcopy(self.model)
+        directional["directional_models"]["positive_y"]["motion_gain"] = .7
+        directional["directional_models"]["negative_y"]["motion_gain"] = 1.5
+        history = [dict(time_s=-.1, tilt_rad=.1)]
+        times = np.linspace(0., .3, 31)
+        initial = dict(time_s=0., position_m=0., velocity_m_s=0.,
+                       theta_rad=0., omega_rad_s=0., direction_y=1.)
+        positive = predict_trajectory(directional, initial, history, times)
+        negative = predict_trajectory(
+            directional, dict(initial, direction_y=-1.), history, times
+        )
+        self.assertGreater(negative["v"][-1], positive["v"][-1]*1.8)
 
     def test_training_requires_opposed_complete_pair(self):
         for ids in ((0,), (0, 2)):

@@ -1770,6 +1770,67 @@ def _validated_online_prediction(report, drone_id):
             or _prediction_segment_ids([row.get("segment_id") for row in ranges], "data range IDs") != training
             or {_prediction_number(row.get("direction_y"), "training direction") for row in ranges} != {-1., 1.}):
         raise ValueError("training data must contain both world-Y directions with matching IDs")
+    directional = model.get("directional_models")
+    if directional is not None:
+        if (not isinstance(directional, dict)
+                or set(directional) != {"positive_y", "negative_y"}):
+            raise ValueError(
+                "directional prediction model must contain both world-Y directions"
+            )
+        range_signs = {
+            int(row["segment_id"]): int(row["direction_y"])
+            for row in ranges
+        }
+        for label, sign in (("positive_y", 1), ("negative_y", -1)):
+            component = directional[label]
+            if (not isinstance(component, dict)
+                    or component.get("direction_y") != sign):
+                raise ValueError(label + " prediction component sign is invalid")
+            component_fit = component.get("attitude_fit")
+            expected_ids = [segment for segment in training
+                            if range_signs[segment] == sign]
+            if (not isinstance(component_fit, dict)
+                    or component_fit.get("model") != "second_order"
+                    or _prediction_segment_ids(
+                        component_fit.get("training_segments"),
+                        label + " attitude training IDs",
+                    ) != expected_ids
+                    or component_fit.get("active_bounds") != [0, 0, 0, 0, 0]):
+                raise ValueError(label + " fit provenance or bounds are invalid")
+            for name, (lower, upper) in _PREDICTION_PARAMETER_BOUNDS.items():
+                value = _prediction_number(component_fit.get(name), label + " " + name)
+                if not lower <= value <= upper:
+                    raise ValueError(label + " parameter is outside supported bounds")
+                if min(value-lower, upper-value) <= (upper-lower)*1e-4:
+                    raise ValueError(label + " parameter reached an active fit bound")
+            component_gain = _prediction_number(
+                component.get("motion_gain"), label + " motion_gain"
+            )
+            if not .2 < component_gain < 2.5:
+                raise ValueError(label + " motion_gain is outside supported bounds")
+            component_identifiability = component.get("identifiability", {})
+            if (not isinstance(component_identifiability, dict)
+                    or component_identifiability.get("identifiable") is not True
+                    or component_identifiability.get("bound_active_parameters") != []
+                    or component_identifiability.get("rank") != 5):
+                raise ValueError(label + " parameters are not identifiable")
+            component_condition = _prediction_number(
+                component_identifiability.get("condition_number"),
+                label + " condition_number",
+            )
+            component_singular = component_identifiability.get("singular_values")
+            if (not 0 < component_condition < 1e6
+                    or not isinstance(component_singular, list)
+                    or len(component_singular) != 5
+                    or min(_prediction_number(value, label + " singular value")
+                           for value in component_singular) < 1e-5):
+                raise ValueError(label + " parameter excitation is insufficient")
+            margin = _prediction_number(
+                component.get("terminal_velocity_error_margin_m_s"),
+                label + " terminal velocity error margin",
+            )
+            if not 0 <= margin <= _PREDICTION_GATE_MAXIMA["terminal_error_m_s"]:
+                raise ValueError(label + " terminal velocity margin is invalid")
 
     metrics = validated.get("metrics")
     if (not isinstance(metrics, dict) or type(metrics.get("schema_version")) is not int

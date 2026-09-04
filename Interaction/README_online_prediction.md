@@ -123,8 +123,19 @@ python3 orchestrator.py --calibrate --skip-record
 - `online_prediction_attempt`：最近一次诊断状态和报告路径。
 - `prediction_model`：仅当完整报告已在保存前返回，且最后冻结模型通过独立数值门时更新。
 
+新候选保留共享参数作为旧读取器的兼容证据，但 calibration 控制实际按运动方向选择
+`directional_models.positive_y` 或 `directional_models.negative_y`。每个方向独立拟合
+delay、ωn、ζ、倾角 gain、bias 和 motion gain，并分别通过可辨识性/参数边界检查。
+上一冻结模型在 held-out ±Y pair 上得到的每方向末端速度绝对误差，会作为下一候选的
+`terminal_velocity_error_margin_m_s`。硬约束实际检查
+`|predicted velocity| + direction margin <= tolerance`，而不是只检查点预测。
+第一候选尚无 held-out 数据，margin 明确为零；不能把它解释成已知零误差。
+
 不完整、缺样本、拟合失败、不可辨识、碰到参数边界或误差过大时，
 保留旧 `prediction_model`，不妨碍原校准保存。
+如果上一候选的 held-out validation 失败，下一对 calibration 自动保持原固定制动
+脉冲继续采数，不允许失败模型改变动作。如果某方向的误差裕量已经等于或超过终端
+速度容差，也同样退回固定脉冲；不会在开始制动后才因模型不可用而提前 level。
 若后台尚未完成，不延长控制阶段等待；独立目录保留 partial/collecting 证据，
 可用完整飞行日志离线重放。退出时有界关闭后台进程，不无限等待。
 独立报告不会自动由现有 orchestrator 下载；完整飞行日志仍可用于下面的重放。

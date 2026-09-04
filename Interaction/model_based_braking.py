@@ -99,7 +99,7 @@ def _second_order_transition(wn_rad_s, zeta, dt_s):
     ])
 
 
-def _validated_model(model, experimental):
+def _validated_model(model, experimental, direction_y):
     if (not isinstance(model, dict) or model.get("schema_version") != 1 or
             model.get("kind") != "delayed_second_order_planar_prediction" or
             model.get("prediction_scope") != "attitude_command_only"):
@@ -108,11 +108,23 @@ def _validated_model(model, experimental):
             model.get("deployment_approved") is True and
             model.get("independent_validation_complete") is True):
         raise ValueError("model_not_approved_for_nonexperimental_control")
-    quality = model.get("identifiability", {})
+    label = "positive_y" if direction_y > 0 else "negative_y"
+    directional = model.get("directional_models")
+    component = model
+    if directional is not None:
+        if (not isinstance(directional, dict)
+                or set(directional) != {"positive_y", "negative_y"}):
+            raise ValueError("directional_model_set_invalid")
+        for expected_label, sign in (("positive_y", 1), ("negative_y", -1)):
+            value = directional.get(expected_label)
+            if not isinstance(value, dict) or value.get("direction_y") != sign:
+                raise ValueError("directional_model_sign_invalid:" + expected_label)
+        component = directional[label]
+    quality = component.get("identifiability", model.get("identifiability", {}))
     if (quality.get("identifiable") is not True or
             quality.get("bound_active_parameters") != []):
         raise ValueError("model_not_identifiable_or_at_bounds")
-    fit = model.get("attitude_fit", {})
+    fit = component.get("attitude_fit", {})
     if fit.get("model") != "second_order":
         raise ValueError("second_order_fit_required")
     bounds = {"delay_s": (0., .15), "wn_rad_s": (5., 100.),
@@ -124,7 +136,9 @@ def _validated_model(model, experimental):
         if not low <= value <= high:
             raise ValueError("model_parameter_out_of_bounds:" + key)
         params[key] = value
-    params["motion_gain"] = _number(model.get("motion_gain"), "motion_gain")
+    params["motion_gain"] = _number(
+        component.get("motion_gain"), "motion_gain"
+    )
     if not .2 < params["motion_gain"] < 2.5:
         raise ValueError("model_motion_gain_out_of_bounds")
     ranges = model.get("data_ranges")
@@ -137,7 +151,18 @@ def _validated_model(model, experimental):
             interval = _vector(row.get(key), 2, key)
             if interval[0] > interval[1]:
                 raise ValueError("reversed_training_range")
-    return params, copy.deepcopy(ranges)
+    margin = _number(
+        component.get(
+            "terminal_velocity_error_margin_m_s",
+            model.get("terminal_velocity_error_margin_m_s", 0.),
+        ),
+        "terminal_velocity_error_margin_m_s",
+    )
+    if not 0 <= margin <= .5:
+        raise ValueError("terminal_velocity_error_margin_out_of_bounds")
+    return params, copy.deepcopy(ranges), margin, (
+        label if directional is not None else "shared_legacy"
+    )
 
 
 class ModelBasedBrakingController:
@@ -209,8 +234,13 @@ class ModelBasedBrakingController:
         self._last_decision_time = None
         self._model_error = None
         try:
-            self.params, self.ranges = _validated_model(
-                self.model, self.config["experimental_calibration"])
+            (self.params, self.ranges,
+             self.terminal_velocity_error_margin_m_s,
+             self.selected_directional_model) = _validated_model(
+                self.model,
+                self.config["experimental_calibration"],
+                self.direction_xy[1],
+            )
             selected = [r for r in self.ranges if r["direction_y"] == self.direction_xy[1]]
             if not selected:
                 raise ValueError("requested_direction_was_not_identified")
@@ -448,6 +478,7 @@ class ModelBasedBrakingController:
         terminal_tilt_deg = np.degrees(forecast["angle"])
         terminal_velocity_ok = (
             np.abs(forecast["velocity"])
+            + self.terminal_velocity_error_margin_m_s
             <= self.config["terminal_velocity_tolerance_m_s"]
         )
         terminal_tilt_ok = (
@@ -505,6 +536,14 @@ class ModelBasedBrakingController:
             terminal_velocity_tolerance_m_s=self.config[
                 "terminal_velocity_tolerance_m_s"
             ],
+            terminal_velocity_error_margin_m_s=(
+                self.terminal_velocity_error_margin_m_s
+            ),
+            conservative_terminal_velocity_bound_m_s=float(
+                abs(forecast["velocity"][selected])
+                + self.terminal_velocity_error_margin_m_s
+            ),
+            selected_directional_model=self.selected_directional_model,
             terminal_tilt_tolerance_deg=self.config[
                 "terminal_tilt_tolerance_deg"
             ],

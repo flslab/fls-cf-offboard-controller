@@ -81,6 +81,50 @@ def _validation_gates(metrics, config):
     return gates, limits
 
 
+def _directional_terminal_velocity_margins(metrics, config):
+    """Absolute held-out terminal errors, kept separate by motion direction."""
+    configured_scale = config.get("terminal_velocity_error_margin_scale", 1.0)
+    try:
+        scale = float(configured_scale)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            "terminal_velocity_error_margin_scale must be finite in [1, 3]"
+        ) from exc
+    if (isinstance(configured_scale, bool) or not math.isfinite(scale)
+            or not 1. <= scale <= 3.):
+        raise ValueError(
+            "terminal_velocity_error_margin_scale must be finite in [1, 3]"
+        )
+    result = {}
+    for row in metrics.get("per_trial", []):
+        direction = row.get("direction_y")
+        error = row.get("terminal_error_m_s")
+        if (direction not in (-1, 1) or isinstance(error, bool)
+                or not isinstance(error, (int, float))
+                or not math.isfinite(error)):
+            raise ValueError("held-out terminal errors need both signed directions")
+        label = "positive_y" if direction > 0 else "negative_y"
+        result[label] = max(result.get(label, 0.), scale*abs(float(error)))
+    if set(result) != {"positive_y", "negative_y"}:
+        raise ValueError("held-out terminal margins need both world-Y directions")
+    return result
+
+
+def _with_terminal_velocity_margins(model, margins, source):
+    result = copy.deepcopy(model)
+    directional = result.get("directional_models")
+    if isinstance(directional, dict):
+        for label, value in margins.items():
+            if label not in directional or not isinstance(directional[label], dict):
+                raise ValueError("directional model is missing a terminal-margin component")
+            directional[label]["terminal_velocity_error_margin_m_s"] = float(value)
+            directional[label]["terminal_velocity_error_margin_source"] = copy.deepcopy(source)
+    else:
+        result["terminal_velocity_error_margin_m_s"] = float(max(margins.values()))
+        result["terminal_velocity_error_margin_source"] = copy.deepcopy(source)
+    return result
+
+
 class _CalibrationAccumulator:
     """Worker-owned state; injected numerical functions make causality testable."""
 
@@ -93,6 +137,9 @@ class _CalibrationAccumulator:
         self.evaluate_fn = evaluate_fn
         self.progress_callback = None
         self.trials = []
+        self.latest_terminal_velocity_margins = None
+        self.latest_validation_passed = None
+        self.latest_validation_source = None
         self.expected = list(expected_segment_ids)
         self.report = {
             "schema_version": 1, "kind": "online_prediction_calibration",
@@ -211,6 +258,9 @@ class _CalibrationAccumulator:
                     copy.deepcopy(frozen["model"]),
                     [sample for trial in pair for sample in trial],
                     max_sample_gap_s=float(self.config.get("max_sample_gap_s", .06))))
+                margins = _directional_terminal_velocity_margins(
+                    metrics, self.config
+                )
                 gates, limits = _validation_gates(metrics, self.config)
                 gates["both_y_directions"] = opposed
                 gates["reported_segment_ids_match"] = metrics.get("validation_segment_ids") == pair_ids
@@ -220,9 +270,42 @@ class _CalibrationAccumulator:
                 identifiability = frozen["model"].get("identifiability", {})
                 gates["parameters_identifiable"] = identifiability.get("identifiable") is True
                 gates["no_active_parameter_bounds"] = identifiability.get("bound_active_parameters") == []
+                directional = frozen["model"].get("directional_models")
+                if isinstance(directional, dict):
+                    directional_quality = [
+                        component.get("identifiability", {})
+                        for component in directional.values()
+                        if isinstance(component, dict)
+                    ]
+                    gates["directional_parameters_identifiable"] = bool(
+                        len(directional_quality) == 2
+                        and all(item.get("identifiable") is True
+                                for item in directional_quality)
+                    )
+                    gates["directional_no_active_parameter_bounds"] = bool(
+                        len(directional_quality) == 2
+                        and all(item.get("bound_active_parameters") == []
+                                for item in directional_quality)
+                    )
                 validation.update(metrics=metrics, gates=gates, limits=limits,
                                   evaluation_elapsed_s=time.monotonic()-validation_started,
                                   validation_passed=all(gates.values()))
+                margin_source = {
+                    "kind": "held_out_absolute_terminal_error",
+                    "candidate_version": frozen["version"],
+                    "validation_segment_ids": list(pair_ids),
+                    "scale": float(self.config.get(
+                        "terminal_velocity_error_margin_scale", 1.0
+                    )),
+                    "validation_passed": validation["validation_passed"],
+                }
+                validation["model"] = _with_terminal_velocity_margins(
+                    validation["model"], margins, margin_source
+                )
+                validation["terminal_velocity_error_margins_m_s"] = margins
+                self.latest_terminal_velocity_margins = copy.deepcopy(margins)
+                self.latest_validation_passed = validation["validation_passed"]
+                self.latest_validation_source = margin_source
                 self.report["validated_candidate"] = copy.deepcopy(validation)
                 events.append(("candidate_validated", {
                     "candidate_version": frozen["version"],
@@ -234,6 +317,17 @@ class _CalibrationAccumulator:
             except Exception as error:
                 validation.update(validation_passed=False,
                                   error=f"{type(error).__name__}: {error}")
+                # A failed/indeterminate held-out evaluation is a hard control
+                # failure for the next candidate. Never retain an earlier
+                # successful validation bit across this exception path.
+                self.latest_validation_passed = False
+                self.latest_validation_source = {
+                    "kind": "held_out_validation_failed",
+                    "candidate_version": frozen["version"],
+                    "validation_segment_ids": list(pair_ids),
+                    "error": validation["error"],
+                    "validation_passed": False,
+                }
                 self.report["validated_candidate"] = copy.deepcopy(validation)
                 events.append(("validation_failed", {
                     "candidate_version": frozen["version"],
@@ -250,6 +344,12 @@ class _CalibrationAccumulator:
             fitted = _plain(self.fit_fn(
                 [sample for trial in self.trials for sample in trial],
                 max_sample_gap_s=float(self.config.get("max_sample_gap_s", .06))))
+            if self.latest_terminal_velocity_margins is not None:
+                fitted = _with_terminal_velocity_margins(
+                    fitted,
+                    self.latest_terminal_velocity_margins,
+                    self.latest_validation_source,
+                )
             # Validate serialization before replacing a known candidate.
             if (not isinstance(fitted, dict)
                     or fitted.get("train_segment_ids") != self.report["received_segment_ids"]):
@@ -266,12 +366,28 @@ class _CalibrationAccumulator:
                     source_log_sha256=metadata.get('source_sha256'),
                 )
             json.dumps(fitted, allow_nan=False)
+            fit_quality_ok = fitted.get(
+                "candidate_status", "requires_held_out_validation"
+            ) == "requires_held_out_validation"
             candidate = {"version": len(self.trials) // 2,
                          "training_segment_ids": list(self.report["received_segment_ids"]),
                          "model": fitted, "independent_validation": False,
                          "fit_elapsed_s": time.monotonic()-fitting_started,
                          "validation_passed": False, "runtime_enabled": False,
-                         "flight_approved": False}
+                         "flight_approved": False,
+                         "control_eligible": bool(
+                             self.latest_validation_passed is not False
+                             and fit_quality_ok
+                         ),
+                         "control_eligibility_reason": (
+                             "candidate_fit_not_identifiable_or_at_bounds"
+                             if not fit_quality_ok else
+                             "bootstrap_first_frozen_candidate"
+                             if self.latest_validation_passed is None else
+                             "previous_frozen_candidate_passed_held_out_validation"
+                             if self.latest_validation_passed else
+                             "previous_frozen_candidate_failed_held_out_validation"
+                         )}
             self.report["candidate"] = candidate
             events.append(("candidate_fitted", {
                 "version": candidate["version"],
@@ -280,6 +396,10 @@ class _CalibrationAccumulator:
                 "fit_elapsed_s": candidate['fit_elapsed_s'],
                 "report_path": str(self.path),
                 "independent_validation": False,
+                "control_eligible": candidate["control_eligible"],
+                "control_eligibility_reason": candidate[
+                    "control_eligibility_reason"
+                ],
             }))
         except Exception as error:
             failure = {"training_segment_ids": list(self.report["received_segment_ids"]),
@@ -411,6 +531,16 @@ class OnlinePredictionCalibration:
             value = float(self.config.get(name, .06))
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(name + " must be finite and positive")
+        configured_margin_scale = self.config.get(
+            "terminal_velocity_error_margin_scale", 1.0
+        )
+        margin_scale = float(configured_margin_scale)
+        if (isinstance(configured_margin_scale, bool)
+                or not math.isfinite(margin_scale)
+                or not 1. <= margin_scale <= 3.):
+            raise ValueError(
+                "terminal_velocity_error_margin_scale must be finite in [1, 3]"
+            )
         self._context = context or multiprocessing.get_context("spawn")
         if self._context.get_start_method() != "spawn":
             raise ValueError("online calibration requires spawn, never fork")

@@ -48,17 +48,28 @@ def summary_markdown(report):
              f"held-out diagnostic gates passed: {report['validation_passed']}.", '',
              'The last all-data refit is NOT independently validated. '
              'Only the previous frozen model is scored on the final held-out pair.', '',
-             '| Version | Training segments | Validation segments | Passed |',
-             '|---|---|---|---|']
+             '| Version | Training segments | Validation segments | Passed | +Y margin (m/s) | -Y margin (m/s) |',
+             '|---|---|---|---|---|---|']
     for value in report.get('validation_history', []):
+        margins = value.get('terminal_velocity_error_margins_m_s') or {}
         lines.append(f"| {value['candidate_version']} | {value['training_segment_ids']} "
-                     f"| {value['validation_segment_ids']} | {value['validation_passed']} |")
+                     f"| {value['validation_segment_ids']} | {value['validation_passed']} "
+                     f"| {margins.get('positive_y', 'n/a')} "
+                     f"| {margins.get('negative_y', 'n/a')} |")
+    candidate = report.get('candidate') or {}
+    if candidate:
+        lines += [
+            '', '## Next-pair control eligibility', '',
+            f"Eligible: `{candidate.get('control_eligible', False)}`; reason: "
+            f"`{candidate.get('control_eligibility_reason', 'not_reported')}`.",
+        ]
     validated = report.get('validated_candidate') or {}
     model = validated.get('model') or {}
     if model:
         lines += ['', '## Last frozen model', '', '```json',
                   json.dumps({key: model.get(key) for key in (
-                      'attitude_fit', 'motion_gain', 'identifiability')}, indent=2), '```']
+                      'attitude_fit', 'motion_gain', 'identifiability',
+                      'directional_models')}, indent=2), '```']
     metrics = validated.get('metrics') or {}
     if metrics.get('per_trial'):
         lines += ['', '## Final held-out trials', '',

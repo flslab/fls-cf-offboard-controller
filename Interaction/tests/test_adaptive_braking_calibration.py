@@ -136,12 +136,52 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
         self.assertIsNone(adapter._pair_models[1])
         self.assertEqual(self.events[0][1]['reason'], 'candidate_unavailable_at_pair_start')
 
+    def test_failed_prior_validation_candidate_locks_pair_to_baseline(self):
+        adapter = self.adapter()
+        source = report()
+        source['candidate']['control_eligible'] = False
+        source['candidate']['control_eligibility_reason'] = (
+            'previous_frozen_candidate_failed_held_out_validation'
+        )
+        command = self.command(2, 'level_before_acceleration')
+        self.assertIs(adapter.modify(command, 1., {}, source), command)
+        self.assertIsNone(adapter._pair_models[1])
+        self.assertEqual(
+            self.events[-1][1]['reason'],
+            'previous_frozen_candidate_failed_held_out_validation',
+        )
+
+    def test_candidate_margin_at_tolerance_locks_pair_to_baseline(self):
+        adapter = self.adapter()
+        source = report()
+        source['candidate']['model']['directional_models'] = {
+            'positive_y': dict(terminal_velocity_error_margin_m_s=.05),
+            'negative_y': dict(terminal_velocity_error_margin_m_s=.01),
+        }
+        command = self.command(2, 'level_before_acceleration')
+        self.assertIs(adapter.modify(command, 1., {}, source), command)
+        self.assertIsNone(adapter._pair_models[1])
+        self.assertEqual(
+            self.events[-1][1]['reason'],
+            'candidate_uncertainty_exceeds_terminal_tolerance',
+        )
+
     def test_candidate_cannot_train_on_current_or_future_pair(self):
         adapter = self.adapter()
         command = self.command(2, 'level_before_acceleration')
         adapter.modify(command, 1., {}, report(2))
         self.assertIsNone(adapter._pair_models[1])
         self.assertEqual(self.events[0][1]['reason'], 'candidate_provenance_invalid_or_not_causal')
+
+    def test_stale_candidate_cannot_skip_a_failed_intermediate_fit(self):
+        adapter = self.adapter()
+        command = self.command(4, 'level_before_acceleration')
+        adapter.modify(command, 1., {}, report(1))
+        self.assertIsNone(adapter._pair_models[2])
+        self.assertEqual(
+            self.events[0][1]['reason'],
+            'candidate_provenance_invalid_or_not_causal',
+        )
 
     @patch('Interaction.adaptive_braking_calibration.ModelBasedBrakingController', FakePredictor)
     def test_freezes_pair_target_and_shortens_once_without_rebraking(self):

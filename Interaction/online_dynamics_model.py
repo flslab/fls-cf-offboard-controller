@@ -257,33 +257,30 @@ def _identifiability(items, fit):
     }
 
 
-def fit_predictive_model(samples, *, max_sample_gap_s=.06):
-    """Fit one immutable candidate using only the supplied training segments."""
-    samples = list(samples)
-    items = build_tilt_trials(samples, max_sample_gap_s=max_sample_gap_s)
-    if len(items) < 2 or set(int(t.trial.direction[1]) for t in items) != {-1, 1}:
-        raise ValueError("training requires at least one complete opposed world-Y trial pair")
+def _fit_component(items):
+    """Fit and independently check one shared or signed-direction component."""
     with python_warnings.catch_warnings(record=True) as caught_warnings:
         python_warnings.simplefilter("always", RuntimeWarning)
         attitude_fit = fit_tilt(items, "second_order")
-    numerical_warnings = list(dict.fromkeys(str(warning.message) for warning in caught_warnings
-                                            if issubclass(warning.category, RuntimeWarning)))
-    # _json_safe is for absent report diagnostics, never for repairing a failed
-    # fit. In particular BLAS residual products in the reused optimizer may
-    # warn or overflow even when every residual itself is finite.
+    numerical_warnings = list(dict.fromkeys(
+        str(warning.message) for warning in caught_warnings
+        if issubclass(warning.category, RuntimeWarning)
+    ))
     for key, (lower, upper) in PARAMETER_BOUNDS.items():
         value = _number(attitude_fit.get(key), "fitted " + key)
         if not lower <= value <= upper:
-            raise ValueError("fitted parameter is outside its declared bounds: " + key)
-    reported_rmse = _number(attitude_fit.get("train_rmse_deg"), "train_rmse_deg")
+            raise ValueError(
+                "fitted parameter is outside its declared bounds: " + key
+            )
+    reported_rmse = _number(
+        attitude_fit.get("train_rmse_deg"), "train_rmse_deg"
+    )
     costs = attitude_fit.get("seed_costs")
     if not isinstance(costs, list) or not costs:
         raise ValueError("fit is missing finite seed costs")
     costs = [_number(value, "fit seed cost") for value in costs]
     if reported_rmse < 0 or min(costs) < 0:
         raise ValueError("fit costs and RMSE must be nonnegative")
-    # Independently check the selected model's objective using elementwise
-    # squares/sums instead of another BLAS dot product.
     checked_cost = 0.
     for item in items:
         dt = np.diff(item.trial.times)
@@ -291,17 +288,70 @@ def fit_predictive_model(samples, *, max_sample_gap_s=.06):
         weight /= weight.sum()*len(items)
         residual = tilt_prediction(item, attitude_fit)-item.angle
         checked_cost += float(np.sum(np.square(residual)*weight))
-    checked_cost = _number(checked_cost, "independently checked training objective")
-    if (not np.isclose(np.radians(reported_rmse)**2, checked_cost, rtol=1e-5, atol=1e-12)
-            or not np.isclose(min(costs), checked_cost, rtol=1e-5, atol=1e-12)):
-        raise ValueError("reported fit objective disagrees with independently recomputed residuals")
-    gain = motion_gain(items)
-    diagnostic = _identifiability(items, attitude_fit)
+    checked_cost = _number(
+        checked_cost, "independently checked training objective"
+    )
+    if (not np.isclose(np.radians(reported_rmse)**2, checked_cost,
+                       rtol=1e-5, atol=1e-12)
+            or not np.isclose(min(costs), checked_cost,
+                              rtol=1e-5, atol=1e-12)):
+        raise ValueError(
+            "reported fit objective disagrees with independently recomputed residuals"
+        )
+    return dict(
+        attitude_fit=attitude_fit,
+        motion_gain=motion_gain(items),
+        identifiability=_identifiability(items, attitude_fit),
+        numerical_warnings=numerical_warnings,
+        checked_training_objective_rad2=checked_cost,
+    )
+
+
+def fit_predictive_model(samples, *, max_sample_gap_s=.06):
+    """Fit one immutable candidate using only the supplied training segments."""
+    samples = list(samples)
+    items = build_tilt_trials(samples, max_sample_gap_s=max_sample_gap_s)
+    if len(items) < 2 or set(int(t.trial.direction[1]) for t in items) != {-1, 1}:
+        raise ValueError("training requires at least one complete opposed world-Y trial pair")
+    shared = _fit_component(items)
+    attitude_fit = shared["attitude_fit"]
+    gain = shared["motion_gain"]
+    diagnostic = shared["identifiability"]
+    numerical_warnings = list(shared["numerical_warnings"])
+    directional_models = {}
+    for sign, label in ((1, "positive_y"), (-1, "negative_y")):
+        selected = [item for item in items
+                    if int(item.trial.direction[1]) == sign]
+        component = _fit_component(selected)
+        numerical_warnings.extend(component["numerical_warnings"])
+        directional_models[label] = dict(
+            direction_y=sign,
+            attitude_fit=component["attitude_fit"],
+            motion_gain=component["motion_gain"],
+            identifiability=component["identifiability"],
+            numerical_diagnostics=dict(
+                finite_fit_metadata=True,
+                residual_objective_independently_checked=True,
+                checked_training_objective_rad2=component[
+                    "checked_training_objective_rad2"
+                ],
+                optimizer_runtime_warnings=component["numerical_warnings"],
+            ),
+            terminal_velocity_error_margin_m_s=0.,
+            terminal_velocity_error_margin_source="no_held_out_validation_available",
+        )
+    numerical_warnings = list(dict.fromkeys(numerical_warnings))
     warnings = []
     if diagnostic["bound_active_parameters"]:
         warnings.append("attitude parameters reached declared fit bounds")
     if not diagnostic["identifiable"]:
         warnings.append("local parameter sensitivity is weak or rank deficient")
+    for label, component in directional_models.items():
+        component_diagnostic = component["identifiability"]
+        if component_diagnostic["bound_active_parameters"]:
+            warnings.append(label + " attitude parameters reached declared fit bounds")
+        if not component_diagnostic["identifiable"]:
+            warnings.append(label + " parameter sensitivity is weak or rank deficient")
     if numerical_warnings:
         warnings.append("optimizer emitted numeric warnings; finite metadata and residual objective were independently checked")
     warnings.extend([
@@ -341,16 +391,23 @@ def fit_predictive_model(samples, *, max_sample_gap_s=.06):
     result = dict(
         schema_version=1, kind="delayed_second_order_planar_prediction",
         attitude_fit=attitude_fit, motion_gain=gain,
+        directional_models=directional_models,
+        model_scope="direction_decoupled_with_shared_legacy_fallback",
         train_segment_ids=[t.trial.segment for t in items],
         clock_scope="host_receive_effective_delay", prediction_scope="attitude_command_only",
         runtime_enabled=False, deployment_approved=False,
         candidate_status=("requires_identifiability_review" if
-                          (not diagnostic["identifiable"] or diagnostic["bound_active_parameters"])
+                          (not diagnostic["identifiable"] or diagnostic["bound_active_parameters"]
+                           or any(not component["identifiability"]["identifiable"]
+                                  or component["identifiability"]["bound_active_parameters"]
+                                  for component in directional_models.values()))
                           else "requires_held_out_validation"),
         independent_validation_complete=False, identifiability=diagnostic,
         numerical_diagnostics=dict(finite_fit_metadata=True,
                                    residual_objective_independently_checked=True,
-                                   checked_training_objective_rad2=checked_cost,
+                                   checked_training_objective_rad2=shared[
+                                       "checked_training_objective_rad2"
+                                   ],
                                    optimizer_runtime_warnings=numerical_warnings),
         parameter_bounds={**PARAMETER_BOUNDS, "motion_gain": (.2, 2.5)},
         parameter_units=PARAMETER_UNITS, data_ranges=ranges,
@@ -363,25 +420,49 @@ def fit_predictive_model(samples, *, max_sample_gap_s=.06):
     return _json_safe(result)
 
 
-def _validate_model(model):
-    if (not isinstance(model, dict) or model.get("schema_version") != 1 or
-            model.get("kind") != "delayed_second_order_planar_prediction"):
-        raise ValueError("unsupported predictive model schema")
-    fit = model.get("attitude_fit")
+def _validate_component(component, label):
+    if not isinstance(component, dict):
+        raise ValueError(label + " model component is missing")
+    fit = component.get("attitude_fit")
     if not isinstance(fit, dict) or fit.get("model") != "second_order":
-        raise ValueError("a delayed stable second-order attitude fit is required")
+        raise ValueError(label + " requires a delayed stable second-order fit")
     fit = dict(fit)
     for key, (lower, upper) in PARAMETER_BOUNDS.items():
         try:
-            fit[key] = _number(fit[key], key)
+            fit[key] = _number(fit[key], label + " " + key)
         except KeyError as exc:
-            raise ValueError(f"missing model parameter {key}") from exc
+            raise ValueError(f"missing {label} model parameter {key}") from exc
         if not lower <= fit[key] <= upper:
-            raise ValueError(f"model parameter {key} is outside declared bounds")
-    gain = _number(model.get("motion_gain"), "motion_gain")
+            raise ValueError(f"{label} model parameter {key} is outside declared bounds")
+    gain = _number(component.get("motion_gain"), label + " motion_gain")
     if not .2 < gain < 2.5:
-        raise ValueError("motion_gain is outside declared bounds")
+        raise ValueError(label + " motion_gain is outside declared bounds")
     return fit, gain
+
+
+def _validate_model(model, direction_y=None):
+    if (not isinstance(model, dict) or model.get("schema_version") != 1 or
+            model.get("kind") != "delayed_second_order_planar_prediction"):
+        raise ValueError("unsupported predictive model schema")
+    shared = _validate_component(model, "shared")
+    directional = model.get("directional_models")
+    if directional is None:
+        return shared
+    if (not isinstance(directional, dict)
+            or set(directional) != {"positive_y", "negative_y"}):
+        raise ValueError("directional_models must contain positive_y and negative_y")
+    for label, sign in (("positive_y", 1), ("negative_y", -1)):
+        component = directional[label]
+        if component.get("direction_y") != sign:
+            raise ValueError(label + " direction sign is invalid")
+        _validate_component(component, label)
+    if direction_y is None:
+        return shared
+    direction = _number(direction_y, "direction_y")
+    if abs(abs(direction)-1.) > 1e-6:
+        raise ValueError("direction_y must be +1 or -1")
+    label = "positive_y" if direction > 0 else "negative_y"
+    return _validate_component(directional[label], label)
 
 
 def predict_trajectory(model, initial_state, command_history, sample_times):
@@ -396,7 +477,6 @@ def predict_trajectory(model, initial_state, command_history, sample_times):
     Future commands, when provided, make the result a conditional trajectory.
     Returned arrays ``x``, ``v``, ``theta`` use m, m/s, and rad respectively.
     """
-    fit, gain = _validate_model(model)
     required = ("time_s", "position_m", "velocity_m_s", "theta_rad", "omega_rad_s", "direction_y")
     try:
         state = {key: _number(initial_state[key], key) for key in required}
@@ -405,6 +485,7 @@ def predict_trajectory(model, initial_state, command_history, sample_times):
     direction = state["direction_y"]
     if abs(abs(direction)-1.) > 1e-6:
         raise ValueError("direction_y must be +1 or -1")
+    fit, gain = _validate_model(model, direction)
     origin = state["time_s"]
     times = np.array([_number(x, "sample_times") for x in sample_times])
     if len(times) == 0 or np.any(np.diff(times) <= 0) or times[0] < origin:

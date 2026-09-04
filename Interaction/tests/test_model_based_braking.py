@@ -1,4 +1,5 @@
 """Pure synthetic tests; no cflib, firmware, hardware or frozen RL imports."""
+import copy
 import math
 import unittest
 
@@ -220,6 +221,44 @@ class ModelBasedBrakingTests(unittest.TestCase):
         self.assertTrue(result['terminal_velocity_constraint_satisfied'])
         self.assertTrue(result['terminal_tilt_constraint_satisfied'])
         self.assertTrue(result['terminal_candidate_grid_refined'])
+
+    def test_directional_component_and_velocity_error_margin_are_enforced(self):
+        source = model()
+        quality = copy.deepcopy(source['identifiability'])
+        source['directional_models'] = {
+            'positive_y': dict(
+                direction_y=1, attitude_fit=copy.deepcopy(source['attitude_fit']),
+                motion_gain=.8, identifiability=copy.deepcopy(quality),
+                terminal_velocity_error_margin_m_s=.049,
+            ),
+            'negative_y': dict(
+                direction_y=-1, attitude_fit=copy.deepcopy(source['attitude_fit']),
+                motion_gain=1.2, identifiability=copy.deepcopy(quality),
+                terminal_velocity_error_margin_m_s=0.,
+            ),
+        }
+        positive = ModelBasedBrakingController(
+            source, target_position_xy=[0., .15], direction_xy=[0., 1.],
+            brake_deadline_s=.32,
+            config=dict(enabled=True, experimental_calibration=True,
+                        max_compute_s=1.),
+        )
+        positive.record_command(-.2, .35)
+        positive.record_command(-.05, 0.)
+        result = positive.decide(0., state())
+        self.assertEqual(positive.params['motion_gain'], .8)
+        self.assertEqual(result['selected_directional_model'], 'positive_y')
+        self.assertEqual(result['terminal_velocity_error_margin_m_s'], .049)
+        self.assertEqual(result['hard_feasible_candidate_count'], 0)
+
+        negative = ModelBasedBrakingController(
+            source, target_position_xy=[0., -.15], direction_xy=[0., -1.],
+            brake_deadline_s=.32,
+            config=dict(enabled=True, experimental_calibration=True,
+                        max_compute_s=1.),
+        )
+        self.assertEqual(negative.params['motion_gain'], 1.2)
+        self.assertEqual(negative.selected_directional_model, 'negative_y')
 
     def test_closed_loop_shortens_brake_and_reduces_synthetic_reverse(self):
         adaptive, control = self.simulate(True), self.simulate(False)

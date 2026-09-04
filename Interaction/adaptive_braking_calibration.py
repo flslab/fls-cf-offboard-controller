@@ -136,11 +136,42 @@ class AdaptiveBrakingCalibration:
                 version = source.get("version")
                 if (isinstance(training, list) and len(training) >= 2 and not len(training) % 2
                         and all(type(value) is int for value in training)
-                        and training == list(range(len(training))) and max(training) < segment
+                        and training == list(range(segment))
                         and isinstance(model, dict) and model.get("train_segment_ids") == training
                         and type(version) is int and version > 0):
-                    candidate = copy.deepcopy(source)
-                    reason = "earlier_trial_candidate_frozen"
+                    eligible = source.get("control_eligible", True)
+                    tolerance = float(self.model_config.get(
+                        "terminal_velocity_tolerance_m_s", .05
+                    ))
+                    directional = model.get("directional_models", {})
+                    margins = [
+                        component.get(
+                            "terminal_velocity_error_margin_m_s", 0.
+                        )
+                        for component in directional.values()
+                        if isinstance(component, dict)
+                    ]
+                    if (model.get("candidate_status") not in
+                            (None, "requires_held_out_validation")):
+                        reason = "candidate_fit_not_identifiable_or_at_bounds"
+                    elif directional and set(directional) != {
+                            "positive_y", "negative_y"}:
+                        reason = "candidate_directional_model_set_invalid"
+                    elif eligible is not True:
+                        reason = source.get(
+                            "control_eligibility_reason",
+                            "candidate_failed_prior_held_out_validation",
+                        )
+                    elif margins and (any(
+                            isinstance(value, bool)
+                            or not isinstance(value, (int, float))
+                            or not math.isfinite(value)
+                            or value < 0 for value in margins)
+                            or max(margins) >= tolerance):
+                        reason = "candidate_uncertainty_exceeds_terminal_tolerance"
+                    else:
+                        candidate = copy.deepcopy(source)
+                        reason = "earlier_trial_candidate_frozen"
                 else:
                     reason = "candidate_provenance_invalid_or_not_causal"
         self._pair_models[pair] = candidate

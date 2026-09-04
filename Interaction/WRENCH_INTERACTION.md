@@ -115,6 +115,16 @@ vectorized 10 ms duration grid refines the coarse pulse schedule without
 repeating the time integration. If no candidate passes all gates, the adapter levels and logs the failed
 constraint state rather than accepting the least-bad candidate.
 
+New online fits contain independent `positive_y` and `negative_y` second-order
+attitude and motion-gain components; the shared component remains only for
+backward-compatible evidence. Held-out terminal-speed absolute error is carried
+forward separately for each direction, and a runtime candidate must satisfy
+`abs(predicted terminal speed) + direction error margin <= tolerance`.
+Only a bootstrap first candidate or a candidate following a passed held-out
+pair may alter calibration braking. A failed validation, an unidentifiable fit,
+an active parameter bound, or a margin as large as the tolerance makes the next
+pair use the original fixed pulse instead.
+
 Adaptive prediction persistence is independent of that legacy planar-fit gate.
 If an adaptive run produces a validated prediction model but its modified pulse
 schedule fails the legacy planar quality gate, a current previously saved
