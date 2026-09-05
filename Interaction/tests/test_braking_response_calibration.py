@@ -136,6 +136,29 @@ class PlanarBrakingCalibrationTests(unittest.TestCase):
                 self.assertEqual(command.phase, phase)
                 self.assertEqual(command.attitude_control, attitude_control)
 
+    def test_readiness_boundary_tolerance_enters_trial_without_extra_wait_cycle(self):
+        # The paused protocol clock accumulates control-period floats.  The
+        # readiness gate admits a boundary within 1 ns, so command scheduling
+        # must use the same tolerance.  This mirrors the observed
+        # 38.73999999999866 versus 38.74 failure.
+        first_start = self.plan.trial_start_s[0]
+        just_inside_tolerance = first_start - 1.5e-12
+        command = self.plan.command(just_inside_tolerance, yaw_deg=0.0)
+        self.assertEqual(command.segment_id, 0)
+        self.assertEqual(command.phase, "level_before_acceleration")
+        self.assertTrue(command.active)
+
+        outside_tolerance = first_start - 2e-9
+        self.assertEqual(
+            self.plan.command(outside_tolerance, yaw_deg=0.0).phase,
+            "waiting",
+        )
+
+        second_start = self.plan.trial_start_s[1]
+        second = self.plan.command(second_start - 1.5e-12, yaw_deg=0.0)
+        self.assertEqual(second.segment_id, 1)
+        self.assertEqual(second.phase, "level_before_acceleration")
+
     def test_attitude_is_rotated_by_yaw_and_brake_reverses_it(self):
         accelerate = self.plan.command(2.80, yaw_deg=0.0)
         brake = self.plan.command(3.30, yaw_deg=0.0)

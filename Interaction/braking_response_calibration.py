@@ -304,8 +304,15 @@ class PlanarBrakingCalibration:
         yaw_deg = float(yaw_deg)
         if not np.all(np.isfinite([elapsed_s, yaw_deg])):
             raise ValueError("braking calibration command time/yaw must be finite")
+        # The flight loop stops its protocol clock on an unadmitted trial
+        # boundary using the same 1 ns tolerance.  Snap comparisons within
+        # that tolerance forward so a boundary such as 38.73999999999866 does
+        # not pass readiness and then spend one extra cycle in ``waiting``.
+        # That extra cycle can otherwise turn harmless estimator jitter into a
+        # false trial-start safety failure before any attitude command is sent.
+        boundary_time_s = elapsed_s + 1e-9
         zero = np.zeros(2)
-        if not self.enabled or elapsed_s < self.maneuver_start_s:
+        if not self.enabled or boundary_time_s < self.maneuver_start_s:
             return BrakingCalibrationCommand(
                 active=False,
                 attitude_control=False,
@@ -330,8 +337,10 @@ class PlanarBrakingCalibration:
                 pitch_deg=0.0,
             )
 
-        segment_id = int(np.searchsorted(self.trial_start_s, elapsed_s, side="right") - 1)
-        local_s = elapsed_s - self.trial_start_s[segment_id]
+        segment_id = int(np.searchsorted(
+            self.trial_start_s, boundary_time_s, side="right"
+        ) - 1)
+        local_s = max(0.0, elapsed_s - self.trial_start_s[segment_id])
         accelerate_s = self.trial_accelerate_s[segment_id]
         brake_s = self.trial_brake_s[segment_id]
         direction = self.trial_directions[segment_id].copy()
