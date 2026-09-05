@@ -89,6 +89,7 @@ class PlanarBrakingCalibration:
         self.tilt_levels_deg = tilt_levels.copy()
         self.tilt_deg = float(np.max(self.tilt_levels_deg))
         self.accelerate_durations_s = None
+        self.brake_durations_s = None
         if "accelerate_durations_s" in config:
             durations = np.asarray(config["accelerate_durations_s"], dtype=float)
             repeats = config.get("repetitions_per_duration", 1)
@@ -104,11 +105,36 @@ class PlanarBrakingCalibration:
             if len(self.tilt_levels_deg) != 1:
                 raise ValueError("duration sweep requires one fixed tilt angle")
             self.accelerate_durations_s = durations.copy()
+            if "brake_durations_s" in config:
+                brake_durations = np.asarray(
+                    config["brake_durations_s"], dtype=float
+                )
+                if (
+                    brake_durations.ndim != 1
+                    or brake_durations.shape != durations.shape
+                    or not np.all(np.isfinite(brake_durations))
+                    or np.any(brake_durations <= 0)
+                    or np.any(np.diff(brake_durations) < 0)
+                ):
+                    raise ValueError(
+                        "braking durations must be positive, nondecreasing, "
+                        "and match acceleration durations"
+                    )
+                self.brake_durations_s = brake_durations.copy()
             self.repetitions_per_duration = int(repeats)
             # Each duration is a repetition at the same tilt for the existing
-            # signed-gain quality checks. Opposite pulses have matched times.
+            # signed-gain quality checks. Brake times match acceleration times
+            # unless an explicit pairwise brake schedule is configured.
             self.repetitions_per_tilt = len(durations) * int(repeats)
-            self.accelerate_s = self.brake_s = float(max(durations))
+            self.accelerate_s = float(max(durations))
+            self.brake_s = float(max(
+                durations if self.brake_durations_s is None
+                else self.brake_durations_s
+            ))
+        elif "brake_durations_s" in config:
+            raise ValueError(
+                "brake_durations_s requires accelerate_durations_s"
+            )
         # ``repetitions`` remains the number of trials per direction.  Keeping
         # this aggregate makes the persisted protocol compatible with the
         # existing signed-quality contract while each individual level is also
@@ -211,7 +237,14 @@ class PlanarBrakingCalibration:
             self.trial_accelerate_s = np.repeat(np.tile(
                 self.accelerate_durations_s, self.repetitions_per_duration
             ), len(self.directions))
-            self.trial_brake_s = self.trial_accelerate_s.copy()
+            scheduled_brake_s = (
+                self.accelerate_durations_s
+                if self.brake_durations_s is None
+                else self.brake_durations_s
+            )
+            self.trial_brake_s = np.repeat(np.tile(
+                scheduled_brake_s, self.repetitions_per_duration
+            ), len(self.directions))
         self.trial_attitude_durations_s = (
             self.level_before_acceleration_s + self.trial_accelerate_s
             + self.level_before_brake_s + self.trial_brake_s
@@ -229,6 +262,10 @@ class PlanarBrakingCalibration:
             "accelerate_durations_s": (
                 None if self.accelerate_durations_s is None
                 else self.accelerate_durations_s.tolist()
+            ),
+            "brake_durations_s": (
+                None if self.brake_durations_s is None
+                else self.brake_durations_s.tolist()
             ),
             "repetitions_per_duration": getattr(self, "repetitions_per_duration", None),
             "trial_accelerate_s": self.trial_accelerate_s.tolist(),

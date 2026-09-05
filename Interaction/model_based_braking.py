@@ -49,6 +49,19 @@ DEFAULTS = {
     "position_scale_m": .05,
     "velocity_scale_m_s": .08,
     "max_history_entries": 64,
+    # Optional calibration-only correction for short-horizon translational
+    # mismatch.  It is deliberately disabled until residual-corrected replay
+    # has passed independent held-out validation.
+    "motion_residual_observer_enabled": False,
+    "motion_residual_window_s": .08,
+    "motion_residual_min_window_s": .06,
+    "motion_residual_max_sample_gap_s": .04,
+    "motion_residual_filter_tau_s": .08,
+    "motion_residual_max_abs_accel_m_s2": 1.5,
+    "motion_residual_sigma_floor_m_s2": .15,
+    "motion_residual_sigma_multiplier": 2.,
+    "motion_residual_apply_horizon_s": .08,
+    "motion_residual_min_samples": 4,
 }
 
 
@@ -97,6 +110,184 @@ def _second_order_transition(wn_rad_s, zeta, dt_s):
         [cosine+decay_rate*sine_over_frequency, sine_over_frequency],
         [-wn*wn*sine_over_frequency, cosine-decay_rate*sine_over_frequency],
     ])
+
+
+class RollingMotionResidualObserver:
+    """Causal finite-window acceleration-residual estimate.
+
+    Only measured projected velocity and measured attitude enter this class.
+    Candidate commands and predicted future states never do.  A rejected or
+    discontinuous update clears the filtered estimate so a stale correction
+    cannot silently survive a bad measurement interval.
+    """
+
+    def __init__(self, *, window_s=.08, min_window_s=.06,
+                 max_sample_gap_s=.04, filter_tau_s=.08,
+                 max_abs_accel_m_s2=1.5, sigma_floor_m_s2=.15,
+                 min_samples=4, max_samples=64):
+        values = {
+            "window_s": window_s,
+            "min_window_s": min_window_s,
+            "max_sample_gap_s": max_sample_gap_s,
+            "filter_tau_s": filter_tau_s,
+            "max_abs_accel_m_s2": max_abs_accel_m_s2,
+            "sigma_floor_m_s2": sigma_floor_m_s2,
+        }
+        for key, value in values.items():
+            values[key] = _number(value, key)
+            if values[key] <= 0:
+                raise ValueError(key + " must be positive")
+        if values["min_window_s"] > values["window_s"]:
+            raise ValueError("motion residual minimum window exceeds window")
+        if not .06 <= values["window_s"] <= .10:
+            raise ValueError("motion residual window must be in [.06,.10] s")
+        if values["min_window_s"] < .04:
+            raise ValueError("motion residual minimum window must be at least .04 s")
+        if values["max_sample_gap_s"] > values["min_window_s"]:
+            raise ValueError("motion residual sample gap exceeds minimum window")
+        if values["max_sample_gap_s"] > .04:
+            raise ValueError("motion residual sample gap cannot exceed .04 s")
+        if values["filter_tau_s"] > .20:
+            raise ValueError("motion residual filter tau cannot exceed .20 s")
+        if (isinstance(min_samples, (bool, np.bool_))
+                or int(min_samples) != min_samples
+                or not 3 <= int(min_samples) <= 32):
+            raise ValueError("motion residual min_samples must be in [3,32]")
+        if (isinstance(max_samples, (bool, np.bool_))
+                or int(max_samples) != max_samples
+                or not int(min_samples) <= int(max_samples) <= 128):
+            raise ValueError("motion residual max_samples is invalid")
+        self.window_s = values["window_s"]
+        self.min_window_s = values["min_window_s"]
+        self.max_sample_gap_s = values["max_sample_gap_s"]
+        self.filter_tau_s = values["filter_tau_s"]
+        self.max_abs_accel_m_s2 = values["max_abs_accel_m_s2"]
+        self.sigma_floor_m_s2 = values["sigma_floor_m_s2"]
+        self.min_samples = int(min_samples)
+        self.max_samples = int(max_samples)
+        self.samples = []
+        self.filtered_accel_m_s2 = None
+        self.variance_m2_s4 = 0.
+        self._last_estimate_time_s = None
+        self._last_snapshot = self._snapshot("warming_up")
+
+    def _snapshot(self, status, *, raw=None, rejected=False):
+        ready = self.filtered_accel_m_s2 is not None and status == "ready"
+        span = 0. if len(self.samples) < 2 else (
+            self.samples[-1][0]-self.samples[0][0]
+        )
+        return {
+            "ready": ready,
+            "status": status,
+            "sample_count": len(self.samples),
+            "window_span_s": float(span),
+            "raw_acceleration_m_s2": (
+                None if raw is None else float(raw)
+            ),
+            "filtered_acceleration_m_s2": (
+                float(self.filtered_accel_m_s2) if ready else 0.
+            ),
+            "sigma_acceleration_m_s2": (
+                float(max(self.sigma_floor_m_s2,
+                          math.sqrt(max(0., self.variance_m2_s4))))
+                if ready else 0.
+            ),
+            "clipped": False,
+            "rejected": bool(rejected),
+        }
+
+    def _reset(self):
+        self.samples = []
+        self.filtered_accel_m_s2 = None
+        self.variance_m2_s4 = 0.
+        self._last_estimate_time_s = None
+
+    def update(self, time_s, projected_velocity_m_s, measured_theta_rad,
+               motion_gain):
+        stamp = _number(time_s, "motion residual time")
+        velocity = _number(projected_velocity_m_s,
+                           "motion residual velocity")
+        theta = _number(measured_theta_rad, "motion residual theta")
+        gain = _number(motion_gain, "motion residual motion_gain")
+        model_acceleration = gain*9.81*math.tan(theta)
+        if not math.isfinite(model_acceleration):
+            self._reset()
+            self._last_snapshot = self._snapshot("nonfinite_model_reset")
+            return copy.deepcopy(self._last_snapshot)
+
+        if self.samples:
+            previous = self.samples[-1]
+            dt = stamp-previous[0]
+            if abs(dt) <= 1e-12:
+                if (abs(velocity-previous[1]) <= 1e-12
+                        and abs(model_acceleration-previous[2]) <= 1e-12):
+                    return copy.deepcopy(self._last_snapshot)
+                self._reset()
+                self.samples.append((stamp, velocity, model_acceleration))
+                self._last_snapshot = self._snapshot(
+                    "conflicting_timestamp_reset"
+                )
+                return copy.deepcopy(self._last_snapshot)
+            if dt < 0:
+                self._reset()
+                self.samples.append((stamp, velocity, model_acceleration))
+                self._last_snapshot = self._snapshot(
+                    "nonincreasing_timestamp_reset"
+                )
+                return copy.deepcopy(self._last_snapshot)
+            if dt > self.max_sample_gap_s+1e-12:
+                self._reset()
+                self.samples.append((stamp, velocity, model_acceleration))
+                self._last_snapshot = self._snapshot("sample_gap_reset")
+                return copy.deepcopy(self._last_snapshot)
+
+        self.samples.append((stamp, velocity, model_acceleration))
+        self.samples = self.samples[-self.max_samples:]
+        cutoff = stamp-self.window_s
+        while len(self.samples) > 1 and self.samples[1][0] <= cutoff:
+            self.samples.pop(0)
+        # Do not interpolate a synthetic measurement at the window boundary.
+        # Select the earliest real sample inside the configured window.
+        inside = [sample for sample in self.samples if sample[0] >= cutoff-1e-12]
+        self.samples = inside
+        span = 0. if len(inside) < 2 else inside[-1][0]-inside[0][0]
+        if len(inside) < self.min_samples or span < self.min_window_s-1e-12:
+            self._last_snapshot = self._snapshot("warming_up")
+            return copy.deepcopy(self._last_snapshot)
+
+        model_delta_velocity = 0.
+        for left, right in zip(inside[:-1], inside[1:]):
+            model_delta_velocity += .5*(left[2]+right[2])*(right[0]-left[0])
+        raw = ((inside[-1][1]-inside[0][1])-model_delta_velocity)/span
+        if not math.isfinite(raw) or abs(raw) > self.max_abs_accel_m_s2:
+            self.filtered_accel_m_s2 = None
+            self.variance_m2_s4 = 0.
+            self._last_estimate_time_s = None
+            status = "residual_outlier_rejected"
+            self._last_snapshot = self._snapshot(
+                status, raw=raw if math.isfinite(raw) else None,
+                rejected=True,
+            )
+            return copy.deepcopy(self._last_snapshot)
+
+        if self.filtered_accel_m_s2 is None:
+            self.filtered_accel_m_s2 = raw
+            self.variance_m2_s4 = 0.
+        else:
+            previous_estimate_time = (
+                stamp if self._last_estimate_time_s is None
+                else self._last_estimate_time_s
+            )
+            estimate_dt = max(0., stamp-previous_estimate_time)
+            alpha = 1.-math.exp(-estimate_dt/self.filter_tau_s)
+            error = raw-self.filtered_accel_m_s2
+            self.filtered_accel_m_s2 += alpha*error
+            self.variance_m2_s4 = (
+                (1.-alpha)*(self.variance_m2_s4+alpha*error*error)
+            )
+        self._last_estimate_time_s = stamp
+        self._last_snapshot = self._snapshot("ready", raw=raw)
+        return copy.deepcopy(self._last_snapshot)
 
 
 def _validated_model(model, experimental, direction_y):
@@ -185,13 +376,23 @@ class ModelBasedBrakingController:
         self.config = dict(DEFAULTS)
         self.config.update(config or {})
         self._clock = clock
-        for key in ("enabled", "experimental_calibration", "calibration_one_way_latch"):
+        boolean_keys = {
+            "enabled", "experimental_calibration", "calibration_one_way_latch",
+            "motion_residual_observer_enabled",
+        }
+        for key in boolean_keys:
             if type(self.config[key]) is not bool:
                 raise ValueError(key + " must be boolean")
-        for key in set(DEFAULTS)-{"enabled", "experimental_calibration", "calibration_one_way_latch", "candidate_pulse_s"}:
+        integer_keys = {"max_history_entries", "motion_residual_min_samples"}
+        for key in set(DEFAULTS)-boolean_keys-{"candidate_pulse_s"}-integer_keys:
             self.config[key] = _number(self.config[key], key)
             if self.config[key] <= 0:
                 raise ValueError(key + " must be positive")
+        for key in integer_keys:
+            value = self.config[key]
+            if (isinstance(value, (bool, np.bool_)) or int(value) != value):
+                raise ValueError(key + " must be an integer")
+            self.config[key] = int(value)
         if not 0 < self.config["brake_tilt_deg"] < 30:
             raise ValueError("brake_tilt_deg must be below 30")
         if not .1 <= self.config["prediction_horizon_s"] <= 1.5:
@@ -216,6 +417,35 @@ class ModelBasedBrakingController:
             )
         if self.config["max_history_entries"] != int(self.config["max_history_entries"]) or not 2 <= self.config["max_history_entries"] <= 64:
             raise ValueError("max_history_entries must be an integer in [2,64]")
+        if not 3 <= self.config["motion_residual_min_samples"] <= 32:
+            raise ValueError(
+                "motion_residual_min_samples must be an integer in [3,32]"
+            )
+        if (self.config["motion_residual_min_window_s"]
+                > self.config["motion_residual_window_s"]):
+            raise ValueError(
+                "motion residual minimum window exceeds configured window"
+            )
+        if (self.config["motion_residual_max_sample_gap_s"]
+                > self.config["motion_residual_min_window_s"]):
+            raise ValueError(
+                "motion residual sample gap exceeds minimum window"
+            )
+        if not .05 <= self.config["motion_residual_apply_horizon_s"] <= .10:
+            raise ValueError(
+                "motion residual apply horizon must be in [.05,.10] s"
+            )
+        if (self.config["motion_residual_apply_horizon_s"]
+                > self.config["prediction_horizon_s"]):
+            raise ValueError(
+                "motion residual apply horizon exceeds prediction horizon"
+            )
+        if self.config["motion_residual_max_abs_accel_m_s2"] > 5.:
+            raise ValueError(
+                "motion residual acceleration limit cannot exceed 5 m/s^2"
+            )
+        if self.config["motion_residual_sigma_multiplier"] > 4.:
+            raise ValueError("motion residual sigma multiplier cannot exceed 4")
         pulses = tuple(_number(x, "candidate_pulse_s") for x in self.config["candidate_pulse_s"])
         if (not 1 <= len(pulses) <= 8 or any(not 0 < x <= .3 for x in pulses)
                 or any(b <= a for a, b in zip(pulses, pulses[1:]))):
@@ -235,6 +465,22 @@ class ModelBasedBrakingController:
         self.level_latched = False
         self._last_decision_time = None
         self._model_error = None
+        self.motion_residual_observer = RollingMotionResidualObserver(
+            window_s=self.config["motion_residual_window_s"],
+            min_window_s=self.config["motion_residual_min_window_s"],
+            max_sample_gap_s=self.config[
+                "motion_residual_max_sample_gap_s"
+            ],
+            filter_tau_s=self.config["motion_residual_filter_tau_s"],
+            max_abs_accel_m_s2=self.config[
+                "motion_residual_max_abs_accel_m_s2"
+            ],
+            sigma_floor_m_s2=self.config[
+                "motion_residual_sigma_floor_m_s2"
+            ],
+            min_samples=self.config["motion_residual_min_samples"],
+            max_samples=self.config["max_history_entries"],
+        )
         try:
             (self.params, self.ranges,
              self.terminal_velocity_error_margin_m_s,
@@ -279,9 +525,47 @@ class ModelBasedBrakingController:
                       valid_until_s=now+self.config["command_valid_for_s"],
                       compute_elapsed_s=max(0., self._clock()-started),
                       experimental_calibration=self.config["experimental_calibration"],
-                      position_controller_identified=False, model_parameters_updated=False)
+                      position_controller_identified=False,
+                      model_parameters_updated=False,
+                      motion_residual_observer_enabled=self.config[
+                          "motion_residual_observer_enabled"
+                      ])
         result.update(details)
         return result
+
+    def _residual_result_details(self, residual, *, state_age_s,
+                                 dynamic_margin_m_s=0.):
+        static_margin = self.terminal_velocity_error_margin_m_s
+        return {
+            "motion_residual_ready": bool(residual["ready"]),
+            "motion_residual_status": residual["status"],
+            "motion_residual_window_span_s": float(
+                residual["window_span_s"]
+            ),
+            "motion_residual_sample_count": int(residual["sample_count"]),
+            "motion_residual_raw_acceleration_m_s2": residual[
+                "raw_acceleration_m_s2"
+            ],
+            "motion_residual_acceleration_m_s2": float(
+                residual["filtered_acceleration_m_s2"]
+            ),
+            "motion_residual_sigma_acceleration_m_s2": float(
+                residual["sigma_acceleration_m_s2"]
+            ),
+            "motion_residual_clipped": bool(residual["clipped"]),
+            "motion_residual_rejected": bool(residual["rejected"]),
+            "motion_residual_corrected_prediction": bool(residual["ready"]),
+            "motion_residual_future_hold_s": self.config[
+                "motion_residual_apply_horizon_s"
+            ],
+            "motion_residual_dynamic_velocity_margin_m_s": float(
+                dynamic_margin_m_s
+            ),
+            "terminal_velocity_total_error_margin_m_s": float(
+                static_margin+dynamic_margin_m_s
+            ),
+            "state_age_s": float(state_age_s),
+        }
 
     def _state(self, state, now):
         stamp = _number(state["time_s"], "state time")
@@ -320,7 +604,40 @@ class ModelBasedBrakingController:
             raise ValueError("state_outside_identified_range")
         return stamp, float(position @ self.direction_xy), pv, theta, rate, float(rpy[2]), extrapolated
 
-    def _forecast(self, state, now, durations):
+    @staticmethod
+    def _disabled_residual_snapshot():
+        return {
+            "ready": False,
+            "status": "disabled",
+            "sample_count": 0,
+            "window_span_s": 0.,
+            "raw_acceleration_m_s2": None,
+            "filtered_acceleration_m_s2": 0.,
+            "sigma_acceleration_m_s2": 0.,
+            "clipped": False,
+            "rejected": False,
+        }
+
+    def _observe_motion_residual(self, observed):
+        if not self.config["motion_residual_observer_enabled"]:
+            return self._disabled_residual_snapshot()
+        return self.motion_residual_observer.update(
+            observed[0], observed[2], observed[3], self.params["motion_gain"]
+        )
+
+    def observe_state(self, now_s, state):
+        """Warm the causal residual observer without making a decision.
+
+        Calibration adapters may call this during the bounded initial brake
+        interval.  Repeating the same measured packet is a no-op.
+        """
+        if self._model_error:
+            raise ValueError(self._model_error)
+        now = _number(now_s, "now_s")
+        observed = self._state(state, now)
+        return self._observe_motion_residual(observed)
+
+    def _forecast(self, state, now, durations, residual):
         """Exact linear attitude transitions; trapezoid kinematics, bounded grid."""
         stamp, p, v, theta, rate, _yaw, _extra = state
         delay = self.params["delay_s"]
@@ -334,6 +651,22 @@ class ModelBasedBrakingController:
         # Shift to a local clock before matrix/time calculations; epoch floats
         # otherwise obscure actual delayed transition coincidence.
         age = now-stamp
+        residual_bias = (
+            float(residual["filtered_acceleration_m_s2"])
+            if residual["ready"] else 0.
+        )
+        residual_sigma = (
+            float(residual["sigma_acceleration_m_s2"])
+            if residual["ready"] else 0.
+        )
+        # The grid begins at the measured-state timestamp.  The validity
+        # horizon is anchored there, so repeatedly deciding from one stale
+        # packet cannot renew the same residual estimate.  State-age
+        # extrapolation consumes part of this short horizon.
+        residual_apply_until_s = self.config[
+            "motion_residual_apply_horizon_s"
+        ]
+        sigma_multiplier = self.config["motion_residual_sigma_multiplier"]
         history_t = np.array([t-stamp for t, _ in self.history])
         history_u = np.array([u for _, u in self.history])
         steps = int(math.ceil((age+horizon)/dt))
@@ -341,6 +674,8 @@ class ModelBasedBrakingController:
             raise ValueError("prediction_grid_exceeds_bound")
         base = np.linspace(0., age+horizon, steps+1)
         events = np.r_[history_t+delay, age+delay, age+durations+delay]
+        if residual["ready"]:
+            events = np.r_[events, residual_apply_until_s]
         grid = np.unique(np.r_[base, events[(events > 0) & (events < age+horizon)]])
         if len(grid) > 370:
             raise ValueError("prediction_grid_exceeds_bound")
@@ -348,6 +683,7 @@ class ModelBasedBrakingController:
         angle = np.full(count, theta); angular = np.full(count, rate)
         velocity = np.full(count, v); position = np.full(count, p)
         max_position = position.copy(); min_velocity = velocity.copy()
+        min_velocity_lower_bound = velocity.copy()
         zero_position = np.full(count, np.nan)
         last_acc = self.params["motion_gain"]*9.81*np.tan(angle)
         brake = -math.radians(self.config["brake_tilt_deg"])
@@ -375,7 +711,13 @@ class ModelBasedBrakingController:
             if not np.isfinite(next_angle).all() or np.any(np.abs(next_angle) > math.radians(self.config["max_tilt_deg"])):
                 raise ValueError("predicted_tilt_exceeds_envelope")
             acceleration = self.params["motion_gain"]*9.81*np.tan(next_angle)
-            next_velocity = velocity+.5*(last_acc+acceleration)*step
+            residual_exposure = max(
+                0., min(float(right), residual_apply_until_s)-float(left)
+            )
+            next_velocity = (
+                velocity+.5*(last_acc+acceleration)*step
+                + residual_bias*residual_exposure
+            )
             next_position = position+.5*(velocity+next_velocity)*step
             crossing = np.isnan(zero_position) & (velocity > 0) & (next_velocity <= 0)
             if crossing.any():
@@ -383,14 +725,26 @@ class ModelBasedBrakingController:
                 zero_position[crossing] = position[crossing] + .5*velocity[crossing]*step*fraction
             max_position = np.maximum(max_position, next_position)
             min_velocity = np.minimum(min_velocity, next_velocity)
+            uncertainty = (
+                sigma_multiplier*residual_sigma
+                * min(float(right), residual_apply_until_s)
+            )
+            min_velocity_lower_bound = np.minimum(
+                min_velocity_lower_bound, next_velocity-uncertainty
+            )
             angle, velocity, position, last_acc = next_angle, next_velocity, next_position, acceleration
         if not np.isfinite(np.r_[position, velocity, min_velocity, max_position]).all():
             raise ValueError("nonfinite_prediction")
         return dict(position=position, velocity=velocity, angle=angle,
                     min_velocity=min_velocity,
+                    min_velocity_lower_bound=min_velocity_lower_bound,
                     max_position=max_position, zero_position=zero_position,
                     candidate_count=count, integration_steps=len(grid)-1,
-                    prediction_end_time_s=end)
+                    prediction_end_time_s=end,
+                    motion_residual_dynamic_margin_m_s=float(
+                        sigma_multiplier*residual_sigma
+                        * min(age+horizon, residual_apply_until_s)
+                    ))
 
     def decide(self, now_s, state):
         started = self._clock()
@@ -404,6 +758,7 @@ class ModelBasedBrakingController:
         self._last_decision_time = now
         try:
             observed = self._state(state, now)
+            residual = self._observe_motion_residual(observed)
             remaining = max(0., self.brake_deadline_s-now)
             durations = np.unique(np.r_[
                 0.,
@@ -422,7 +777,7 @@ class ModelBasedBrakingController:
                 raise ValueError("candidate_grid_exceeds_bound")
             # One vectorized forecast avoids repeating the time integration;
             # candidate count changes array width, not the number of steps.
-            forecast = self._forecast(observed, now, durations)
+            forecast = self._forecast(observed, now, durations, residual)
         except (KeyError, TypeError, ValueError, OverflowError) as error:
             return self._result("fallback", str(error), now, started)
         elapsed = self._clock()-started
@@ -451,6 +806,13 @@ class ModelBasedBrakingController:
                     hard_terminal_constraints_satisfied=None,
                     terminal_velocity_constraint_satisfied=None,
                     terminal_tilt_constraint_satisfied=None,
+                    **self._residual_result_details(
+                        residual,
+                        state_age_s=now-observed[0],
+                        dynamic_margin_m_s=forecast[
+                            "motion_residual_dynamic_margin_m_s"
+                        ],
+                    ),
                 )
             if self.config["calibration_one_way_latch"]:
                 self.level_latched = True
@@ -469,6 +831,13 @@ class ModelBasedBrakingController:
                 hard_terminal_constraints_satisfied=None,
                 terminal_velocity_constraint_satisfied=None,
                 terminal_tilt_constraint_satisfied=None,
+                **self._residual_result_details(
+                    residual,
+                    state_age_s=now-observed[0],
+                    dynamic_margin_m_s=forecast[
+                        "motion_residual_dynamic_margin_m_s"
+                    ],
+                ),
             )
         target = float(self.target_position_xy @ self.direction_xy)
         # Position and zero-crossing error are separate from reverse motion.
@@ -478,16 +847,30 @@ class ModelBasedBrakingController:
         reverse = np.maximum(0., -forecast["min_velocity"])
         overshoot = np.maximum(0., forecast["max_position"]-target)
         terminal_tilt_deg = np.degrees(forecast["angle"])
+        dynamic_margin = forecast["motion_residual_dynamic_margin_m_s"]
+        total_margin = (
+            self.terminal_velocity_error_margin_m_s+dynamic_margin
+        )
+        terminal_velocity_lower = forecast["velocity"]-total_margin
+        terminal_velocity_upper = forecast["velocity"]+total_margin
         terminal_velocity_ok = (
-            np.abs(forecast["velocity"])
-            + self.terminal_velocity_error_margin_m_s
-            <= self.config["terminal_velocity_tolerance_m_s"]
+            (terminal_velocity_lower
+             >= -self.config["reverse_tolerance_m_s"])
+            & (terminal_velocity_upper
+               <= self.config["terminal_velocity_tolerance_m_s"])
         )
         terminal_tilt_ok = (
             np.abs(terminal_tilt_deg)
             <= self.config["terminal_tilt_tolerance_deg"]
         )
-        no_reverse = reverse <= self.config["reverse_tolerance_m_s"]
+        conservative_min_velocity = (
+            forecast["min_velocity_lower_bound"]
+            - self.terminal_velocity_error_margin_m_s
+        )
+        no_reverse = (
+            conservative_min_velocity
+            >= -self.config["reverse_tolerance_m_s"]
+        )
         feasible = no_reverse & terminal_velocity_ok & terminal_tilt_ok
         score = ((endpoint-target)/self.config["position_scale_m"])**2
         score += (forecast["velocity"]/self.config["velocity_scale_m_s"])**2
@@ -543,7 +926,16 @@ class ModelBasedBrakingController:
             ),
             conservative_terminal_velocity_bound_m_s=float(
                 abs(forecast["velocity"][selected])
-                + self.terminal_velocity_error_margin_m_s
+                + total_margin
+            ),
+            conservative_terminal_velocity_lower_m_s=float(
+                terminal_velocity_lower[selected]
+            ),
+            conservative_terminal_velocity_upper_m_s=float(
+                terminal_velocity_upper[selected]
+            ),
+            conservative_min_velocity_m_s=float(
+                conservative_min_velocity[selected]
             ),
             selected_directional_model=self.selected_directional_model,
             terminal_tilt_tolerance_deg=self.config[
@@ -560,4 +952,11 @@ class ModelBasedBrakingController:
             fallback_to_original_brake=False,
             hard_feasible_candidate_count=int(np.count_nonzero(feasible)),
             terminal_candidate_grid_refined=refined,
-            model_train_segment_ids=copy.deepcopy(self.model.get("train_segment_ids", [])))
+            model_train_segment_ids=copy.deepcopy(
+                self.model.get("train_segment_ids", [])
+            ),
+            **self._residual_result_details(
+                residual,
+                state_age_s=now-observed[0],
+                dynamic_margin_m_s=dynamic_margin,
+            ))

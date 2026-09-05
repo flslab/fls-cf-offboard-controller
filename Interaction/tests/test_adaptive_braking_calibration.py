@@ -45,6 +45,7 @@ class FakePredictor:
         self.config = config
         self.history = []
         self.decisions = []
+        self.observations = []
         self.action = 'level'
 
     def record_command(self, stamp, tilt):
@@ -54,6 +55,10 @@ class FakePredictor:
         self.decisions.append((now, copy.deepcopy(state)))
         return dict(action=self.action, reason='fake_'+self.action,
                     level_latched=self.action != 'brake')
+
+    def observe_state(self, now, state):
+        self.observations.append((now, copy.deepcopy(state)))
+        return dict(ready=len(self.observations) >= 4, status='fake')
 
 
 class AdaptiveBrakingCalibrationTests(unittest.TestCase):
@@ -284,6 +289,31 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
         self.assertIs(result, proposed)
         self.assertEqual(result.phase, 'brake')
         self.assertNotIn(4, adapter._latched)
+
+    @patch('Interaction.adaptive_braking_calibration.ModelBasedBrakingController', FakePredictor)
+    def test_residual_observer_gets_causal_warmup_before_first_decision(self):
+        adapter = self.adapter(dict(model_based_braking=dict(
+            max_compute_s=.008,
+            motion_residual_observer_enabled=True,
+        )))
+        self.prepare_brake(adapter)
+        episode = adapter._episodes[4]
+        for now in (10.66, 10.68):
+            proposed = self.command(4, 'brake')
+            actual = adapter.modify(proposed, now, state(now-.001), report())
+            self.assertIs(actual, proposed)
+            adapter.record_sent(actual, now+.001)
+            self.assertEqual(episode.decisions, [])
+        result = adapter.modify(
+            self.command(4, 'brake'), 10.70, state(10.699), report()
+        )
+        self.assertEqual(result.phase, 'level_after_brake')
+        self.assertEqual(len(episode.decisions), 1)
+        self.assertGreaterEqual(len(episode.observations), 5)
+        self.assertTrue(all(
+            observation[1]['time_s'] <= observation[0]
+            for observation in episode.observations
+        ))
 
     @patch('Interaction.adaptive_braking_calibration.ModelBasedBrakingController', FakePredictor)
     def test_missing_measurements_do_not_hold_brake_past_warmup(self):

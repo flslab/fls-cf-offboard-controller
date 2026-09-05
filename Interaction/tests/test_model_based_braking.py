@@ -9,6 +9,7 @@ from scipy.linalg import expm
 
 from Interaction.model_based_braking import (
     ModelBasedBrakingController,
+    RollingMotionResidualObserver,
     _second_order_transition,
 )
 
@@ -44,6 +45,176 @@ def controller(*, direction=1, target=.15, deadline=.32, **config):
 
 
 class ModelBasedBrakingTests(unittest.TestCase):
+    def test_causal_motion_residual_observer_recovers_constant_bias(self):
+        observer = RollingMotionResidualObserver(
+            sigma_floor_m_s2=.01,
+        )
+        bias = .6
+        snapshot = None
+        for stamp in (0., .02, .04, .06, .08):
+            snapshot = observer.update(stamp, bias*stamp, 0., 1.)
+        self.assertTrue(snapshot['ready'])
+        self.assertEqual(snapshot['status'], 'ready')
+        self.assertAlmostEqual(
+            snapshot['filtered_acceleration_m_s2'], bias, places=9
+        )
+        self.assertGreaterEqual(snapshot['window_span_s'], .06)
+        count = snapshot['sample_count']
+        duplicate = observer.update(.08, bias*.08, 0., 1.)
+        self.assertEqual(duplicate['sample_count'], count)
+
+    def test_motion_residual_observer_uses_irregular_real_samples(self):
+        observer = RollingMotionResidualObserver(
+            sigma_floor_m_s2=.01,
+        )
+        theta = .1
+        model_acceleration = 9.81*math.tan(theta)
+        bias = -.35
+        snapshot = None
+        for stamp in (0., .015, .037, .065, .08):
+            velocity = (model_acceleration+bias)*stamp
+            snapshot = observer.update(stamp, velocity, theta, 1.)
+        self.assertTrue(snapshot['ready'])
+        self.assertAlmostEqual(snapshot['raw_acceleration_m_s2'], bias, places=9)
+
+    def test_motion_residual_gap_and_outlier_never_reuse_stale_bias(self):
+        observer = RollingMotionResidualObserver(
+            sigma_floor_m_s2=.01, max_abs_accel_m_s2=1.,
+        )
+        for stamp in (0., .02, .04, .06):
+            ready = observer.update(stamp, .5*stamp, 0., 1.)
+        self.assertTrue(ready['ready'])
+        reset = observer.update(.12, .06, 0., 1.)
+        self.assertFalse(reset['ready'])
+        self.assertEqual(reset['status'], 'sample_gap_reset')
+        self.assertEqual(reset['filtered_acceleration_m_s2'], 0.)
+        for stamp in (.14, .16, .18):
+            rejected = observer.update(stamp, 20.*stamp, 0., 1.)
+        self.assertFalse(rejected['ready'])
+        self.assertEqual(rejected['status'], 'residual_outlier_rejected')
+        self.assertTrue(rejected['rejected'])
+        self.assertFalse(rejected['clipped'])
+        self.assertEqual(rejected['filtered_acceleration_m_s2'], 0.)
+
+    def test_motion_residual_requires_full_causal_window(self):
+        observer = RollingMotionResidualObserver()
+        for stamp in (0., .02, .04):
+            snapshot = observer.update(stamp, .4*stamp, 0., 1.)
+        self.assertFalse(snapshot['ready'])
+        self.assertEqual(snapshot['status'], 'warming_up')
+        reset = observer.update(.03, .012, 0., 1.)
+        self.assertFalse(reset['ready'])
+        self.assertEqual(reset['status'], 'nonincreasing_timestamp_reset')
+
+    def test_enabled_motion_residual_changes_forecast_and_reports_uncertainty(self):
+        corrected = controller(
+            deadline=.38,
+            motion_residual_observer_enabled=True,
+            motion_residual_sigma_floor_m_s2=.05,
+        )
+        baseline = controller(deadline=.38)
+        bias = .6
+        for stamp in (0., .02, .04, .06, .08):
+            measured = state(
+                stamp, v=.20+bias*stamp, theta=0., omega=0.
+            )
+            corrected.observe_state(stamp, measured)
+        current = state(.08, v=.20+bias*.08, theta=0., omega=0.)
+        corrected_result = corrected.decide(.08, current)
+        baseline_result = baseline.decide(.08, current)
+        self.assertTrue(corrected_result['motion_residual_ready'])
+        self.assertTrue(
+            corrected_result['motion_residual_corrected_prediction']
+        )
+        self.assertAlmostEqual(
+            corrected_result['motion_residual_acceleration_m_s2'], bias,
+            places=9,
+        )
+        self.assertGreater(
+            corrected_result['motion_residual_dynamic_velocity_margin_m_s'],
+            0.,
+        )
+        self.assertNotAlmostEqual(
+            corrected_result['predicted_terminal_velocity_m_s'],
+            baseline_result['predicted_terminal_velocity_m_s'],
+        )
+
+    def test_warming_residual_path_preserves_base_forecast(self):
+        baseline = controller()
+        warming = controller(motion_residual_observer_enabled=True)
+        current = state()
+        first = baseline.decide(0., current)
+        second = warming.decide(0., current)
+        self.assertEqual(second['motion_residual_status'], 'warming_up')
+        for key in (
+                'action', 'reason', 'selected_pulse_s',
+                'predicted_terminal_velocity_m_s',
+                'predicted_terminal_tilt_deg',
+                'predicted_endpoint_position_m',
+                'hard_feasible_candidate_count'):
+            self.assertEqual(first[key], second[key], key)
+
+    def test_residual_uncertainty_participates_in_hard_velocity_interval(self):
+        item = controller(
+            deadline=.38,
+            motion_residual_observer_enabled=True,
+            motion_residual_sigma_floor_m_s2=.5,
+        )
+        for stamp in (0., .02, .04, .06, .08):
+            item.observe_state(stamp, state(
+                stamp, v=.2, theta=0., omega=0.
+            ))
+        result = item.decide(.08, state(.08, v=.2, theta=0., omega=0.))
+        self.assertTrue(result['motion_residual_ready'])
+        self.assertGreaterEqual(
+            result['motion_residual_dynamic_velocity_margin_m_s'], .079
+        )
+        self.assertEqual(result['hard_feasible_candidate_count'], 0)
+        self.assertFalse(result['terminal_velocity_constraint_satisfied'])
+
+    def test_repeated_stale_packet_does_not_renew_residual_horizon(self):
+        item = controller(
+            deadline=.38,
+            motion_residual_observer_enabled=True,
+            motion_residual_sigma_floor_m_s2=.05,
+        )
+        bias = .4
+        for stamp in (0., .02, .04, .06, .08):
+            item.observe_state(
+                stamp,
+                state(stamp, v=.2+bias*stamp, theta=0., omega=0.),
+            )
+        packet = state(.08, v=.2+bias*.08, theta=0., omega=0.)
+        observed = item._state(packet, .08)
+        residual = item._observe_motion_residual(observed)
+        first = item._forecast(observed, .08, np.array([0.]), residual)
+        duplicate = item._observe_motion_residual(item._state(packet, .11))
+        later = item._forecast(observed, .11, np.array([0.]), duplicate)
+        self.assertEqual(residual['sample_count'], duplicate['sample_count'])
+        self.assertAlmostEqual(
+            first['motion_residual_dynamic_margin_m_s'],
+            later['motion_residual_dynamic_margin_m_s'],
+            places=12,
+        )
+        self.assertAlmostEqual(
+            first['motion_residual_dynamic_margin_m_s'], 2.*.05*.08,
+            places=12,
+        )
+
+    def test_motion_residual_configuration_is_bounded(self):
+        for config in (
+            dict(motion_residual_window_s=.11),
+            dict(motion_residual_min_window_s=.03),
+            dict(motion_residual_max_sample_gap_s=.05),
+            dict(motion_residual_filter_tau_s=.21),
+            dict(motion_residual_apply_horizon_s=.11),
+            dict(motion_residual_min_samples=2),
+            dict(motion_residual_max_abs_accel_m_s2=5.1),
+            dict(motion_residual_sigma_multiplier=4.1),
+        ):
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                controller(**config)
+
     def test_closed_form_transition_matches_matrix_exponential(self):
         for wn in (5., 14., 100.):
             for zeta in (.2, .8, .999999, 1., 1.000001, 1.5, 2.):

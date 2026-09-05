@@ -51,6 +51,55 @@ class PlanarBrakingCalibrationTests(unittest.TestCase):
             [.16, .24, .32, .32],
         )
 
+    def test_duration_sweep_accepts_independent_pairwise_brake_schedule(self):
+        plan = PlanarBrakingCalibration({
+            "enabled": True,
+            "tilt_levels_deg": [20],
+            "accelerate_durations_s": [.32, .32, .32],
+            "brake_durations_s": [.16, .20, .24],
+            "repetitions_per_duration": 2,
+        })
+        np.testing.assert_allclose(plan.trial_accelerate_s, [.32] * 12)
+        np.testing.assert_allclose(
+            plan.trial_brake_s,
+            [.16, .16, .20, .20, .24, .24] * 2,
+        )
+        self.assertEqual(plan.repetitions, 6)
+        self.assertAlmostEqual(plan.accelerate_s, .32)
+        self.assertAlmostEqual(plan.brake_s, .24)
+        protocol = plan.timing_protocol()
+        self.assertEqual(protocol["accelerate_durations_s"], [.32, .32, .32])
+        self.assertEqual(protocol["brake_durations_s"], [.16, .20, .24])
+
+        first_start = plan.trial_start_s[0]
+        brake_start = (
+            first_start + plan.level_before_acceleration_s
+            + plan.trial_accelerate_s[0] + plan.level_before_brake_s
+        )
+        self.assertEqual(plan.command(brake_start + .159, 0).phase, "brake")
+        self.assertEqual(plan.command(brake_start + .161, 0).phase,
+                         "level_after_brake")
+
+    def test_independent_brake_schedule_rejects_invalid_configuration(self):
+        base = {
+            "tilt_levels_deg": [20],
+            "accelerate_durations_s": [.32, .32, .32],
+        }
+        invalid = ([], [.16], [.16, .20], [.16, 0, .24],
+                   [.16, float("nan"), .24], [.24, .20, .16])
+        for durations in invalid:
+            with self.subTest(durations=durations), self.assertRaisesRegex(
+                ValueError, "braking durations"
+            ):
+                PlanarBrakingCalibration(
+                    base | {"brake_durations_s": durations}
+                )
+        with self.assertRaisesRegex(ValueError, "requires accelerate"):
+            PlanarBrakingCalibration({
+                "tilt_levels_deg": [20],
+                "brake_durations_s": [.16, .20, .24],
+            })
+
     def setUp(self):
         self.plan = PlanarBrakingCalibration({
             "enabled": True,

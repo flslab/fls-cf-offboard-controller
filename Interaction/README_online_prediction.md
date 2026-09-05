@@ -130,8 +130,9 @@ delay、ωn、ζ、倾角 gain、bias 和 motion gain，并分别通过可辨识
 冻结模型在它自己的下一组 held-out ±Y pair 上得到的每方向末端速度绝对误差，会写入
 `terminal_velocity_error_margin_m_s`。只有通过这次独立验证的同一个冻结模型，才可能在
 再下一组试验中控制；刚刚用全部已有数据重拟合的新候选仍标记为等待自己的 held-out
-验证，不能借用前一版本的验证结果。硬约束实际检查
-`|predicted velocity| + direction margin <= tolerance`，而不是只检查点预测。
+验证，不能借用前一版本的验证结果。硬约束实际检查保守速度区间：整段预测的
+`minimum velocity lower bound >= -0.02 m/s`，终点区间同时满足
+`lower >= -0.02 m/s` 与 `upper <= +0.05 m/s`，而不是只检查点预测。
 每个方向单独放行：例如 −Y margin 合格而 +Y 不合格时，−Y 可以缩短脉冲，+Y 仍执行
 原固定脉冲。第一候选尚无 held-out 数据时绝不参与控制。
 
@@ -162,6 +163,134 @@ level，并在 decision 日志中记录 hard-constraint 状态，不会把不合
 状态或输入错误仍按无命令 fallback 处理，由 adapter level/abort。
 0.06 m / 0.06 m/s 是这版 **诊断误差门**，不是准许飞行或保证停准的标准。
 要用于真实 release 后的控制，还需独立重复数据、状态/电量覆盖和控制策略验证。
+
+## Release 后的可复用 brake-to-position 封装
+
+`Interaction/predictive_brake_handoff.py` 提供了一个独立、无设备 I/O 的状态机，
+供后续把通过验证的模型接入 interaction。它从 **release 时的当前状态** 和一个冻结的
+三维目的地开始，没有 calibration 的加速段，也没有继续旧固定制动脉冲的 fallback：
+
+```text
+BRAKE（训练数据内的最大反向倾角，模型滚动选择剩余时长）
+  -> LEVEL（回水平并等待真实响应尾部）
+  -> POSITION（实测状态通过硬门限后锁存目标）
+
+模型/状态/计算失败 -> ABORT_LEVEL（回水平，由调用者结束本次 episode）
+```
+
+模型第一次预测应该 level 时不会立即切 position。封装还要求实测纵向/横向速度、
+倾角、角速度和加速度通过门限，已经真实发送的 level 指令经过模型响应时间，并连续
+稳定一个 dwell，才返回 `action == "position"`。如果制动已经越过原目的地，最终目标
+会沿运动方向钳制到实际位置，避免 position controller 把无人机往回拉；横向目标默认
+锁存到交接时的实际横向位置。交接后如果惯性继续把飞机推过该目标，后续每次
+`decide()` 还会将纵向目标单调向前推进到最新实际位置；目标绝不会再次落到飞机后方。
+
+最小调用方式：
+
+```python
+from Interaction.predictive_brake_handoff import (
+    predictive_brake_to_position,
+    projected_tilt_history_from_world_acceleration,
+    validated_prediction_model_for_interaction,
+)
+
+model = validated_prediction_model_for_interaction(
+    saved_drone_calibration,
+    enabled=feature_enabled,
+    direction_xy=[0.0, direction_y],
+    # 只应在完成后续独立验证后临时显式打开；正式部署应改模型 approval flags。
+    allow_validated_experimental_model=True,
+)
+history = projected_tilt_history_from_world_acceleration(
+    actually_sent_acceleration_history,
+    [0.0, direction_y],
+)
+episode = predictive_brake_to_position(
+    model,
+    initial_state=release_state,
+    destination_position=frozen_destination_xyz,
+    now_s=release_time_s,
+    sent_command_history=history,
+    direction_xy=[0.0, direction_y],
+    config={"allow_validated_experimental_model": True},
+)
+
+decision = episode.decide(now_s, current_state)
+if decision["action"] in ("brake", "level", "abort_level"):
+    assert actual_send_time_s <= decision["valid_until_s"]
+    send_attitude(decision["roll_deg"], decision["pitch_deg"])
+    # 仅在 send_attitude 真正成功之后记录；发送失败绝不能伪造历史。
+    episode.record_sent(decision, actual_send_time_s)
+elif decision["action"] == "position":
+    assert actual_send_time_s <= decision["valid_until_s"]
+    send_position(decision["position_target"])
+```
+
+每个 decision 都带有单调递增的 `decision_sequence` 和最多 30 ms 的
+`valid_until_s`，position sender 也必须只发最新且未过期的 target。过期姿态 decision
+不应发送；如果它实际上已经被发送，仍须调用 `record_sent` 记录真实输入，该函数会返回
+`False`，随后 episode 会 `abort_level`。`abort_level` 发出后，调用者还必须退出该
+episode 并进入自己的安全处理，不能把它当作可以继续滚动预测的普通 level。
+调用者必须按 `decide -> send -> record_sent -> 下一次 decide` 的顺序执行；不能在
+新的 decision 已产生后再发送上一个 decision。
+
+`current_state` 使用与 `ModelBasedBrakingController` 相同的 host clock，包含
+`time_s`、`position_xy`、`velocity_xy`、`orientation_rpy_rad`、
+`angular_velocity_rad_s`、`state_group_skew_s` 和 `battery_voltage_V`；建议额外提供
+`acceleration_xy`。若不提供，加速度门会等至少两个连续速度样本后才可能通过。
+因为模型没有辨识 yaw dynamics，制动期间实测 yaw rate 默认必须不超过
+0.35 rad/s；position 交接门则检查完整三轴角速度，而不只检查 roll/pitch rate。
+目的地、方向和模型在 episode 创建时冻结。当前只支持 world ±Y；X/对角方向、训练
+范围外状态、方向误差裕量不达标或验证证据不完整都会 fail closed。
+进入 position 后仍须持续调用 `decide()` 并发送它返回的最新 position target，才能维持
+动态 no-pullback 保证。定位样本还受单步 0.10 m、等效速率 3.0 m/s、相对冻结目的地
+累计向前 0.50 m 的棘轮边界约束；越界不会把异常定位直接变成远距离 position command。
+如果实际发送的 roll/pitch 与返回 decision 不一致，`record_sent()` 会尽量按实际姿态
+重建并保留这个输入：调用时通过 `actual_attitude={"roll_deg": ..., "pitch_deg": ...,
+"yaw_rate_deg_s": ..., "projection_yaw_rad": ...}` 传入 lower layer 实际采用的值。
+它同时锁存协议错误；下一次调用只会得到 `abort_level`，不会在遗漏执行历史的情况下
+继续预测制动。
+
+这个模块目前**没有自动接入普通 interaction**，也不会改变现有飞行动作。保存模型仍
+默认不获 runtime approval；等补测完成后，再在现有 release 分支中显式创建 episode，
+并保持“成功发送后才 `record_sent`”和 `abort_level` 的外部退出处理。
+
+## 80 ms 在线平动残差（默认关闭）
+
+`ModelBasedBrakingController` 现在包含一个可选的因果残差观察器。它只使用最近最多
+80 ms 的实测投影速度与实测倾角，至少需要 60 ms、4 个真实样本：
+
+```text
+b = (measured delta-v - integral(k * g * tan(theta) dt)) / measured delta-t
+```
+
+该修正只从测量锚点起作用 80 ms，之后恢复冻结基础模型。重复使用同一旧状态不会延长
+有效期；时间倒退、冲突时间戳、超过 40 ms 的采样间断或超过 1.5 m/s^2 的异常残差会
+清空修正。候选的硬约束同时加入 2-sigma 动态速度裕量和已有 held-out 静态裕量。
+
+配置项 `motion_residual_observer_enabled` 默认是 `false`。当前离线结果只支持继续研究，
+尚未验证完整候选选择与位置交接；因此不能用旧基础模型的 `control_eligible` 结果为这个
+混合预测器自动授权，更不能据此打开普通 interaction。
+
+可用下面的只读工具做相邻 ±Y pair 的 leave-pair-out 比较；输出目录必须不存在：
+
+```bash
+python -m Interaction.evaluate_motion_residual /absolute/path/to/lb11_log.json \
+  --output /absolute/path/to/a-new-output-directory
+```
+
+## 定向高速制动标定
+
+需要补充高速数据时，使用显式 opt-in 参数；默认 `--calibrate` 行为不变：
+
+```bash
+python controller.py --calibrate --targeted-braking-calibration \
+  --log --smooth-controller-rate 100
+```
+
+该模式固定使用 20 度、每次加速 0.32 s，并以 0.16 / 0.20 / 0.24 s 三个制动时长、
+每组两次、交替 ±Y，共 12 个 trial。它强制关闭 adaptive pulse replacement，保证收集到
+确定的时长响应，同时保留原有边界、速度、定位新鲜度和姿态安全检查。
 
 ## 不飞也能拟合现有日志
 

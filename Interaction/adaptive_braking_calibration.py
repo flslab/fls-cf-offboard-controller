@@ -265,13 +265,43 @@ class AdaptiveBrakingCalibration:
             self._episodes[segment] = episode
             self._brake_observations[segment] = set()
             self._emit("Adaptive Braking Episode Started", {"segment_id": segment,
-                "model_version": candidate["version"], "target_position_xy": target.tolist(),
-                "direction_xy": direction.tolist(), "brake_started_at_s": now,
-                "original_brake_deadline_s": episode.brake_deadline_s,
-                "minimum_brake_observations": 2, "minimum_brake_periods": 2,
-                "target_source": "explicit_brake_start_forward_distance",
-                "position_command_target_modified": False})
+                    "model_version": candidate["version"], "target_position_xy": target.tolist(),
+                    "direction_xy": direction.tolist(), "brake_started_at_s": now,
+                    "original_brake_deadline_s": episode.brake_deadline_s,
+                    "minimum_brake_observations": (
+                        self.model_config.get("motion_residual_min_samples", 4)
+                        if self.model_config.get(
+                            "motion_residual_observer_enabled", False
+                        ) else 2
+                    ),
+                    "minimum_brake_periods": int(math.ceil(max(
+                        2*self.dt,
+                        self.model_config.get(
+                            "motion_residual_min_window_s", .06
+                        ) if self.model_config.get(
+                            "motion_residual_observer_enabled", False
+                        ) else 0.,
+                    )/self.dt)),
+                    "target_source": "explicit_brake_start_forward_distance",
+                    "position_command_target_modified": False})
         episode = self._episodes[segment]
+        residual_enabled = bool(self.model_config.get(
+            "motion_residual_observer_enabled", False
+        ))
+        if residual_enabled:
+            try:
+                episode.observe_state(now, state)
+            except (KeyError, TypeError, ValueError, OverflowError) as error:
+                self._latched.add(segment)
+                self._emit("Adaptive Braking Decision", {
+                    "segment_id": segment,
+                    "model_version": candidate["version"],
+                    "action": "level",
+                    "reason": "motion_residual_observation_invalid:"+str(error),
+                    "target_position_xy": episode.target_position_xy.tolist(),
+                    "level_latched": True,
+                })
+                return self._level(command)
         observations = self._brake_observations[segment]
         first_brake = episode.brake_deadline_s-float(self.plan.trial_brake_s[segment])
         try:
@@ -283,9 +313,16 @@ class AdaptiveBrakingCalibration:
             pass
         # First allow enough actual brake/measurement cycles to retain the
         # five-phase system-identification contract. Never extend the deadline.
+        minimum_observation_s = max(
+            2*self.dt,
+            self.model_config.get("motion_residual_min_window_s", .06)
+            if residual_enabled else 0.,
+        )
         required = (self._sent_brake_count.get(segment, 0) >= 2
-                    and len(observations) >= 2 and now-first_brake >= 2*self.dt-1e-9)
-        if now-first_brake < 2*self.dt-1e-9 and now < episode.brake_deadline_s:
+                    and len(observations) >= 2
+                    and now-first_brake >= minimum_observation_s-1e-9)
+        if (now-first_brake < minimum_observation_s-1e-9
+                and now < episode.brake_deadline_s):
             return command
         if now >= episode.brake_deadline_s:
             decision = {"action": "level", "reason": "original_brake_deadline",

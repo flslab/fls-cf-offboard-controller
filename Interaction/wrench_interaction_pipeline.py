@@ -109,6 +109,18 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
             "candidate_refinement_step_s": 0.01,
             "terminal_velocity_tolerance_m_s": 0.05,
             "terminal_tilt_tolerance_deg": 3.0,
+            # Experimental calibration only.  Keep disabled until the exact
+            # hybrid predictor passes independent held-out validation.
+            "motion_residual_observer_enabled": False,
+            "motion_residual_window_s": 0.08,
+            "motion_residual_min_window_s": 0.06,
+            "motion_residual_max_sample_gap_s": 0.04,
+            "motion_residual_filter_tau_s": 0.08,
+            "motion_residual_max_abs_accel_m_s2": 1.5,
+            "motion_residual_sigma_floor_m_s2": 0.15,
+            "motion_residual_sigma_multiplier": 2.0,
+            "motion_residual_apply_horizon_s": 0.08,
+            "motion_residual_min_samples": 4,
         },
     },
     "online_prediction_calibration": {

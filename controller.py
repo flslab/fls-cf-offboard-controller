@@ -1335,6 +1335,18 @@ class Controller:
     def calibration_switch(self):
         """Run contact-free calibration or the data-only attitude repeat test."""
         try:
+            targeted_braking = bool(getattr(
+                self.args, 'targeted_braking_calibration', False
+            ))
+            if targeted_braking and (
+                    not getattr(self.args, 'calibrate', False)
+                    or getattr(self.args, 'braking_test', False)
+                    or getattr(self.args, 'interaction', False)
+                    or getattr(self.args, 'ground_test', False)):
+                raise ValueError(
+                    '--targeted-braking-calibration requires --calibrate '
+                    'without --interaction, --braking-test, or --ground-test'
+                )
             adaptive_selection = getattr(
                 self.args, 'adaptive_braking_calibration', None
             )
@@ -1370,6 +1382,25 @@ class Controller:
                     wrench_config.setdefault('online_prediction_calibration', {})[
                         'enabled'
                     ] = True
+                if targeted_braking:
+                    # The targeted protocol is deliberately deterministic: it
+                    # collects controlled high-speed +/-Y data at three brake
+                    # durations.  Keep the ordinary mission untouched and do
+                    # not let the adaptive controller replace those pulses.
+                    wrench_config.setdefault('adaptive_braking_calibration', {})[
+                        'enabled'
+                    ] = False
+                    wrench_config.setdefault('online_prediction_calibration', {})[
+                        'enabled'
+                    ] = True
+                    wrench_config.setdefault('planar_braking_calibration', {}).update({
+                        'enabled': True,
+                        'tilt_levels_deg': [20.0],
+                        'directions_xy': [[0.0, 1.0], [0.0, -1.0]],
+                        'accelerate_durations_s': [0.32, 0.32, 0.32],
+                        'brake_durations_s': [0.16, 0.20, 0.24],
+                        'repetitions_per_duration': 2,
+                    })
             controller = InteractionsControl(
                 self.cf,
                 self._safe_sleep,
@@ -2361,6 +2392,12 @@ if __name__ == '__main__':
         ),
     )
     ap.add_argument(
+        "--targeted-braking-calibration", action="store_true",
+        help=("during --calibrate, collect a fixed 20-degree +/-Y sweep with "
+              "0.32 s acceleration and 0.16/0.20/0.24 s braking pulses; "
+              "adaptive pulse selection is disabled for this opt-in run"),
+    )
+    ap.add_argument(
         "--adaptive-braking-calibration",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -2450,6 +2487,13 @@ if __name__ == '__main__':
         ap.error(str(error))
     if args.interaction and args.calibrate:
         ap.error('--interaction and --calibrate are mutually exclusive')
+    if args.targeted_braking_calibration and (
+            not args.calibrate or args.interaction or args.braking_test
+            or args.ground_test):
+        ap.error(
+            '--targeted-braking-calibration requires --calibrate without '
+            '--interaction, --braking-test, or --ground-test'
+        )
     if args.adaptive_braking_calibration is not None and (
             not args.calibrate or args.interaction or args.braking_test):
         ap.error(

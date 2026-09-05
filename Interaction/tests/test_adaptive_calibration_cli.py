@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from Interaction.braking_response_calibration import PlanarBrakingCalibration
 from Interaction.braking_repeat_test import validate_repeat_test_options
 
 
@@ -47,6 +48,7 @@ def calibration_switch():
 class AdaptiveCalibrationCliTests(unittest.TestCase):
     def args(self, **changes):
         values = dict(calibrate=True, adaptive_braking_calibration=None,
+                      targeted_braking_calibration=False,
                       interaction=False, braking_test=False, ground_test=False,
                       smooth_controller_rate=100, drone_id='lb11', sense_axis='y',
                       sense_sign=1, sense_max_age=.25)
@@ -60,6 +62,7 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
     def test_flag_is_tristate_and_both_explicit_choices_parse(self):
         defaults = parse_controller_args([])
         self.assertIsNone(defaults.adaptive_braking_calibration)
+        self.assertFalse(defaults.targeted_braking_calibration)
         args = parse_controller_args(['--calibrate', '--adaptive-braking-calibration',
                                       '--log', '--smooth-controller-rate', '100'])
         self.assertTrue(args.calibrate)
@@ -71,6 +74,24 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
             '--log', '--smooth-controller-rate', '100',
         ])
         self.assertFalse(disabled.adaptive_braking_calibration)
+
+    def test_targeted_flag_requires_airborne_exclusive_calibration(self):
+        args = parse_controller_args([
+            '--calibrate', '--targeted-braking-calibration', '--log',
+            '--smooth-controller-rate', '100',
+        ])
+        self.assertTrue(args.targeted_braking_calibration)
+        for modes in (
+                [], ['--interaction'], ['--braking-test'], ['--ground-test'],
+                ['--calibrate', '--interaction'],
+                ['--calibrate', '--braking-test'],
+                ['--calibrate', '--ground-test']):
+            with self.subTest(modes=modes), redirect_stderr(
+                    io.StringIO()), self.assertRaises(SystemExit):
+                parse_controller_args([
+                    *modes, '--targeted-braking-calibration', '--log',
+                    '--smooth-controller-rate', '100',
+                ])
 
     def test_cli_rejects_explicit_selection_without_exclusive_calibration(self):
         for option in ('--adaptive-braking-calibration',
@@ -153,11 +174,71 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
         self.assertTrue(config['online_prediction_calibration']['enabled'])
         self.assertNotIn('Interaction', mission)
 
+    def test_targeted_protocol_is_exact_and_scoped_to_private_copy(self):
+        run, factory = calibration_switch()
+        mission = {
+            'boundary_limits': {'y': [-1.5, 1.5]},
+            'Interaction': {'config': {'wrench_interaction': {
+                'adaptive_braking_calibration': {
+                    'enabled': True, 'tilt_limit_deg': 19.0,
+                },
+                'online_prediction_calibration': {
+                    'enabled': False, 'max_sample_gap_s': .06,
+                },
+                'planar_braking_calibration': {
+                    'enabled': False,
+                    'tilt_levels_deg': [8.0, 14.0, 20.0],
+                    'accelerate_durations_s': [.16, .24, .32],
+                    'max_xy_speed_m_s': 1.6,
+                    'trial_start_dwell_s': .5,
+                },
+            }}},
+        }
+        before = deepcopy(mission)
+        run(self.controller(self.args(targeted_braking_calibration=True), mission))
+        configured = factory.call_args.args[3]
+        wrench = configured['Interaction']['config']['wrench_interaction']
+        self.assertFalse(wrench['adaptive_braking_calibration']['enabled'])
+        self.assertTrue(wrench['online_prediction_calibration']['enabled'])
+        self.assertEqual(
+            wrench['online_prediction_calibration']['max_sample_gap_s'], .06
+        )
+        self.assertEqual(wrench['adaptive_braking_calibration']['tilt_limit_deg'], 19.0)
+        plan_config = wrench['planar_braking_calibration']
+        self.assertEqual(plan_config['tilt_levels_deg'], [20.0])
+        self.assertEqual(plan_config['directions_xy'], [[0.0, 1.0], [0.0, -1.0]])
+        self.assertEqual(plan_config['accelerate_durations_s'], [.32, .32, .32])
+        self.assertEqual(plan_config['brake_durations_s'], [.16, .20, .24])
+        self.assertEqual(plan_config['repetitions_per_duration'], 2)
+        self.assertEqual(plan_config['max_xy_speed_m_s'], 1.6)
+        self.assertEqual(plan_config['trial_start_dwell_s'], .5)
+        plan = PlanarBrakingCalibration(plan_config)
+        self.assertEqual(len(plan.trial_directions), 12)
+        self.assertEqual(plan.trial_accelerate_s.tolist(), [.32] * 12)
+        self.assertEqual(
+            plan.trial_brake_s.tolist(), [.16, .16, .20, .20, .24, .24] * 2
+        )
+        self.assertEqual(mission, before)
+        factory.return_value.run_calibration.assert_called_once()
+
     def test_programmatic_invalid_modes_rejected_before_dispatch(self):
         for changes in ({'calibrate': False}, {'interaction': True}, {'braking_test': True}):
             with self.subTest(changes=changes):
                 run, factory = calibration_switch()
                 controller = self.controller(self.args(adaptive_braking_calibration=True, **changes), {})
+                with self.assertRaisesRegex(ValueError, 'requires --calibrate'):
+                    run(controller)
+                factory.assert_not_called()
+
+    def test_programmatic_targeted_mode_rejects_nonflight_contexts(self):
+        for changes in (
+                {'calibrate': False}, {'interaction': True},
+                {'braking_test': True}, {'ground_test': True}):
+            with self.subTest(changes=changes):
+                run, factory = calibration_switch()
+                controller = self.controller(self.args(
+                    targeted_braking_calibration=True, **changes
+                ), {})
                 with self.assertRaisesRegex(ValueError, 'requires --calibrate'):
                     run(controller)
                 factory.assert_not_called()
