@@ -687,9 +687,9 @@ LOG_VARS = {
     'RATE_EST': RATE_EST,
     'YAW_CTL': YAW_CTL,
     'MOT_BAT': MOT_BAT,
-    'POS_CTL_I_D': CTL_I_D,
-    'POS_VEL_CTL': POS_VEL_CTL,
-    'ATT_RATE_CTL': ATT_RATE_CTL,
+    # 'POS_CTL_I_D': CTL_I_D,
+    # 'POS_VEL_CTL': POS_VEL_CTL,
+    # 'ATT_RATE_CTL': ATT_RATE_CTL,
 }
 # PID Configurations
 PID_VALUES_PROP_2_NO_I = {
