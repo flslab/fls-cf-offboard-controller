@@ -128,13 +128,12 @@ python3 orchestrator.py --calibrate --skip-record
 `directional_models.positive_y` 或 `directional_models.negative_y`。每个方向独立拟合
 delay、ωn、ζ、倾角 gain、bias 和 motion gain，并分别通过可辨识性/参数边界检查。
 冻结模型在它自己的下一组 held-out ±Y pair 上得到的每方向末端速度绝对误差，会写入
-`terminal_velocity_error_margin_m_s`。只有通过这次独立验证的同一个冻结模型，才可能在
+`terminal_velocity_error_margin_m_s`，但该值只作为诊断记录，不再扩大运行时预测速度。
+运行时直接使用模型的点预测。只有通过这次独立验证的同一个冻结模型，才可能在
 再下一组试验中控制；刚刚用全部已有数据重拟合的新候选仍标记为等待自己的 held-out
-验证，不能借用前一版本的验证结果。硬约束实际检查保守速度区间：整段预测的
-`minimum velocity lower bound >= -0.02 m/s`，终点区间同时满足
-`lower >= -0.02 m/s` 与 `upper <= +0.05 m/s`，而不是只检查点预测。
-每个方向单独放行：例如 −Y margin 合格而 +Y 不合格时，−Y 可以缩短脉冲，+Y 仍执行
-原固定脉冲。第一候选尚无 held-out 数据时绝不参与控制。
+验证，不能借用前一版本的验证结果。硬约束直接检查点预测：整段预测速度不得低于
+`-0.02 m/s`，预测终端速度必须位于 `[-0.02, +0.05] m/s`，并满足终端姿态限制。
+第一候选尚无 held-out 数据时绝不参与控制。
 
 held-out 数值门失败、不可辨识、碰到参数边界或误差过大时仍保存本次模型和
 `failed_gates`，但写入 `control_eligible: false`。只有报告不完整、缺样本、含 NaN、

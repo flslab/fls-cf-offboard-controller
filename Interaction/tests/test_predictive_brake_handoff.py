@@ -251,14 +251,23 @@ class PredictionModelLoadingTests(unittest.TestCase):
                     allow_validated_experimental_model=True,
                 )
 
-    def test_direction_margin_and_observed_envelope_are_hard_limits(self):
-        with self.assertRaisesRegex(ValueError, "margin"):
-            validated_prediction_model_for_interaction(
-                {"prediction_model": validated_model(margin=0.05)},
-                enabled=True,
-                direction_xy=[0.0, 1.0],
-                allow_validated_experimental_model=True,
-            )
+    def test_direction_margin_is_ignored_but_observed_envelope_is_hard(self):
+        selected = validated_prediction_model_for_interaction(
+            {"prediction_model": validated_model(margin=1000.0)},
+            enabled=True,
+            direction_xy=[0.0, 1.0],
+            allow_validated_experimental_model=True,
+        )
+        self.assertEqual(
+            selected["directional_models"]["positive_y"]
+            ["terminal_velocity_error_margin_m_s"],
+            1000.0,
+        )
+        runtime = episode(model=selected)
+        decision = runtime.decide(10.001, state(10.0, vy=0.55))
+        self.assertIn(decision["action"], ("brake", "level"))
+        self.assertNotEqual(decision["action"], "abort_level")
+        self.assertEqual(decision["terminal_velocity_error_margin_m_s"], 0.0)
         with self.assertRaisesRegex(ValueError, "only world"):
             validated_prediction_model_for_interaction(
                 {"prediction_model": validated_model()},

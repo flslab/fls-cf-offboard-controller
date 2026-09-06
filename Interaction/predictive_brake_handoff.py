@@ -356,9 +356,10 @@ def validated_prediction_model_for_interaction(
 
     When ``enabled`` is false, old calibration documents remain compatible and
     ``None`` is returned. By default, failed validation evidence is rejected;
-    the explicit runtime override skips only evidence/margin gates while the
+    the explicit runtime override skips the evidence gates while the
     model structure, fitted parameters, and observed command envelope remain
-    mandatory. Persisted deployment/control-eligibility flags are informational.
+    mandatory. Held-out terminal-error margins and persisted
+    deployment/control-eligibility flags are informational.
     """
     if type(enabled) is not bool:
         raise ValueError("prediction-model interaction enabled must be boolean")
@@ -381,12 +382,7 @@ def validated_prediction_model_for_interaction(
         raise ValueError("accept_failed_validation must be boolean")
     if not accept_failed_validation:
         _validated_evidence(model, allow)
-    _, _, margin, _ = _validated_model(model, allow, direction[1])
-    if not accept_failed_validation and margin >= tolerance:
-        raise ValueError(
-            f"prediction model {_direction_label(direction)} margin "
-            f"{margin:.6f}m/s is not below {tolerance:.6f}m/s"
-        )
+    _validated_model(model, allow, direction[1])
     _observed_command_envelope(model, direction)
     return copy.deepcopy(model)
 

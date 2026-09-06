@@ -156,9 +156,6 @@ class AdaptiveBrakingCalibration:
                         and isinstance(model, dict) and model.get("train_segment_ids") == training
                         and type(version) is int and version > 0):
                     eligible = source.get("control_eligible") is True
-                    tolerance = float(self.model_config.get(
-                        "terminal_velocity_tolerance_m_s", .05
-                    ))
                     directional = model.get("directional_models", {})
                     if (model.get("candidate_status") not in
                             (None, "requires_held_out_validation")):
@@ -176,28 +173,22 @@ class AdaptiveBrakingCalibration:
                         reason = "validated_candidate_frozen"
                         for label in direction_eligible:
                             component = directional.get(label)
-                            margin = (None if not isinstance(component, dict)
-                                      else component.get(
-                                          "terminal_velocity_error_margin_m_s"
-                                      ))
-                            if (isinstance(margin, (int, float))
-                                    and not isinstance(margin, bool)
-                                    and math.isfinite(margin)
-                                    and 0 <= margin < tolerance):
+                            if not directional or isinstance(component, dict):
                                 direction_eligible[label] = True
                                 direction_reasons[label] = (
-                                    "validated_direction_margin_within_tolerance"
+                                    "model_point_prediction_enabled_"
+                                    "terminal_error_margin_ignored"
                                 )
                             else:
                                 direction_reasons[label] = (
-                                    "direction_uncertainty_exceeds_terminal_tolerance"
+                                    "directional_model_missing"
                                 )
                         candidate["direction_control_eligible"] = copy.deepcopy(
                             direction_eligible
                         )
                         if not any(direction_eligible.values()):
                             candidate = None
-                            reason = "all_direction_uncertainties_exceed_tolerance"
+                            reason = "all_directional_models_missing"
                 else:
                     reason = "candidate_provenance_invalid_or_not_causal"
         self._pair_models[pair] = candidate

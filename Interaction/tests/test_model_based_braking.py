@@ -154,7 +154,7 @@ class ModelBasedBrakingTests(unittest.TestCase):
                 'hard_feasible_candidate_count'):
             self.assertEqual(first[key], second[key], key)
 
-    def test_residual_uncertainty_participates_in_hard_velocity_interval(self):
+    def test_residual_uncertainty_is_diagnostic_not_a_runtime_margin(self):
         item = controller(
             deadline=.38,
             motion_residual_observer_enabled=True,
@@ -169,8 +169,8 @@ class ModelBasedBrakingTests(unittest.TestCase):
         self.assertGreaterEqual(
             result['motion_residual_dynamic_velocity_margin_m_s'], .079
         )
-        self.assertEqual(result['hard_feasible_candidate_count'], 0)
-        self.assertFalse(result['terminal_velocity_constraint_satisfied'])
+        self.assertGreater(result['hard_feasible_candidate_count'], 0)
+        self.assertTrue(result['terminal_velocity_constraint_satisfied'])
 
     def test_repeated_stale_packet_does_not_renew_residual_horizon(self):
         item = controller(
@@ -472,7 +472,7 @@ class ModelBasedBrakingTests(unittest.TestCase):
         self.assertTrue(result['terminal_tilt_constraint_satisfied'])
         self.assertTrue(result['terminal_candidate_grid_refined'])
 
-    def test_directional_component_and_velocity_error_margin_are_enforced(self):
+    def test_directional_component_uses_point_prediction_and_ignores_error_margin(self):
         source = model()
         quality = copy.deepcopy(source['identifiability'])
         source['directional_models'] = {
@@ -498,8 +498,8 @@ class ModelBasedBrakingTests(unittest.TestCase):
         result = positive.decide(0., state())
         self.assertEqual(positive.params['motion_gain'], .8)
         self.assertEqual(result['selected_directional_model'], 'positive_y')
-        self.assertEqual(result['terminal_velocity_error_margin_m_s'], .049)
-        self.assertEqual(result['hard_feasible_candidate_count'], 0)
+        self.assertEqual(result['terminal_velocity_error_margin_m_s'], 0.)
+        self.assertGreater(result['hard_feasible_candidate_count'], 0)
 
         negative = ModelBasedBrakingController(
             source, target_position_xy=[0., -.15], direction_xy=[0., -1.],

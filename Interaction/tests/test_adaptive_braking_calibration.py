@@ -172,7 +172,7 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
             'own_held_out_validation_failed',
         )
 
-    def test_direction_margin_only_disables_that_direction(self):
+    def test_direction_margin_does_not_disable_point_prediction(self):
         adapter = self.adapter()
         source = report()
         source['validated_control_candidate']['model']['directional_models'] = {
@@ -184,7 +184,7 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
         self.assertIsNotNone(adapter._pair_models[2])
         self.assertEqual(
             adapter._pair_models[2]['direction_control_eligible'],
-            {'positive_y': False, 'negative_y': True},
+            {'positive_y': True, 'negative_y': True},
         )
         self.assertEqual(
             self.events[-1][1]['reason'],
@@ -192,11 +192,11 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
         )
         self.assertEqual(
             self.events[-1][1]['adaptive_directions'],
-            {'positive_y': False, 'negative_y': True},
+            {'positive_y': True, 'negative_y': True},
         )
 
     @patch('Interaction.adaptive_braking_calibration.ModelBasedBrakingController', FakePredictor)
-    def test_direction_gate_keeps_positive_fixed_but_adapts_negative(self):
+    def test_direction_margin_allows_both_directions_to_adapt(self):
         adapter = self.adapter()
         source = report()
         source['validated_control_candidate']['model']['directional_models'] = {
@@ -206,11 +206,8 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
         positive = self.command(4, 'level_before_acceleration')
         adapter.modify(positive, 1., state(1.), source)
         positive_brake = self.command(4, 'brake')
-        self.assertIs(
-            adapter.modify(positive_brake, 2., state(1.999), source),
-            positive_brake,
-        )
-        self.assertNotIn(4, adapter._episodes)
+        adapter.modify(positive_brake, 2., state(1.999), source)
+        self.assertIn(4, adapter._episodes)
 
         self.prepare_brake(adapter, segment=5, source=source)
         self.assertIn(5, adapter._episodes)

@@ -347,16 +347,10 @@ def _validated_model(model, experimental, direction_y):
         # Accept calibration files written by older versions, but make voltage
         # explicitly non-semantic inside the runtime controller.
         row.pop("battery_voltage_V", None)
-    margin = _number(
-        component.get(
-            "terminal_velocity_error_margin_m_s",
-            model.get("terminal_velocity_error_margin_m_s", 0.),
-        ),
-        "terminal_velocity_error_margin_m_s",
-    )
-    if not 0 <= margin <= .5:
-        raise ValueError("terminal_velocity_error_margin_out_of_bounds")
-    return params, ranges, margin, (
+    # Held-out terminal errors remain calibration diagnostics, but are no
+    # longer inflated into every runtime velocity forecast. Runtime control is
+    # intentionally based on the model's point prediction.
+    return params, ranges, 0.0, (
         label if directional is not None else "shared_legacy"
     )
 
@@ -965,9 +959,10 @@ class ModelBasedBrakingController:
         overshoot = np.maximum(0., forecast["max_position"]-target)
         terminal_tilt_deg = np.degrees(forecast["angle"])
         dynamic_margin = forecast["motion_residual_dynamic_margin_m_s"]
-        total_margin = (
-            self.terminal_velocity_error_margin_m_s+dynamic_margin
-        )
+        # Execute the point prediction directly. Calibration error and residual
+        # uncertainty remain visible diagnostics but do not widen the runtime
+        # terminal-velocity or no-reverse constraints.
+        total_margin = 0.0
         terminal_velocity_lower = forecast["velocity"]-total_margin
         terminal_velocity_upper = forecast["velocity"]+total_margin
         terminal_velocity_ok = (
@@ -980,10 +975,7 @@ class ModelBasedBrakingController:
             np.abs(terminal_tilt_deg)
             <= self.config["terminal_tilt_tolerance_deg"]
         )
-        conservative_min_velocity = (
-            forecast["min_velocity_lower_bound"]
-            - self.terminal_velocity_error_margin_m_s
-        )
+        conservative_min_velocity = forecast["min_velocity"]
         no_reverse = (
             conservative_min_velocity
             >= -self.config["reverse_tolerance_m_s"]
