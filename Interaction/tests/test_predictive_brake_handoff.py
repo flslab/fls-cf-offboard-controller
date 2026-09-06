@@ -542,6 +542,33 @@ class PredictiveBrakeToPositionTests(unittest.TestCase):
         "Interaction.predictive_brake_handoff.ModelBasedBrakingController",
         FakePredictor,
     )
+    def test_default_handoff_accepts_longitudinal_speed_below_point_one(self):
+        item = episode(history=[(9.8, -math.radians(20.0))])
+        item._controller.next.update({
+            "action": "level",
+            "reason": "rolling_prediction_selected_level",
+            "roll_deg": 0.0,
+            "pitch_deg": 0.0,
+            "projected_tilt_rad": 0.0,
+        })
+        level = item.decide(10.0, state(10.0, vy=-0.085))
+        self.assertEqual(level["action"], "level")
+        self.assertTrue(level["measured_handoff_safe"])
+        self.assertTrue(item.record_sent(level, 10.0))
+        item.decide(10.40, state(10.40, vy=-0.085))
+        handoff = item.decide(10.46, state(10.46, vy=-0.085))
+        self.assertEqual(handoff["action"], "position")
+
+        outside = episode(history=[(9.8, -math.radians(20.0))])
+        outside._controller.next.update(item._controller.next)
+        decision = outside.decide(10.0, state(10.0, vy=-0.101))
+        self.assertEqual(decision["action"], "level")
+        self.assertFalse(decision["measured_handoff_safe"])
+
+    @patch(
+        "Interaction.predictive_brake_handoff.ModelBasedBrakingController",
+        FakePredictor,
+    )
     def test_position_ratchet_rejects_stale_localization(self):
         item = episode()
         item.phase = item.POSITION

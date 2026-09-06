@@ -225,11 +225,14 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # is deliberately gentler than confirmed coasting.
         "coast_candidate_tail_cancellation_max_acceleration_m_s2": 1.0,
         "coast_acceleration_filter_time_constant_s": 0.08,
-        # Position control receives ownership only after measured translation,
-        # attitude, and acceleration have settled. Longitudinal motion uses the
-        # tight stop threshold; bounded transverse drift is handed to position
-        # control with its target latched at the measured lateral coordinate.
-        # brake_xy_speed_m_s is retained for the legacy observer-brake path.
+        # The legacy coast path levels as soon as signed speed along the frozen
+        # interaction direction reaches 0.10 m/s, then hands the frozen stop
+        # target to position control after 0.30 s of actually sent level
+        # commands.  The older state-settled fields remain accepted for archived
+        # mission/calibration files, but they no longer delay this timed handoff.
+        "coast_level_handoff_speed_m_s": 0.10,
+        "coast_level_handoff_delay_s": 0.30,
+        # brake_xy_speed_m_s is retained for the observer-brake path.
         "coast_handoff_speed_m_s": 0.04,
         "coast_handoff_max_lateral_speed_m_s": 0.15,
         "coast_handoff_max_tilt_deg": 3.0,

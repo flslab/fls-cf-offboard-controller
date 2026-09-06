@@ -1606,7 +1606,8 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertLessEqual(control.coast_tracking_power_w_per_kg, 0.0)
         self.assertEqual(control.command_mode, 'attitude_coast')
 
-        # One low-speed sample is not enough, and a rebound resets the dwell.
+        # The first signed-speed sample below 0.10 m/s latches level attitude.
+        # A subsequent rebound does not restart braking or reset the timer.
         self.assertFalse(control.update_coast_attitude(
             [0.0, 0.18, 1.0], [0.0, 0.03, 0.0],
             [0.0, 0.11, 1.0], [0.0, 0.0, 0.0], 1.10,
@@ -1631,10 +1632,16 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             command_timestamp=1.29,
         ))
         control.send(commander, command_timestamp=1.29, yaw_deg=0.0)
+        self.assertFalse(control.update_coast_attitude(
+            [0.0, 0.22, 1.0], [0.0, 0.20, 0.0],
+            [0.0, 0.11, 1.0], [0.0, 0.0, 0.0], 1.399,
+            command_timestamp=1.399,
+        ))
+        control.send(commander, command_timestamp=1.399, yaw_deg=0.0)
         self.assertTrue(control.update_coast_attitude(
             [0.0, 0.22, 1.0], [0.0, 0.02, 0.0],
-            [0.0, 0.11, 1.0], [0.0, 0.0, 0.0], 1.35,
-            command_timestamp=1.35,
+            [0.0, 0.11, 1.0], [0.0, 0.0, 0.0], 1.401,
+            command_timestamp=1.401,
         ))
         self.assertEqual(control.command_mode, 'position_hold')
         control.send(commander)
@@ -1644,7 +1651,10 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.stopping_position_m, [0.0, 0.22, 1.0]
         )
         self.assertTrue(control.coast_target_clamped_to_actual)
-        self.assertEqual(control.brake_completion_reason, 'actual_state_settled')
+        self.assertEqual(
+            control.brake_completion_reason,
+            'timed_level_to_position_handoff',
+        )
 
     def test_handoff_holds_frozen_virtual_stop_when_it_is_still_ahead(self):
         commander = FakeCommander()
@@ -1659,6 +1669,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             coast_handoff_max_acceleration_m_s2=10.0,
             coast_handoff_max_tilt_deg=30.0,
             coast_alignment_dwell_s=0.0,
+            coast_level_handoff_delay_s=0.0,
         )
         self.assertTrue(control.start_contact('orientation'))
         self.assertTrue(control.end_contact(
@@ -1670,10 +1681,16 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         control.send(commander, command_timestamp=1.0, yaw_deg=0.0)
 
-        self.assertTrue(control.update_coast_attitude(
+        self.assertFalse(control.update_coast_attitude(
             [0.0, 0.16, 1.0], [0.0, 0.01, 0.0],
             [0.0, 0.28, 1.0], [0.0, 0.0, 0.0], 1.01,
             command_timestamp=1.01,
+        ))
+        control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
+        self.assertTrue(control.update_coast_attitude(
+            [0.0, 0.16, 1.0], [0.0, 0.01, 0.0],
+            [0.0, 0.28, 1.0], [0.0, 0.0, 0.0], 1.02,
+            command_timestamp=1.02,
         ))
         np.testing.assert_allclose(control.hold_position, [0.0, 0.28, 1.0])
         np.testing.assert_allclose(
@@ -1770,59 +1787,70 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertGreaterEqual(minimum_speed, -0.02)
         self.assertLessEqual(maximum_position, 0.27)
         self.assertTrue(control.coast_target_clamped_to_actual)
-        self.assertLess(abs(speed), 0.04)
+        self.assertLessEqual(abs(speed), 0.10)
+        self.assertEqual(
+            control.coast_handoff_reason,
+            'timed_level_to_position_handoff',
+        )
 
-    def test_coast_handoff_requires_level_attitude_and_continuous_dwell(self):
+    def test_coast_handoff_levels_at_point_one_then_waits_point_three(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
             yaw_deg=0.0,
             shadow_mode=False,
-            coast_attitude_response_delay_s=0.0,
-            coast_attitude_time_constant_s=0.0,
-            coast_handoff_speed_m_s=0.04,
-            coast_handoff_max_tilt_deg=3.0,
-            coast_handoff_max_acceleration_m_s2=0.35,
-            coast_alignment_dwell_s=0.05,
+            coast_level_handoff_speed_m_s=0.10,
+            coast_level_handoff_delay_s=0.30,
         )
         self.assertTrue(control.start_contact('orientation'))
         self.assertTrue(control.end_contact(
-            [0.0, 0.0, 1.0], [0.0, 0.03, 0.0], 1.0,
+            [0.0, 0.0, 1.0], [0.0, 0.30, 0.0], 1.0,
             interaction_direction=[0.0, 1.0, 0.0], coast=True,
         ))
         control.confirm_release_candidate(timestamp=1.0)
         control.send(commander, command_timestamp=1.0, yaw_deg=0.0)
 
+        # Above the threshold the existing target-aware attitude brake remains
+        # active. The threshold sample itself immediately commands true level.
         self.assertFalse(control.update_coast_attitude(
-            [0.0, 0.001, 1.0], [0.0, 0.03, 0.0],
+            [0.0, 0.01, 1.0], [0.0, 0.11, 0.0],
             [0.0, 0.20, 1.0], [0.0, 0.0, 0.0], 1.01,
-            current_orientation_rpy=np.radians([4.0, 0.0, 0.0]),
             command_timestamp=1.01,
         ))
+        self.assertFalse(control._coast_level_handoff_latched)
         control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
-        self.assertFalse(control.coast_handoff_state_ready)
         self.assertFalse(control.update_coast_attitude(
-            [0.0, 0.001, 1.0], [0.0, 0.03, 0.0],
+            [0.0, 0.02, 1.0], [0.0, 0.099, 0.0],
             [0.0, 0.20, 1.0], [0.0, 0.0, 0.0], 1.02,
             current_orientation_rpy=np.zeros(3),
             command_timestamp=1.02,
         ))
         control.send(commander, command_timestamp=1.02, yaw_deg=0.0)
-        self.assertTrue(control.coast_handoff_state_ready)
+        self.assertTrue(control._coast_level_handoff_latched)
+        self.assertEqual(control.contact_roll_deg, 0.0)
+        self.assertEqual(control.contact_pitch_deg, 0.0)
+        self.assertFalse(control.coast_handoff_state_ready)
+
+        # A speed rebound cannot re-enable attitude braking after the latch.
         self.assertFalse(control.update_coast_attitude(
-            [0.0, 0.001, 1.0], [0.0, 0.03, 0.0],
-            [0.0, 0.20, 1.0], [0.0, 0.0, 0.0], 1.04,
-            current_orientation_rpy=np.zeros(3),
-            command_timestamp=1.04,
+            [0.0, 0.03, 1.0], [0.0, 0.15, 0.0],
+            [0.0, 0.20, 1.0], [0.0, 0.0, 0.0], 1.319,
+            current_orientation_rpy=np.radians([8.0, 0.0, 0.0]),
+            command_timestamp=1.319,
         ))
-        control.send(commander, command_timestamp=1.04, yaw_deg=0.0)
+        self.assertEqual(control.contact_roll_deg, 0.0)
+        self.assertEqual(control.contact_pitch_deg, 0.0)
+        control.send(commander, command_timestamp=1.319, yaw_deg=0.0)
         self.assertTrue(control.update_coast_attitude(
-            [0.0, 0.001, 1.0], [0.0, 0.03, 0.0],
-            [0.0, 0.20, 1.0], [0.0, 0.0, 0.0], 1.071,
-            current_orientation_rpy=np.zeros(3),
-            command_timestamp=1.071,
+            [0.0, 0.04, 1.0], [0.0, 0.15, 0.0],
+            [0.0, 0.20, 1.0], [0.0, 0.0, 0.0], 1.321,
+            current_orientation_rpy=np.radians([8.0, 0.0, 0.0]),
+            command_timestamp=1.321,
         ))
-        self.assertEqual(control.coast_handoff_reason, 'actual_state_settled')
+        self.assertEqual(
+            control.coast_handoff_reason,
+            'timed_level_to_position_handoff',
+        )
 
     def test_low_speed_direction_reversal_handoffs_after_state_dwell(self):
         commander = FakeCommander()
@@ -1837,6 +1865,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             coast_handoff_max_acceleration_m_s2=10.0,
             coast_handoff_max_tilt_deg=30.0,
             coast_alignment_dwell_s=0.08,
+            coast_level_handoff_delay_s=0.08,
         )
         self.assertTrue(control.start_contact('orientation'))
         self.assertTrue(control.end_contact(
@@ -1848,7 +1877,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         control.send(commander, command_timestamp=1.0, yaw_deg=0.0)
 
-        # Reversal alone is insufficient while lateral speed is still high.
+        # Reversal immediately enters the same one-way level phase.
         self.assertFalse(control.update_coast_attitude(
             [0.02, 0.12, 1.0], [0.25, -0.01, 0.0],
             [0.0, 0.2, 1.0], [0.0, 0.0, 0.0], 1.01,
@@ -1857,8 +1886,8 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
         self.assertEqual(control.command_mode, 'attitude_coast')
 
-        # Crossing the original direction is not enough by itself: measured
-        # speed/tilt/acceleration must remain settled for the configured dwell.
+        # The level phase waits only for its fixed delay; it does not command a
+        # second acceleration to eliminate reverse motion.
         self.assertFalse(control.update_coast_attitude(
             [0.021, 0.119, 1.0], [0.002, -0.002, 0.0],
             [0.0, 0.2, 1.0], [0.0, 0.0, 0.0], 1.02,
@@ -1879,11 +1908,11 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(control.command_mode, 'position_hold')
         self.assertEqual(
             control.coast_handoff_reason,
-            'motion_reversed_state_settled',
+            'timed_level_to_position_handoff',
         )
         self.assertEqual(
             control.brake_completion_reason,
-            'motion_reversed_state_settled',
+            'timed_level_to_position_handoff',
         )
         np.testing.assert_allclose(control.hold_position, [0.023, 0.2, 1.0])
         self.assertFalse(control.coast_target_clamped_to_actual)
@@ -1902,6 +1931,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             coast_handoff_max_acceleration_m_s2=100.0,
             coast_handoff_max_tilt_deg=30.0,
             coast_alignment_dwell_s=0.0,
+            coast_level_handoff_delay_s=0.0,
         )
         self.assertTrue(control.start_contact('orientation'))
         self.assertTrue(control.end_contact(
@@ -1913,11 +1943,18 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         control.send(commander, command_timestamp=1.0, yaw_deg=0.0)
 
-        self.assertTrue(control.update_coast_attitude(
+        self.assertFalse(control.update_coast_attitude(
             [0.05, 0.20, 1.0], [0.08, 0.0, 0.0],
             [0.0, 0.20, 1.0], [0.0, 0.0, 0.0], 1.01,
             current_orientation_rpy=np.zeros(3),
             command_timestamp=1.01,
+        ))
+        control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
+        self.assertTrue(control.update_coast_attitude(
+            [0.05, 0.20, 1.0], [0.08, 0.0, 0.0],
+            [0.0, 0.20, 1.0], [0.0, 0.0, 0.0], 1.02,
+            current_orientation_rpy=np.zeros(3),
+            command_timestamp=1.02,
         ))
 
         self.assertAlmostEqual(control.coast_lateral_speed_m_s, 0.08)
@@ -2004,7 +2041,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(control.command_mode, 'attitude_coast')
         self.assertEqual(
             control.coast_handoff_reason,
-            'waiting_for_actual_stop_after_timeout',
+            'waiting_for_timed_level_handoff_after_timeout',
         )
         self.assertLessEqual(control.coast_tracking_power_w_per_kg, 0.0)
 
@@ -2019,6 +2056,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             coast_attitude_time_constant_s=0.0,
             coast_handoff_max_acceleration_m_s2=10.0,
             coast_alignment_dwell_s=0.0,
+            coast_level_handoff_delay_s=0.0,
         )
         self.assertTrue(control.start_contact('orientation'))
         self.assertTrue(control.end_contact(
@@ -2045,10 +2083,16 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         np.testing.assert_allclose(
             control.release_momentum_kg_m_s, [0.0, 0.0017, 0.0]
         )
-        self.assertTrue(control.update_coast_attitude(
+        self.assertFalse(control.update_coast_attitude(
             [0.0, 0.02, 1.0], [0.0, 0.01, 0.0],
             [0.0, -0.50, 1.0], [0.0, 0.0, 0.0], 1.11,
             command_timestamp=1.11,
+        ))
+        control.send(commander, command_timestamp=1.11, yaw_deg=0.0)
+        self.assertTrue(control.update_coast_attitude(
+            [0.0, 0.02, 1.0], [0.0, 0.01, 0.0],
+            [0.0, -0.50, 1.0], [0.0, 0.0, 0.0], 1.12,
+            command_timestamp=1.12,
         ))
         np.testing.assert_allclose(control.hold_position, [0.0, 0.02, 1.0])
 

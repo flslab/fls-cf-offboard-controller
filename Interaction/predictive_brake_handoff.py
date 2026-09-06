@@ -50,7 +50,7 @@ DEFAULTS = {
     "max_brake_duration_s": None,
     "max_attitude_phase_s": 1.5,
     "direction_inference_speed_m_s": 0.03,
-    "handoff_longitudinal_speed_m_s": 0.04,
+    "handoff_longitudinal_speed_m_s": 0.10,
     "handoff_lateral_speed_m_s": 0.15,
     "handoff_tilt_deg": 3.0,
     "handoff_angular_rate_rad_s": 0.50,

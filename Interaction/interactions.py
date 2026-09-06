@@ -2075,7 +2075,12 @@ class GuidedTouchProtocol:
 
 
 class TranslationControlHandoff:
-    """Switch translation through contact, braking, and position-hold modes."""
+    """Switch translation through contact, braking, and position-hold modes.
+
+    The legacy coast path uses a one-way timed handoff: level at a configured
+    signed longitudinal speed, hold that actually sent level command for a
+    configured delay, then give the frozen release target to position control.
+    """
 
     POSITION_HOLD = 'position_hold'
     CONTACT_POSITION = 'position_interaction'
@@ -2106,6 +2111,8 @@ class TranslationControlHandoff:
             coast_attitude_acceleration_scale=1.0,
             coast_calibrated_direction_xy=None,
             coast_level_terminal_speed_m_s=0.03,
+            coast_level_handoff_speed_m_s=0.10,
+            coast_level_handoff_delay_s=0.30,
             coast_command_period_s=0.02,
             coast_command_acceleration_deadband_m_s2=0.02,
             coast_candidate_tail_cancellation_max_acceleration_m_s2=1.0,
@@ -2179,6 +2186,12 @@ class TranslationControlHandoff:
         self.coast_level_terminal_speed_m_s = float(
             coast_level_terminal_speed_m_s
         )
+        self.coast_level_handoff_speed_m_s = float(
+            coast_level_handoff_speed_m_s
+        )
+        self.coast_level_handoff_delay_s = float(
+            coast_level_handoff_delay_s
+        )
         self.coast_command_period_s = float(coast_command_period_s)
         self.coast_command_acceleration_deadband_m_s2 = float(
             coast_command_acceleration_deadband_m_s2
@@ -2224,6 +2237,8 @@ class TranslationControlHandoff:
             self.coast_attitude_time_constant_s,
             self.coast_attitude_acceleration_scale,
             self.coast_level_terminal_speed_m_s,
+            self.coast_level_handoff_speed_m_s,
+            self.coast_level_handoff_delay_s,
             self.coast_command_period_s,
             self.coast_command_acceleration_deadband_m_s2,
             self.coast_candidate_tail_cancellation_max_acceleration_m_s2,
@@ -2259,6 +2274,8 @@ class TranslationControlHandoff:
             or self.coast_level_terminal_speed_m_s < 0
             or self.coast_level_terminal_speed_m_s
             >= self.coast_handoff_speed_m_s
+            or self.coast_level_handoff_speed_m_s <= 0
+            or self.coast_level_handoff_delay_s < 0
             or self.coast_command_period_s <= 0
             or self.coast_command_acceleration_deadband_m_s2 < 0
             or self.coast_candidate_tail_cancellation_max_acceleration_m_s2
@@ -2343,6 +2360,7 @@ class TranslationControlHandoff:
         self._last_attitude_send_timestamp = None
         self._attitude_send_intervals_s = []
         self._level_attitude_command_started_at = None
+        self._coast_level_handoff_latched = False
         self._tail_neutralization_deadline = None
         self._tail_neutralization_needs_send_anchor = False
         self.release_candidate_action = None
@@ -2447,6 +2465,7 @@ class TranslationControlHandoff:
         self._last_attitude_send_timestamp = None
         self._attitude_send_intervals_s = []
         self._level_attitude_command_started_at = None
+        self._coast_level_handoff_latched = False
         self._tail_neutralization_deadline = None
         self._tail_neutralization_needs_send_anchor = False
         self.release_candidate_action = None
@@ -2927,6 +2946,8 @@ class TranslationControlHandoff:
         self._coast_filtered_acceleration_xy.fill(0.0)
         self._coast_model_acceleration_xy.fill(0.0)
         self._coast_acceleration_valid = False
+        self._level_attitude_command_started_at = None
+        self._coast_level_handoff_latched = False
         self._tail_neutralization_deadline = None
         self._tail_neutralization_needs_send_anchor = False
         if coast:
@@ -3002,6 +3023,8 @@ class TranslationControlHandoff:
         self._coast_filtered_acceleration_xy.fill(0.0)
         self._coast_model_acceleration_xy.fill(0.0)
         self._coast_acceleration_valid = False
+        self._level_attitude_command_started_at = None
+        self._coast_level_handoff_latched = False
         self._tail_neutralization_deadline = None
         self._tail_neutralization_needs_send_anchor = False
         self.release_candidate_action = None
@@ -3052,6 +3075,10 @@ class TranslationControlHandoff:
                 raise ValueError('confirmed release timestamp must be finite')
             self._brake_started_at = timestamp
             self._coast_alignment_since = None
+            # A reversible release candidate may already have sent level
+            # commands.  The requested 0.30 s interval starts no earlier than
+            # the confirmed release and is anchored by the next actual send.
+            self._level_attitude_command_started_at = None
         self._release_candidate_mode = None
 
     def update_coast_attitude(
@@ -3068,6 +3095,10 @@ class TranslationControlHandoff:
         """Brake with attitude toward a stop target frozen at release.
 
         Returns true only on the sample that transitions to position control.
+        Once signed speed reaches ``coast_level_handoff_speed_m_s``, attitude
+        is latched level and cannot resume reverse-motion damping. Position
+        handoff follows ``coast_level_handoff_delay_s`` after the first actual
+        level send (and never before release confirmation).
         The stop target is retained only along the interaction axis; the
         measured perpendicular coordinate is latched at handoff. If measured
         motion already passed the stop, the complete measured position is
@@ -3112,7 +3143,16 @@ class TranslationControlHandoff:
         self.brake_projected_speed_m_s = float(
             velocity[:2] @ self.brake_direction[:2]
         )
-        xy_speed = float(np.linalg.norm(velocity[:2]))
+        if (
+            not self._coast_level_handoff_latched
+            and self.brake_projected_speed_m_s
+            <= self.coast_level_handoff_speed_m_s
+        ):
+            self._coast_level_handoff_latched = True
+            # The timer is based on the first real level command sent after the
+            # speed threshold, not on this earlier state/plan timestamp.
+            self._level_attitude_command_started_at = None
+            self._coast_alignment_since = None
         brake_direction_norm = float(np.linalg.norm(
             self.brake_direction[:2]
         ))
@@ -3124,13 +3164,11 @@ class TranslationControlHandoff:
                 velocity[:2]
                 - self.brake_projected_speed_m_s * brake_direction_xy
             )
-            longitudinal_speed = abs(self.brake_projected_speed_m_s)
             lateral_speed = float(np.linalg.norm(lateral_velocity_xy))
         else:
             # With no trustworthy release axis, retain the original full-XY
             # stop gate and latch the complete measured position at handoff.
             brake_direction_xy = np.zeros(2)
-            longitudinal_speed = xy_speed
             lateral_speed = 0.0
         self.coast_lateral_speed_m_s = lateral_speed
         attitude_timed_out = bool(
@@ -3234,6 +3272,26 @@ class TranslationControlHandoff:
             tracking['action'] = 'leveling_command_deadband'
             tracking['power_w_per_kg'] = 0.0
             tracking['acceleration_saturated'] = False
+        if self._coast_level_handoff_latched:
+            # Once the signed longitudinal speed first reaches 0.10 m/s, never
+            # command reverse-motion cleanup.  Send true level attitude for the
+            # fixed handoff delay, even if the measured speed subsequently
+            # bounces across the threshold while the old response decays.
+            tracking['roll_deg'] = 0.0
+            tracking['pitch_deg'] = 0.0
+            tracking['raw_tilt_deg'] = 0.0
+            tracking['required_deceleration_m_s2'] = 0.0
+            tracking['tail_cancellation_acceleration_m_s2'] = 0.0
+            tracking['tail_cancellation_signed_acceleration_m_s2'] = 0.0
+            tracking['predicted_terminal_after_pulse_m_s'] = (
+                tracking['predicted_level_terminal_speed_m_s']
+            )
+            tracking['requested_acceleration_m_s2'] = np.zeros(2)
+            tracking['applied_acceleration_m_s2'] = np.zeros(2)
+            tracking['command_acceleration_m_s2'] = np.zeros(2)
+            tracking['action'] = 'level_for_timed_position_handoff'
+            tracking['power_w_per_kg'] = 0.0
+            tracking['acceleration_saturated'] = False
         self.coast_stop_target_position_m = target_position.copy()
         self.coast_target_remaining_distance_m = float(
             tracking['remaining_distance_m']
@@ -3313,9 +3371,6 @@ class TranslationControlHandoff:
             -1.0,
             1.0,
         ))))
-        measured_acceleration_norm = float(np.linalg.norm(
-            self._coast_filtered_acceleration_xy
-        ))
         planned_command_level = bool(
             np.linalg.norm(tracking['command_acceleration_m_s2']) <= 1e-9
         )
@@ -3324,8 +3379,7 @@ class TranslationControlHandoff:
             and np.linalg.norm(self._coast_command_history[-1][1]) <= 1e-9
         )
         self.coast_response_queue_settle_required_s = float(
-            self.coast_attitude_response_delay_s
-            + 4.0 * self.coast_attitude_time_constant_s
+            self.coast_level_handoff_delay_s
         )
         self.coast_response_queue_settle_elapsed_s = (
             None
@@ -3336,60 +3390,26 @@ class TranslationControlHandoff:
                 0.0,
             )
         )
-        predicted_terminal_safe = bool(
-            tracking['predicted_level_terminal_speed_m_s'] is None
-            or abs(tracking['predicted_level_terminal_speed_m_s'])
-            <= self.coast_handoff_speed_m_s
-        )
         self.coast_response_queue_settled = bool(
-            planned_command_level
+            self._coast_level_handoff_latched
+            and planned_command_level
             and history_command_level
             and self.coast_response_queue_settle_elapsed_s is not None
             and self.coast_response_queue_settle_elapsed_s
             >= self.coast_response_queue_settle_required_s
-            and predicted_terminal_safe
-        )
-        motion_reversed = bool(
-            np.linalg.norm(self.brake_direction[:2]) > 1e-9
-            and self.brake_projected_speed_m_s <= 0.0
         )
         self.coast_handoff_state_ready = bool(
-            self._coast_acceleration_valid
-            and longitudinal_speed <= self.coast_handoff_speed_m_s
-            and lateral_speed <= self.coast_handoff_max_lateral_speed_m_s
-            and self.coast_actual_tilt_deg <= self.coast_handoff_max_tilt_deg
-            and measured_acceleration_norm
-            <= self.coast_handoff_max_acceleration_m_s2
-            and self.coast_response_queue_settled
+            self.coast_response_queue_settled
         )
-        if self.coast_handoff_state_ready:
-            if self._coast_alignment_since is None:
-                self._coast_alignment_since = timestamp
-        else:
-            self._coast_alignment_since = None
-        handoff_ready = bool(
-            self._coast_alignment_since is not None
-            and timestamp - self._coast_alignment_since
-            >= self.coast_alignment_dwell_s
-        )
+        handoff_ready = self.coast_handoff_state_ready
         if not handoff_ready or not bool(allow_position_handoff):
-            # A timeout is diagnostic only. Switching a still-moving vehicle
-            # to position control would recreate the pullback failure, so keep
-            # applying bounded dissipative attitude damping until longitudinal
-            # speed and the bounded lateral handoff envelope are acceptable.
             if attitude_timed_out:
-                self.coast_handoff_reason = 'waiting_for_actual_stop_after_timeout'
+                self.coast_handoff_reason = (
+                    'waiting_for_timed_level_handoff_after_timeout'
+                )
             return False
 
-        if motion_reversed:
-            self.coast_handoff_reason = (
-                'motion_reversed_state_settled'
-            )
-        else:
-            self.coast_handoff_reason = (
-                'actual_state_settled_after_timeout'
-                if attitude_timed_out else 'actual_state_settled'
-            )
+        self.coast_handoff_reason = 'timed_level_to_position_handoff'
         # Hold the stop point frozen at release only along the calibrated
         # interaction line. The perpendicular coordinate is always latched to
         # the measured position, allowing native position control to damp small
@@ -7858,6 +7878,18 @@ class InteractionsControl:
                                 translation_control
                                 .coast_response_queue_settle_required_s
                             ),
+                            'level_handoff_speed_threshold_m_s': (
+                                translation_control
+                                .coast_level_handoff_speed_m_s
+                            ),
+                            'level_handoff_delay_s': (
+                                translation_control
+                                .coast_level_handoff_delay_s
+                            ),
+                            'level_handoff_latched': (
+                                translation_control
+                                ._coast_level_handoff_latched
+                            ),
                             'command_mode': (
                                 translation_control.command_mode
                             ),
@@ -8987,6 +9019,15 @@ class InteractionsControl:
                 ),
                 'coast_response_queue_settle_required_s': (
                     translation_control.coast_response_queue_settle_required_s
+                ),
+                'coast_level_handoff_speed_threshold_m_s': (
+                    translation_control.coast_level_handoff_speed_m_s
+                ),
+                'coast_level_handoff_delay_s': (
+                    translation_control.coast_level_handoff_delay_s
+                ),
+                'coast_level_handoff_latched': (
+                    translation_control._coast_level_handoff_latched
                 ),
                 'coast_handoff_reason': (
                     translation_control.coast_handoff_reason
