@@ -7,6 +7,9 @@ claim that a POSITION controller has been identified.
 
 Use is explicitly calibration-scoped. Its one-way mode may shorten the original
 constant brake pulse, but cannot extend it or restart braking after leveling.
+An experimental state outside the model's identified velocity/attitude range
+cannot authorize early leveling: the already scheduled fixed brake continues,
+bounded by its original deadline, until the state re-enters that range.
 The caller must log/send a decision, then record_command only after that send
 succeeds. Invalid-input/model fallbacks contain NO command: the caller must
 level/abort the experimental maneuver, not continue a stale instruction. The
@@ -534,8 +537,11 @@ class ModelBasedBrakingController:
         return result
 
     def _residual_result_details(self, residual, *, state_age_s,
-                                 dynamic_margin_m_s=0.):
+                                 dynamic_margin_m_s=0.,
+                                 corrected_prediction=None):
         static_margin = self.terminal_velocity_error_margin_m_s
+        if corrected_prediction is None:
+            corrected_prediction = bool(residual["ready"])
         return {
             "motion_residual_ready": bool(residual["ready"]),
             "motion_residual_status": residual["status"],
@@ -554,7 +560,9 @@ class ModelBasedBrakingController:
             ),
             "motion_residual_clipped": bool(residual["clipped"]),
             "motion_residual_rejected": bool(residual["rejected"]),
-            "motion_residual_corrected_prediction": bool(residual["ready"]),
+            "motion_residual_corrected_prediction": bool(
+                corrected_prediction
+            ),
             "motion_residual_future_hold_s": self.config[
                 "motion_residual_apply_horizon_s"
             ],
@@ -566,6 +574,87 @@ class ModelBasedBrakingController:
             ),
             "state_age_s": float(state_age_s),
         }
+
+    def _bounded_original_brake_result(
+            self, now, started, observed, residual, remaining, reason, *,
+            candidate_count=0, dynamic_margin_m_s=0.,
+            terminal_constraints_evaluated=False,
+            hard_terminal_constraints_satisfied=None,
+            hard_feasible_candidate_count=None,
+            terminal_velocity_constraint_satisfied=None,
+            terminal_tilt_constraint_satisfied=None,
+            terminal_candidate_grid_refined=False):
+        """Continue only the already-authorized calibration brake pulse.
+
+        This is deliberately not reported as a model-selected or
+        terminal-constraint-feasible command.  It cannot increase tilt,
+        restart a latched brake, or run past the original deadline.
+        """
+        yaw, sign = observed[5], self.direction_xy[1]
+        tilt = -math.radians(self.config["brake_tilt_deg"])
+        tilt_deg = math.degrees(tilt)
+        velocity_range = [
+            min(float(row["velocity_m_s"][0]) for row in self.ranges),
+            max(float(row["velocity_m_s"][1]) for row in self.ranges),
+        ]
+        tilt_range_deg = [
+            math.degrees(min(float(row["theta_rad"][0])
+                             for row in self.ranges)),
+            math.degrees(max(float(row["theta_rad"][1])
+                             for row in self.ranges)),
+        ]
+        return self._result(
+            "brake",
+            reason,
+            now,
+            started,
+            projected_tilt_rad=tilt,
+            roll_deg=float(-tilt_deg*sign*math.cos(yaw)),
+            pitch_deg=float(-tilt_deg*sign*math.sin(yaw)),
+            candidate_count=int(candidate_count),
+            selected_pulse_s=float(remaining),
+            fallback_to_original_brake=True,
+            state_extrapolates_training_range=bool(observed[6]),
+            observed_projected_velocity_m_s=float(observed[2]),
+            observed_projected_tilt_deg=math.degrees(float(observed[3])),
+            identified_velocity_range_m_s=velocity_range,
+            identified_tilt_range_deg=tilt_range_deg,
+            selected_directional_model=self.selected_directional_model,
+            terminal_velocity_tolerance_m_s=self.config[
+                "terminal_velocity_tolerance_m_s"
+            ],
+            terminal_velocity_error_margin_m_s=(
+                self.terminal_velocity_error_margin_m_s
+            ),
+            terminal_tilt_tolerance_deg=self.config[
+                "terminal_tilt_tolerance_deg"
+            ],
+            terminal_constraints_evaluated=bool(
+                terminal_constraints_evaluated
+            ),
+            hard_terminal_constraints_satisfied=(
+                hard_terminal_constraints_satisfied
+            ),
+            hard_feasible_candidate_count=hard_feasible_candidate_count,
+            terminal_velocity_constraint_satisfied=(
+                terminal_velocity_constraint_satisfied
+            ),
+            terminal_tilt_constraint_satisfied=(
+                terminal_tilt_constraint_satisfied
+            ),
+            terminal_candidate_grid_refined=bool(
+                terminal_candidate_grid_refined
+            ),
+            model_train_segment_ids=copy.deepcopy(
+                self.model.get("train_segment_ids", [])
+            ),
+            **self._residual_result_details(
+                residual,
+                state_age_s=now-observed[0],
+                dynamic_margin_m_s=dynamic_margin_m_s,
+                corrected_prediction=False,
+            ),
+        )
 
     def _state(self, state, now):
         stamp = _number(state["time_s"], "state time")
@@ -760,6 +849,49 @@ class ModelBasedBrakingController:
             observed = self._state(state, now)
             residual = self._observe_motion_residual(observed)
             remaining = max(0., self.brake_deadline_s-now)
+            # Experimental calibration is allowed to observe outside the
+            # fitted range so it can collect new data, but an extrapolated
+            # forecast must not cancel a known, bounded baseline brake.  The
+            # 2026-09-06 segment-6 failure otherwise leveled after about two
+            # brake frames at 1.16 m/s and coasted into the global boundary.
+            if observed[6]:
+                if (observed[2] > 0 and remaining > 0
+                        and not self.level_latched):
+                    return self._bounded_original_brake_result(
+                        now,
+                        started,
+                        observed,
+                        residual,
+                        remaining,
+                        "state_outside_identified_range_"
+                        "continue_bounded_original_brake",
+                    )
+                was_latched = self.level_latched
+                if self.config["calibration_one_way_latch"]:
+                    self.level_latched = True
+                return self._result(
+                    "level",
+                    ("already_level_latched" if was_latched else
+                     "state_outside_identified_range_"
+                     "level_for_nonpositive_velocity_or_deadline"),
+                    now,
+                    started,
+                    projected_tilt_rad=0.,
+                    roll_deg=0.,
+                    pitch_deg=0.,
+                    selected_pulse_s=0.,
+                    fallback_to_original_brake=False,
+                    state_extrapolates_training_range=True,
+                    terminal_constraints_evaluated=False,
+                    hard_terminal_constraints_satisfied=None,
+                    terminal_velocity_constraint_satisfied=None,
+                    terminal_tilt_constraint_satisfied=None,
+                    **self._residual_result_details(
+                        residual,
+                        state_age_s=now-observed[0],
+                        corrected_prediction=False,
+                    ),
+                )
             durations = np.unique(np.r_[
                 0.,
                 np.minimum(self.config["candidate_pulse_s"], remaining),
@@ -788,31 +920,17 @@ class ModelBasedBrakingController:
             # bounded by the original deadline and is explicitly *not* a
             # terminal-constraint result.
             if observed[2] > 0 and remaining > 0 and not self.level_latched:
-                yaw, sign = observed[5], self.direction_xy[1]
-                tilt = -math.radians(self.config["brake_tilt_deg"])
-                tilt_deg = math.degrees(tilt)
-                return self._result(
-                    "brake",
-                    "prediction_compute_budget_exceeded_continue_bounded_original_brake",
+                return self._bounded_original_brake_result(
                     now,
                     started,
-                    projected_tilt_rad=tilt,
-                    roll_deg=float(-tilt_deg*sign*math.cos(yaw)),
-                    pitch_deg=float(-tilt_deg*sign*math.sin(yaw)),
+                    observed,
+                    residual,
+                    remaining,
+                    "prediction_compute_budget_exceeded_continue_bounded_original_brake",
                     candidate_count=forecast["candidate_count"],
-                    selected_pulse_s=float(remaining),
-                    fallback_to_original_brake=True,
-                    terminal_constraints_evaluated=False,
-                    hard_terminal_constraints_satisfied=None,
-                    terminal_velocity_constraint_satisfied=None,
-                    terminal_tilt_constraint_satisfied=None,
-                    **self._residual_result_details(
-                        residual,
-                        state_age_s=now-observed[0],
-                        dynamic_margin_m_s=forecast[
-                            "motion_residual_dynamic_margin_m_s"
-                        ],
-                    ),
+                    dynamic_margin_m_s=forecast[
+                        "motion_residual_dynamic_margin_m_s"
+                    ],
                 )
             if self.config["calibration_one_way_latch"]:
                 self.level_latched = True
@@ -887,6 +1005,36 @@ class ModelBasedBrakingController:
         elif not np.any(no_reverse):
             selected, reason = 0, "unavoidable_predicted_reverse_level_to_remove_brake"
         elif not np.any(feasible):
+            # A lack of a fully feasible *model-selected* early transition is
+            # not permission to cancel the fixed calibration brake. Continue
+            # it for this control cycle and re-evaluate on the next measured
+            # state. This remains bounded by the original protocol deadline.
+            # Approved nonexperimental users still fail closed to level.
+            if self.config["experimental_calibration"]:
+                original_index = int(np.argmin(np.abs(
+                    durations-remaining
+                )))
+                return self._bounded_original_brake_result(
+                    now,
+                    started,
+                    observed,
+                    residual,
+                    remaining,
+                    "no_candidate_satisfies_terminal_state_constraints_"
+                    "continue_bounded_original_brake",
+                    candidate_count=forecast["candidate_count"],
+                    dynamic_margin_m_s=dynamic_margin,
+                    terminal_constraints_evaluated=True,
+                    hard_terminal_constraints_satisfied=False,
+                    hard_feasible_candidate_count=0,
+                    terminal_velocity_constraint_satisfied=bool(
+                        terminal_velocity_ok[original_index]
+                    ),
+                    terminal_tilt_constraint_satisfied=bool(
+                        terminal_tilt_ok[original_index]
+                    ),
+                    terminal_candidate_grid_refined=refined,
+                )
             selected = 0
             reason = (
                 "no_candidate_satisfies_terminal_state_constraints_"

@@ -190,6 +190,53 @@ class CalibrationTrialWaitRuntimeTests(unittest.TestCase):
         self.assertTrue(all(0.29 <= event['wait_elapsed_s'] <= 0.36
                             for event in ready))
 
+    def test_slow_fresh_state_rate_does_not_stretch_attitude_pulses(self):
+        def behavior(state, now, _logs, _controller):
+            # The control loop runs at 100 Hz but the synchronized state is
+            # fresh at 50 Hz. Every other control iteration therefore sees a
+            # duplicate timestamp, matching the late-run slowdown observed on
+            # lb11. Pulse duration must still follow real state time.
+            state['time'] = (
+                1000.0 + int((now-1000.0+1e-8)/0.02)*0.02
+            )
+
+        runtime = self.make_runtime(wait_behavior=behavior)
+        controller, logs, clock, command_times, _config, _duration = runtime
+        controller.ctrl_rate = 100
+
+        def sleep(_seconds):
+            command_times.extend(
+                [clock[0]]
+                * (len(controller.lo_commander.calls)-len(command_times))
+            )
+            clock[0] += 0.01
+            logs.advance(0.01)
+
+        controller._safe_sleep = sleep
+        self.run_planar(runtime)
+        phases = self.events(logs, 'Planar Braking Calibration Phase')
+        for segment in (0, 1):
+            segment_phases = {
+                row['phase']: row for row in phases
+                if row['segment_id'] == segment
+            }
+            accelerate_wall_s = (
+                segment_phases['level_before_brake']['time']
+                - segment_phases['accelerate']['time']
+            )
+            brake_wall_s = (
+                segment_phases['level_after_brake']['time']
+                - segment_phases['brake']['time']
+            )
+            # Phase transitions are quantized to fresh-state intervals. The
+            # first interval may already be credited on the entry cycle, so a
+            # 40 ms phase at 50 Hz may measure as 20-60 ms wall-to-wall in
+            # event timestamps, but it must never stretch to the old 80 ms.
+            self.assertGreaterEqual(accelerate_wall_s, 0.019)
+            self.assertLessEqual(accelerate_wall_s, 0.061)
+            self.assertGreaterEqual(brake_wall_s, 0.019)
+            self.assertLessEqual(brake_wall_s, 0.061)
+
     def test_stale_during_actual_attitude_still_levels_and_aborts(self):
         def behavior(state, _now, _logs, controller):
             if controller.lo_commander.calls and controller.lo_commander.calls[-1][0] == 'zdistance':
@@ -199,6 +246,38 @@ class CalibrationTrialWaitRuntimeTests(unittest.TestCase):
         self.run_planar(runtime, StaleLocalizationError, 'during planar attitude calibration')
         self.assertEqual(runtime[0].lo_commander.calls[-1],
                          ('zdistance', (0.0, 0.0, 0.0, 1.0), {}))
+
+    def test_blocked_host_loop_during_attitude_levels_and_aborts(self):
+        runtime = self.make_runtime()
+        controller, logs, clock, command_times, _config, _duration = runtime
+        _config['safety']['calibration_max_protocol_clock_lag_s'] = 0.5
+        blocked = [False]
+
+        def sleep(_seconds):
+            command_times.extend(
+                [clock[0]]
+                * (len(controller.lo_commander.calls)-len(command_times))
+            )
+            attitude_active = bool(
+                controller.lo_commander.calls
+                and controller.lo_commander.calls[-1][0] == 'zdistance'
+            )
+            step = 0.12 if attitude_active and not blocked[0] else 0.02
+            blocked[0] = blocked[0] or step > 0.02
+            clock[0] += step
+            logs.advance(step)
+
+        controller._safe_sleep = sleep
+        self.run_planar(
+            runtime,
+            StaleLocalizationError,
+            'state sample gap during planar attitude calibration',
+        )
+        self.assertTrue(blocked[0])
+        self.assertEqual(
+            controller.lo_commander.calls[-1],
+            ('zdistance', (0.0, 0.0, 0.0, 1.0), {}),
+        )
 
     def test_old_capture_enabled_setting_cannot_run_retired_experiment(self):
         runtime = self.make_runtime()

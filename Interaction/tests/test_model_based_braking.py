@@ -348,6 +348,48 @@ class ModelBasedBrakingTests(unittest.TestCase):
         self.assertEqual(result['projected_tilt_rad'], 0.)
         self.assertTrue(result['level_latched'])
 
+    def test_out_of_range_forward_state_keeps_bounded_baseline_brake(self):
+        item = controller(deadline=.32)
+        result = item.decide(0., state(v=.9))
+        self.assertEqual(result['action'], 'brake')
+        self.assertEqual(
+            result['reason'],
+            'state_outside_identified_range_'
+            'continue_bounded_original_brake',
+        )
+        self.assertAlmostEqual(result['selected_pulse_s'], .32)
+        self.assertTrue(result['fallback_to_original_brake'])
+        self.assertTrue(result['state_extrapolates_training_range'])
+        self.assertFalse(result['terminal_constraints_evaluated'])
+        self.assertIsNone(result['hard_terminal_constraints_satisfied'])
+        self.assertEqual(result['candidate_count'], 0)
+        self.assertEqual(result['identified_velocity_range_m_s'], [-.2, .8])
+
+        item.record_command(.01, -math.radians(20.))
+        in_range = item.decide(.01, state(.01, v=.79))
+        self.assertFalse(in_range['state_extrapolates_training_range'])
+        self.assertNotEqual(
+            in_range['reason'],
+            'state_outside_identified_range_'
+            'continue_bounded_original_brake',
+        )
+
+    def test_out_of_range_reverse_state_never_restarts_brake(self):
+        item = controller(deadline=.32)
+        result = item.decide(0., state(v=-.3))
+        self.assertEqual(result['action'], 'level')
+        self.assertEqual(result['projected_tilt_rad'], 0.)
+        self.assertTrue(result['level_latched'])
+        self.assertEqual(
+            result['reason'],
+            'state_outside_identified_range_'
+            'level_for_nonpositive_velocity_or_deadline',
+        )
+        item.record_command(.01, 0.)
+        later = item.decide(.01, state(.01, v=.9))
+        self.assertEqual(later['action'], 'level')
+        self.assertEqual(later['reason'], 'already_level_latched')
+
     def test_model_copy_frozen_during_episode(self):
         source = model()
         item = ModelBasedBrakingController(source, target_position_xy=[0., .15],
@@ -377,10 +419,11 @@ class ModelBasedBrakingTests(unittest.TestCase):
         velocity_limited = controller(
             terminal_velocity_tolerance_m_s=.001,
         ).decide(0., state())
-        self.assertEqual(velocity_limited['action'], 'level')
+        self.assertEqual(velocity_limited['action'], 'brake')
         self.assertEqual(
             velocity_limited['reason'],
-            'no_candidate_satisfies_terminal_state_constraints_level_to_remove_brake',
+            'no_candidate_satisfies_terminal_state_constraints_'
+            'continue_bounded_original_brake',
         )
         self.assertEqual(
             velocity_limited['hard_feasible_candidate_count'], 0
@@ -388,15 +431,18 @@ class ModelBasedBrakingTests(unittest.TestCase):
         self.assertFalse(
             velocity_limited['hard_terminal_constraints_satisfied']
         )
+        self.assertTrue(velocity_limited['terminal_constraints_evaluated'])
+        self.assertTrue(velocity_limited['fallback_to_original_brake'])
 
         tilt_limited = controller(
             prediction_horizon_s=.1,
             terminal_velocity_tolerance_m_s=.10,
             terminal_tilt_tolerance_deg=.01,
         ).decide(0., state(v=.05))
-        self.assertEqual(tilt_limited['action'], 'level')
+        self.assertEqual(tilt_limited['action'], 'brake')
         self.assertEqual(tilt_limited['hard_feasible_candidate_count'], 0)
         self.assertFalse(tilt_limited['terminal_tilt_constraint_satisfied'])
+        self.assertTrue(tilt_limited['fallback_to_original_brake'])
 
     def test_selected_brake_candidate_satisfies_all_hard_constraints(self):
         result = controller().decide(0., state())

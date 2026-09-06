@@ -35,20 +35,26 @@ class PlanarBrakingCalibrationTests(unittest.TestCase):
                 PlanarBrakingCalibration({'tilt_levels_deg': [20],
                                          'accelerate_durations_s': durations})
 
-    def test_duration_sweep_allows_repeated_held_out_pair(self):
+    def test_duration_sweep_allows_high_tier_train_validate_control_pairs(self):
         plan = PlanarBrakingCalibration({
             'enabled': True,
             'tilt_levels_deg': [20],
-            'accelerate_durations_s': [.16, .24, .32, .32],
+            'accelerate_durations_s': [
+                .16, .24, .32, .32, .45, .45, .45,
+            ],
         })
-        self.assertEqual(len(plan.trial_directions), 8)
+        self.assertEqual(len(plan.trial_directions), 14)
         np.testing.assert_allclose(
             plan.trial_accelerate_s,
-            [.16, .16, .24, .24, .32, .32, .32, .32],
+            [
+                .16, .16, .24, .24,
+                .32, .32, .32, .32,
+                .45, .45, .45, .45, .45, .45,
+            ],
         )
         self.assertEqual(
             plan.timing_protocol()['accelerate_durations_s'],
-            [.16, .24, .32, .32],
+            [.16, .24, .32, .32, .45, .45, .45],
         )
 
     def test_duration_sweep_accepts_independent_pairwise_brake_schedule(self):

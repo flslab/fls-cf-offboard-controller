@@ -22,8 +22,14 @@ def report(version=1, validation_passed=True):
     ids = list(range(version*2))
     candidate_model['train_segment_ids'] = ids
     candidate_model['directional_models'] = {
-        'positive_y': dict(terminal_velocity_error_margin_m_s=.01),
-        'negative_y': dict(terminal_velocity_error_margin_m_s=.01),
+        label: dict(
+            direction_y=direction,
+            attitude_fit=copy.deepcopy(candidate_model['attitude_fit']),
+            motion_gain=candidate_model['motion_gain'],
+            identifiability=copy.deepcopy(candidate_model['identifiability']),
+            terminal_velocity_error_margin_m_s=.01,
+        )
+        for label, direction in (('positive_y', 1), ('negative_y', -1))
     }
     return dict(validated_control_candidate=dict(
         version=version, model=candidate_model, training_segment_ids=ids,
@@ -216,6 +222,55 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
         self.assertIsNone(adapter._pair_models[2])
         self.assertEqual(self.events[0][1]['reason'], 'candidate_provenance_invalid_or_not_causal')
 
+    def test_high_tier_is_trained_and_validated_before_third_pair(self):
+        high_speed_plan = PlanarBrakingCalibration(dict(
+            enabled=True,
+            tilt_levels_deg=[20.],
+            accelerate_durations_s=[
+                .16, .24, .32, .32, .45, .45, .45,
+            ],
+            start_delay_s=0.,
+            max_xy_speed_m_s=1.6,
+            max_displacement_m=1.2,
+        ))
+        events = []
+        adapter = AdaptiveBrakingCalibration(
+            dict(enabled=True, model_based_braking=dict(max_compute_s=.008)),
+            high_speed_plan,
+            100.,
+            lambda name, data: events.append((name, data)),
+        )
+
+        # Pair 5 can only freeze a model trained through segment 7 and held
+        # out on the first 0.45 s pair (segments 8/9). It therefore has high-
+        # speed validation data, but not high-speed training data yet.
+        pair_five_start = high_speed_plan.command(
+            high_speed_plan.trial_start_s[10]+.001,
+            0.,
+        )
+        adapter.modify(pair_five_start, 1., {}, report(4))
+        pair_five = adapter._pair_models[5]
+        self.assertEqual(pair_five['training_segment_ids'], list(range(8)))
+        self.assertEqual(pair_five['validation_segment_ids'], [8, 9])
+        self.assertNotIn(8, pair_five['model']['train_segment_ids'])
+
+        # Only pair 6 may freeze a candidate whose training prefix contains
+        # the first 0.45 s pair and whose own held-out validation is the
+        # second 0.45 s pair. This is why the highest tier occurs three times.
+        pair_six_start = high_speed_plan.command(
+            high_speed_plan.trial_start_s[12]+.001,
+            0.,
+        )
+        adapter.modify(pair_six_start, 2., {}, report(5))
+        pair_six = adapter._pair_models[6]
+        self.assertEqual(pair_six['training_segment_ids'], list(range(10)))
+        self.assertEqual(pair_six['validation_segment_ids'], [10, 11])
+        self.assertEqual(pair_six['model']['train_segment_ids'], list(range(10)))
+        self.assertIn(8, pair_six['model']['train_segment_ids'])
+        self.assertIn(9, pair_six['model']['train_segment_ids'])
+        self.assertEqual(events[-1][1]['segment_ids'], [12, 13])
+        self.assertTrue(events[-1][1]['adaptive'])
+
     def test_stale_candidate_cannot_skip_a_failed_intermediate_fit(self):
         adapter = self.adapter()
         command = self.command(6, 'level_before_acceleration')
@@ -316,12 +371,32 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
         ))
 
     @patch('Interaction.adaptive_braking_calibration.ModelBasedBrakingController', FakePredictor)
-    def test_missing_measurements_do_not_hold_brake_past_warmup(self):
+    def test_insufficient_observations_continue_bounded_brake_then_recover(self):
         adapter = self.adapter()
         self.prepare_brake(adapter)
-        result = adapter.modify(self.command(4, 'brake'), 10.66, {}, report())
-        self.assertEqual(result.phase, 'level_after_brake')
-        self.assertEqual(self.events[-1][1]['reason'], 'insufficient_actual_brake_observations')
+        episode = adapter._episodes[4]
+        proposed = self.command(4, 'brake')
+        result = adapter.modify(proposed, 10.66, {}, report())
+        self.assertIs(result, proposed)
+        self.assertEqual(result.phase, 'brake')
+        self.assertNotIn(4, adapter._latched)
+        self.assertEqual(episode.decisions, [])
+        self.assertEqual(
+            self.events[-1][1]['reason'],
+            'insufficient_actual_brake_observations_'
+            'continue_bounded_original_brake',
+        )
+        self.assertTrue(self.events[-1][1]['fallback_to_original_brake'])
+
+        # A later distinct state completes the warmup and returns ownership to
+        # the model; the temporary data gap must not permanently latch level.
+        episode.action = 'brake'
+        recovered = adapter.modify(
+            self.command(4, 'brake'), 10.67, state(10.669), report()
+        )
+        self.assertEqual(recovered.phase, 'brake')
+        self.assertEqual(len(episode.decisions), 1)
+        self.assertEqual(self.events[-1][1]['reason'], 'fake_brake')
 
     @patch('Interaction.adaptive_braking_calibration.ModelBasedBrakingController', FakePredictor)
     def test_hard_deadline_is_enforced_even_if_predictor_wants_more_brake(self):
@@ -352,6 +427,26 @@ class AdaptiveBrakingCalibrationTests(unittest.TestCase):
         np.testing.assert_allclose(adapter._episodes[5].target_position_xy, [0., -.30])
         self.assertIn(result.phase, ('brake', 'level_after_brake'))
         self.assertNotEqual(self.events[-1][1]['reason'], 'insufficient_effective_command_history')
+
+    def test_out_of_range_state_cannot_cancel_scheduled_brake(self):
+        adapter = self.adapter(dict(model_based_braking=dict(max_compute_s=.1)))
+        self.prepare_brake(adapter, segment=4)
+        proposed = self.command(4, 'brake')
+        result = adapter.modify(
+            proposed, 10.66, state(10.659, v=.9), report()
+        )
+        self.assertIs(result, proposed)
+        self.assertEqual(result.phase, 'brake')
+        self.assertNotIn(4, adapter._latched)
+        decision = self.events[-1][1]
+        self.assertEqual(decision['action'], 'brake')
+        self.assertEqual(
+            decision['reason'],
+            'state_outside_identified_range_'
+            'continue_bounded_original_brake',
+        )
+        self.assertTrue(decision['fallback_to_original_brake'])
+        self.assertFalse(decision['terminal_constraints_evaluated'])
 
     def test_sent_command_time_must_increase(self):
         adapter = self.adapter()

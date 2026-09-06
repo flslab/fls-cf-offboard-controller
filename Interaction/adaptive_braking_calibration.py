@@ -6,7 +6,11 @@ it, and then only in directions whose held-out terminal-speed margin is below
 the controller tolerance. At each later pair's first trial start, freeze that
 validated snapshot. No model update can change an in-progress pair. A missing
 or ineligible direction keeps its scheduled fixed pulse. A failed online
-prediction levels and latches instead of continuing an obsolete instruction.
+prediction levels and latches instead of continuing an obsolete instruction;
+an out-of-range state may only continue the already scheduled fixed pulse up
+to its original deadline and cannot use extrapolation to level early. A brief
+shortage of distinct brake-state observations has the same bounded behavior;
+it cannot authorize early leveling either.
 
 The caller must validate/start the online worker before enabling this adapter,
 call modify only for an admitted control cycle, and call record_sent only after
@@ -328,8 +332,24 @@ class AdaptiveBrakingCalibration:
             decision = {"action": "level", "reason": "original_brake_deadline",
                         "level_latched": True}
         elif not required:
-            decision = {"action": "fallback", "reason": "insufficient_actual_brake_observations",
-                        "level_latched": True}
+            # A telemetry duplicate/dropout during the initial brake window
+            # is not evidence that leveling is safe. Keep only the fixed,
+            # already-authorized command and retry on the next measured state;
+            # the branch above still enforces the original hard deadline.
+            decision = {
+                "action": "brake",
+                "reason": (
+                    "insufficient_actual_brake_observations_"
+                    "continue_bounded_original_brake"
+                ),
+                "level_latched": False,
+                "fallback_to_original_brake": True,
+                "terminal_constraints_evaluated": False,
+                "actual_brake_observation_count": len(observations),
+                "sent_brake_command_count": self._sent_brake_count.get(
+                    segment, 0
+                ),
+            }
         else:
             decision = episode.decide(now, state)
         if decision.get("action") not in ("brake", "level", "fallback"):

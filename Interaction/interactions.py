@@ -6137,6 +6137,40 @@ class InteractionsControl:
                     )
                 self._safe_sleep(dt)
                 continue
+            protocol_state_step_s = dt
+            if last_state_time is not None:
+                protocol_state_step_s = float(state_time-last_state_time)
+                if (
+                    not np.isfinite(protocol_state_step_s)
+                    or protocol_state_step_s <= 0.0
+                ):
+                    check_trial_wait(now, invalidate=True)
+                    if planar_attitude_active:
+                        self.lo_commander.send_zdistance_setpoint(
+                            0.0, 0.0, 0.0, float(nominal_position[2])
+                        )
+                    raise StaleLocalizationError(
+                        'Onboard state time did not increase during '
+                        'calibration'
+                    )
+                # A large discontinuity is a telemetry/host pause, not
+                # elapsed maneuver time. Active attitude already aborts on
+                # stale or unsynchronized state above. A fresh packet after a
+                # blocked host loop can hide that gap from the state-age test,
+                # so reject it explicitly while attitude control is active.
+                # Position-held phases instead resume with one nominal control
+                # step rather than skipping a scheduled calibration phase.
+                if protocol_state_step_s > max_state_age_s:
+                    if planar_attitude_active:
+                        self.lo_commander.send_zdistance_setpoint(
+                            0.0, 0.0, 0.0, float(nominal_position[2])
+                        )
+                        raise StaleLocalizationError(
+                            'Onboard state sample gap during planar attitude '
+                            f'calibration was {protocol_state_step_s:.3f}s '
+                            f'(limit {max_state_age_s:.3f}s)'
+                        )
+                    protocol_state_step_s = dt
             last_state_time = state_time
 
             position = state['position']
@@ -8358,6 +8392,9 @@ class InteractionsControl:
                 'calibration_protocol_elapsed_s': (
                     calibration_elapsed_s if calibration_mode else None
                 ),
+                'calibration_protocol_state_step_s': (
+                    protocol_state_step_s if calibration_mode else None
+                ),
                 'calibration_trial_waiting': calibration_wait_this_cycle,
                 'calibration_trial_wait_stage': (
                     None if calibration_trial_wait is None
@@ -8633,11 +8670,17 @@ class InteractionsControl:
             self._safe_sleep(max(dt - (time.time() - now), 0.0))
             if (calibration_mode and interaction_start is not None
                     and not calibration_wait_this_cycle):
-                # Advance the calibration protocol only after one complete,
-                # fresh, synchronized sample/control cycle. A telemetry pause
-                # therefore cannot skip excitation or attitude phases, nor
-                # make the duration check accept an incomplete fit.
-                next_elapsed_s = calibration_elapsed_s + dt
+                # Advance only after one complete, fresh, synchronized
+                # sample/control cycle, but use the measured interval between
+                # admitted states rather than assuming the requested control
+                # period. Otherwise 50-70 Hz state delivery to a 100 Hz loop
+                # silently turns a nominal 0.45 s attitude pulse into a much
+                # longer real command. Duplicate timestamps never reach this
+                # branch, and a large telemetry discontinuity is reduced to
+                # one nominal step above, so pauses still cannot skip phases.
+                next_elapsed_s = (
+                    calibration_elapsed_s + protocol_state_step_s
+                )
                 # Never step past an unadmitted start boundary: otherwise a
                 # short level phase could be skipped while waiting for a trial.
                 for boundary_s, _label, key, gate, _plan in calibration_trial_boundaries:
