@@ -78,8 +78,6 @@ class CalibrationControlContinuityTests(unittest.TestCase):
                     }
                     for label, sign in (('positive_y', 1), ('negative_y', -1))
                 }
-                for row in candidate_model['data_ranges']:
-                    row['battery_voltage_V'] = [7.9, 8.1]
                 session.latest_report = {'validated_control_candidate': {
                     'version': 1, 'training_segment_ids': [0, 1],
                     'validation_segment_ids': [2, 3],

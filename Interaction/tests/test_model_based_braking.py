@@ -23,15 +23,15 @@ def model():
                                   zeta=.8, gain=1., bias_world_y_rad=0.),
                 motion_gain=1., data_ranges=[
                     dict(direction_y=sign, command_acceleration_m_s2=[-3.57055, 3.57055],
-                         velocity_m_s=[-.2, .8], theta_rad=[-.4, .4],
-                         battery_voltage_V=[7.3, 7.5]) for sign in (-1, 1)])
+                         velocity_m_s=[-.2, .8], theta_rad=[-.4, .4])
+                    for sign in (-1, 1)])
 
 
 def state(t=0., *, p=0., v=.55, theta=.15, omega=-1., direction=1):
     return dict(time_s=t, position_xy=[0., direction*p], velocity_xy=[0., direction*v],
                 orientation_rpy_rad=[-direction*theta, 0., 0.],
                 angular_velocity_rad_s=[-direction*omega, 0., 0.],
-                state_group_skew_s=.004, battery_voltage_V=7.4)
+                state_group_skew_s=.004)
 
 
 def controller(*, direction=1, target=.15, deadline=.32, **config):
@@ -270,12 +270,36 @@ class ModelBasedBrakingTests(unittest.TestCase):
     def test_invalid_measurement_never_returns_stale_command(self):
         for updates in [dict(time_s=-.1), dict(state_group_skew_s=.04),
                         dict(velocity_xy=[float('nan'), .5]),
-                        dict(velocity_xy=[.2, .5]), dict(battery_voltage_V=6.5),
+                        dict(velocity_xy=[.2, .5]),
                         dict(angular_velocity_rad_s=[8., 0., 0.])]:
             item = controller()
             result = item.decide(0., dict(state(), **updates))
             self.assertEqual(result['action'], 'fallback', result)
             self.assertIsNone(result['projected_tilt_rad'])
+
+    def test_voltage_is_not_a_model_input_or_runtime_gate(self):
+        without_voltage = controller().decide(0., state())
+        legacy_model = model()
+        for row in legacy_model['data_ranges']:
+            row['battery_voltage_V'] = [7.3, 7.5]
+        legacy = ModelBasedBrakingController(
+            legacy_model,
+            target_position_xy=[0., .15], direction_xy=[0., 1.],
+            brake_deadline_s=.32,
+            config=dict(enabled=True, experimental_calibration=True,
+                        max_compute_s=1., max_battery_margin_V=.001),
+        )
+        legacy.record_command(-.2, .35)
+        legacy.record_command(-.05, 0.)
+        with_extreme_voltage = legacy.decide(
+            0., dict(state(), battery_voltage_V=-1000.)
+        )
+        self.assertTrue(all(
+            'battery_voltage_V' not in row for row in legacy.ranges
+        ))
+        self.assertNotIn('max_battery_margin_V', legacy.config)
+        self.assertEqual(without_voltage['action'], with_extreme_voltage['action'])
+        self.assertEqual(without_voltage['reason'], with_extreme_voltage['reason'])
 
     def test_fixed_target_deadline_and_level_latch(self):
         item = controller(deadline=.10)

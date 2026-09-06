@@ -44,7 +44,6 @@ DEFAULTS = {
     "max_tilt_deg": 29.,
     "max_projected_rate_rad_s": 5.,
     "max_target_distance_m": 1.,
-    "max_battery_margin_V": .15,
     "reverse_tolerance_m_s": .02,
     "overshoot_tolerance_m": .03,
     "terminal_velocity_tolerance_m_s": .05,
@@ -337,13 +336,17 @@ def _validated_model(model, experimental, direction_y):
     ranges = model.get("data_ranges")
     if not isinstance(ranges, list) or not ranges:
         raise ValueError("model_missing_training_ranges")
+    ranges = copy.deepcopy(ranges)
     for row in ranges:
         if row.get("direction_y") not in (-1, 1):
             raise ValueError("model_direction_not_supported")
-        for key in ("command_acceleration_m_s2", "velocity_m_s", "theta_rad", "battery_voltage_V"):
+        for key in ("command_acceleration_m_s2", "velocity_m_s", "theta_rad"):
             interval = _vector(row.get(key), 2, key)
             if interval[0] > interval[1]:
                 raise ValueError("reversed_training_range")
+        # Accept calibration files written by older versions, but make voltage
+        # explicitly non-semantic inside the runtime controller.
+        row.pop("battery_voltage_V", None)
     margin = _number(
         component.get(
             "terminal_velocity_error_margin_m_s",
@@ -353,7 +356,7 @@ def _validated_model(model, experimental, direction_y):
     )
     if not 0 <= margin <= .5:
         raise ValueError("terminal_velocity_error_margin_out_of_bounds")
-    return params, copy.deepcopy(ranges), margin, (
+    return params, ranges, margin, (
         label if directional is not None else "shared_legacy"
     )
 
@@ -362,8 +365,8 @@ class ModelBasedBrakingController:
     """One fixed-target, fixed-direction braking episode; no mutable fit.
 
     State fields accepted by decide: time_s, position_xy, velocity_xy,
-    orientation_rpy_rad, angular_velocity_rad_s, state_group_skew_s,
-    battery_voltage_V. All times are the same host clock. Positive projected
+    orientation_rpy_rad, angular_velocity_rad_s and state_group_skew_s. All
+    times are the same host clock. Positive projected
     tilt/velocity is along direction_xy, which currently must be exactly ±Y.
 
     The numerical workload is at most 64 candidates × 369 time intervals,
@@ -375,6 +378,9 @@ class ModelBasedBrakingController:
                  brake_deadline_s, config=None, clock=time.perf_counter):
         self.config = dict(DEFAULTS)
         self.config.update(config or {})
+        # Backward-compatible no-op for configurations written before voltage
+        # was removed from the predictive model.
+        self.config.pop("max_battery_margin_V", None)
         self._clock = clock
         boolean_keys = {
             "enabled", "experimental_calibration", "calibration_one_way_latch",
@@ -679,10 +685,6 @@ class ModelBasedBrakingController:
         if abs(rate) > self.config["max_projected_rate_rad_s"]:
             raise ValueError("angular_rate_exceeds_safety_envelope")
         pv = float(velocity @ self.direction_xy)
-        battery = _number(state["battery_voltage_V"], "battery")
-        margin = self.config["max_battery_margin_V"]
-        if not min(r["battery_voltage_V"][0] for r in self.ranges)-margin <= battery <= max(r["battery_voltage_V"][1] for r in self.ranges)+margin:
-            raise ValueError("battery_outside_identified_range")
         extrapolated = not (
             min(r["velocity_m_s"][0] for r in self.ranges) <= pv <= max(r["velocity_m_s"][1] for r in self.ranges)
             and min(r["theta_rad"][0] for r in self.ranges) <= theta <= max(r["theta_rad"][1] for r in self.ranges))

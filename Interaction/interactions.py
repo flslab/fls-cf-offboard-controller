@@ -6402,7 +6402,6 @@ class InteractionsControl:
                     'state_group_skew_s': float(state_group_skew),
                     'velocity_xy': output.estimate.velocity[:2].tolist(),
                     'position_xy': position[:2].tolist(),
-                    'battery_voltage_V': battery_voltage,
                 })
 
             sensor_fields = self._force_sensor_log_fields(output.estimate, now)
@@ -7305,7 +7304,6 @@ class InteractionsControl:
                                         state['angular_velocity']
                                     ),
                                     'state_group_skew_s': state_group_skew,
-                                    'battery_voltage_V': battery_voltage,
                                 },
                                 destination_position=predicted_destination,
                                 now_s=prediction_started_at,
@@ -7596,7 +7594,6 @@ class InteractionsControl:
                     'orientation_rpy_rad': output.estimate.orientation_rpy,
                     'angular_velocity_rad_s': state['angular_velocity'],
                     'state_group_skew_s': state_group_skew,
-                    'battery_voltage_V': battery_voltage,
                 }
                 predictive_brake_decision = (
                     predictive_brake_episode.decide(
@@ -8066,7 +8063,6 @@ class InteractionsControl:
                             'orientation_rpy_rad': output.estimate.orientation_rpy,
                             'angular_velocity_rad_s': state['angular_velocity'],
                             'state_group_skew_s': state_group_skew,
-                            'battery_voltage_V': battery_voltage,
                         }, prediction_calibration.latest_report,
                     )
                 phase_marker = (
@@ -9198,24 +9194,6 @@ class InteractionsControl:
                         ) > 1e-9)
                     ],
                 }
-                braking_battery_samples = np.asarray([
-                    sample['battery_voltage_V']
-                    for sample in planar_braking_samples
-                    if sample.get('battery_voltage_V') is not None
-                    and np.isfinite(sample['battery_voltage_V'])
-                ], dtype=float)
-                if len(braking_battery_samples):
-                    planar_braking_fit['battery_voltage_V'] = {
-                        'minimum': round(float(np.min(
-                            braking_battery_samples
-                        )), 4),
-                        'mean': round(float(np.mean(
-                            braking_battery_samples
-                        )), 4),
-                        'maximum': round(float(np.max(
-                            braking_battery_samples
-                        )), 4),
-                    }
                 attempted_planar_braking_fit = planar_braking_fit
                 (
                     planar_braking_fit,

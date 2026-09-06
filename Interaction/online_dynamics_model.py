@@ -153,8 +153,6 @@ def build_tilt_trials(samples, max_sample_gap_s=.06):
                 angular = _vector(row["angular_velocity_rad_s"], 3, "angular_velocity_rad_s")
                 velocity = _vector(row["velocity_xy"], 2, "velocity_xy")
                 position = _vector(row["position_xy"], 2, "position_xy")
-                if _number(row["battery_voltage_V"], "battery_voltage_V") <= 0:
-                    raise ValueError("battery_voltage_V must be positive")
                 if "state_group_skew_s" in row:
                     skew = _number(row["state_group_skew_s"], "state_group_skew_s")
                     if skew < 0 or skew > .03:
@@ -364,7 +362,7 @@ def fit_predictive_model(samples, *, max_sample_gap_s=.06):
     # Hash only the consumed fields. Unrelated metadata need not be JSON-safe.
     fields = ("segment_id", "timestamp", "command_started_at", "phase", "direction_xy",
               "command_acceleration_xy", "actual_attitude_rpy_rad", "angular_velocity_rad_s",
-              "velocity_xy", "position_xy", "battery_voltage_V", "state_group_skew_s")
+              "velocity_xy", "position_xy", "state_group_skew_s")
     canonical = [{key: _json_safe(row[key]) for key in fields if key in row} for row in training_rows]
     digest = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":"),
                                        allow_nan=False).encode()).hexdigest()
@@ -385,8 +383,6 @@ def fit_predictive_model(samples, *, max_sample_gap_s=.06):
             "theta_rad": [float(min(item.angle)), float(max(item.angle))],
             "velocity_m_s": [float(min(trial.velocities)), float(max(trial.velocities))],
             "position_m": [float(min(trial.positions)), float(max(trial.positions))],
-            "battery_voltage_V": [min(float(r["battery_voltage_V"]) for r in rows),
-                                  max(float(r["battery_voltage_V"]) for r in rows)],
         })
     result = dict(
         schema_version=1, kind="delayed_second_order_planar_prediction",

@@ -60,7 +60,7 @@ def _report():
 
 
 class ReplaySampleAugmentationTests(unittest.TestCase):
-    def test_actual_vectors_rates_battery_and_first_duplicate_are_preserved(self):
+    def test_actual_vectors_rates_and_first_duplicate_are_preserved(self):
         first = _observer(100.)
         second = _observer(101., scale=.5)
         records = [first, _observer(100., scale=9.),
@@ -90,7 +90,6 @@ class ReplaySampleAugmentationTests(unittest.TestCase):
             self.assertEqual(sample["angular_velocity_rad_s"], row["angular_velocity_rad_s"])
             self.assertEqual(sample["position_xy"], row["position_m"][:2])
             self.assertEqual(sample["velocity_xy"], row["velocity_m_s"][:2])
-            self.assertEqual(sample["battery_voltage_V"], row["battery_voltage_V"])
             self.assertEqual(sample["state_group_skew_s"], row["state_group_skew_s"])
         # World-X components and signed world-Y are retained, not direction-projected.
         self.assertEqual(samples[0]["position_xy"], [.71, -.82])
@@ -101,7 +100,7 @@ class ReplaySampleAugmentationTests(unittest.TestCase):
         self.assertEqual(records, original_records)
 
     def test_required_measurement_is_never_synthesized_from_partial_row(self):
-        for missing in ("angular_velocity_rad_s", "battery_voltage_V", "state_group_skew_s"):
+        for missing in ("angular_velocity_rad_s", "state_group_skew_s"):
             with self.subTest(missing=missing):
                 record = _observer(10.)
                 del record["data"][missing]

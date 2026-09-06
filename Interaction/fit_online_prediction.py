@@ -35,7 +35,6 @@ def samples_from_log(records, max_sample_gap_s=.06):
             angular_velocity_rad_s=row['angular_velocity_rad_s'],
             position_xy=row['position_m'][:2],
             velocity_xy=row['velocity_m_s'][:2],
-            battery_voltage_V=row['battery_voltage_V'],
             state_group_skew_s=row['state_group_skew_s'],
         )
     return samples, [trial.segment for trial in trials], metadata
@@ -84,7 +83,7 @@ def summary_markdown(report):
               '- Only the tested world-Y attitude-command response is identified.',
               '- Delay is effective host-clock delay, including telemetry/scheduling.',
               '- Evaluation is conditional on the executed command schedule; no future measured states initialize forecasts.',
-              '- Position-controller capture, X/Z response, payload/battery extrapolation and reliable stopping are not validated.',
+              '- Position-controller capture, X/Z response, payload extrapolation and reliable stopping are not validated.',
               '- Models are diagnostic only: runtime_enabled=false and flight_approved=false.', '',
               'Full provenance, raw samples, gate failures and all intermediate candidates are in report.json and report.samples.jsonl.', '']
     return '\n'.join(lines)

@@ -236,7 +236,7 @@ episode 并进入自己的安全处理，不能把它当作可以继续滚动预
 
 `current_state` 使用与 `ModelBasedBrakingController` 相同的 host clock，包含
 `time_s`、`position_xy`、`velocity_xy`、`orientation_rpy_rad`、
-`angular_velocity_rad_s`、`state_group_skew_s` 和 `battery_voltage_V`；建议额外提供
+`angular_velocity_rad_s` 和 `state_group_skew_s`；建议额外提供
 `acceleration_xy`。若不提供，加速度门会等至少两个连续速度样本后才可能通过。
 因为模型没有辨识 yaw dynamics，制动期间实测 yaw rate 默认必须不超过
 0.35 rad/s；position 交接门则检查完整三轴角速度，而不只检查 roll/pitch rate。

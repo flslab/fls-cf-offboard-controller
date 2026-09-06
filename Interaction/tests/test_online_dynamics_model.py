@@ -262,15 +262,15 @@ class OnlineDynamicsModelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "phase"):
             build_tilt_trials([row for row in self.training if row["phase"] != "brake"])
 
-    def test_missing_rate_position_attitude_battery_rejected(self):
-        for field in ("angular_velocity_rad_s", "position_xy", "actual_attitude_rpy_rad", "battery_voltage_V"):
+    def test_missing_rate_position_attitude_rejected(self):
+        for field in ("angular_velocity_rad_s", "position_xy", "actual_attitude_rpy_rad"):
             broken = copy.deepcopy(self.training)
             del broken[20][field]
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, field):
                 build_tilt_trials(broken)
 
     def test_nonfinite_and_invalid_direction_rejected(self):
-        cases = (("timestamp", float("nan")), ("battery_voltage_V", float("inf")),
+        cases = (("timestamp", float("nan")),
                  ("angular_velocity_rad_s", [0., float("nan"), 0.]),
                  ("velocity_xy", [0., float("inf")]), ("position_xy", [0., float("nan")]),
                  ("actual_attitude_rpy_rad", [float("nan"), 0., 0.]),
@@ -280,6 +280,17 @@ class OnlineDynamicsModelTests(unittest.TestCase):
             broken[20][field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
                 build_tilt_trials(broken)
+
+    def test_voltage_is_not_required_or_in_fitted_model(self):
+        samples = copy.deepcopy(self.training)
+        for row in samples:
+            row.pop("battery_voltage_V", None)
+        fitted = fit_predictive_model(samples)
+        self.assertTrue(fitted["data_ranges"])
+        self.assertTrue(all(
+            "battery_voltage_V" not in row
+            for row in fitted["data_ranges"]
+        ))
 
     def test_large_gap_and_duplicate_nonmonotone_clocks_rejected(self):
         with self.assertRaisesRegex(ValueError, "gap"):

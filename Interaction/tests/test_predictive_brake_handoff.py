@@ -90,7 +90,6 @@ def state(
         "orientation_rpy_rad": [roll, pitch, yaw],
         "angular_velocity_rad_s": [wx, wy, wz],
         "state_group_skew_s": 0.004,
-        "battery_voltage_V": 7.4,
         "acceleration_xy": list(acceleration),
     }
 

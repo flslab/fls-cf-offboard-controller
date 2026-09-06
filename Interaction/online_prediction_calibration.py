@@ -161,7 +161,7 @@ class _CalibrationAccumulator:
             "cautions": [
                 "Numeric gates are diagnostic only, not flight approval.",
                 "The latest all-data refit has no independent validation.",
-                "Sequential maneuver amplitude/duration may confound time and battery.",
+                "Sequential maneuver amplitude/duration may confound time and trial order.",
                 "Queued samples interrupted before worker receipt remain in flight logs.",
                 "Adaptive calibration, when enabled in context, changes actual brake timing; runtime_enabled refers only to normal interaction deployment.",
             ],
