@@ -230,28 +230,24 @@ class ModelBasedBrakingTests(unittest.TestCase):
                         atol=2e-12,
                     )
 
-    def test_default_disabled_and_candidate_requires_explicit_experiment(self):
-        for config, reason in [({}, "disabled"),
-                               ({"enabled": True}, "model_not_approved_for_nonexperimental_control")]:
-            item = ModelBasedBrakingController(model(), target_position_xy=[0., .15],
-                direction_xy=[0., 1.], brake_deadline_s=.32, config=config)
-            result = item.decide(0., state())
-            self.assertEqual(result['action'], 'fallback')
-            self.assertEqual(result['reason'], reason)
-            self.assertIsNone(result['roll_deg'])
+    def test_default_disabled(self):
+        item = ModelBasedBrakingController(model(), target_position_xy=[0., .15],
+            direction_xy=[0., 1.], brake_deadline_s=.32)
+        result = item.decide(0., state())
+        self.assertEqual(result['action'], 'fallback')
+        self.assertEqual(result['reason'], 'disabled')
+        self.assertIsNone(result['roll_deg'])
 
-    def test_persisted_control_eligibility_flag_is_enforced(self):
+    def test_persisted_deployment_flags_do_not_gate_model(self):
         source = model()
         source['control_eligible'] = False
         item = ModelBasedBrakingController(
             source, target_position_xy=[0., .15], direction_xy=[0., 1.],
             brake_deadline_s=.32,
-            config=dict(enabled=True, experimental_calibration=True),
+            config=dict(enabled=True),
         )
-        self.assertEqual(
-            item.decide(0., state())['reason'],
-            'model_marked_control_ineligible',
-        )
+        self.assertEqual(item.decide(0., state())['reason'],
+                         'insufficient_effective_command_history')
 
     def test_direction_and_actual_sent_history(self):
         item = controller()

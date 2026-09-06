@@ -2206,6 +2206,36 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertTrue(control.consume_detector_rearm(3.1))
         self.assertFalse(control.consume_detector_rearm(3.2))
 
+    def test_predictive_position_handoff_uses_requested_target(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            rearm_delay_s=0.2,
+        )
+        self.assertTrue(control.start_contact())
+        control.send(FakeCommander(), command_timestamp=0.9, yaw_deg=0.0)
+        self.assertTrue(control.end_contact(
+            [0.0, 0.1, 1.0], [0.0, 0.4, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=[0.0, 0.0, 0.0],
+            coast=True,
+        ))
+        history = control.sent_attitude_acceleration_history()
+        self.assertTrue(history)
+        self.assertIsNot(history[-1][1], control._coast_command_history[-1][1])
+        self.assertTrue(control.set_predictive_position_target(
+            [0.0, 0.35, 1.0], 1.2
+        ))
+        self.assertEqual(control.mode, control.POSITION_HOLD)
+        self.assertEqual(
+            control.brake_completion_reason,
+            'predictive_model_position_handoff',
+        )
+        np.testing.assert_allclose(control.hold_position, [0.0, 0.35, 1.0])
+        self.assertFalse(control.consume_detector_rearm(1.399))
+        self.assertTrue(control.consume_detector_rearm(1.4))
+
     def test_shadow_translation_never_leaves_position_hold(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(

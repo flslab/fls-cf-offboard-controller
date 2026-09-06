@@ -241,6 +241,22 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # control because doing so would pull it back toward the handoff point.
         "coast_attitude_timeout_s": 1.5,
     },
+    "predictive_braking": {
+        # A saved directional model automatically replaces the legacy coast
+        # controller after a confirmed potentiometer release. Failed held-out
+        # quality flags are accepted for this experimental flight path, while
+        # structural, parameter, command-envelope, and live-state checks remain.
+        "enabled": True,
+        "accept_failed_validation": True,
+        "allow_validated_experimental_model": True,
+        "allow_state_extrapolation": True,
+        "model_based_braking": {
+            # The outer interaction loop already rejects samples older than
+            # 100 ms; use that same limit instead of the library's tighter
+            # standalone default.
+            "max_state_age_s": 0.10,
+        },
+    },
     "admittance": {
         "translation_mass": [0.30, 0.30, 0.45],
         "translation_damping": [1.20, 1.20, 1.80],

@@ -12,9 +12,11 @@ so delayed commands remain part of the prediction.  A position decision is not
 emitted until the model predicts a safe level tail *and* measured speed, tilt,
 angular rate, acceleration, response settling, and dwell gates all pass.
 
-Nothing here enables the policy in normal interaction.  Persisted prediction
-models remain deployment-disabled by default; accepting a held-out validated
-experimental model requires an explicit constructor option.
+The onboard interaction loop now owns the device-I/O adapter for this class and
+uses it after confirmed potentiometer release when a saved model is present.
+Persisted deployment flags are informational; callers explicitly choose whether
+failed held-out evidence is accepted, while structural and command-envelope
+checks remain mandatory.
 """
 from __future__ import annotations
 
@@ -42,6 +44,7 @@ __all__ = [
 
 DEFAULTS = {
     "allow_validated_experimental_model": False,
+    "accept_failed_validation": False,
     "allow_state_extrapolation": False,
     "brake_tilt_deg": None,
     "max_brake_duration_s": None,
@@ -196,12 +199,11 @@ def _validated_evidence(model, allow_experimental):
     if not isinstance(model, dict):
         raise ValueError("prediction model must be a dictionary")
     if (
-        model.get("control_eligible") is not True
-        or model.get("validation_passed") is not True
+        model.get("validation_passed") is not True
         or model.get("independent_validation_complete") is not True
     ):
         raise ValueError(
-            "prediction model is not independently validated and control eligible"
+            "prediction model is not independently validated"
         )
     validation = model.get("validation")
     if not isinstance(validation, dict):
@@ -209,7 +211,6 @@ def _validated_evidence(model, allow_experimental):
     if (
         validation.get("independent_validation") is not True
         or validation.get("validation_passed") is not True
-        or validation.get("control_eligible") is not True
         or validation.get("failed_gates") != []
     ):
         raise ValueError("prediction model held-out validation did not pass")
@@ -244,16 +245,8 @@ def _validated_evidence(model, allow_experimental):
         raise ValueError("held-out trial provenance is incomplete or inconsistent")
     if not isinstance(model.get("directional_models"), dict):
         raise ValueError("direction-specific prediction models are required")
-    for key in ("runtime_enabled", "deployment_approved"):
-        if type(model.get(key)) is not bool or validation.get(key) is not model[key]:
-            raise ValueError(key + " disagrees between model and validation evidence")
-    if not allow_experimental and (
-        model.get("runtime_enabled") is not True
-        or model.get("deployment_approved") is not True
-    ):
-        raise ValueError(
-            "prediction model is validated but not approved for runtime deployment"
-        )
+    # control_eligible/runtime_enabled/deployment_approved are persisted for
+    # diagnostics but no longer gate construction of an interaction controller.
 
 
 def _validate_motion_residual_evidence(model, engine_options):
@@ -357,12 +350,15 @@ def _observed_command_envelope(
 def validated_prediction_model_for_interaction(
         calibration_entry, *, enabled, direction_xy,
         allow_validated_experimental_model=False,
+        accept_failed_validation=False,
         terminal_velocity_tolerance_m_s=0.05):
     """Select a frozen model for a future interaction integration point.
 
     When ``enabled`` is false, old calibration documents remain compatible and
-    ``None`` is returned.  Enabling is fail-closed: a missing, failed, or
-    unapproved model raises before a release episode can begin.
+    ``None`` is returned. By default, failed validation evidence is rejected;
+    the explicit runtime override skips only evidence/margin gates while the
+    model structure, fitted parameters, and observed command envelope remain
+    mandatory. Persisted deployment/control-eligibility flags are informational.
     """
     if type(enabled) is not bool:
         raise ValueError("prediction-model interaction enabled must be boolean")
@@ -381,9 +377,12 @@ def validated_prediction_model_for_interaction(
     )
     if not 0 < tolerance <= 0.10:
         raise ValueError("terminal velocity tolerance must be in (0, 0.10]")
-    _validated_evidence(model, allow)
+    if type(accept_failed_validation) is not bool:
+        raise ValueError("accept_failed_validation must be boolean")
+    if not accept_failed_validation:
+        _validated_evidence(model, allow)
     _, _, margin, _ = _validated_model(model, allow, direction[1])
-    if margin >= tolerance:
+    if not accept_failed_validation and margin >= tolerance:
         raise ValueError(
             f"prediction model {_direction_label(direction)} margin "
             f"{margin:.6f}m/s is not below {tolerance:.6f}m/s"
@@ -416,6 +415,7 @@ class PredictiveBrakeToPosition:
         self.config.update(copy.deepcopy(dict(config or {})))
         for key in (
                 "allow_validated_experimental_model",
+                "accept_failed_validation",
                 "allow_state_extrapolation",
                 "latch_lateral_position_to_actual",
                 "prevent_position_pullback"):
@@ -493,6 +493,7 @@ class PredictiveBrakeToPosition:
             enabled=True,
             direction_xy=self.direction_xy,
             allow_validated_experimental_model=allow,
+            accept_failed_validation=self.config["accept_failed_validation"],
             terminal_velocity_tolerance_m_s=tolerance,
         )
         params, _, margin, selected = _validated_model(

@@ -171,22 +171,23 @@ class PredictionModelLoadingTests(unittest.TestCase):
             {}, enabled=False, direction_xy=[0.0, 1.0]
         ))
 
-    def test_unapproved_model_requires_explicit_experimental_opt_in(self):
+    def test_deployment_flags_do_not_gate_selection(self):
         source = validated_model()
-        with self.assertRaisesRegex(ValueError, "not approved"):
-            validated_prediction_model_for_interaction(
-                {"prediction_model": source},
-                enabled=True,
-                direction_xy=[0.0, 1.0],
-            )
         selected = validated_prediction_model_for_interaction(
             {"prediction_model": source},
             enabled=True,
             direction_xy=[0.0, 1.0],
-            allow_validated_experimental_model=True,
         )
         self.assertEqual(selected, source)
         self.assertIsNot(selected, source)
+        source["control_eligible"] = False
+        source["validation"]["control_eligible"] = False
+        selected = validated_prediction_model_for_interaction(
+            {"prediction_model": source},
+            enabled=True,
+            direction_xy=[0.0, 1.0],
+        )
+        self.assertEqual(selected, source)
         approved = validated_model(approved=True)
         self.assertEqual(
             validated_prediction_model_for_interaction(
@@ -199,7 +200,6 @@ class PredictionModelLoadingTests(unittest.TestCase):
 
     def test_failed_or_incomplete_evidence_is_rejected(self):
         for mutate in (
-                lambda item: item.update(control_eligible=False),
                 lambda item: item["validation"]["failed_gates"].append("x"),
                 lambda item: item["validation"]["gates"].update(x=False),
                 lambda item: item.pop("validation")):
@@ -213,13 +213,29 @@ class PredictionModelLoadingTests(unittest.TestCase):
                     allow_validated_experimental_model=True,
                 )
 
+    def test_explicit_runtime_override_accepts_failed_validation(self):
+        source = validated_model(margin=0.08)
+        source['validation_passed'] = False
+        source['validation']['validation_passed'] = False
+        source['validation']['failed_gates'] = ['terminal_error_m_s']
+        source['validation']['gates']['terminal_error_m_s'] = False
+        selected = validated_prediction_model_for_interaction(
+            {'prediction_model': source},
+            enabled=True,
+            direction_xy=[0.0, 1.0],
+            accept_failed_validation=True,
+        )
+        self.assertEqual(selected, source)
+        item = episode(
+            model=source,
+            config={'accept_failed_validation': True},
+        )
+        self.assertEqual(item.selected_directional_model, 'positive_y')
+
     def test_simplified_or_internally_conflicting_evidence_is_rejected(self):
         cases = []
         source = validated_model()
         source["validation"]["gates"] = {"looks_good": True}
-        cases.append(source)
-        source = validated_model()
-        source["validation"]["runtime_enabled"] = True
         cases.append(source)
         source = validated_model()
         source["validation"]["validation_segment_ids"] = [1, 2]

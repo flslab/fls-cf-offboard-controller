@@ -33,6 +33,10 @@ from Interaction.potentiometer_force_sensor import (
     PotentiometerContactDetector,
     PotentiometerReleaseDetector,
 )
+from Interaction.predictive_brake_handoff import (
+    PredictiveBrakeToPosition,
+    projected_tilt_history_from_world_acceleration,
+)
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH,
@@ -2483,6 +2487,38 @@ class TranslationControlHandoff:
             self.yaw_deg if yaw_deg is None else yaw_deg
         )
 
+    def sent_attitude_acceleration_history(self):
+        """Return a detached copy of actual sent world-XY attitude inputs."""
+        return [
+            (float(timestamp), np.asarray(acceleration, dtype=float).copy())
+            for timestamp, acceleration in self._coast_command_history
+        ]
+
+    def set_predictive_position_target(self, position, timestamp):
+        """Transfer a predictive coast episode to its position target."""
+        if self.shadow_mode or self.mode not in (
+                self.ATTITUDE_COAST, self.POSITION_HOLD):
+            return False
+        position = np.asarray(position, dtype=float)
+        timestamp = float(timestamp)
+        if (
+            position.shape != (3,)
+            or not np.all(np.isfinite(position))
+            or not np.isfinite(timestamp)
+        ):
+            raise ValueError('predictive position target must be finite XYZ')
+        self.hold_position = position.copy()
+        self.hover_z = float(position[2])
+        self.stopping_position_m = position.copy()
+        self.set_contact_attitude(0.0, 0.0, 0.0)
+        self.brake_command_tilt_deg = 0.0
+        self.brake_completion_reason = 'predictive_model_position_handoff'
+        self._brake_started_at = None
+        if self.mode != self.POSITION_HOLD:
+            self._detector_rearm_at = timestamp + self.rearm_delay_s
+            self._transition_mode(self.POSITION_HOLD)
+        return True
+
     def _record_attitude_command(self, timestamp, yaw_deg):
         timestamp = float(timestamp)
         if not np.isfinite(timestamp):
@@ -3591,6 +3627,8 @@ class TranslationControlHandoff:
                     sent_at + float(pulse_hold_s)
                 )
                 self._tail_neutralization_needs_send_anchor = False
+            return sent_at
+        return None
 
 
 def calculate_tilt(roll, pitch, degrees=True):
@@ -5294,6 +5332,43 @@ class InteractionsControl:
             force_sensor_available,
             calibration_mode=calibration_mode,
         )
+        predictive_braking_config = deepcopy(
+            config.get('predictive_braking', {})
+        )
+        if not isinstance(predictive_braking_config, dict):
+            raise ValueError('predictive_braking must be a mapping')
+        predictive_braking_enabled = predictive_braking_config.pop(
+            'enabled', True
+        )
+        if type(predictive_braking_enabled) is not bool:
+            raise ValueError('predictive_braking.enabled must be boolean')
+        predictive_calibration_entry = (
+            load_drone_calibration(self.drone_id, calibration_path)
+            if (
+                predictive_braking_enabled
+                and not calibration_mode
+                and release_mode == 'potentiometer_coast'
+                and not pipeline.shadow_mode
+            ) else None
+        )
+        predictive_braking_model = (
+            predictive_calibration_entry.get('prediction_model')
+            if isinstance(predictive_calibration_entry, dict) else None
+        )
+        predictive_braking_available = bool(
+            predictive_braking_model is not None
+        )
+        if (
+            predictive_braking_enabled
+            and not calibration_mode
+            and release_mode == 'potentiometer_coast'
+            and not pipeline.shadow_mode
+            and not predictive_braking_available
+        ):
+            logger.warning(
+                'No saved prediction_model is available; potentiometer '
+                'release will use the legacy coast controller.'
+            )
         if configured_contact_detection_source not in (
                 'wrench_observer', 'potentiometer'):
             raise ValueError(
@@ -5527,9 +5602,12 @@ class InteractionsControl:
                             'mode': release_mode,
                             'configured_mode': configured_release_mode,
                             'coast_control_policy': (
-                                'target_aware_no_pullback'
-                                if release_mode == 'potentiometer_coast'
-                                else None
+                                (
+                                    'predictive_model_brake_to_position'
+                                    if predictive_braking_available
+                                    else 'target_aware_no_pullback'
+                                )
+                                if release_mode == 'potentiometer_coast' else None
                             ),
                             'ignored_during_calibration': bool(
                                 calibration_mode
@@ -5693,6 +5771,11 @@ class InteractionsControl:
         render_selection = None
         virtual_motion_state = None
         coast_stop_prediction = None
+        predictive_brake_episode = None
+        predictive_brake_decision = None
+        predictive_brake_abort_after_send = False
+        predictive_position_handoff_logged = False
+        predictive_last_logged_signature = None
         excitation_config = config['calibration_excitation']
         excitation_end_s = (
             float(excitation_config['start_delay_s'])
@@ -6114,7 +6197,13 @@ class InteractionsControl:
                 calibration_group_skew_dropout_max_s = 0.0
             if state_time == last_state_time:
                 check_trial_wait(now, duplicate=True)
-                if (
+                if predictive_brake_episode is not None:
+                    # The predictive episode may only issue a new attitude
+                    # decision from a new synchronized state. Do not resend a
+                    # stale decision behind its back; the last Crazyflie
+                    # setpoint remains latched until the next fresh sample.
+                    pass
+                elif (
                     calibration_mode
                     and active_position_capture_command is not None
                     and active_position_capture_command.attitude_control
@@ -7186,6 +7275,95 @@ class InteractionsControl:
                         'control from the active interaction'
                     )
                 if release_started:
+                    if predictive_braking_available:
+                        predicted_destination = self._bounded_wrench_reference(
+                            np.array([
+                                coast_stop_prediction['position'][0],
+                                coast_stop_prediction['position'][1],
+                                translation_control.hover_z,
+                            ])
+                        )
+                        direction_y = float(coast_direction[1])
+                        try:
+                            if abs(direction_y) <= 1e-9:
+                                raise ValueError(
+                                    'release has no world-Y braking direction'
+                                )
+                            prediction_started_at = time.time()
+                            predictive_brake_episode = PredictiveBrakeToPosition(
+                                predictive_braking_model,
+                                initial_state={
+                                    'time_s': state_time,
+                                    'position_xy': position[:2],
+                                    'velocity_xy': (
+                                        output.estimate.velocity[:2]
+                                    ),
+                                    'orientation_rpy_rad': (
+                                        output.estimate.orientation_rpy
+                                    ),
+                                    'angular_velocity_rad_s': (
+                                        state['angular_velocity']
+                                    ),
+                                    'state_group_skew_s': state_group_skew,
+                                    'battery_voltage_V': battery_voltage,
+                                },
+                                destination_position=predicted_destination,
+                                now_s=prediction_started_at,
+                                sent_command_history=(
+                                    projected_tilt_history_from_world_acceleration(
+                                        translation_control
+                                        .sent_attitude_acceleration_history(),
+                                        [0.0, float(np.sign(direction_y))],
+                                    )
+                                ),
+                                direction_xy=[
+                                    0.0, float(np.sign(direction_y))
+                                ],
+                                config=predictive_braking_config,
+                            )
+                            predictive_brake_decision = None
+                            predictive_brake_abort_after_send = False
+                            predictive_position_handoff_logged = False
+                            predictive_last_logged_signature = None
+                            self._log_event(
+                                'Predictive Brake Started',
+                                {
+                                    'direction_xy': [
+                                        0.0, float(np.sign(direction_y))
+                                    ],
+                                    'release_position_m': position.tolist(),
+                                    'release_velocity_m_s': (
+                                        output.estimate.velocity.tolist()
+                                    ),
+                                    'destination_position_m': (
+                                        predicted_destination.tolist()
+                                    ),
+                                    'accept_failed_validation': bool(
+                                        predictive_braking_config.get(
+                                            'accept_failed_validation', False
+                                        )
+                                    ),
+                                    'state_source': (
+                                        'crazyflie_state_estimate'
+                                    ),
+                                },
+                            )
+                        except (KeyError, TypeError, ValueError) as error:
+                            predictive_brake_episode = None
+                            self._log_event(
+                                'Predictive Brake Unavailable',
+                                {
+                                    'reason': str(error),
+                                    'fallback': 'legacy_coast_controller',
+                                    'state_source': (
+                                        'crazyflie_state_estimate'
+                                    ),
+                                },
+                            )
+                            logger.warning(
+                                'Predictive brake could not start: %s; using '
+                                'legacy coast controller.', error,
+                            )
                     potentiometer_release_processed = True
                     potentiometer_release_pending = False
                     candidate_release_force_world = None
@@ -7405,6 +7583,109 @@ class InteractionsControl:
 
             braking_kwargs = {}
             coast_handoff_completed = False
+            predictive_brake_decision = None
+            if (
+                predictive_brake_episode is not None
+                and potentiometer_release_processed
+            ):
+                predictive_decision_time = time.time()
+                predictive_runtime_state = {
+                    'time_s': state_time,
+                    'position_xy': position[:2],
+                    'velocity_xy': output.estimate.velocity[:2],
+                    'orientation_rpy_rad': output.estimate.orientation_rpy,
+                    'angular_velocity_rad_s': state['angular_velocity'],
+                    'state_group_skew_s': state_group_skew,
+                    'battery_voltage_V': battery_voltage,
+                }
+                predictive_brake_decision = (
+                    predictive_brake_episode.decide(
+                        predictive_decision_time,
+                        predictive_runtime_state,
+                    )
+                )
+                predictive_action = predictive_brake_decision['action']
+                predictive_signature = (
+                    predictive_action,
+                    predictive_brake_decision.get('reason'),
+                )
+                if predictive_signature != predictive_last_logged_signature:
+                    self._log_event(
+                        'Predictive Brake Decision',
+                        {
+                            'action': predictive_action,
+                            'reason': predictive_brake_decision.get('reason'),
+                            'phase': predictive_brake_decision.get('phase'),
+                            'elapsed_s': predictive_brake_decision.get(
+                                'elapsed_s'
+                            ),
+                            'selected_directional_model': (
+                                predictive_brake_decision.get(
+                                    'selected_directional_model'
+                                )
+                            ),
+                            'target_position_m': (
+                                predictive_brake_decision.get(
+                                    'position_target'
+                                )
+                            ),
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+                    predictive_last_logged_signature = predictive_signature
+                if predictive_action in ('brake', 'level', 'abort_level'):
+                    translation_control.set_contact_attitude(
+                        predictive_brake_decision['roll_deg'],
+                        predictive_brake_decision['pitch_deg'],
+                        predictive_brake_decision['yaw_rate_deg_s'],
+                        yaw_deg=np.degrees(
+                            output.estimate.orientation_rpy[2]
+                        ),
+                    )
+                    attitude_command_planned_at = predictive_decision_time
+                    predictive_brake_abort_after_send = bool(
+                        predictive_action == 'abort_level'
+                    )
+                elif predictive_action == 'position':
+                    predictive_target = np.asarray(
+                        predictive_brake_decision['position_target'],
+                        dtype=float,
+                    )
+                    translation_control.set_predictive_position_target(
+                        self._bounded_wrench_reference(predictive_target),
+                        state_time,
+                    )
+                    if not predictive_position_handoff_logged:
+                        self._log_event(
+                            'Predictive Brake Position Handoff',
+                            {
+                                'reason': predictive_brake_decision.get(
+                                    'reason'
+                                ),
+                                'actual_position_m': position.tolist(),
+                                'actual_velocity_m_s': (
+                                    output.estimate.velocity.tolist()
+                                ),
+                                'target_position_m': (
+                                    translation_control
+                                    .hold_position.tolist()
+                                ),
+                                'target_clamped_to_actual': (
+                                    predictive_brake_decision.get(
+                                        'target_clamped_to_actual'
+                                    )
+                                ),
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                        predictive_position_handoff_logged = True
+                else:
+                    raise RuntimeError(
+                        'unknown predictive braking action: '
+                        + str(predictive_action)
+                    )
             if translation_control.mode in (
                     translation_control.ATTITUDE_COAST,
                     translation_control.POSITION_COAST):
@@ -7440,6 +7721,8 @@ class InteractionsControl:
                 force_virtual_drag_N = virtual_motion_state['drag_force_N']
                 attitude_command_planned_at = time.time()
                 coast_handoff_completed = bool(
+                    predictive_brake_episode is None
+                    and
                     translation_control.mode
                     == translation_control.ATTITUDE_COAST
                     and translation_control.update_coast_attitude(
@@ -7660,6 +7943,9 @@ class InteractionsControl:
                 )
                 and translation_control.consume_detector_rearm(state_time)
             ):
+                predictive_brake_episode = None
+                predictive_brake_decision = None
+                predictive_brake_abort_after_send = False
                 pipeline.detector.translation.reset(state_time)
                 initial_contact_gate.reset()
                 if potentiometer_contact_detector is not None:
@@ -8092,10 +8378,52 @@ class InteractionsControl:
             elif not translation_control.uses_position_setpoint:
                 command_position = None
                 command_yaw = translation_control.yaw_deg
-                translation_control.send(
+                attitude_sent_at = translation_control.send(
                     self.lo_commander,
                     yaw_deg=np.degrees(output.estimate.orientation_rpy[2]),
                 )
+                if (
+                    predictive_brake_episode is not None
+                    and predictive_brake_decision is not None
+                    and predictive_brake_decision.get('action') in (
+                        'brake', 'level', 'abort_level'
+                    )
+                ):
+                    try:
+                        predictive_send_accepted = (
+                            predictive_brake_episode.record_sent(
+                                predictive_brake_decision,
+                                attitude_sent_at,
+                            )
+                        )
+                    except (TypeError, ValueError) as error:
+                        predictive_send_accepted = False
+                        logger.warning(
+                            'Predictive brake command-history update failed: '
+                            '%s; returning to legacy coast control.', error,
+                        )
+                    if (
+                        not predictive_send_accepted
+                        or predictive_brake_abort_after_send
+                    ):
+                        self._log_event(
+                            'Predictive Brake Fallback',
+                            {
+                                'reason': (
+                                    predictive_brake_decision.get('reason')
+                                    if predictive_brake_abort_after_send
+                                    else 'sent_command_protocol_rejected'
+                                ),
+                                'safe_command_sent': 'level_attitude',
+                                'fallback': 'legacy_coast_controller',
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                        predictive_brake_episode = None
+                        predictive_brake_decision = None
+                        predictive_brake_abort_after_send = False
             else:
                 command_position = translation_control.hold_position.copy()
                 command_yaw = translation_control.yaw_deg
@@ -8197,8 +8525,31 @@ class InteractionsControl:
                 'contact_detection_source': contact_detection_source,
                 'release_behavior_mode': release_mode,
                 'coast_control_policy': (
-                    'target_aware_no_pullback'
+                    (
+                        'predictive_model_brake_to_position'
+                        if predictive_braking_available
+                        else 'target_aware_no_pullback'
+                    )
                     if release_mode == 'potentiometer_coast' else None
+                ),
+                'predictive_braking_enabled': predictive_braking_enabled,
+                'predictive_braking_model_available': (
+                    predictive_braking_available
+                ),
+                'predictive_braking_active': (
+                    predictive_brake_episode is not None
+                ),
+                'predictive_braking_action': (
+                    None if predictive_brake_decision is None
+                    else predictive_brake_decision.get('action')
+                ),
+                'predictive_braking_reason': (
+                    None if predictive_brake_decision is None
+                    else predictive_brake_decision.get('reason')
+                ),
+                'predictive_braking_position_target_m': (
+                    None if predictive_brake_decision is None
+                    else predictive_brake_decision.get('position_target')
                 ),
                 'initial_contact_detector_armed': (
                     initial_contact_gate.armed
