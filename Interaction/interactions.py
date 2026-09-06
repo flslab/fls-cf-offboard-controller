@@ -5915,6 +5915,13 @@ class InteractionsControl:
                         0.0, 0.0, 0.0, float(nominal_position[2])
                     )
                 raise StaleLocalizationError('Onboard state packet set is incomplete')
+            # ``_get_synchronized_onboard_wrench_state`` reads data populated by
+            # asynchronous Crazyflie callbacks.  The control thread can be
+            # descheduled after the loop-entry timestamp above while callbacks
+            # continue to publish newer packets.  Refresh wall time after the
+            # snapshot so a fresh packet is never compared with a stale ``now``
+            # and misclassified as hundreds of milliseconds into the future.
+            now = time.time()
             state_time = state['time']
             state_age = now - state_time
             if state_age < -0.5:

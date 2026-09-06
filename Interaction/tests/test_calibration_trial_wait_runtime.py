@@ -165,6 +165,30 @@ class CalibrationTrialWaitRuntimeTests(unittest.TestCase):
         ready = self.events(runtime[1], 'Planar Braking Calibration Trial Ready')
         self.assertGreaterEqual(ready[0]['wait_elapsed_s'], 0.64)
 
+    def test_state_age_uses_time_refreshed_after_async_snapshot(self):
+        clock_ref = []
+        delayed = [False]
+
+        def behavior(state, _now, logs, _controller):
+            if self.pending_wait(logs) and not delayed[0]:
+                # Reproduce the flight race: the control thread saved its loop
+                # timestamp, then was descheduled while callback-owned packet
+                # time advanced.  The returned state is current at resume.
+                clock_ref[0][0] += 0.60
+                logs.advance(0.60)
+                state['time'] = logs.packet_time
+                state['motor_state']['time'] = logs.packet_time
+                delayed[0] = True
+
+        runtime = self.make_runtime(wait_behavior=behavior)
+        clock_ref.append(runtime[2])
+        self.run_planar(runtime)
+        self.assertTrue(delayed[0])
+        self.assertEqual(
+            len(self.events(runtime[1], 'Planar Braking Calibration Trial Ready')),
+            2,
+        )
+
     def test_normal_every_other_frame_duplicate_does_not_starve_readiness(self):
         def behavior(state, now, logs, _controller):
             # 50Hz telemetry consumed by a 100Hz control loop: a repeated
