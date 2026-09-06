@@ -245,11 +245,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_attitude_timeout_s": 1.5,
     },
     "predictive_braking": {
-        # A saved directional model automatically replaces the legacy coast
-        # controller after a confirmed potentiometer release. Failed held-out
-        # quality flags are accepted for this experimental flight path, while
-        # structural, parameter, command-envelope, and live-state checks remain.
-        "enabled": True,
+        # Keep the saved directional model available for later experiments,
+        # but default normal interaction to the legacy coast controller.
+        "enabled": False,
         "accept_failed_validation": True,
         "allow_validated_experimental_model": True,
         "allow_state_extrapolation": True,

@@ -38,6 +38,9 @@ class DefaultConfigTests(unittest.TestCase):
             handoff["coast_handoff_max_acceleration_m_s2"], 0.35
         )
         self.assertEqual(handoff["coast_alignment_dwell_s"], 0.05)
+        self.assertFalse(
+            DEFAULT_WRENCH_INTERACTION_CONFIG["predictive_braking"]["enabled"]
+        )
 
 
 class ContactDetectorTests(unittest.TestCase):
