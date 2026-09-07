@@ -2160,6 +2160,8 @@ class TranslationControlHandoff:
     The legacy coast path uses a one-way timed handoff: level at a configured
     signed longitudinal speed, hold that actually sent level command for a
     configured delay, then give the frozen release target to position control.
+    Missions may instead request an immediate current-position handoff at the
+    speed threshold so no intermediate level-attitude command is sent.
     """
 
     POSITION_HOLD = 'position_hold'
@@ -2193,6 +2195,7 @@ class TranslationControlHandoff:
             coast_level_terminal_speed_m_s=0.03,
             coast_level_handoff_speed_m_s=0.10,
             coast_level_handoff_delay_s=0.30,
+            coast_direct_position_handoff=False,
             coast_command_period_s=0.02,
             coast_command_acceleration_deadband_m_s2=0.02,
             coast_candidate_tail_cancellation_max_acceleration_m_s2=1.0,
@@ -2271,6 +2274,9 @@ class TranslationControlHandoff:
         )
         self.coast_level_handoff_delay_s = float(
             coast_level_handoff_delay_s
+        )
+        self.coast_direct_position_handoff = bool(
+            coast_direct_position_handoff
         )
         self.coast_command_period_s = float(coast_command_period_s)
         self.coast_command_acceleration_deadband_m_s2 = float(
@@ -3229,16 +3235,6 @@ class TranslationControlHandoff:
         self.brake_projected_speed_m_s = float(
             velocity[:2] @ self.brake_direction[:2]
         )
-        if (
-            not self._coast_level_handoff_latched
-            and self.brake_projected_speed_m_s
-            <= self.coast_level_handoff_speed_m_s
-        ):
-            self._coast_level_handoff_latched = True
-            # The timer is based on the first real level command sent after the
-            # speed threshold, not on this earlier state/plan timestamp.
-            self._level_attitude_command_started_at = None
-            self._coast_alignment_since = None
         brake_direction_norm = float(np.linalg.norm(
             self.brake_direction[:2]
         ))
@@ -3257,6 +3253,58 @@ class TranslationControlHandoff:
             brake_direction_xy = np.zeros(2)
             lateral_speed = 0.0
         self.coast_lateral_speed_m_s = lateral_speed
+        if (
+            not self._coast_level_handoff_latched
+            and self.brake_projected_speed_m_s
+            <= self.coast_level_handoff_speed_m_s
+        ):
+            self._coast_level_handoff_latched = True
+            self._level_attitude_command_started_at = None
+            self._coast_alignment_since = None
+            if self.coast_direct_position_handoff:
+                # Transfer ownership directly to the native position
+                # controller. Latch the measured pose rather than the frozen
+                # virtual stop so the handoff cannot request a forward pull or
+                # stale-target correction. No level attitude is sent first.
+                self.coast_stop_target_position_m = target_position.copy()
+                self.coast_target_remaining_distance_m = float(
+                    (target_position[:2] - position[:2]) @ brake_direction_xy
+                )
+                self.coast_delay_reserved_distance_m = 0.0
+                self.coast_required_deceleration_m_s2 = 0.0
+                self.coast_command_acceleration_m_s2 = np.zeros(2)
+                self.coast_actual_tilt_deg = float(np.degrees(np.arccos(
+                    np.clip(
+                        np.cos(orientation_rpy[0])
+                        * np.cos(orientation_rpy[1]),
+                        -1.0,
+                        1.0,
+                    )
+                )))
+                self.coast_handoff_actual_position_m = position.copy()
+                self.coast_target_clamped_to_actual = True
+                self.coast_lateral_target_latched_to_actual = True
+                self.hold_position = position.copy()
+                self.hover_z = float(position[2])
+                self.stopping_position_m = position.copy()
+                self.set_contact_attitude(0.0, 0.0, 0.0)
+                self.brake_command_tilt_deg = 0.0
+                self.coast_tracking_action = 'direct_position_handoff'
+                self.coast_tracking_acceleration_m_s2 = np.zeros(2)
+                self.coast_tracking_acceleration_saturated = False
+                self.coast_tracking_power_w_per_kg = 0.0
+                self.coast_response_queue_settled = False
+                self.coast_handoff_state_ready = True
+                self.coast_handoff_reason = (
+                    'direct_current_position_handoff'
+                )
+                self.brake_completion_reason = self.coast_handoff_reason
+                self._brake_started_at = None
+                self._detector_rearm_at = timestamp + self.rearm_delay_s
+                self._transition_mode(self.POSITION_HOLD)
+                return True
+            # The legacy timer is based on the first real level command sent
+            # after the speed threshold, not on this state timestamp.
         attitude_timed_out = bool(
             self._brake_started_at is not None
             and timestamp - self._brake_started_at

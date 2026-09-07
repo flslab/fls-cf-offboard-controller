@@ -232,6 +232,7 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # mission/calibration files, but they no longer delay this timed handoff.
         "coast_level_handoff_speed_m_s": 0.10,
         "coast_level_handoff_delay_s": 0.30,
+        "coast_direct_position_handoff": False,
         # brake_xy_speed_m_s is retained for the observer-brake path.
         "coast_handoff_speed_m_s": 0.04,
         "coast_handoff_max_lateral_speed_m_s": 0.15,

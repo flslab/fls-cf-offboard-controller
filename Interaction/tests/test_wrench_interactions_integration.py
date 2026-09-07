@@ -1852,6 +1852,45 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'timed_level_to_position_handoff',
         )
 
+    def test_coast_can_handoff_directly_to_current_position(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_level_handoff_speed_m_s=0.10,
+            coast_level_handoff_delay_s=0.30,
+            coast_direct_position_handoff=True,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.30, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+        control.send(commander, command_timestamp=1.0, yaw_deg=0.0)
+        calls_before_handoff = len(commander.calls)
+
+        self.assertTrue(control.update_coast_attitude(
+            [0.02, 0.08, 1.01], [0.01, 0.099, 0.0],
+            [0.0, 0.20, 1.0], [0.0, 0.0, 0.0], 1.02,
+            current_orientation_rpy=np.radians([8.0, 0.0, 0.0]),
+            command_timestamp=1.02,
+        ))
+        self.assertEqual(control.command_mode, 'position_hold')
+        self.assertEqual(
+            control.coast_handoff_reason,
+            'direct_current_position_handoff',
+        )
+        np.testing.assert_allclose(
+            control.hold_position, [0.02, 0.08, 1.01]
+        )
+        self.assertTrue(control.coast_target_clamped_to_actual)
+        self.assertEqual(len(commander.calls), calls_before_handoff)
+
+        control.send(commander)
+        self.assertEqual(commander.calls[-1][0], 'position')
+
     def test_low_speed_direction_reversal_handoffs_after_state_dwell(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
