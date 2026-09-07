@@ -1,4 +1,5 @@
 import logging
+import random
 import threading
 import time
 import traceback
@@ -51,6 +52,78 @@ from Interaction.wrench_model_calibration import (
 # from Interaction.collision_avoidance.simulation import apf_velocity
 
 logger = logging.getLogger(__name__)
+
+
+class PairedFrictionRandomizer:
+    """Randomize high/low friction within each consecutive interaction pair."""
+
+    def __init__(self, config=None, rng=None):
+        config = config or {}
+        if not isinstance(config, dict):
+            raise ValueError('virtual_object.two_afc_friction must be a mapping')
+        enabled = config.get('enabled', False)
+        if type(enabled) is not bool:
+            raise ValueError('two_afc_friction.enabled must be boolean')
+        self.enabled = enabled
+        self.high_mu = float(config.get('high_mu', 0.10))
+        self.low_mu = float(config.get('low_mu', 0.01))
+        if (
+            not np.all(np.isfinite([self.high_mu, self.low_mu]))
+            or self.low_mu < 0.0
+            or self.high_mu <= self.low_mu
+        ):
+            raise ValueError(
+                'two_afc_friction requires finite coefficients with '
+                'high_mu > low_mu >= 0'
+            )
+        seed = config.get('random_seed')
+        if seed is not None and type(seed) is not int:
+            raise ValueError('two_afc_friction.random_seed must be an integer or null')
+        self.random_seed = seed
+        self._rng = rng if rng is not None else random.Random(seed)
+        self._pending_pair = []
+        self.actual_sequence = []
+
+    def begin_interaction(self):
+        """Lock and record the condition for one accepted interaction start."""
+        if not self.enabled:
+            return None
+        if not self._pending_pair:
+            high_first = bool(self._rng.getrandbits(1))
+            self._pending_pair = (
+                [('high', self.high_mu), ('low', self.low_mu)]
+                if high_first else
+                [('low', self.low_mu), ('high', self.high_mu)]
+            )
+        condition, mu = self._pending_pair.pop(0)
+        interaction_number = len(self.actual_sequence) + 1
+        record = {
+            'interaction_number': interaction_number,
+            'pair_number': (interaction_number + 1) // 2,
+            'position_in_pair': 1 if interaction_number % 2 else 2,
+            'condition': condition,
+            'mu': mu,
+        }
+        self.actual_sequence.append(record)
+        return dict(record)
+
+    def summary(self):
+        return {
+            'enabled': self.enabled,
+            'high_mu': self.high_mu,
+            'low_mu': self.low_mu,
+            'random_seed': self.random_seed,
+            'interaction_count': len(self.actual_sequence),
+            'actual_sequence': [dict(row) for row in self.actual_sequence],
+        }
+
+    def formatted_sequence(self):
+        if not self.actual_sequence:
+            return '(no accepted contact starts)'
+        return ' -> '.join(
+            f"{row['interaction_number']}:{row['condition']}(mu={row['mu']:.2f})"
+            for row in self.actual_sequence
+        )
 
 
 def _planar_fit_for_calibration_save(
@@ -1815,6 +1888,13 @@ class VirtualObjectPlanarMotion:
         self.origin = np.zeros(2)
         self.position = np.zeros(2)
         self.velocity = np.zeros(2)
+
+    def set_friction_coefficients(self, kinetic, static):
+        values = np.asarray([kinetic, static], dtype=float)
+        if not np.all(np.isfinite(values)) or np.any(values < 0.0):
+            raise ValueError('virtual friction coefficients must be finite and non-negative')
+        self.resistance_config['kinetic_friction_coefficient'] = float(values[0])
+        self.resistance_config['static_friction_coefficient'] = float(values[1])
 
     def reset(self, position_xy, velocity_xy):
         self.origin = np.asarray(position_xy, dtype=float).copy()
@@ -5343,6 +5423,16 @@ class InteractionsControl:
             potentiometer_contact_dwell_s = float(
                 contact_detection_config.get('onset_dwell_s', 0.03)
             )
+        two_afc_config = virtual_object_config.get('two_afc_friction', {})
+        if not isinstance(two_afc_config, dict):
+            raise ValueError('virtual_object.two_afc_friction must be a mapping')
+        two_afc_config = dict(two_afc_config)
+        two_afc_configured_enabled = two_afc_config.get('enabled', False)
+        if type(two_afc_configured_enabled) is not bool:
+            raise ValueError('two_afc_friction.enabled must be boolean')
+        if calibration_mode:
+            two_afc_config['enabled'] = False
+        two_afc_friction = PairedFrictionRandomizer(two_afc_config)
         force_max_attitude_deg = _validated_attitude_limit(
             force_max_attitude_deg, 'force rendering'
         )
@@ -5594,6 +5684,16 @@ class InteractionsControl:
                         'static_friction_coefficient': (
                             force_static_friction_coefficient
                         ),
+                        'two_afc_friction': {
+                            **two_afc_friction.summary(),
+                            'configured_enabled': (
+                                two_afc_configured_enabled
+                            ),
+                            'disabled_during_calibration': bool(
+                                calibration_mode
+                                and two_afc_configured_enabled
+                            ),
+                        },
                         'drag_coefficient': force_drag_coefficient,
                         'frontal_area': force_frontal_area,
                         'air_density': force_air_density,
@@ -5776,6 +5876,27 @@ class InteractionsControl:
             air_density=force_air_density,
             friction_min_speed_m_s=force_friction_min_speed_m_s,
         )
+        active_two_afc_condition = None
+
+        def begin_two_afc_interaction():
+            nonlocal force_kinetic_friction_coefficient
+            nonlocal force_static_friction_coefficient
+            nonlocal active_two_afc_condition
+            condition = two_afc_friction.begin_interaction()
+            if condition is None:
+                return None
+            mu = float(condition['mu'])
+            force_kinetic_friction_coefficient = mu
+            force_static_friction_coefficient = mu
+            virtual_motion.set_friction_coefficients(mu, mu)
+            active_two_afc_condition = condition
+            self._log_event('2AFC Friction Condition Started', {
+                **condition,
+                'kinetic_friction_coefficient': mu,
+                'static_friction_coefficient': mu,
+                'state_source': 'crazyflie_state_estimate',
+            })
+            return condition
         potentiometer_release_decision = None
         potentiometer_release_processed = False
         potentiometer_release_pending = False
@@ -6669,6 +6790,12 @@ class InteractionsControl:
                 and potentiometer_contact_decision.started
                 and bool(sensor_fields.get('force_sensor_fresh'))
             ):
+                if (
+                    not pipeline.shadow_mode
+                    and translation_control.mode
+                    == translation_control.POSITION_HOLD
+                ):
+                    begin_two_afc_interaction()
                 potentiometer_release_processed = False
                 potentiometer_release_pending = False
                 candidate_release_force_world = None
@@ -6767,6 +6894,9 @@ class InteractionsControl:
                                 ).tolist()
                             ),
                             'response_enabled': not pipeline.shadow_mode,
+                            'two_afc_friction_condition': (
+                                active_two_afc_condition
+                            ),
                             'state_source': 'crazyflie_state_estimate',
                         },
                     )
@@ -6860,6 +6990,12 @@ class InteractionsControl:
                             )
                         if event_name == 'Translation Contact':
                             if decision.started:
+                                if (
+                                    not pipeline.shadow_mode
+                                    and translation_control.mode
+                                    == translation_control.POSITION_HOLD
+                                ):
+                                    begin_two_afc_interaction()
                                 if force_rendering_enabled:
                                     selection_resistance, _, _ = (
                                         virtual_resistance_force(
@@ -6954,6 +7090,9 @@ class InteractionsControl:
                                                 render_selection[
                                                     'virtual_projected_acceleration'
                                                 ]
+                                            ),
+                                            'two_afc_friction_condition': (
+                                                active_two_afc_condition
                                             ),
                                             'state_source': (
                                                 'crazyflie_state_estimate'
@@ -9352,8 +9491,19 @@ class InteractionsControl:
             })
             logger.info('CALIBRATED %s', saved_path)
         else:
+            two_afc_summary = two_afc_friction.summary()
+            if two_afc_friction.enabled:
+                self._log_event('2AFC Friction Sequence Complete', {
+                    **two_afc_summary,
+                    'state_source': 'crazyflie_state_estimate',
+                })
+                logger.info(
+                    '2AFC ACTUAL FRICTION ORDER: %s',
+                    two_afc_friction.formatted_sequence(),
+                )
             self._log_event('Wrench Interaction Complete', {
                 'state_source': 'crazyflie_state_estimate',
+                'two_afc_friction': two_afc_summary,
             })
 
     def _run_peer_translation(self) -> None:
