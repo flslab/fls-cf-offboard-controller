@@ -230,7 +230,7 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # target to position control after 0.30 s of actually sent level
         # commands.  The older state-settled fields remain accepted for archived
         # mission/calibration files, but they no longer delay this timed handoff.
-        "coast_level_handoff_speed_m_s": 0.10,
+        "coast_level_handoff_speed_m_s": 0.20,
         "coast_level_handoff_delay_s": 0.30,
         "coast_direct_position_handoff": False,
         # brake_xy_speed_m_s is retained for the observer-brake path.
