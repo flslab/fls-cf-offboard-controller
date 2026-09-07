@@ -2,6 +2,7 @@ import unittest
 
 from Interaction.interactions import (
     PairedFrictionRandomizer,
+    TranslationControlHandoff,
     VirtualObjectPlanarMotion,
 )
 
@@ -70,6 +71,26 @@ class PairedFrictionRandomizerTests(unittest.TestCase):
         )
         self.assertEqual(
             motion.resistance_config['static_friction_coefficient'], 0.01
+        )
+
+    def test_handling_log_includes_the_current_rendering_condition(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+        )
+        details = (
+            'current_mass=0.170 kg, virtual_mass=0.170 kg, '
+            'kinetic_mu=0.010, static_mu=0.010, 2AFC=low'
+        )
+
+        with self.assertLogs('Interaction.interactions', level='INFO') as logs:
+            self.assertTrue(control.start_contact(log_details=details))
+
+        self.assertEqual(
+            logs.output[-1],
+            'INFO:Interaction.interactions:'
+            'HANDLING INTERACTION | ' + details,
         )
 
 

@@ -2477,18 +2477,23 @@ class TranslationControlHandoff:
                 'braking axis; rerun --calibrate for this direction'
             )
 
-    def _transition_mode(self, new_mode):
+    def _transition_mode(self, new_mode, log_details=None):
         self.mode = new_mode
-        logger.info({
+        message = {
             self.CONTACT_POSITION: 'HANDLING INTERACTION',
             self.CONTACT_ZDISTANCE: 'HANDLING INTERACTION',
             self.ATTITUDE_COAST: 'COASTING WITH ATTITUDE',
             self.POSITION_COAST: 'COASTING',
             self.ATTITUDE_BRAKING: 'BRAKING',
             self.POSITION_HOLD: 'HOVER',
-        }[new_mode])
+        }[new_mode]
+        if log_details:
+            message += f' | {log_details}'
+        logger.info(message)
 
-    def start_contact(self, render_mode='orientation', current_position=None):
+    def start_contact(
+            self, render_mode='orientation', current_position=None,
+            log_details=None):
         # Detector residuals during braking are expected controller/model
         # transients. Do not let them chatter the command mode.
         if self.shadow_mode or self.mode != self.POSITION_HOLD:
@@ -2557,7 +2562,8 @@ class TranslationControlHandoff:
         self.release_candidate_command_hold_s = None
         self._transition_mode(
             self.CONTACT_POSITION
-            if render_mode == 'position' else self.CONTACT_ZDISTANCE
+            if render_mode == 'position' else self.CONTACT_ZDISTANCE,
+            log_details=log_details,
         )
         return True
 
@@ -5897,6 +5903,19 @@ class InteractionsControl:
                 'state_source': 'crazyflie_state_estimate',
             })
             return condition
+
+        def current_interaction_log_details():
+            details = (
+                f'current_mass={force_current_mass:.3f} kg, '
+                f'virtual_mass={force_virtual_mass:.3f} kg, '
+                f'kinetic_mu={force_kinetic_friction_coefficient:.3f}, '
+                f'static_mu={force_static_friction_coefficient:.3f}'
+            )
+            if active_two_afc_condition is not None:
+                details += (
+                    f", 2AFC={active_two_afc_condition['condition']}"
+                )
+            return details
         potentiometer_release_decision = None
         potentiometer_release_processed = False
         potentiometer_release_pending = False
@@ -6862,7 +6881,8 @@ class InteractionsControl:
                 )
                 if translation_control.start_contact(
                         selected_render_mode,
-                        self._bounded_wrench_reference(position)):
+                        self._bounded_wrench_reference(position),
+                        log_details=current_interaction_log_details()):
                     pipeline.admittance.reset()
                     self._log_event(
                         'Translation Contact Start',
@@ -7035,7 +7055,10 @@ class InteractionsControl:
                                 )
                                 if translation_control.start_contact(
                                         render_selection['mode'],
-                                        self._bounded_wrench_reference(position)):
+                                        self._bounded_wrench_reference(position),
+                                        log_details=(
+                                            current_interaction_log_details()
+                                        )):
                                     # Commit contact-owned state only after the
                                     # handoff accepts the observer onset. A
                                     # detector re-start during release braking
