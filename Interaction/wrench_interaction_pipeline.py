@@ -251,12 +251,26 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_velocity_unwind_min_deceleration_m_s2": 0.30,
         "coast_velocity_unwind_filter_time_constant_s": 0.03,
         "coast_velocity_unwind_max_target_error_m_s": 0.15,
+        # Optional one-control-step lookahead.  Instead of waiting for the
+        # current tail prediction to cross the fixed terminal-speed target,
+        # also unwind when one more real braking update is predicted to cross
+        # it.  This compensates for the discrete command/update interval while
+        # preserving the legacy fixed-threshold behavior by default.
+        "coast_velocity_unwind_one_step_lookahead_enabled": False,
+        "coast_velocity_unwind_one_step_max_dt_s": 0.03,
         # Once level, resume zero-velocity braking if total XY speed is still
         # above this narrow hysteresis band. This prevents predictive unwind
         # from tracking a persistent 0.03--0.10 m/s residual forever.
         "coast_velocity_rebrake_speed_m_s": 0.04,
         "coast_velocity_handoff_min_projected_speed_m_s": -0.03,
         "coast_velocity_handoff_max_rate_deg_s": 5.0,
+        # Optional per-sample kinematic sanity gate for coast-mode transition
+        # decisions.  Rejected samples keep the already-active command and are
+        # rebased, rather than being allowed to trigger unwind/re-brake/handoff.
+        "coast_state_kinematic_guard_enabled": False,
+        "coast_state_max_kinematic_residual_m": 0.03,
+        "coast_state_max_implied_acceleration_m_s2": 20.0,
+        "coast_state_max_sample_gap_s": 0.05,
         "coast_direct_position_handoff": False,
         # brake_xy_speed_m_s is retained for the observer-brake path.
         "coast_handoff_speed_m_s": 0.04,

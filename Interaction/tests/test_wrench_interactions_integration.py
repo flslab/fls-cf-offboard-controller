@@ -2100,6 +2100,109 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         self.assertEqual(control.command_mode, 'velocity_coast')
 
+    def test_predictive_velocity_coast_one_step_unwinds_before_fixed_crossing(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_unwind_terminal_speed_m_s=0.10,
+            coast_velocity_unwind_one_step_lookahead_enabled=True,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.40, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.008, 1.0], [0.0, 0.40, 0.0], 1.02,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.radians([50.0, 0.0, 0.0]),
+        ))
+        self.assertGreater(
+            control.coast_velocity_predicted_unwind_terminal_speed_m_s,
+            control.coast_velocity_unwind_terminal_speed_m_s,
+        )
+        self.assertLessEqual(
+            control.coast_velocity_predicted_next_step_terminal_speed_m_s,
+            control.coast_velocity_unwind_terminal_speed_m_s,
+        )
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+        self.assertEqual(
+            control.coast_velocity_unwind_decision_reason,
+            'one_step_tail_prediction',
+        )
+        self.assertTrue(control.consume_velocity_pid_reset_request())
+
+    def test_velocity_coast_rejects_impossible_kinematic_state_jump(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_state_kinematic_guard_enabled=True,
+            coast_state_max_kinematic_residual_m=0.03,
+            coast_state_max_implied_acceleration_m_s2=20.0,
+            coast_state_max_sample_gap_s=0.05,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, -0.10, 1.0], [0.0, -0.06, 0.0], 1.02,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+        ))
+        self.assertFalse(control.coast_state_sample_valid)
+        self.assertEqual(
+            control.coast_state_rejection_reason,
+            'position_velocity_inconsistency',
+        )
+        self.assertEqual(control.coast_velocity_phase, 'fast_brake')
+        rejection = control.consume_coast_state_rejection()
+        self.assertEqual(rejection['reason'], 'position_velocity_inconsistency')
+        self.assertGreater(rejection['kinematic_residual_m'], 0.03)
+        self.assertIsNone(control.consume_coast_state_rejection())
+
+        # The rejected sample becomes the new comparison baseline, so the next
+        # coherent sample is accepted instead of causing a rejection cascade.
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, -0.1012, 1.0], [0.0, -0.06, 0.0], 1.04,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+        ))
+        self.assertTrue(control.coast_state_sample_valid)
+
+    def test_velocity_coast_recontact_requires_explicit_sensor_authority(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.30, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        self.assertFalse(control.start_contact(
+            'orientation', current_position=[0.0, 0.02, 1.0]
+        ))
+        self.assertTrue(control.start_contact(
+            'orientation',
+            current_position=[0.0, 0.02, 1.0],
+            allow_coast_reentry=True,
+        ))
+        self.assertEqual(control.command_mode, 'attitude_zdistance')
+
     def test_predictive_velocity_coast_rebrakes_if_level_but_still_fast(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(

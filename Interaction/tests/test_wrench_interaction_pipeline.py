@@ -46,6 +46,12 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(
             handoff["coast_velocity_unwind_max_target_error_m_s"], 0.15
         )
+        self.assertFalse(
+            handoff["coast_velocity_unwind_one_step_lookahead_enabled"]
+        )
+        self.assertEqual(
+            handoff["coast_velocity_unwind_one_step_max_dt_s"], 0.03
+        )
         self.assertEqual(
             handoff["coast_velocity_rebrake_speed_m_s"], 0.04
         )
@@ -56,6 +62,14 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(
             handoff["coast_velocity_handoff_max_rate_deg_s"], 5.0
         )
+        self.assertFalse(handoff["coast_state_kinematic_guard_enabled"])
+        self.assertEqual(
+            handoff["coast_state_max_kinematic_residual_m"], 0.03
+        )
+        self.assertEqual(
+            handoff["coast_state_max_implied_acceleration_m_s2"], 20.0
+        )
+        self.assertEqual(handoff["coast_state_max_sample_gap_s"], 0.05)
         self.assertEqual(handoff["coast_handoff_speed_m_s"], 0.04)
         self.assertEqual(handoff["coast_handoff_max_tilt_deg"], 0.5)
         self.assertEqual(
