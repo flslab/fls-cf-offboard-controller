@@ -4255,11 +4255,18 @@ class TranslationControlHandoff:
                 self._tail_neutralization_needs_send_anchor = False
             return sent_at
         elif self.mode == self.VELOCITY_COAST:
-            commander.send_velocity_world_setpoint(
-                float(self.coast_velocity_command_xy_m_s[0]),
-                float(self.coast_velocity_command_xy_m_s[1]),
+            current_yaw_deg = float(
+                self.yaw_deg if yaw_deg is None else yaw_deg
+            )
+            body_velocity_xy = world_to_body_xy(
+                self.coast_velocity_command_xy_m_s,
+                current_yaw_deg,
+            )
+            commander.send_hover_setpoint(
+                float(body_velocity_xy[0]),
+                float(body_velocity_xy[1]),
                 0.0,
-                0.0,
+                self.hover_z,
             )
             return float(
                 time.time()

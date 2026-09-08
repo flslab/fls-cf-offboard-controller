@@ -1949,8 +1949,8 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(control.command_mode, 'velocity_coast')
 
         control.send(commander, command_timestamp=1.0)
-        self.assertEqual(commander.calls[-1][0], 'velocity_world')
-        np.testing.assert_allclose(commander.calls[-1][1], [0.0, 0.0, 0.0, 0.0])
+        self.assertEqual(commander.calls[-1][0], 'hover')
+        np.testing.assert_allclose(commander.calls[-1][1], [0.0, 0.0, 0.0, 1.0])
 
         self.assertFalse(control.update_coast_velocity(
             [0.01, 0.10, 1.0], [0.06, 0.09, 0.0], 1.01,
@@ -1997,7 +1997,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         control.confirm_release_candidate(timestamp=1.0)
         control.send(commander, command_timestamp=1.0)
         np.testing.assert_allclose(
-            commander.calls[-1][1], [0.0, 0.0, 0.0, 0.0]
+            commander.calls[-1][1], [0.0, 0.0, 0.0, 1.0]
         )
 
         # A strong measured braking attitude predicts that leveling now will
@@ -2017,7 +2017,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertFalse(control.consume_velocity_pid_reset_request())
         control.send(commander, command_timestamp=1.05)
         np.testing.assert_allclose(
-            commander.calls[-1][1], [0.0, 0.60, 0.0, 0.0]
+            commander.calls[-1][1], [0.0, 0.60, 0.0, 1.0]
         )
 
         # Low speed alone is not sufficient while measured tilt is large.
@@ -2118,7 +2118,29 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertFalse(control.consume_velocity_rebrake_request())
         control.send(commander, command_timestamp=1.15)
         np.testing.assert_allclose(
-            commander.calls[-1][1], [0.0, 0.0, 0.0, 0.0]
+            commander.calls[-1][1], [0.0, 0.0, 0.0, 1.0]
+        )
+
+    def test_velocity_coast_hover_rotates_world_velocity_and_holds_release_z(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.2], [1.0, 0.0, 0.0], 1.0,
+            interaction_direction=[1.0, 0.0, 0.0], coast=True,
+        ))
+        control.coast_velocity_command_xy_m_s = np.array([1.0, 0.0])
+
+        control.send(commander, command_timestamp=1.0, yaw_deg=90.0)
+
+        self.assertEqual(commander.calls[-1][0], 'hover')
+        np.testing.assert_allclose(
+            commander.calls[-1][1], [0.0, -1.0, 0.0, 1.2], atol=1e-12
         )
 
     def test_low_speed_direction_reversal_handoffs_after_state_dwell(self):
