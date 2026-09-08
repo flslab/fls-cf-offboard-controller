@@ -284,6 +284,19 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
             "max_state_age_s": 0.10,
         },
     },
+    # Shadow-only adapter for the minimum-time velocity MPC. When enabled it
+    # consumes real flight state and actual sent attitude commands, but its
+    # decisions are logged only and never acquire command authority.
+    "learning_velocity_mpc_shadow": {
+        "enabled": False,
+        "target_velocity_m_s": 0.0,
+        # The saved fitted prediction model currently supports world +/-Y.
+        # Null locks the sign from release velocity; [0, +/-1] fixes it.
+        "direction_xy": None,
+        "log_interval_s": 0.10,
+        # Stay inside the original 8-degree calibration envelope by default.
+        "controller": {"max_acceleration_tilt_deg": 8.0},
+    },
     "admittance": {
         "translation_mass": [0.30, 0.30, 0.45],
         "translation_damping": [1.20, 1.20, 1.80],

@@ -29,6 +29,12 @@ from Interaction.position_capture_calibration import PositionCaptureCalibration
 from Interaction.online_prediction_calibration import OnlinePredictionCalibration
 from Interaction.calibration_trial_readiness import CalibrationTrialReadinessGate
 from Interaction.flight_behaviors import load_commands
+from Interaction.learning_velocity_mpc import (
+    LearningVelocityMPC,
+    VelocityMPCConfig,
+    VelocityMPCState,
+    frozen_velocity_model_from_prediction_model,
+)
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
 from Interaction.potentiometer_force_sensor import (
     PotentiometerContactDetector,
@@ -36,6 +42,7 @@ from Interaction.potentiometer_force_sensor import (
 )
 from Interaction.predictive_brake_handoff import (
     PredictiveBrakeToPosition,
+    projected_tilt_from_world_acceleration,
     projected_tilt_history_from_world_acceleration,
 )
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
@@ -6039,11 +6046,80 @@ class InteractionsControl:
         )
         if type(predictive_braking_enabled) is not bool:
             raise ValueError('predictive_braking.enabled must be boolean')
+        velocity_mpc_shadow_config = deepcopy(
+            config.get('learning_velocity_mpc_shadow', {})
+        )
+        if not isinstance(velocity_mpc_shadow_config, dict):
+            raise ValueError('learning_velocity_mpc_shadow must be a mapping')
+        velocity_mpc_shadow_enabled = velocity_mpc_shadow_config.pop(
+            'enabled', False
+        )
+        if type(velocity_mpc_shadow_enabled) is not bool:
+            raise ValueError(
+                'learning_velocity_mpc_shadow.enabled must be boolean'
+            )
+        velocity_mpc_shadow_target_m_s = float(
+            velocity_mpc_shadow_config.pop('target_velocity_m_s', 0.0)
+        )
+        velocity_mpc_shadow_log_interval_s = float(
+            velocity_mpc_shadow_config.pop('log_interval_s', 0.10)
+        )
+        velocity_mpc_shadow_direction_config = (
+            velocity_mpc_shadow_config.pop('direction_xy', None)
+        )
+        velocity_mpc_controller_config = velocity_mpc_shadow_config.pop(
+            'controller', {}
+        )
+        if velocity_mpc_shadow_config:
+            raise ValueError(
+                'unknown learning_velocity_mpc_shadow keys: '
+                + ', '.join(sorted(velocity_mpc_shadow_config))
+            )
+        if (
+            not np.isfinite(velocity_mpc_shadow_target_m_s)
+            or not np.isfinite(velocity_mpc_shadow_log_interval_s)
+            or velocity_mpc_shadow_log_interval_s <= 0.0
+        ):
+            raise ValueError(
+                'learning velocity MPC target/log interval must be finite; '
+                'log interval must be positive'
+            )
+        if not isinstance(velocity_mpc_controller_config, dict):
+            raise ValueError(
+                'learning_velocity_mpc_shadow.controller must be a mapping'
+            )
+        velocity_mpc_config_object = VelocityMPCConfig(
+            **velocity_mpc_controller_config
+        )
+        velocity_mpc_config_object.validate()
+        if velocity_mpc_shadow_direction_config is not None:
+            configured_velocity_direction = np.asarray(
+                velocity_mpc_shadow_direction_config, dtype=float
+            )
+            if (
+                configured_velocity_direction.shape != (2,)
+                or not np.all(np.isfinite(configured_velocity_direction))
+                or abs(configured_velocity_direction[0]) > 1e-9
+                or abs(abs(configured_velocity_direction[1])-1.0) > 1e-9
+            ):
+                raise ValueError(
+                    'learning velocity MPC fitted model direction must be '
+                    'world [0,+/-1]'
+                )
+            velocity_mpc_shadow_direction_config = (
+                configured_velocity_direction
+            )
+        prediction_model_consumer_enabled = bool(
+            velocity_mpc_shadow_enabled
+            or (
+                predictive_braking_enabled
+                and not velocity_coast_braking_enabled
+            )
+        )
         predictive_calibration_entry = (
             load_drone_calibration(self.drone_id, calibration_path)
             if (
-                predictive_braking_enabled
-                and not velocity_coast_braking_enabled
+                prediction_model_consumer_enabled
                 and not calibration_mode
                 and release_mode == 'potentiometer_coast'
                 and not pipeline.shadow_mode
@@ -6056,6 +6132,14 @@ class InteractionsControl:
         predictive_braking_available = bool(
             predictive_braking_model is not None
         )
+        velocity_mpc_shadow_available = bool(
+            velocity_mpc_shadow_enabled and predictive_braking_available
+        )
+        if velocity_mpc_shadow_enabled and not velocity_mpc_shadow_available:
+            logger.warning(
+                'Learning velocity MPC shadow requested without a saved '
+                'prediction_model; real flight commands remain unchanged.'
+            )
         if (
             predictive_braking_enabled
             and not velocity_coast_braking_enabled
@@ -6545,6 +6629,12 @@ class InteractionsControl:
         predictive_brake_abort_after_send = False
         predictive_position_handoff_logged = False
         predictive_last_logged_signature = None
+        velocity_mpc_shadow_episode = None
+        velocity_mpc_shadow_direction = None
+        velocity_mpc_shadow_previous_state = None
+        velocity_mpc_shadow_last_decision = None
+        velocity_mpc_shadow_last_logged_signature = None
+        velocity_mpc_shadow_last_log_time = None
         excitation_config = config['calibration_excitation']
         excitation_end_s = (
             float(excitation_config['start_delay_s'])
@@ -8153,6 +8243,94 @@ class InteractionsControl:
                                 'Predictive brake could not start: %s; using '
                                 'legacy coast controller.', error,
                             )
+                    if velocity_mpc_shadow_available:
+                        try:
+                            if velocity_mpc_shadow_direction_config is None:
+                                direction_y = float(coast_direction[1])
+                                if abs(direction_y) <= 1e-9:
+                                    raise ValueError(
+                                        'release has no world-Y shadow direction'
+                                    )
+                                velocity_mpc_shadow_direction = np.array([
+                                    0.0, float(np.sign(direction_y))
+                                ])
+                            else:
+                                velocity_mpc_shadow_direction = (
+                                    velocity_mpc_shadow_direction_config.copy()
+                                )
+                            frozen_model, selected_model = (
+                                frozen_velocity_model_from_prediction_model(
+                                    predictive_braking_model,
+                                    direction_y=float(
+                                        velocity_mpc_shadow_direction[1]
+                                    ),
+                                )
+                            )
+                            velocity_mpc_shadow_episode = LearningVelocityMPC(
+                                frozen_model,
+                                direction_xy=velocity_mpc_shadow_direction,
+                                target_velocity_m_s=(
+                                    velocity_mpc_shadow_target_m_s
+                                ),
+                                config=velocity_mpc_config_object,
+                            )
+                            sent_history = (
+                                projected_tilt_history_from_world_acceleration(
+                                    translation_control
+                                    .sent_attitude_acceleration_history(),
+                                    velocity_mpc_shadow_direction,
+                                )
+                            )
+                            for sent_time, projected_tilt in sent_history:
+                                velocity_mpc_shadow_episode.record_sent_command(
+                                    sent_time, projected_tilt
+                                )
+                            velocity_mpc_shadow_previous_state = None
+                            velocity_mpc_shadow_last_decision = None
+                            velocity_mpc_shadow_last_logged_signature = None
+                            velocity_mpc_shadow_last_log_time = None
+                            self._log_event(
+                                'Learning Velocity MPC Shadow Started',
+                                {
+                                    'offline_only': True,
+                                    'command_authority': False,
+                                    'actual_flight_controller_unchanged': True,
+                                    'direction_xy': (
+                                        velocity_mpc_shadow_direction.tolist()
+                                    ),
+                                    'target_velocity_m_s': (
+                                        velocity_mpc_shadow_target_m_s
+                                    ),
+                                    'selected_directional_model': selected_model,
+                                    'model_source': (
+                                        'saved_prediction_model_plus_causal_'
+                                        'acceleration_residual'
+                                    ),
+                                    'seeded_sent_command_count': len(sent_history),
+                                    'state_source': (
+                                        'crazyflie_state_estimate'
+                                    ),
+                                },
+                            )
+                        except (KeyError, TypeError, ValueError) as error:
+                            velocity_mpc_shadow_episode = None
+                            velocity_mpc_shadow_direction = None
+                            self._log_event(
+                                'Learning Velocity MPC Shadow Unavailable',
+                                {
+                                    'reason': str(error),
+                                    'offline_only': True,
+                                    'actual_flight_controller_unchanged': True,
+                                    'state_source': (
+                                        'crazyflie_state_estimate'
+                                    ),
+                                },
+                            )
+                            logger.warning(
+                                'Learning velocity MPC shadow could not start: '
+                                '%s; real flight controller is unchanged.',
+                                error,
+                            )
                     potentiometer_release_processed = True
                     potentiometer_release_pending = False
                     candidate_release_force_world = None
@@ -8373,6 +8551,131 @@ class InteractionsControl:
             braking_kwargs = {}
             coast_handoff_completed = False
             predictive_brake_decision = None
+            if (
+                velocity_mpc_shadow_episode is not None
+                and potentiometer_release_processed
+            ):
+                velocity_mpc_shadow_now = time.time()
+                velocity_mpc_shadow_state = VelocityMPCState(
+                    time_s=state_time,
+                    velocity_xy=tuple(output.estimate.velocity[:2]),
+                    orientation_rpy_rad=tuple(
+                        output.estimate.orientation_rpy
+                    ),
+                    angular_velocity_rad_s=tuple(state['angular_velocity']),
+                    state_group_skew_s=state_group_skew,
+                )
+                if velocity_mpc_shadow_previous_state is not None:
+                    try:
+                        velocity_mpc_shadow_episode.observe_transition(
+                            velocity_mpc_shadow_previous_state,
+                            velocity_mpc_shadow_state,
+                        )
+                    except (TypeError, ValueError) as error:
+                        logger.debug(
+                            'Learning velocity MPC shadow residual sample '
+                            'rejected: %s', error,
+                        )
+                velocity_mpc_shadow_previous_state = (
+                    velocity_mpc_shadow_state
+                )
+                velocity_mpc_shadow_last_decision = (
+                    velocity_mpc_shadow_episode.decide(
+                        velocity_mpc_shadow_now,
+                        velocity_mpc_shadow_state,
+                    )
+                )
+                velocity_mpc_signature = (
+                    velocity_mpc_shadow_last_decision.get('action'),
+                    velocity_mpc_shadow_last_decision.get('reason'),
+                )
+                velocity_mpc_log_due = bool(
+                    velocity_mpc_shadow_last_log_time is None
+                    or velocity_mpc_shadow_now
+                    - velocity_mpc_shadow_last_log_time
+                    >= velocity_mpc_shadow_log_interval_s
+                )
+                if (
+                    velocity_mpc_signature
+                    != velocity_mpc_shadow_last_logged_signature
+                    or velocity_mpc_log_due
+                ):
+                    self._log_event(
+                        'Learning Velocity MPC Shadow Decision',
+                        {
+                            'offline_only': True,
+                            'command_authority': False,
+                            'actual_flight_controller_unchanged': True,
+                            'action': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'action'
+                                )
+                            ),
+                            'reason': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'reason'
+                                )
+                            ),
+                            'direction_xy': (
+                                velocity_mpc_shadow_direction.tolist()
+                            ),
+                            'measured_velocity_m_s': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'measured_velocity_m_s'
+                                )
+                            ),
+                            'target_velocity_m_s': (
+                                velocity_mpc_shadow_target_m_s
+                            ),
+                            'hypothetical_roll_deg': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'roll_deg'
+                                )
+                            ),
+                            'hypothetical_pitch_deg': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'pitch_deg'
+                                )
+                            ),
+                            'predicted_arrival_time_s': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'predicted_arrival_time_s'
+                                )
+                            ),
+                            'predicted_terminal_velocity_m_s': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'predicted_terminal_velocity_m_s'
+                                )
+                            ),
+                            'predicted_terminal_tilt_deg': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'predicted_terminal_tilt_deg'
+                                )
+                            ),
+                            'predicted_max_signed_overshoot_m_s': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'predicted_max_signed_overshoot_m_s'
+                                )
+                            ),
+                            'hard_terminal_constraints_satisfied': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'hard_terminal_constraints_satisfied'
+                                )
+                            ),
+                            'residual_learning': (
+                                velocity_mpc_shadow_last_decision.get(
+                                    'residual_learning'
+                                )
+                            ),
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+                    velocity_mpc_shadow_last_logged_signature = (
+                        velocity_mpc_signature
+                    )
+                    velocity_mpc_shadow_last_log_time = (
+                        velocity_mpc_shadow_now
+                    )
             if (
                 predictive_brake_episode is not None
                 and potentiometer_release_processed
@@ -9367,6 +9670,46 @@ class InteractionsControl:
                     self.lo_commander,
                     yaw_deg=np.degrees(output.estimate.orientation_rpy[2]),
                 )
+                if velocity_mpc_shadow_episode is not None:
+                    try:
+                        sent_attitude_history = (
+                            translation_control
+                            .sent_attitude_acceleration_history()
+                        )
+                        if not sent_attitude_history:
+                            raise ValueError(
+                                'actual attitude send was not recorded'
+                            )
+                        shadow_sent_time, shadow_sent_acceleration = (
+                            sent_attitude_history[-1]
+                        )
+                        shadow_sent_tilt = (
+                            projected_tilt_from_world_acceleration(
+                                shadow_sent_acceleration,
+                                velocity_mpc_shadow_direction,
+                            )
+                        )
+                        velocity_mpc_shadow_episode.record_sent_command(
+                            shadow_sent_time, shadow_sent_tilt
+                        )
+                    except (TypeError, ValueError) as error:
+                        self._log_event(
+                            'Learning Velocity MPC Shadow Stopped',
+                            {
+                                'reason': str(error),
+                                'offline_only': True,
+                                'actual_flight_controller_unchanged': True,
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                        logger.warning(
+                            'Learning velocity MPC shadow command-history '
+                            'update failed: %s; shadow stopped without '
+                            'changing real flight control.', error,
+                        )
+                        velocity_mpc_shadow_episode = None
                 if (
                     predictive_brake_episode is not None
                     and predictive_brake_decision is not None
@@ -9410,6 +9753,17 @@ class InteractionsControl:
                         predictive_brake_decision = None
                         predictive_brake_abort_after_send = False
             else:
+                if velocity_mpc_shadow_episode is not None:
+                    self._log_event(
+                        'Learning Velocity MPC Shadow Stopped',
+                        {
+                            'reason': 'actual_controller_entered_position_mode',
+                            'offline_only': True,
+                            'actual_flight_controller_unchanged': True,
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+                    velocity_mpc_shadow_episode = None
                 command_position = translation_control.hold_position.copy()
                 command_yaw = translation_control.yaw_deg
                 last_command_position = command_position.copy()

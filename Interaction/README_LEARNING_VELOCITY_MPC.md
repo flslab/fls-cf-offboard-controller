@@ -41,3 +41,42 @@ Run the synthetic tests with:
 ```bash
 venv/bin/python -m unittest Interaction.tests.test_learning_velocity_mpc
 ```
+
+## Real-state shadow integration
+
+The normal interaction entry now has an opt-in shadow adapter. It starts after
+a confirmed potentiometer release, loads the saved directional
+`prediction_model`, consumes live Crazyflie state plus the actual attitude
+commands sent by the existing controller, and emits:
+
+- `Learning Velocity MPC Shadow Started`
+- `Learning Velocity MPC Shadow Decision`
+- `Learning Velocity MPC Shadow Stopped` or `... Unavailable`
+
+The adapter never applies the hypothetical MPC roll/pitch. Enable it in the
+mission interaction configuration only for a later live-state shadow run,
+while leaving the active predictive policy off:
+
+```yaml
+predictive_braking:
+  enabled: false
+
+learning_velocity_mpc_shadow:
+  # Keep false for offline log replay. Change to true only after benchmarking
+  # the remote compute/logging budget for a live-state shadow run.
+  enabled: false
+  target_velocity_m_s: 0.0
+  direction_xy: null       # infer +/-Y from the release; or [0.0, -1.0]
+  log_interval_s: 0.10
+  controller:
+    max_acceleration_tilt_deg: 8.0
+    terminal_velocity_tolerance_m_s: 0.05
+    terminal_tilt_tolerance_deg: 3.0
+    overshoot_tolerance_m_s: 0.02
+```
+
+This replaces the old candidate selector only in the diagnostic comparison;
+it does not replace the identified dynamics. LMPC still needs the fitted
+`delay_s`, `wn_rad_s`, `zeta`, command gain, and motion gain. A future model
+replacement must first produce the same frozen-model interface and pass
+held-out directional validation.

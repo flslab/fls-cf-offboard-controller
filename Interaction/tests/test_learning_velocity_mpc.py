@@ -7,6 +7,7 @@ from Interaction.learning_velocity_mpc import (
     LearningVelocityMPC,
     VelocityMPCConfig,
     VelocityMPCState,
+    frozen_velocity_model_from_prediction_model,
 )
 from Interaction.offline_braking_selector import FrozenTiltModel
 from Interaction.model_based_braking import _second_order_transition
@@ -51,6 +52,54 @@ class LearningVelocityMPCTests(unittest.TestCase):
         ):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 VelocityMPCConfig(**update).validate()
+
+    def test_saved_directional_prediction_model_can_seed_shadow_mpc(self):
+        prediction = {
+            "schema_version": 1,
+            "kind": "delayed_second_order_planar_prediction",
+            "prediction_scope": "attitude_command_only",
+            "identifiability": {
+                "identifiable": True, "bound_active_parameters": [],
+            },
+            "data_ranges": [{
+                "direction_y": sign,
+                "command_acceleration_m_s2": [-3.0, 3.0],
+                "velocity_m_s": [-1.0, 1.0],
+                "theta_rad": [-0.4, 0.4],
+            } for sign in (-1, 1)],
+            "directional_models": {
+                "positive_y": {
+                    "direction_y": 1,
+                    "identifiability": {
+                        "identifiable": True, "bound_active_parameters": [],
+                    },
+                    "attitude_fit": {
+                        "model": "second_order", "delay_s": 0.03,
+                        "wn_rad_s": 14.0, "zeta": 0.8, "gain": 1.0,
+                        "bias_world_y_rad": 0.01,
+                    },
+                    "motion_gain": 0.9,
+                },
+                "negative_y": {
+                    "direction_y": -1,
+                    "identifiability": {
+                        "identifiable": True, "bound_active_parameters": [],
+                    },
+                    "attitude_fit": {
+                        "model": "second_order", "delay_s": 0.04,
+                        "wn_rad_s": 13.0, "zeta": 0.9, "gain": 0.95,
+                        "bias_world_y_rad": -0.01,
+                    },
+                    "motion_gain": 0.8,
+                },
+            },
+        }
+        frozen, label = frozen_velocity_model_from_prediction_model(
+            prediction, direction_y=-1,
+        )
+        self.assertEqual(label, "negative_y")
+        self.assertEqual(frozen.delay_s, 0.04)
+        self.assertEqual(frozen.motion_gain, 0.8)
 
     def test_missing_sent_history_fails_closed_without_command(self):
         item = LearningVelocityMPC(

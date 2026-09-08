@@ -20,7 +20,10 @@ import math
 
 import numpy as np
 
-from Interaction.model_based_braking import _second_order_transition
+from Interaction.model_based_braking import (
+    _second_order_transition,
+    _validated_model,
+)
 from Interaction.offline_braking_selector import FrozenTiltModel
 
 
@@ -169,6 +172,29 @@ class CausalAccelerationResidualLearner:
                 float(self.estimate_m_s2) if self.ready else 0.0
             ),
         }
+
+
+def frozen_velocity_model_from_prediction_model(model, *, direction_y):
+    """Select one calibrated +/-Y component for shadow velocity MPC.
+
+    This performs the same structural/range validation as the existing
+    model-based braking controller. Deployment metadata is deliberately not an
+    authorization gate here because this adapter is shadow-only.
+    """
+    direction = float(direction_y)
+    if not math.isfinite(direction) or abs(abs(direction)-1.0) > 1e-9:
+        raise ValueError("velocity MPC fitted model supports only direction_y +/-1")
+    params, _ranges, _margin, label = _validated_model(
+        model, True, direction
+    )
+    return FrozenTiltModel(
+        delay_s=params["delay_s"],
+        wn_rad_s=params["wn_rad_s"],
+        zeta=params["zeta"],
+        command_gain=params["gain"],
+        motion_gain=params["motion_gain"],
+        projected_bias_rad=params["bias_world_y_rad"],
+    ), label
 
 
 class LearningVelocityMPC:

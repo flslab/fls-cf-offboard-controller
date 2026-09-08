@@ -65,6 +65,16 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertFalse(
             DEFAULT_WRENCH_INTERACTION_CONFIG["predictive_braking"]["enabled"]
         )
+        velocity_shadow = DEFAULT_WRENCH_INTERACTION_CONFIG[
+            "learning_velocity_mpc_shadow"
+        ]
+        self.assertFalse(velocity_shadow["enabled"])
+        self.assertEqual(velocity_shadow["target_velocity_m_s"], 0.0)
+        self.assertIsNone(velocity_shadow["direction_xy"])
+        self.assertEqual(
+            velocity_shadow["controller"]["max_acceleration_tilt_deg"],
+            8.0,
+        )
 
 
 class ContactDetectorTests(unittest.TestCase):
