@@ -5598,6 +5598,19 @@ class InteractionsControl:
                 'control_handoff.coast_velocity_braking_enabled must be '
                 'boolean'
             )
+        velocity_coast_handoff_speed_m_s = float(
+            config['control_handoff'].get(
+                'coast_velocity_handoff_speed_m_s', 0.10
+            )
+        )
+        if (
+            not np.isfinite(velocity_coast_handoff_speed_m_s)
+            or velocity_coast_handoff_speed_m_s <= 0.0
+        ):
+            raise ValueError(
+                'control_handoff.coast_velocity_handoff_speed_m_s must be '
+                'finite and positive'
+            )
         predictive_braking_config = deepcopy(
             config.get('predictive_braking', {})
         )
@@ -5892,8 +5905,7 @@ class InteractionsControl:
                                 if release_mode == 'potentiometer_coast' else None
                             ),
                             'velocity_handoff_speed_m_s': (
-                                translation_control
-                                .coast_velocity_handoff_speed_m_s
+                                velocity_coast_handoff_speed_m_s
                                 if velocity_coast_braking_enabled else None
                             ),
                             'ignored_during_calibration': bool(
