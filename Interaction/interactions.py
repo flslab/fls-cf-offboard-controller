@@ -8225,11 +8225,17 @@ class InteractionsControl:
                                 braking_kwargs['coast_velocity'].tolist()
                             ),
                             'virtual_position_error_m': (
-                                translation_control
+                                None
+                                if translation_control
+                                .coast_tracking_position_error_m is None
+                                else translation_control
                                 .coast_tracking_position_error_m.tolist()
                             ),
                             'virtual_velocity_error_m_s': (
-                                translation_control
+                                None
+                                if translation_control
+                                .coast_tracking_velocity_error_m_s is None
+                                else translation_control
                                 .coast_tracking_velocity_error_m_s.tolist()
                             ),
                             'position_pullback_disabled': True,
