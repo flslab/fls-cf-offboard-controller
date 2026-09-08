@@ -7966,6 +7966,17 @@ class InteractionsControl:
                     )
                 )
                 if coast_handoff_completed:
+                    position_integrators_reset = False
+                    if (
+                        translation_control.coast_handoff_reason
+                        == 'direct_current_position_handoff'
+                    ):
+                        # Match the established attitude-to-position transition:
+                        # clear both controller integrators before the first
+                        # native position setpoint is sent later this cycle.
+                        self.cf.param.set_value("posCtlPid.resetI", "1")
+                        self.cf.param.set_value("velCtlPid.resetI", "1")
+                        position_integrators_reset = True
                     self._log_event(
                         'Coast Position Control Handoff',
                         {
@@ -8102,6 +8113,9 @@ class InteractionsControl:
                             ),
                             'command_mode': (
                                 translation_control.command_mode
+                            ),
+                            'position_integrators_reset': (
+                                position_integrators_reset
                             ),
                             'state_source': 'crazyflie_state_estimate',
                         },
