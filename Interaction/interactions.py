@@ -618,6 +618,36 @@ def world_to_body_xy(world_velocity_xy, yaw_deg):
     ])
 
 
+def reset_pid_integrators_without_ack(crazyflie, parameter_names):
+    """Reset uint8 PID flags without occupying the parameter reply queue.
+
+    Crazyflie ``Param.set_value`` serializes acknowledged writes with log
+    traffic.  The first pair of handoff resets produced a roughly 0.52 second
+    telemetry/command gap in flight.  ``set_value_raw`` uses the documented
+    by-name no-ack path, which is appropriate for transient uint8 reset flags.
+    Test doubles and older cflib versions retain the acknowledged fallback.
+    """
+    names = tuple(str(name) for name in parameter_names)
+    if not names:
+        return 'none'
+    parameter_api = getattr(crazyflie, 'param', None)
+    if parameter_api is None:
+        raise AttributeError('Crazyflie parameter API is unavailable')
+    raw_setter = getattr(parameter_api, 'set_value_raw', None)
+    if callable(raw_setter):
+        for complete_name in names:
+            # cflib ParamTocElement type 0x08 is uint8_t. Both resetI flags are
+            # PARAM_UINT8 in the Crazyflie controller firmware.
+            raw_setter(complete_name, 0x08, 1)
+        return 'raw_by_name_no_ack'
+    setter = getattr(parameter_api, 'set_value', None)
+    if not callable(setter):
+        raise AttributeError('Crazyflie parameter setter is unavailable')
+    for complete_name in names:
+        setter(complete_name, '1')
+    return 'acknowledged_fallback'
+
+
 def coast_braking_attitude(
         current_velocity_xy,
         brake_direction_xy,
@@ -2200,10 +2230,11 @@ class TranslationControlHandoff:
             coast_velocity_handoff_speed_m_s=0.10,
             coast_velocity_predictive_unwind_enabled=False,
             coast_velocity_unwind_terminal_speed_m_s=0.05,
-            coast_velocity_unwind_prediction_margin_s=0.03,
+            coast_velocity_unwind_prediction_margin_s=0.15,
             coast_velocity_unwind_min_deceleration_m_s2=0.30,
             coast_velocity_unwind_filter_time_constant_s=0.03,
-            coast_velocity_unwind_max_target_error_m_s=0.08,
+            coast_velocity_unwind_max_target_error_m_s=0.15,
+            coast_velocity_rebrake_speed_m_s=0.15,
             coast_velocity_handoff_min_projected_speed_m_s=-0.03,
             coast_velocity_handoff_max_rate_deg_s=20.0,
             coast_direct_position_handoff=False,
@@ -2310,6 +2341,9 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_max_target_error_m_s = float(
             coast_velocity_unwind_max_target_error_m_s
         )
+        self.coast_velocity_rebrake_speed_m_s = float(
+            coast_velocity_rebrake_speed_m_s
+        )
         self.coast_velocity_handoff_min_projected_speed_m_s = float(
             coast_velocity_handoff_min_projected_speed_m_s
         )
@@ -2372,6 +2406,7 @@ class TranslationControlHandoff:
             self.coast_velocity_unwind_min_deceleration_m_s2,
             self.coast_velocity_unwind_filter_time_constant_s,
             self.coast_velocity_unwind_max_target_error_m_s,
+            self.coast_velocity_rebrake_speed_m_s,
             self.coast_velocity_handoff_min_projected_speed_m_s,
             self.coast_velocity_handoff_max_rate_deg_s,
             self.coast_command_period_s,
@@ -2419,6 +2454,8 @@ class TranslationControlHandoff:
             or self.coast_velocity_unwind_min_deceleration_m_s2 <= 0
             or self.coast_velocity_unwind_filter_time_constant_s <= 0
             or self.coast_velocity_unwind_max_target_error_m_s <= 0
+            or self.coast_velocity_rebrake_speed_m_s
+            <= self.coast_velocity_handoff_speed_m_s
             or self.coast_velocity_handoff_min_projected_speed_m_s > 0
             or self.coast_velocity_handoff_max_rate_deg_s <= 0
             or self.coast_command_period_s <= 0
@@ -2524,7 +2561,9 @@ class TranslationControlHandoff:
         self.coast_velocity_handoff_tilt_ready = False
         self.coast_velocity_handoff_rate_ready = False
         self.coast_velocity_handoff_speed_ready = False
+        self.coast_velocity_rebrake_count = 0
         self._coast_velocity_pid_reset_pending = False
+        self._coast_velocity_rebrake_pending = False
 
     def _validate_calibrated_braking_direction(self, direction_xy):
         if self.coast_calibrated_direction_xy is None:
@@ -2645,7 +2684,9 @@ class TranslationControlHandoff:
         self.coast_velocity_handoff_tilt_ready = False
         self.coast_velocity_handoff_rate_ready = False
         self.coast_velocity_handoff_speed_ready = False
+        self.coast_velocity_rebrake_count = 0
         self._coast_velocity_pid_reset_pending = False
+        self._coast_velocity_rebrake_pending = False
         self._transition_mode(
             self.CONTACT_POSITION
             if render_mode == 'position' else self.CONTACT_ZDISTANCE,
@@ -3139,7 +3180,9 @@ class TranslationControlHandoff:
         self.coast_velocity_handoff_tilt_ready = False
         self.coast_velocity_handoff_rate_ready = False
         self.coast_velocity_handoff_speed_ready = False
+        self.coast_velocity_rebrake_count = 0
         self._coast_velocity_pid_reset_pending = False
+        self._coast_velocity_rebrake_pending = False
         if coast:
             yaw_deg = float(np.degrees(orientation_rpy[2]))
             if not self._coast_command_history:
@@ -3415,6 +3458,28 @@ class TranslationControlHandoff:
             self.coast_velocity_predicted_unwind_terminal_speed_m_s = (
                 predicted_terminal_speed
             )
+            angular_rate_xy_deg_s = float(np.linalg.norm(
+                np.degrees(angular_velocity[:2])
+            ))
+
+            # A deliberately conservative early unwind can leave useful
+            # forward speed after the vehicle has become level.  Re-enter a short
+            # zero-velocity brake only from a settled attitude; this closes
+            # the loop without allowing an early prediction to coast forever.
+            if (
+                self.coast_velocity_phase == 'predictive_unwind'
+                and self.brake_projected_speed_m_s
+                >= self.coast_velocity_rebrake_speed_m_s
+                and self.coast_actual_tilt_deg
+                <= self.coast_handoff_max_tilt_deg
+                and angular_rate_xy_deg_s
+                <= self.coast_velocity_handoff_max_rate_deg_s
+            ):
+                self.coast_velocity_phase = 'fast_brake'
+                self.coast_velocity_command_xy_m_s.fill(0.0)
+                self.coast_velocity_rebrake_count += 1
+                self._coast_velocity_rebrake_pending = True
+                self._coast_alignment_since = None
 
             if self.coast_velocity_phase == 'fast_brake':
                 predicted_tail_ready = bool(
@@ -3498,15 +3563,14 @@ class TranslationControlHandoff:
             else:
                 self.coast_velocity_command_xy_m_s.fill(0.0)
                 self.coast_tracking_action = (
-                    'predictive_zero_world_velocity_brake'
+                    'predictive_zero_world_velocity_rebrake'
+                    if self.coast_velocity_rebrake_count > 0
+                    else 'predictive_zero_world_velocity_brake'
                 )
 
             self.coast_tracking_velocity_error_m_s = (
                 self.coast_velocity_command_xy_m_s - velocity[:2]
             )
-            angular_rate_xy_deg_s = float(np.linalg.norm(
-                np.degrees(angular_velocity[:2])
-            ))
             self.coast_velocity_handoff_speed_ready = bool(
                 xy_speed <= self.coast_velocity_handoff_speed_m_s
                 and self.brake_projected_speed_m_s
@@ -3572,6 +3636,12 @@ class TranslationControlHandoff:
         """Return true once when predictive unwind needs a bumpless reset."""
         pending = bool(self._coast_velocity_pid_reset_pending)
         self._coast_velocity_pid_reset_pending = False
+        return pending
+
+    def consume_velocity_rebrake_request(self):
+        """Return true once when a settled but fast coast resumes braking."""
+        pending = bool(self._coast_velocity_rebrake_pending)
+        self._coast_velocity_rebrake_pending = False
         return pending
 
     def update_coast_attitude(
@@ -6250,6 +6320,17 @@ class InteractionsControl:
                             'velocity_predictive_unwind_enabled': (
                                 velocity_predictive_unwind_enabled
                             ),
+                            'velocity_unwind_prediction_margin_s': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_prediction_margin_s',
+                                    0.15,
+                                )
+                            ),
+                            'velocity_rebrake_speed_m_s': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_rebrake_speed_m_s', 0.15
+                                )
+                            ),
                             'ignored_during_calibration': bool(
                                 calibration_mode
                             ),
@@ -8434,7 +8515,15 @@ class InteractionsControl:
                         )
                     )
                     if translation_control.consume_velocity_pid_reset_request():
-                        self.cf.param.set_value("velCtlPid.resetI", "1")
+                        reset_started_at = time.time()
+                        velocity_reset_method = (
+                            reset_pid_integrators_without_ack(
+                                self.cf, ('velCtlPid.resetI',)
+                            )
+                        )
+                        velocity_reset_elapsed_s = (
+                            time.time() - reset_started_at
+                        )
                         self._log_event(
                             'Velocity Coast Predictive Unwind Started',
                             {
@@ -8467,6 +8556,37 @@ class InteractionsControl:
                                     .coast_velocity_unwind_response_horizon_s
                                 ),
                                 'velocity_integrator_reset': True,
+                                'integrator_reset_method': (
+                                    velocity_reset_method
+                                ),
+                                'integrator_reset_elapsed_s': (
+                                    velocity_reset_elapsed_s
+                                ),
+                                'state_source': 'crazyflie_state_estimate',
+                            },
+                        )
+                    if translation_control.consume_velocity_rebrake_request():
+                        self._log_event(
+                            'Velocity Coast Fast Brake Resumed',
+                            {
+                                'rebrake_count': (
+                                    translation_control
+                                    .coast_velocity_rebrake_count
+                                ),
+                                'measured_velocity_m_s': (
+                                    output.estimate.velocity.tolist()
+                                ),
+                                'projected_speed_m_s': (
+                                    translation_control
+                                    .brake_projected_speed_m_s
+                                ),
+                                'rebrake_speed_threshold_m_s': (
+                                    translation_control
+                                    .coast_velocity_rebrake_speed_m_s
+                                ),
+                                'actual_tilt_deg': (
+                                    translation_control.coast_actual_tilt_deg
+                                ),
                                 'state_source': 'crazyflie_state_estimate',
                             },
                         )
@@ -8491,6 +8611,8 @@ class InteractionsControl:
                     )
                 if coast_handoff_completed:
                     position_integrators_reset = False
+                    position_integrator_reset_method = None
+                    position_integrator_reset_elapsed_s = None
                     if (
                         translation_control.coast_handoff_reason
                         in (
@@ -8499,11 +8621,23 @@ class InteractionsControl:
                             'velocity_predictive_unwind_position_handoff',
                         )
                     ):
-                        # Match the established attitude-to-position transition:
-                        # clear both controller integrators before the first
-                        # native position setpoint is sent later this cycle.
-                        self.cf.param.set_value("posCtlPid.resetI", "1")
-                        self.cf.param.set_value("velCtlPid.resetI", "1")
+                        # Clear both controller integrators without adding two
+                        # acknowledged parameter transactions to the handoff
+                        # command path. The first staged flight showed a 0.52 s
+                        # command/telemetry gap at this exact transition.
+                        reset_started_at = time.time()
+                        position_integrator_reset_method = (
+                            reset_pid_integrators_without_ack(
+                                self.cf,
+                                (
+                                    'posCtlPid.resetI',
+                                    'velCtlPid.resetI',
+                                ),
+                            )
+                        )
+                        position_integrator_reset_elapsed_s = (
+                            time.time() - reset_started_at
+                        )
                         position_integrators_reset = True
                     self._log_event(
                         'Coast Position Control Handoff',
@@ -8653,6 +8787,10 @@ class InteractionsControl:
                             'velocity_phase': (
                                 translation_control.coast_velocity_phase
                             ),
+                            'velocity_rebrake_count': (
+                                translation_control
+                                .coast_velocity_rebrake_count
+                            ),
                             'velocity_handoff_tilt_ready': (
                                 translation_control
                                 .coast_velocity_handoff_tilt_ready
@@ -8674,6 +8812,12 @@ class InteractionsControl:
                             ),
                             'position_integrators_reset': (
                                 position_integrators_reset
+                            ),
+                            'integrator_reset_method': (
+                                position_integrator_reset_method
+                            ),
+                            'integrator_reset_elapsed_s': (
+                                position_integrator_reset_elapsed_s
                             ),
                             'state_source': 'crazyflie_state_estimate',
                         },
@@ -9850,6 +9994,9 @@ class InteractionsControl:
                 ),
                 'coast_velocity_phase': (
                     translation_control.coast_velocity_phase
+                ),
+                'coast_velocity_rebrake_count': (
+                    translation_control.coast_velocity_rebrake_count
                 ),
                 'coast_velocity_predicted_unwind_terminal_speed_m_s': (
                     translation_control

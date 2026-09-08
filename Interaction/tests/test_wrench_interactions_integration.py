@@ -30,6 +30,7 @@ from Interaction.interactions import (
     release_candidate_sensor_stale_watchdog,
     release_tail_neutralization_attitude,
     release_coast_initial_velocity,
+    reset_pid_integrators_without_ack,
     resolve_release_mode,
     resolve_wrench_nominal_target,
     select_inertia_render_mode,
@@ -671,6 +672,42 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
         np.testing.assert_allclose(
             world_to_body_xy([1.0, 0.0], 90.0), [0, -1], atol=1e-12
         )
+
+    def test_pid_integrator_reset_prefers_no_ack_raw_writes(self):
+        class RawParameters:
+            def __init__(self):
+                self.calls = []
+
+            def set_value_raw(self, name, parameter_type, value):
+                self.calls.append((name, parameter_type, value))
+
+        parameters = RawParameters()
+        method = reset_pid_integrators_without_ack(
+            SimpleNamespace(param=parameters),
+            ('posCtlPid.resetI', 'velCtlPid.resetI'),
+        )
+
+        self.assertEqual(method, 'raw_by_name_no_ack')
+        self.assertEqual(parameters.calls, [
+            ('posCtlPid.resetI', 0x08, 1),
+            ('velCtlPid.resetI', 0x08, 1),
+        ])
+
+    def test_pid_integrator_reset_keeps_older_cflib_fallback(self):
+        class LegacyParameters:
+            def __init__(self):
+                self.calls = []
+
+            def set_value(self, name, value):
+                self.calls.append((name, value))
+
+        parameters = LegacyParameters()
+        method = reset_pid_integrators_without_ack(
+            SimpleNamespace(param=parameters), ('velCtlPid.resetI',)
+        )
+
+        self.assertEqual(method, 'acknowledged_fallback')
+        self.assertEqual(parameters.calls, [('velCtlPid.resetI', '1')])
 
     def test_heavy_mass_generates_and_limits_attitude_feedback(self):
         pitch, roll = heavy_inertia_attitude(
@@ -2043,6 +2080,46 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'recover_reverse_velocity_while_unwinding',
         )
         self.assertEqual(control.command_mode, 'velocity_coast')
+
+    def test_predictive_velocity_coast_rebrakes_if_level_but_still_fast(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_rebrake_speed_m_s=0.15,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.10, 1.0], [0.0, 0.60, 0.0], 1.05,
+            current_orientation_rpy=np.radians([20.0, 0.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+        self.assertTrue(control.consume_velocity_pid_reset_request())
+
+        # Conservative early unwind may leave forward speed. Once the actual
+        # attitude and rate are settled, resume a short zero-velocity pulse.
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.20, 1.0], [0.0, 0.20, 0.0], 1.15,
+            current_orientation_rpy=np.radians([1.0, 0.0, 0.0]),
+            current_angular_velocity=np.radians([2.0, 0.0, 0.0]),
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'fast_brake')
+        self.assertEqual(control.coast_velocity_rebrake_count, 1)
+        self.assertTrue(control.consume_velocity_rebrake_request())
+        self.assertFalse(control.consume_velocity_rebrake_request())
+        control.send(commander, command_timestamp=1.15)
+        np.testing.assert_allclose(
+            commander.calls[-1][1], [0.0, 0.0, 0.0, 0.0]
+        )
 
     def test_low_speed_direction_reversal_handoffs_after_state_dwell(self):
         commander = FakeCommander()

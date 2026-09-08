@@ -41,6 +41,15 @@ class DefaultConfigTests(unittest.TestCase):
             handoff["coast_velocity_unwind_terminal_speed_m_s"], 0.05
         )
         self.assertEqual(
+            handoff["coast_velocity_unwind_prediction_margin_s"], 0.15
+        )
+        self.assertEqual(
+            handoff["coast_velocity_unwind_max_target_error_m_s"], 0.15
+        )
+        self.assertEqual(
+            handoff["coast_velocity_rebrake_speed_m_s"], 0.15
+        )
+        self.assertEqual(
             handoff["coast_velocity_handoff_min_projected_speed_m_s"],
             -0.03,
         )
