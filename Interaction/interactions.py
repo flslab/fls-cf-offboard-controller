@@ -2229,7 +2229,7 @@ class TranslationControlHandoff:
             coast_velocity_braking_enabled=False,
             coast_velocity_handoff_speed_m_s=0.03,
             coast_velocity_predictive_unwind_enabled=False,
-            coast_velocity_unwind_terminal_speed_m_s=0.02,
+            coast_velocity_unwind_terminal_speed_m_s=0.10,
             coast_velocity_unwind_prediction_margin_s=0.15,
             coast_velocity_unwind_min_deceleration_m_s2=0.30,
             coast_velocity_unwind_filter_time_constant_s=0.03,
@@ -2448,11 +2448,6 @@ class TranslationControlHandoff:
             or self.coast_level_handoff_delay_s < 0
             or self.coast_velocity_handoff_speed_m_s <= 0
             or self.coast_velocity_unwind_terminal_speed_m_s < 0
-            or (
-                self.coast_velocity_predictive_unwind_enabled
-                and self.coast_velocity_unwind_terminal_speed_m_s
-                >= self.coast_velocity_handoff_speed_m_s
-            )
             or self.coast_velocity_unwind_prediction_margin_s < 0
             or self.coast_velocity_unwind_min_deceleration_m_s2 <= 0
             or self.coast_velocity_unwind_filter_time_constant_s <= 0

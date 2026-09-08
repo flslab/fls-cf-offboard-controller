@@ -243,7 +243,7 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # point track the measured velocity so the onboard velocity loop asks
         # for level attitude before position control takes ownership.
         "coast_velocity_predictive_unwind_enabled": False,
-        "coast_velocity_unwind_terminal_speed_m_s": 0.02,
+        "coast_velocity_unwind_terminal_speed_m_s": 0.10,
         # The open-loop attitude fit did not cover the full velocity-estimator
         # tail seen during the first staged flight.  Keep a conservative tail
         # margin here and re-brake after leveling if meaningful speed remains.
