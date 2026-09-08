@@ -510,6 +510,9 @@ class FakeCommander:
     def send_hover_setpoint(self, *args):
         self.calls.append(('hover', args, {}))
 
+    def send_velocity_world_setpoint(self, *args):
+        self.calls.append(('velocity_world', args, {}))
+
     def send_notify_setpoint_stop(self, *args):
         self.calls.append(('stop', args, {}))
 
@@ -1888,6 +1891,48 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertTrue(control.coast_target_clamped_to_actual)
         self.assertEqual(len(commander.calls), calls_before_handoff)
 
+        control.send(commander)
+        self.assertEqual(commander.calls[-1][0], 'position')
+
+    def test_velocity_coast_commands_zero_then_handoffs_below_point_one(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_handoff_speed_m_s=0.10,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.30, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+        self.assertEqual(control.command_mode, 'velocity_coast')
+
+        control.send(commander, command_timestamp=1.0)
+        self.assertEqual(commander.calls[-1][0], 'velocity_world')
+        np.testing.assert_allclose(commander.calls[-1][1], [0.0, 0.0, 0.0, 0.0])
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.01, 0.10, 1.0], [0.06, 0.09, 0.0], 1.01,
+            current_orientation_rpy=np.zeros(3),
+        ))
+        self.assertEqual(control.command_mode, 'velocity_coast')
+
+        self.assertTrue(control.update_coast_velocity(
+            [0.02, 0.12, 1.01], [0.05, 0.08, 0.0], 1.02,
+            current_orientation_rpy=np.zeros(3),
+        ))
+        self.assertEqual(control.command_mode, 'position_hold')
+        self.assertEqual(
+            control.coast_handoff_reason,
+            'velocity_zero_position_handoff',
+        )
+        np.testing.assert_allclose(
+            control.hold_position, [0.02, 0.12, 1.01]
+        )
         control.send(commander)
         self.assertEqual(commander.calls[-1][0], 'position')
 

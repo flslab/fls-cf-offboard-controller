@@ -30,8 +30,10 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(handoff["coast_attitude_time_constant_s"], 0.08)
         self.assertEqual(handoff["coast_attitude_acceleration_scale"], 1.0)
         self.assertEqual(handoff["coast_level_terminal_speed_m_s"], 0.03)
-        self.assertEqual(handoff["coast_level_handoff_speed_m_s"], 0.10)
+        self.assertEqual(handoff["coast_level_handoff_speed_m_s"], 0.50)
         self.assertEqual(handoff["coast_level_handoff_delay_s"], 0.30)
+        self.assertFalse(handoff["coast_velocity_braking_enabled"])
+        self.assertEqual(handoff["coast_velocity_handoff_speed_m_s"], 0.10)
         self.assertEqual(handoff["coast_handoff_speed_m_s"], 0.04)
         self.assertEqual(handoff["coast_handoff_max_tilt_deg"], 3.0)
         self.assertEqual(

@@ -232,6 +232,11 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # mission/calibration files, but they no longer delay this timed handoff.
         "coast_level_handoff_speed_m_s": 0.50,
         "coast_level_handoff_delay_s": 0.30,
+        # Experimental alternative to attitude braking: command zero world
+        # velocity after release, then latch the measured pose for position
+        # control once total XY speed is below the configured threshold.
+        "coast_velocity_braking_enabled": False,
+        "coast_velocity_handoff_speed_m_s": 0.10,
         "coast_direct_position_handoff": False,
         # brake_xy_speed_m_s is retained for the observer-brake path.
         "coast_handoff_speed_m_s": 0.04,
