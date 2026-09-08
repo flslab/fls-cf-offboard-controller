@@ -237,6 +237,19 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # control once total XY speed is below the configured threshold.
         "coast_velocity_braking_enabled": False,
         "coast_velocity_handoff_speed_m_s": 0.10,
+        # Optional staged variant of velocity braking.  First request zero
+        # velocity, then predict when the measured braking attitude has enough
+        # residual impulse to reach a small positive terminal speed.  At that
+        # point track the measured velocity so the onboard velocity loop asks
+        # for level attitude before position control takes ownership.
+        "coast_velocity_predictive_unwind_enabled": False,
+        "coast_velocity_unwind_terminal_speed_m_s": 0.05,
+        "coast_velocity_unwind_prediction_margin_s": 0.03,
+        "coast_velocity_unwind_min_deceleration_m_s2": 0.30,
+        "coast_velocity_unwind_filter_time_constant_s": 0.03,
+        "coast_velocity_unwind_max_target_error_m_s": 0.08,
+        "coast_velocity_handoff_min_projected_speed_m_s": -0.03,
+        "coast_velocity_handoff_max_rate_deg_s": 20.0,
         "coast_direct_position_handoff": False,
         # brake_xy_speed_m_s is retained for the observer-brake path.
         "coast_handoff_speed_m_s": 0.04,

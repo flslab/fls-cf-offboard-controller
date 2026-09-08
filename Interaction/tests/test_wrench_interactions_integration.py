@@ -1936,6 +1936,114 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         control.send(commander)
         self.assertEqual(commander.calls[-1][0], 'position')
 
+    def test_predictive_velocity_coast_unwinds_before_level_handoff(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_handoff_speed_m_s=0.10,
+            coast_velocity_unwind_terminal_speed_m_s=0.05,
+            coast_velocity_unwind_prediction_margin_s=0.03,
+            coast_velocity_handoff_min_projected_speed_m_s=-0.03,
+            coast_velocity_handoff_max_rate_deg_s=20.0,
+            coast_handoff_max_tilt_deg=3.0,
+            coast_alignment_dwell_s=0.05,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+        control.send(commander, command_timestamp=1.0)
+        np.testing.assert_allclose(
+            commander.calls[-1][1], [0.0, 0.0, 0.0, 0.0]
+        )
+
+        # A strong measured braking attitude predicts that leveling now will
+        # consume the remaining forward speed, so the velocity target changes
+        # from zero to the measured velocity before the zero crossing.
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.10, 1.0], [0.0, 0.60, 0.0], 1.05,
+            current_orientation_rpy=np.radians([20.0, 0.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+        self.assertLessEqual(
+            control.coast_velocity_predicted_unwind_terminal_speed_m_s,
+            control.coast_velocity_unwind_terminal_speed_m_s,
+        )
+        self.assertTrue(control.consume_velocity_pid_reset_request())
+        self.assertFalse(control.consume_velocity_pid_reset_request())
+        control.send(commander, command_timestamp=1.05)
+        np.testing.assert_allclose(
+            commander.calls[-1][1], [0.0, 0.60, 0.0, 0.0]
+        )
+
+        # Low speed alone is not sufficient while measured tilt is large.
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.14, 1.0], [0.0, 0.08, 0.0], 1.10,
+            current_orientation_rpy=np.radians([10.0, 0.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+        ))
+        self.assertFalse(control.coast_velocity_handoff_tilt_ready)
+
+        # Once speed, actual tilt, and angular rate stay inside their gates for
+        # the configured dwell, position control latches the measured pose.
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.15, 1.0], [0.0, 0.08, 0.0], 1.20,
+            current_orientation_rpy=np.radians([2.0, 0.0, 0.0]),
+            current_angular_velocity=np.radians([5.0, 0.0, 0.0]),
+        ))
+        self.assertTrue(control.update_coast_velocity(
+            [0.0, 0.155, 1.0], [0.0, 0.06, 0.0], 1.26,
+            current_orientation_rpy=np.radians([1.0, 0.0, 0.0]),
+            current_angular_velocity=np.radians([3.0, 0.0, 0.0]),
+        ))
+        self.assertEqual(
+            control.coast_handoff_reason,
+            'velocity_predictive_unwind_position_handoff',
+        )
+        np.testing.assert_allclose(
+            control.hold_position, [0.0, 0.155, 1.0]
+        )
+        control.send(commander)
+        self.assertEqual(commander.calls[-1][0], 'position')
+
+    def test_predictive_velocity_coast_rejects_reverse_speed_handoff(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_handoff_min_projected_speed_m_s=-0.03,
+            coast_alignment_dwell_s=0.0,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.30, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.05, 1.0], [0.0, -0.05, 0.0], 1.10,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+        ))
+        self.assertFalse(control.coast_velocity_handoff_speed_ready)
+        self.assertGreater(
+            float(control.coast_velocity_command_xy_m_s[1]), -0.05
+        )
+        self.assertEqual(
+            control.coast_tracking_action,
+            'recover_reverse_velocity_while_unwinding',
+        )
+        self.assertEqual(control.command_mode, 'velocity_coast')
+
     def test_low_speed_direction_reversal_handoffs_after_state_dwell(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
