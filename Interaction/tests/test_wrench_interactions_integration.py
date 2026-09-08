@@ -1981,13 +1981,13 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             shadow_mode=False,
             coast_velocity_braking_enabled=True,
             coast_velocity_predictive_unwind_enabled=True,
-            coast_velocity_handoff_speed_m_s=0.10,
-            coast_velocity_unwind_terminal_speed_m_s=0.05,
+            coast_velocity_handoff_speed_m_s=0.03,
+            coast_velocity_unwind_terminal_speed_m_s=0.02,
             coast_velocity_unwind_prediction_margin_s=0.03,
             coast_velocity_handoff_min_projected_speed_m_s=-0.03,
-            coast_velocity_handoff_max_rate_deg_s=20.0,
-            coast_handoff_max_tilt_deg=3.0,
-            coast_alignment_dwell_s=0.05,
+            coast_velocity_handoff_max_rate_deg_s=5.0,
+            coast_handoff_max_tilt_deg=0.5,
+            coast_alignment_dwell_s=0.08,
         )
         self.assertTrue(control.start_contact('orientation'))
         self.assertTrue(control.end_contact(
@@ -2020,32 +2020,45 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             commander.calls[-1][1], [0.0, 0.60, 0.0, 1.0]
         )
 
-        # Low speed alone is not sufficient while measured tilt is large.
+        # Low speed alone is not sufficient while measured tilt is too large.
         self.assertFalse(control.update_coast_velocity(
-            [0.0, 0.14, 1.0], [0.0, 0.08, 0.0], 1.10,
-            current_orientation_rpy=np.radians([10.0, 0.0, 0.0]),
+            [0.0, 0.14, 1.0], [0.0, 0.025, 0.0], 1.10,
+            current_orientation_rpy=np.radians([1.0, 0.0, 0.0]),
             current_angular_velocity=np.zeros(3),
         ))
         self.assertFalse(control.coast_velocity_handoff_tilt_ready)
 
-        # Once speed, actual tilt, and angular rate stay inside their gates for
-        # the configured dwell, position control latches the measured pose.
+        # A level vehicle still cannot hand off while angular rate is high.
         self.assertFalse(control.update_coast_velocity(
-            [0.0, 0.15, 1.0], [0.0, 0.08, 0.0], 1.20,
-            current_orientation_rpy=np.radians([2.0, 0.0, 0.0]),
-            current_angular_velocity=np.radians([5.0, 0.0, 0.0]),
+            [0.0, 0.15, 1.0], [0.0, 0.025, 0.0], 1.20,
+            current_orientation_rpy=np.radians([0.3, 0.0, 0.0]),
+            current_angular_velocity=np.radians([6.0, 0.0, 0.0]),
+        ))
+        self.assertFalse(control.coast_velocity_handoff_rate_ready)
+
+        # Once all three gates are satisfied, require a continuous 80 ms
+        # dwell before position control latches the measured pose.
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.155, 1.0], [0.0, 0.025, 0.0], 1.30,
+            current_orientation_rpy=np.radians([0.3, 0.0, 0.0]),
+            current_angular_velocity=np.radians([3.0, 0.0, 0.0]),
+        ))
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.157, 1.0], [0.0, 0.024, 0.0], 1.37,
+            current_orientation_rpy=np.radians([0.2, 0.0, 0.0]),
+            current_angular_velocity=np.radians([2.0, 0.0, 0.0]),
         ))
         self.assertTrue(control.update_coast_velocity(
-            [0.0, 0.155, 1.0], [0.0, 0.06, 0.0], 1.26,
-            current_orientation_rpy=np.radians([1.0, 0.0, 0.0]),
-            current_angular_velocity=np.radians([3.0, 0.0, 0.0]),
+            [0.0, 0.158, 1.0], [0.0, 0.023, 0.0], 1.39,
+            current_orientation_rpy=np.radians([0.2, 0.0, 0.0]),
+            current_angular_velocity=np.radians([2.0, 0.0, 0.0]),
         ))
         self.assertEqual(
             control.coast_handoff_reason,
             'velocity_predictive_unwind_position_handoff',
         )
         np.testing.assert_allclose(
-            control.hold_position, [0.0, 0.155, 1.0]
+            control.hold_position, [0.0, 0.158, 1.0]
         )
         control.send(commander)
         self.assertEqual(commander.calls[-1][0], 'position')
@@ -2075,9 +2088,15 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertGreater(
             float(control.coast_velocity_command_xy_m_s[1]), -0.05
         )
+        # With the stricter default speed gate, this sample remains in the
+        # zero-velocity brake instead of accepting or tracking reverse motion.
+        self.assertEqual(control.coast_velocity_phase, 'fast_brake')
         self.assertEqual(
             control.coast_tracking_action,
-            'recover_reverse_velocity_while_unwinding',
+            'predictive_zero_world_velocity_brake',
+        )
+        np.testing.assert_allclose(
+            control.coast_velocity_command_xy_m_s, [0.0, 0.0]
         )
         self.assertEqual(control.command_mode, 'velocity_coast')
 
@@ -2109,7 +2128,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         # attitude and rate are settled, resume a short zero-velocity pulse.
         self.assertFalse(control.update_coast_velocity(
             [0.0, 0.20, 1.0], [0.0, 0.20, 0.0], 1.15,
-            current_orientation_rpy=np.radians([1.0, 0.0, 0.0]),
+            current_orientation_rpy=np.radians([0.3, 0.0, 0.0]),
             current_angular_velocity=np.radians([2.0, 0.0, 0.0]),
         ))
         self.assertEqual(control.coast_velocity_phase, 'fast_brake')
@@ -2119,6 +2138,48 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         control.send(commander, command_timestamp=1.15)
         np.testing.assert_allclose(
             commander.calls[-1][1], [0.0, 0.0, 0.0, 1.0]
+        )
+
+    def test_predictive_velocity_coast_rebrakes_lateral_residual_speed(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_handoff_speed_m_s=0.03,
+            coast_velocity_unwind_terminal_speed_m_s=0.02,
+            coast_velocity_rebrake_speed_m_s=0.04,
+            coast_velocity_handoff_max_rate_deg_s=5.0,
+            coast_handoff_max_tilt_deg=0.5,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.10, 1.0], [0.0, 0.60, 0.0], 1.05,
+            current_orientation_rpy=np.radians([20.0, 0.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+
+        # Longitudinal speed alone is below the re-brake threshold, but the
+        # remaining lateral velocity still exceeds the handoff envelope.
+        self.assertFalse(control.update_coast_velocity(
+            [0.01, 0.12, 1.0], [0.05, 0.01, 0.0], 1.15,
+            current_orientation_rpy=np.radians([0.2, 0.0, 0.0]),
+            current_angular_velocity=np.radians([2.0, 0.0, 0.0]),
+        ))
+        self.assertLess(control.brake_projected_speed_m_s, 0.04)
+        self.assertGreater(np.linalg.norm([0.05, 0.01]), 0.04)
+        self.assertEqual(control.coast_velocity_phase, 'fast_brake')
+        self.assertTrue(control.consume_velocity_rebrake_request())
+        np.testing.assert_allclose(
+            control.coast_velocity_command_xy_m_s, [0.0, 0.0]
         )
 
     def test_velocity_coast_hover_rotates_world_velocity_and_holds_release_z(self):

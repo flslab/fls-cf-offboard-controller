@@ -234,16 +234,16 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_level_handoff_delay_s": 0.30,
         # Experimental alternative to attitude braking: command zero world
         # velocity after release, then latch the measured pose for position
-        # control once total XY speed is below the configured threshold.
+        # control only after speed, tilt, and angular rate are all settled.
         "coast_velocity_braking_enabled": False,
-        "coast_velocity_handoff_speed_m_s": 0.10,
+        "coast_velocity_handoff_speed_m_s": 0.03,
         # Optional staged variant of velocity braking.  First request zero
         # velocity, then predict when the measured braking attitude has enough
         # residual impulse to reach a small positive terminal speed.  At that
         # point track the measured velocity so the onboard velocity loop asks
         # for level attitude before position control takes ownership.
         "coast_velocity_predictive_unwind_enabled": False,
-        "coast_velocity_unwind_terminal_speed_m_s": 0.05,
+        "coast_velocity_unwind_terminal_speed_m_s": 0.02,
         # The open-loop attitude fit did not cover the full velocity-estimator
         # tail seen during the first staged flight.  Keep a conservative tail
         # margin here and re-brake after leveling if meaningful speed remains.
@@ -251,18 +251,21 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_velocity_unwind_min_deceleration_m_s2": 0.30,
         "coast_velocity_unwind_filter_time_constant_s": 0.03,
         "coast_velocity_unwind_max_target_error_m_s": 0.15,
-        "coast_velocity_rebrake_speed_m_s": 0.15,
+        # Once level, resume zero-velocity braking if total XY speed is still
+        # above this narrow hysteresis band. This prevents predictive unwind
+        # from tracking a persistent 0.03--0.10 m/s residual forever.
+        "coast_velocity_rebrake_speed_m_s": 0.04,
         "coast_velocity_handoff_min_projected_speed_m_s": -0.03,
-        "coast_velocity_handoff_max_rate_deg_s": 20.0,
+        "coast_velocity_handoff_max_rate_deg_s": 5.0,
         "coast_direct_position_handoff": False,
         # brake_xy_speed_m_s is retained for the observer-brake path.
         "coast_handoff_speed_m_s": 0.04,
         "coast_handoff_max_lateral_speed_m_s": 0.15,
-        "coast_handoff_max_tilt_deg": 3.0,
+        "coast_handoff_max_tilt_deg": 0.5,
         "coast_handoff_max_acceleration_m_s2": 0.35,
         "coast_alignment_position_tolerance_m": 0.04,
         "coast_alignment_velocity_tolerance_m_s": 0.08,
-        "coast_alignment_dwell_s": 0.05,
+        "coast_alignment_dwell_s": 0.08,
         # Diagnostic only; timeout cannot force a moving vehicle into position
         # control because doing so would pull it back toward the handoff point.
         "coast_attitude_timeout_s": 1.5,

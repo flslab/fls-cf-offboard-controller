@@ -2227,16 +2227,16 @@ class TranslationControlHandoff:
             coast_level_handoff_speed_m_s=0.10,
             coast_level_handoff_delay_s=0.30,
             coast_velocity_braking_enabled=False,
-            coast_velocity_handoff_speed_m_s=0.10,
+            coast_velocity_handoff_speed_m_s=0.03,
             coast_velocity_predictive_unwind_enabled=False,
-            coast_velocity_unwind_terminal_speed_m_s=0.05,
+            coast_velocity_unwind_terminal_speed_m_s=0.02,
             coast_velocity_unwind_prediction_margin_s=0.15,
             coast_velocity_unwind_min_deceleration_m_s2=0.30,
             coast_velocity_unwind_filter_time_constant_s=0.03,
             coast_velocity_unwind_max_target_error_m_s=0.15,
-            coast_velocity_rebrake_speed_m_s=0.15,
+            coast_velocity_rebrake_speed_m_s=0.04,
             coast_velocity_handoff_min_projected_speed_m_s=-0.03,
-            coast_velocity_handoff_max_rate_deg_s=20.0,
+            coast_velocity_handoff_max_rate_deg_s=5.0,
             coast_direct_position_handoff=False,
             coast_command_period_s=0.02,
             coast_command_acceleration_deadband_m_s2=0.02,
@@ -2244,11 +2244,11 @@ class TranslationControlHandoff:
             coast_acceleration_filter_time_constant_s=0.08,
             coast_handoff_speed_m_s=0.04,
             coast_handoff_max_lateral_speed_m_s=0.15,
-            coast_handoff_max_tilt_deg=3.0,
+            coast_handoff_max_tilt_deg=0.5,
             coast_handoff_max_acceleration_m_s2=0.35,
             coast_alignment_position_tolerance_m=0.04,
             coast_alignment_velocity_tolerance_m_s=0.08,
-            coast_alignment_dwell_s=0.05,
+            coast_alignment_dwell_s=0.08,
             coast_attitude_timeout_s=1.5,
             rearm_delay_s=0.0,
     ):
@@ -2448,14 +2448,20 @@ class TranslationControlHandoff:
             or self.coast_level_handoff_delay_s < 0
             or self.coast_velocity_handoff_speed_m_s <= 0
             or self.coast_velocity_unwind_terminal_speed_m_s < 0
-            or self.coast_velocity_unwind_terminal_speed_m_s
-            >= self.coast_velocity_handoff_speed_m_s
+            or (
+                self.coast_velocity_predictive_unwind_enabled
+                and self.coast_velocity_unwind_terminal_speed_m_s
+                >= self.coast_velocity_handoff_speed_m_s
+            )
             or self.coast_velocity_unwind_prediction_margin_s < 0
             or self.coast_velocity_unwind_min_deceleration_m_s2 <= 0
             or self.coast_velocity_unwind_filter_time_constant_s <= 0
             or self.coast_velocity_unwind_max_target_error_m_s <= 0
-            or self.coast_velocity_rebrake_speed_m_s
-            <= self.coast_velocity_handoff_speed_m_s
+            or (
+                self.coast_velocity_predictive_unwind_enabled
+                and self.coast_velocity_rebrake_speed_m_s
+                <= self.coast_velocity_handoff_speed_m_s
+            )
             or self.coast_velocity_handoff_min_projected_speed_m_s > 0
             or self.coast_velocity_handoff_max_rate_deg_s <= 0
             or self.coast_command_period_s <= 0
@@ -3463,12 +3469,13 @@ class TranslationControlHandoff:
             ))
 
             # A deliberately conservative early unwind can leave useful
-            # forward speed after the vehicle has become level.  Re-enter a short
-            # zero-velocity brake only from a settled attitude; this closes
-            # the loop without allowing an early prediction to coast forever.
+            # velocity after the vehicle has become level. Re-enter a short
+            # zero-velocity brake only from a settled attitude. Use total XY
+            # speed so lateral residual motion cannot deadlock the handoff.
+            rebrake_started = False
             if (
                 self.coast_velocity_phase == 'predictive_unwind'
-                and self.brake_projected_speed_m_s
+                and xy_speed
                 >= self.coast_velocity_rebrake_speed_m_s
                 and self.coast_actual_tilt_deg
                 <= self.coast_handoff_max_tilt_deg
@@ -3480,8 +3487,12 @@ class TranslationControlHandoff:
                 self.coast_velocity_rebrake_count += 1
                 self._coast_velocity_rebrake_pending = True
                 self._coast_alignment_since = None
+                rebrake_started = True
 
-            if self.coast_velocity_phase == 'fast_brake':
+            # Always send at least one zero-velocity sample after a re-brake.
+            # Without this guard, a tail prediction can switch back to unwind
+            # in the same update and no actual braking command is transmitted.
+            if self.coast_velocity_phase == 'fast_brake' and not rebrake_started:
                 predicted_tail_ready = bool(
                     min(
                         projected_acceleration,
@@ -6012,7 +6023,7 @@ class InteractionsControl:
             )
         velocity_coast_handoff_speed_m_s = float(
             config['control_handoff'].get(
-                'coast_velocity_handoff_speed_m_s', 0.10
+                'coast_velocity_handoff_speed_m_s', 0.03
             )
         )
         if (
@@ -6335,7 +6346,7 @@ class InteractionsControl:
                             ),
                             'velocity_rebrake_speed_m_s': (
                                 config['control_handoff'].get(
-                                    'coast_velocity_rebrake_speed_m_s', 0.15
+                                    'coast_velocity_rebrake_speed_m_s', 0.04
                                 )
                             ),
                             'ignored_during_calibration': bool(
@@ -8583,6 +8594,9 @@ class InteractionsControl:
                                 'measured_velocity_m_s': (
                                     output.estimate.velocity.tolist()
                                 ),
+                                'xy_speed_m_s': float(np.linalg.norm(
+                                    output.estimate.velocity[:2]
+                                )),
                                 'projected_speed_m_s': (
                                     translation_control
                                     .brake_projected_speed_m_s
@@ -8789,6 +8803,21 @@ class InteractionsControl:
                             'velocity_handoff_speed_threshold_m_s': (
                                 translation_control
                                 .coast_velocity_handoff_speed_m_s
+                                if velocity_coast_braking_enabled else None
+                            ),
+                            'velocity_handoff_max_tilt_deg': (
+                                translation_control.coast_handoff_max_tilt_deg
+                                if velocity_coast_braking_enabled else None
+                            ),
+                            'velocity_handoff_max_rate_deg_s': (
+                                translation_control
+                                .coast_velocity_handoff_max_rate_deg_s
+                                if velocity_coast_braking_enabled else None
+                            ),
+                            'actual_angular_rate_xy_deg_s': (
+                                float(np.linalg.norm(np.degrees(
+                                    output.estimate.angular_velocity[:2]
+                                )))
                                 if velocity_coast_braking_enabled else None
                             ),
                             'velocity_phase': (

@@ -33,12 +33,12 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(handoff["coast_level_handoff_speed_m_s"], 0.50)
         self.assertEqual(handoff["coast_level_handoff_delay_s"], 0.30)
         self.assertFalse(handoff["coast_velocity_braking_enabled"])
-        self.assertEqual(handoff["coast_velocity_handoff_speed_m_s"], 0.10)
+        self.assertEqual(handoff["coast_velocity_handoff_speed_m_s"], 0.03)
         self.assertFalse(
             handoff["coast_velocity_predictive_unwind_enabled"]
         )
         self.assertEqual(
-            handoff["coast_velocity_unwind_terminal_speed_m_s"], 0.05
+            handoff["coast_velocity_unwind_terminal_speed_m_s"], 0.02
         )
         self.assertEqual(
             handoff["coast_velocity_unwind_prediction_margin_s"], 0.15
@@ -47,21 +47,21 @@ class DefaultConfigTests(unittest.TestCase):
             handoff["coast_velocity_unwind_max_target_error_m_s"], 0.15
         )
         self.assertEqual(
-            handoff["coast_velocity_rebrake_speed_m_s"], 0.15
+            handoff["coast_velocity_rebrake_speed_m_s"], 0.04
         )
         self.assertEqual(
             handoff["coast_velocity_handoff_min_projected_speed_m_s"],
             -0.03,
         )
         self.assertEqual(
-            handoff["coast_velocity_handoff_max_rate_deg_s"], 20.0
+            handoff["coast_velocity_handoff_max_rate_deg_s"], 5.0
         )
         self.assertEqual(handoff["coast_handoff_speed_m_s"], 0.04)
-        self.assertEqual(handoff["coast_handoff_max_tilt_deg"], 3.0)
+        self.assertEqual(handoff["coast_handoff_max_tilt_deg"], 0.5)
         self.assertEqual(
             handoff["coast_handoff_max_acceleration_m_s2"], 0.35
         )
-        self.assertEqual(handoff["coast_alignment_dwell_s"], 0.05)
+        self.assertEqual(handoff["coast_alignment_dwell_s"], 0.08)
         self.assertFalse(
             DEFAULT_WRENCH_INTERACTION_CONFIG["predictive_braking"]["enabled"]
         )
