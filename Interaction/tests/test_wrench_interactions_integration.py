@@ -3242,6 +3242,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             coast_velocity_unwind_direct_level_attitude_enabled=True,
             coast_velocity_unwind_low_speed_fallback_m_s=1.0,
             coast_velocity_handoff_speed_m_s=0.03,
+            coast_velocity_handoff_position_offset_m=0.12,
             coast_alignment_dwell_s=0.0,
         )
         self.assertTrue(control.start_contact('orientation'))
@@ -3281,7 +3282,8 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(sent['zdistance_m'], 1.0)
 
         # Position control is granted only after the measured state has
-        # settled, and it captures the current pose rather than a stale target.
+        # settled. Its target starts at the measured handoff pose and advances
+        # 12 cm along the locked interaction direction, without lateral pull.
         self.assertTrue(control.update_coast_velocity(
             [0.07, 0.24, 1.06], [0.0, 0.02, 0.0], 1.12,
             current_orientation_rpy=np.radians([0.2, 0.0, 0.0]),
@@ -3291,42 +3293,18 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.coast_handoff_reason,
             'velocity_predictive_unwind_attitude_handoff',
         )
-        np.testing.assert_allclose(control.hold_position, [0.07, 0.24, 1.06])
+        np.testing.assert_allclose(
+            control.coast_handoff_actual_position_m,
+            [0.07, 0.24, 1.06],
+        )
+        np.testing.assert_allclose(control.hold_position, [0.07, 0.36, 1.06])
+        self.assertFalse(control.coast_target_clamped_to_actual)
+        self.assertTrue(control.coast_lateral_target_latched_to_actual)
         control.send(commander, command_timestamp=1.12)
         self.assertEqual(commander.calls[-1][0], 'position')
-
-    def test_fast_brake_can_send_direct_level_attitude_at_fixed_z(self):
-        commander = FakeCommander()
-        control = TranslationControlHandoff(
-            initial_position=[0.0, 0.0, 1.0],
-            yaw_deg=0.0,
-            shadow_mode=False,
-            coast_velocity_braking_enabled=True,
-            coast_velocity_predictive_unwind_enabled=True,
-            coast_velocity_brake_direct_level_attitude_enabled=True,
-        )
-        self.assertTrue(control.start_contact('orientation'))
-        self.assertTrue(control.end_contact(
-            [0.0, 0.0, 1.18], [0.0, 0.40, 0.0], 1.0,
-            interaction_direction=[0.0, 1.0, 0.0], coast=True,
-        ))
-        control.confirm_release_candidate(timestamp=1.0)
-
-        self.assertEqual(control.coast_velocity_phase, 'fast_brake')
-        self.assertTrue(control.direct_level_brake_active)
-        self.assertTrue(control.direct_level_attitude_active)
-        self.assertFalse(control.direct_level_unwind_active)
-        self.assertEqual(control.command_mode, 'fast_brake_attitude_zdistance')
-        control.send(commander, command_timestamp=1.01, yaw_deg=3.0)
-        self.assertEqual(commander.calls[-1][0], 'zdistance')
         np.testing.assert_allclose(
-            commander.calls[-1][1], [0.0, 0.0, 0.0, 1.0]
+            commander.calls[-1][1], [0.07, 0.36, 1.06, 0.0]
         )
-        sent = control.sent_command_snapshot()
-        self.assertEqual(sent['kind'], 'attitude_zdistance')
-        self.assertEqual(sent['roll_deg'], 0.0)
-        self.assertEqual(sent['pitch_deg'], 0.0)
-        self.assertEqual(sent['zdistance_m'], 1.0)
 
     def test_direct_level_and_position_unwind_are_mutually_exclusive(self):
         with self.assertRaisesRegex(ValueError, 'mutually exclusive'):
@@ -3337,6 +3315,15 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                 coast_velocity_predictive_unwind_enabled=True,
                 coast_velocity_unwind_direct_level_attitude_enabled=True,
                 coast_velocity_unwind_position_control_enabled=True,
+            )
+
+    def test_velocity_handoff_position_offset_cannot_be_negative(self):
+        with self.assertRaisesRegex(ValueError, 'position offset'):
+            TranslationControlHandoff(
+                initial_position=[0.0, 0.0, 1.0],
+                yaw_deg=0.0,
+                shadow_mode=False,
+                coast_velocity_handoff_position_offset_m=-0.01,
             )
 
     def test_position_unwind_stays_on_release_line_without_retreat(self):

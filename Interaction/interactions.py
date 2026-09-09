@@ -2422,8 +2422,8 @@ class TranslationControlHandoff:
             coast_level_handoff_speed_m_s=0.10,
             coast_level_handoff_delay_s=0.30,
             coast_velocity_braking_enabled=False,
-            coast_velocity_brake_direct_level_attitude_enabled=False,
             coast_velocity_handoff_speed_m_s=0.03,
+            coast_velocity_handoff_position_offset_m=0.0,
             coast_velocity_predictive_unwind_enabled=False,
             coast_velocity_unwind_terminal_speed_m_s=0.10,
             coast_velocity_unwind_prediction_margin_s=0.15,
@@ -2531,11 +2531,11 @@ class TranslationControlHandoff:
         self.coast_velocity_braking_enabled = bool(
             coast_velocity_braking_enabled
         )
-        self.coast_velocity_brake_direct_level_attitude_enabled = bool(
-            coast_velocity_brake_direct_level_attitude_enabled
-        )
         self.coast_velocity_handoff_speed_m_s = float(
             coast_velocity_handoff_speed_m_s
+        )
+        self.coast_velocity_handoff_position_offset_m = float(
+            coast_velocity_handoff_position_offset_m
         )
         self.coast_velocity_predictive_unwind_enabled = bool(
             coast_velocity_predictive_unwind_enabled
@@ -2642,17 +2642,6 @@ class TranslationControlHandoff:
         self.coast_attitude_timeout_s = float(coast_attitude_timeout_s)
         self.rearm_delay_s = float(rearm_delay_s)
         if (
-            self.coast_velocity_brake_direct_level_attitude_enabled
-            and not (
-                self.coast_velocity_braking_enabled
-                and self.coast_velocity_predictive_unwind_enabled
-            )
-        ):
-            raise ValueError(
-                'direct level-attitude velocity brake requires predictive '
-                'velocity braking'
-            )
-        if (
             self.coast_velocity_unwind_direct_level_attitude_enabled
             and not self.coast_velocity_predictive_unwind_enabled
         ):
@@ -2686,6 +2675,7 @@ class TranslationControlHandoff:
             self.coast_level_handoff_speed_m_s,
             self.coast_level_handoff_delay_s,
             self.coast_velocity_handoff_speed_m_s,
+            self.coast_velocity_handoff_position_offset_m,
             self.coast_velocity_unwind_terminal_speed_m_s,
             self.coast_velocity_unwind_prediction_margin_s,
             self.coast_velocity_unwind_command_switch_delay_s,
@@ -2741,6 +2731,7 @@ class TranslationControlHandoff:
             or self.coast_level_handoff_speed_m_s <= 0
             or self.coast_level_handoff_delay_s < 0
             or self.coast_velocity_handoff_speed_m_s <= 0
+            or self.coast_velocity_handoff_position_offset_m < 0
             or self.coast_velocity_unwind_terminal_speed_m_s < 0
             or self.coast_velocity_unwind_prediction_margin_s < 0
             or self.coast_velocity_unwind_command_switch_delay_s < 0
@@ -3622,8 +3613,6 @@ class TranslationControlHandoff:
                 0.0,
                 yaw_deg=yaw_deg,
             )
-            if self.coast_velocity_brake_direct_level_attitude_enabled:
-                self.brake_command_tilt_deg = 0.0
             self.brake_force_feedforward_acceleration_m_s2 = 0.0
         else:
             # Legacy observer release uses measured velocity and force for
@@ -4282,16 +4271,11 @@ class TranslationControlHandoff:
                         )
             else:
                 self.coast_velocity_command_xy_m_s.fill(0.0)
-                if self.coast_velocity_brake_direct_level_attitude_enabled:
-                    self.set_contact_attitude(0.0, 0.0, 0.0)
-                    self.hover_z = self.velocity_coast_fixed_zdistance_m
-                    self.coast_tracking_action = 'direct_level_attitude_brake'
-                else:
-                    self.coast_tracking_action = (
-                        'predictive_zero_world_velocity_rebrake'
-                        if self.coast_velocity_rebrake_count > 0
-                        else 'predictive_zero_world_velocity_brake'
-                    )
+                self.coast_tracking_action = (
+                    'predictive_zero_world_velocity_rebrake'
+                    if self.coast_velocity_rebrake_count > 0
+                    else 'predictive_zero_world_velocity_brake'
+                )
 
             if not (
                 (
@@ -4299,7 +4283,7 @@ class TranslationControlHandoff:
                     or self.coast_velocity_unwind_direct_level_attitude_enabled
                 )
                 and self.coast_velocity_phase == 'predictive_unwind'
-            ) and not self.direct_level_brake_active:
+            ):
                 self.coast_tracking_velocity_error_m_s = (
                     self.coast_velocity_command_xy_m_s - velocity[:2]
                 )
@@ -4356,7 +4340,26 @@ class TranslationControlHandoff:
             and self.coast_velocity_phase == 'predictive_unwind'
             and self.coast_velocity_unwind_position_target_m is not None
         )
-        if position_unwind_active:
+        interaction_direction_xy = self.brake_direction[:2].copy()
+        interaction_direction_norm = float(np.linalg.norm(
+            interaction_direction_xy
+        ))
+        offset_handoff_target = bool(
+            self.coast_velocity_handoff_position_offset_m > 0.0
+            and interaction_direction_norm > 1e-9
+        )
+        if offset_handoff_target:
+            interaction_direction_xy /= interaction_direction_norm
+            self.hold_position = position.copy()
+            self.hold_position[:2] += (
+                self.coast_velocity_handoff_position_offset_m
+                * interaction_direction_xy
+            )
+            self.hover_z = float(position[2])
+            self.stopping_position_m = self.hold_position.copy()
+            self.coast_target_clamped_to_actual = False
+            self.coast_lateral_target_latched_to_actual = True
+        elif position_unwind_active:
             self.hold_position = (
                 self.coast_velocity_unwind_position_target_m.copy()
             )
@@ -4367,7 +4370,7 @@ class TranslationControlHandoff:
         else:
             self.hold_position = position.copy()
             self.hover_z = float(position[2])
-            self.stopping_position_m = position.copy()
+            self.stopping_position_m = self.hold_position.copy()
             self.coast_target_clamped_to_actual = True
             self.coast_lateral_target_latched_to_actual = True
         self.coast_handoff_actual_position_m = position.copy()
@@ -4983,26 +4986,9 @@ class TranslationControlHandoff:
         )
 
     @property
-    def direct_level_brake_active(self):
-        return bool(
-            self.mode == self.VELOCITY_COAST
-            and self.coast_velocity_phase == 'fast_brake'
-            and self.coast_velocity_brake_direct_level_attitude_enabled
-        )
-
-    @property
-    def direct_level_attitude_active(self):
-        return bool(
-            self.direct_level_brake_active
-            or self.direct_level_unwind_active
-        )
-
-    @property
     def command_mode(self):
         if self.shadow_mode:
             return 'shadow_position_hold'
-        if self.direct_level_brake_active:
-            return 'fast_brake_attitude_zdistance'
         if (
             self.mode == self.VELOCITY_COAST
             and self.coast_velocity_phase == 'predictive_unwind'
@@ -5103,7 +5089,7 @@ class TranslationControlHandoff:
                 yaw_deg=float(self.yaw_deg),
             )
             return sent_at
-        elif self.direct_level_attitude_active:
+        elif self.direct_level_unwind_active:
             commander.send_zdistance_setpoint(
                 0.0,
                 0.0,
@@ -7048,17 +7034,6 @@ class InteractionsControl:
                 'control_handoff.coast_velocity_braking_enabled must be '
                 'boolean'
             )
-        velocity_brake_direct_level_attitude_enabled = (
-            config['control_handoff'].get(
-                'coast_velocity_brake_direct_level_attitude_enabled', False
-            )
-        )
-        if type(velocity_brake_direct_level_attitude_enabled) is not bool:
-            raise ValueError(
-                'control_handoff.'
-                'coast_velocity_brake_direct_level_attitude_enabled must be '
-                'boolean'
-            )
         velocity_predictive_unwind_enabled = config['control_handoff'].get(
             'coast_velocity_predictive_unwind_enabled', False
         )
@@ -7106,17 +7081,6 @@ class InteractionsControl:
                 'coast_velocity_braking_enabled'
             )
         if (
-            velocity_brake_direct_level_attitude_enabled
-            and not (
-                velocity_coast_braking_enabled
-                and velocity_predictive_unwind_enabled
-            )
-        ):
-            raise ValueError(
-                'direct level-attitude velocity brake requires predictive '
-                'velocity braking'
-            )
-        if (
             velocity_unwind_position_control_enabled
             and not velocity_predictive_unwind_enabled
         ):
@@ -7152,6 +7116,20 @@ class InteractionsControl:
             raise ValueError(
                 'control_handoff.coast_velocity_handoff_speed_m_s must be '
                 'finite and positive'
+            )
+        velocity_coast_handoff_position_offset_m = float(
+            config['control_handoff'].get(
+                'coast_velocity_handoff_position_offset_m', 0.0
+            )
+        )
+        if (
+            not np.isfinite(velocity_coast_handoff_position_offset_m)
+            or velocity_coast_handoff_position_offset_m < 0.0
+        ):
+            raise ValueError(
+                'control_handoff.'
+                'coast_velocity_handoff_position_offset_m must be finite and '
+                'non-negative'
             )
         predictive_braking_config = deepcopy(
             config.get('predictive_braking', {})
@@ -7596,8 +7574,9 @@ class InteractionsControl:
                                 velocity_coast_handoff_speed_m_s
                                 if velocity_coast_braking_enabled else None
                             ),
-                            'velocity_brake_direct_level_attitude_enabled': (
-                                velocity_brake_direct_level_attitude_enabled
+                            'velocity_handoff_position_offset_m': (
+                                velocity_coast_handoff_position_offset_m
+                                if velocity_coast_braking_enabled else None
                             ),
                             'velocity_predictive_unwind_enabled': (
                                 velocity_predictive_unwind_enabled
@@ -12420,6 +12399,23 @@ class InteractionsControl:
                                 .coast_velocity_handoff_speed_m_s
                                 if velocity_coast_braking_enabled else None
                             ),
+                            'velocity_handoff_position_offset_m': (
+                                translation_control
+                                .coast_velocity_handoff_position_offset_m
+                                if velocity_coast_braking_enabled else None
+                            ),
+                            'velocity_handoff_interaction_direction_xy': (
+                                translation_control.brake_direction[:2]
+                                .tolist()
+                                if velocity_coast_braking_enabled else None
+                            ),
+                            'target_offset_from_actual_m': (
+                                (
+                                    translation_control.hold_position
+                                    - translation_control
+                                    .coast_handoff_actual_position_m
+                                ).tolist()
+                            ),
                             'velocity_handoff_max_tilt_deg': (
                                 translation_control.coast_handoff_max_tilt_deg
                                 if velocity_coast_braking_enabled else None
@@ -13840,19 +13836,14 @@ class InteractionsControl:
                     float(nominal_position[2])
                     if calibration_attitude_command is not None
                     else (
-                        (
-                            translation_control
-                            .velocity_coast_fixed_zdistance_m
-                            if translation_control.direct_level_attitude_active
-                            else translation_control.hover_z
-                        )
+                        translation_control.hover_z
                         if (
                             not translation_control.uses_position_setpoint
                             and (
                                 translation_control.mode
                                 != translation_control.VELOCITY_COAST
                                 or translation_control
-                                .direct_level_attitude_active
+                                .direct_level_unwind_active
                             )
                         )
                         else None
@@ -13862,18 +13853,14 @@ class InteractionsControl:
                     calibration_attitude_command.roll_deg
                     if calibration_attitude_command is not None
                     else (
-                        (
-                            0.0
-                            if translation_control.direct_level_attitude_active
-                            else translation_control.contact_roll_deg
-                        )
+                        translation_control.contact_roll_deg
                         if (
                             not translation_control.uses_position_setpoint
                             and (
                                 translation_control.mode
                                 != translation_control.VELOCITY_COAST
                                 or translation_control
-                                .direct_level_attitude_active
+                                .direct_level_unwind_active
                             )
                         )
                         else None
@@ -13883,18 +13870,14 @@ class InteractionsControl:
                     calibration_attitude_command.pitch_deg
                     if calibration_attitude_command is not None
                     else (
-                        (
-                            0.0
-                            if translation_control.direct_level_attitude_active
-                            else translation_control.contact_pitch_deg
-                        )
+                        translation_control.contact_pitch_deg
                         if (
                             not translation_control.uses_position_setpoint
                             and (
                                 translation_control.mode
                                 != translation_control.VELOCITY_COAST
                                 or translation_control
-                                .direct_level_attitude_active
+                                .direct_level_unwind_active
                             )
                         )
                         else None
@@ -13938,7 +13921,7 @@ class InteractionsControl:
                         translation_control.mode
                         == translation_control.VELOCITY_COAST
                         and not translation_control.uses_position_setpoint
-                        and not translation_control.direct_level_attitude_active
+                        and not translation_control.direct_level_unwind_active
                     )
                     else None
                 ),
@@ -13949,7 +13932,7 @@ class InteractionsControl:
                         translation_control.mode
                         == translation_control.VELOCITY_COAST
                         and not translation_control.uses_position_setpoint
-                        and not translation_control.direct_level_attitude_active
+                        and not translation_control.direct_level_unwind_active
                     )
                     else None
                 ),
@@ -14009,6 +13992,10 @@ class InteractionsControl:
                     else translation_control
                     .coast_handoff_actual_position_m.tolist()
                 ),
+                'coast_velocity_handoff_position_offset_m': (
+                    translation_control
+                    .coast_velocity_handoff_position_offset_m
+                ),
                 'coast_target_clamped_to_actual': (
                     translation_control.coast_target_clamped_to_actual
                 ),
@@ -14053,10 +14040,6 @@ class InteractionsControl:
                 'coast_velocity_unwind_position_control_enabled': (
                     translation_control
                     .coast_velocity_unwind_position_control_enabled
-                ),
-                'coast_velocity_brake_direct_level_attitude_enabled': (
-                    translation_control
-                    .coast_velocity_brake_direct_level_attitude_enabled
                 ),
                 'coast_velocity_unwind_direct_level_attitude_enabled': (
                     translation_control
