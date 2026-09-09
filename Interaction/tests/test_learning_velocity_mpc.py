@@ -49,6 +49,7 @@ class LearningVelocityMPCTests(unittest.TestCase):
             dict(velocity_uncertainty_margin_m_s=0.03,
                  overshoot_tolerance_m_s=0.02),
             dict(max_state_age_s=0.11),
+            dict(include_selected_trace=1),
         ):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 VelocityMPCConfig(**update).validate()
@@ -100,6 +101,12 @@ class LearningVelocityMPCTests(unittest.TestCase):
         self.assertEqual(label, "negative_y")
         self.assertEqual(frozen.delay_s, 0.04)
         self.assertEqual(frozen.motion_gain, 0.8)
+        with self.assertRaisesRegex(ValueError, "independently validated"):
+            frozen_velocity_model_from_prediction_model(
+                prediction,
+                direction_y=-1,
+                require_validated_evidence=True,
+            )
 
     def test_missing_sent_history_fails_closed_without_command(self):
         item = LearningVelocityMPC(
@@ -122,6 +129,19 @@ class LearningVelocityMPCTests(unittest.TestCase):
         )
         self.assertTrue(result["hard_path_constraints_satisfied"])
         self.assertLessEqual(result["predicted_max_signed_overshoot_m_s"], 0.02+1e-9)
+
+    def test_online_selection_can_skip_duplicate_diagnostic_trace(self):
+        item = self.controller(
+            target=0.6,
+            include_selected_trace=False,
+            prediction_horizon_s=1.0,
+            pulse_grid_step_s=0.02,
+        )
+        result = item.decide(0.0, state())
+        self.assertEqual(result["action"], "accelerate")
+        self.assertEqual(result["selected_trace"], [])
+        self.assertEqual(result["candidate_count"], 47)
+        self.assertTrue(result["hard_path_constraints_satisfied"])
 
     def test_negative_target_uses_opposite_attitude(self):
         item = self.controller(target=-0.5)

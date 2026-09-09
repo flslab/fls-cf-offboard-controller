@@ -83,6 +83,8 @@ class DefaultConfigTests(unittest.TestCase):
             "learning_velocity_mpc_shadow"
         ]
         self.assertFalse(velocity_shadow["enabled"])
+        self.assertFalse(velocity_shadow["command_authority"])
+        self.assertEqual(velocity_shadow["max_decision_time_s"], 0.008)
         self.assertEqual(velocity_shadow["target_velocity_m_s"], 0.0)
         self.assertIsNone(velocity_shadow["direction_xy"])
         self.assertEqual(

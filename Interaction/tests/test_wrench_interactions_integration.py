@@ -2137,6 +2137,31 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         self.assertTrue(control.consume_velocity_pid_reset_request())
 
+    def test_external_mpc_can_acquire_velocity_coast_attitude_commands(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.4, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        self.assertEqual(control.mode, control.VELOCITY_COAST)
+        self.assertTrue(control.acquire_external_attitude_coast())
+        self.assertEqual(control.mode, control.ATTITUDE_COAST)
+        control.set_contact_attitude(-4.0, 0.0, 0.0)
+        commander = FakeCommander()
+        control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        self.assertEqual(commander.calls[-1][1][0], -4.0)
+        self.assertTrue(control.set_predictive_position_target(
+            [0.0, 0.2, 1.0], 1.2
+        ))
+        self.assertEqual(control.mode, control.POSITION_HOLD)
+
     def test_velocity_coast_rejects_impossible_kinematic_state_jump(self):
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],

@@ -1,4 +1,4 @@
-# Learning velocity MPC (offline first)
+# Learning velocity MPC
 
 `learning_velocity_mpc.py` is a minimum-time, receding-horizon controller for
 one planar velocity transition. It is inspired by *Learning Model Predictive
@@ -25,12 +25,12 @@ forecasts.
 
 ## Safety boundary
 
-The implementation is offline-only and has no `cflib` imports or device I/O.
-Every returned dictionary says `flight_command_generated=False`. Its
-no-overshoot result is conditional on the supplied frozen model, configured
-uncertainty margin, fresh synchronized state, and available actuator authority.
-It must pass logged replay, held-out calibration, compute-budget, shadow, and
-staged flight gates before any integration with the interaction loop.
+The optimizer remains device-independent and has no `cflib` imports or device
+I/O. Its no-overshoot result is conditional on the supplied frozen model,
+configured uncertainty margin, fresh synchronized state, and available
+actuator authority. The interaction adapter is responsible for command
+authorization, deadline enforcement, measured terminal-state dwell, and the
+legacy-controller fallback.
 
 Only call `record_sent_command()` after the corresponding command was actually
 sent. History must cover at least the identified attitude-command delay;
@@ -42,41 +42,51 @@ Run the synthetic tests with:
 venv/bin/python -m unittest Interaction.tests.test_learning_velocity_mpc
 ```
 
-## Real-state shadow integration
+## Real-state shadow and online integration
 
-The normal interaction entry now has an opt-in shadow adapter. It starts after
-a confirmed potentiometer release, loads the saved directional
-`prediction_model`, consumes live Crazyflie state plus the actual attitude
-commands sent by the existing controller, and emits:
+The normal interaction entry starts the adapter only after confirmed
+potentiometer release. It loads the saved directional `prediction_model` and
+consumes live Crazyflie state plus actually sent attitude commands. With only
+`enabled: true`, its roll/pitch remain log-only. Online use additionally needs
+`command_authority: true`, a zero-velocity target, independently validated
+model evidence, and exclusive ownership (`predictive_braking.enabled: false`).
 
 - `Learning Velocity MPC Shadow Started`
 - `Learning Velocity MPC Shadow Decision`
 - `Learning Velocity MPC Shadow Stopped` or `... Unavailable`
+- `Learning Velocity MPC Online Started`
+- `Learning Velocity MPC Online Decision`
+- `Learning Velocity MPC Online Fallback` or `... Position Handoff`
 
-The adapter never applies the hypothetical MPC roll/pitch. Enable it in the
-mission interaction configuration only for a later live-state shadow run,
-while leaving the active predictive policy off:
+An online decision exceeding `max_decision_time_s`, returning no hard-feasible
+candidate, or losing valid state/history immediately surrenders authority to
+the legacy coast controller. Position handoff occurs only after measured
+projected speed, total roll/pitch, total roll/pitch rate, and the level command
+remain inside their terminal limits for the configured dwell.
 
 ```yaml
 predictive_braking:
   enabled: false
 
 learning_velocity_mpc_shadow:
-  # Keep false for offline log replay. Change to true only after benchmarking
-  # the remote compute/logging budget for a live-state shadow run.
-  enabled: false
+  enabled: true
+  command_authority: true  # false keeps real-state shadow behavior
   target_velocity_m_s: 0.0
   direction_xy: null       # infer +/-Y from the release; or [0.0, -1.0]
   log_interval_s: 0.10
+  max_decision_time_s: 0.008
   controller:
+    include_selected_trace: false
+    prediction_horizon_s: 1.0
+    pulse_grid_step_s: 0.02
     max_acceleration_tilt_deg: 8.0
     terminal_velocity_tolerance_m_s: 0.05
     terminal_tilt_tolerance_deg: 3.0
     overshoot_tolerance_m_s: 0.02
 ```
 
-This replaces the old candidate selector only in the diagnostic comparison;
-it does not replace the identified dynamics. LMPC still needs the fitted
+This replaces the old release command selector, not the identified dynamics.
+LMPC still needs the fitted
 `delay_s`, `wn_rad_s`, `zeta`, command gain, and motion gain. A future model
 replacement must first produce the same frozen-model interface and pass
 held-out directional validation.

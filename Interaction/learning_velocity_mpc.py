@@ -1,7 +1,7 @@
-"""Offline minimum-time velocity MPC using a learned planar flight model.
+"""Minimum-time velocity MPC using a learned planar flight model.
 
 This module has no Crazyflie/cflib imports and never sends a command.  It is a
-reference-inspired first step toward Learning MPC: a frozen, identified
+reference-inspired controller: a frozen, identified
 second-order attitude model predicts candidate maximum-acceleration/level
 trajectories, while a small causal residual learner corrects repeatable
 translation-model error between episodes.
@@ -10,8 +10,9 @@ The controller's task is deliberately narrow: move the velocity projected on a
 fixed world-XY direction from its episode-start value to ``target_velocity_m_s``
 as quickly as possible, then arrive level.  Target-speed overshoot, terminal
 tilt/rate, command slew, state freshness and the learned-model domain are hard
-candidate gates, not reward terms.  Guarantees are therefore model-conditional;
-this module is not flight authorization.
+candidate gates, not reward terms.  Guarantees are therefore model-conditional.
+The caller, rather than this model-only module, owns flight authorization and
+must retain a fail-closed fallback.
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from Interaction.model_based_braking import (
     _validated_model,
 )
 from Interaction.offline_braking_selector import FrozenTiltModel
+from Interaction.predictive_brake_handoff import _validated_evidence
 
 
 @dataclass(frozen=True)
@@ -50,11 +52,17 @@ class VelocityMPCConfig:
     residual_learning_rate: float = 0.20
     residual_acceleration_limit_m_s2: float = 1.5
     residual_min_samples: int = 4
+    include_selected_trace: bool = True
 
     def validate(self) -> None:
         values = asdict(self)
         integers = {"residual_min_samples"}
+        booleans = {"include_selected_trace"}
         for key, value in values.items():
+            if key in booleans:
+                if type(value) is not bool:
+                    raise ValueError(key + " must be boolean")
+                continue
             if key in integers:
                 if isinstance(value, bool) or int(value) != value:
                     raise ValueError(key + " must be an integer")
@@ -174,16 +182,19 @@ class CausalAccelerationResidualLearner:
         }
 
 
-def frozen_velocity_model_from_prediction_model(model, *, direction_y):
-    """Select one calibrated +/-Y component for shadow velocity MPC.
+def frozen_velocity_model_from_prediction_model(
+        model, *, direction_y, require_validated_evidence=False):
+    """Select one calibrated +/-Y component for velocity MPC.
 
-    This performs the same structural/range validation as the existing
-    model-based braking controller. Deployment metadata is deliberately not an
-    authorization gate here because this adapter is shadow-only.
+    Online callers must require independent held-out validation.  Shadow and
+    offline callers may still inspect a structurally valid failed candidate
+    without authorizing it for commands.
     """
     direction = float(direction_y)
     if not math.isfinite(direction) or abs(abs(direction)-1.0) > 1e-9:
         raise ValueError("velocity MPC fitted model supports only direction_y +/-1")
+    if require_validated_evidence:
+        _validated_evidence(model, allow_experimental=True)
     params, _ranges, _margin, label = _validated_model(
         model, True, direction
     )
@@ -640,14 +651,18 @@ class LearningVelocityMPC:
                 target_velocity_m_s=self.target_velocity_m_s,
                 candidate_count=len(candidates),
             )
-        # Retain one full trajectory for diagnostics without constructing a
-        # trace for every candidate in the real-time selection path.
-        selected_with_trace = self._forecast(
-            now_s=now, velocity=velocity, tilt=tilt, tilt_rate=tilt_rate,
-            current_command=self._last_sent_tilt_rad,
-            episode_sign=episode_sign, pulse_s=selected["pulse_s"],
-        )
-        selected["trace"] = selected_with_trace["trace"]
+        # Shadow/offline analysis may retain one full trajectory. Online mode
+        # disables this duplicate forecast so command selection stays inside
+        # the Pi compute budget.
+        if self.config.include_selected_trace:
+            selected_with_trace = self._forecast(
+                now_s=now, velocity=velocity, tilt=tilt, tilt_rate=tilt_rate,
+                current_command=self._last_sent_tilt_rad,
+                episode_sign=episode_sign, pulse_s=selected["pulse_s"],
+            )
+            selected["trace"] = selected_with_trace["trace"]
+        else:
+            selected["trace"] = []
         command = selected["first_command_tilt_rad"]
         roll, pitch = self._attitude_command(command, yaw)
         return {
