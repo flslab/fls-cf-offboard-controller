@@ -1,0 +1,6 @@
+# metric_direction: lower_is_better
+iteration	timestamp	commit	metric	delta	guard	guard-metric	status	description
+0	2026-09-04	frozen-source-and-checkpoint-hashes	8.95175782651966	0.0	pass	104	baseline	best of five baseline methods on64 fixed development cases; v1 position adapter
+1	2026-09-04	checkpoint-sha256-in-metadata	7.295629539633078	-1.6561282868865828	pass	104	keep	three32768step lineages; development-selected41; no changes to reward/domain/source
+2	2026-09-04	checkpoint-sha256-in-metadata	7.1891224781806535	-0.1065070614524245	pass	104	keep	three65536additional-step lineages; development-selected63; no changes to reward/domain/source
+3	2026-09-04	checkpoint-sha256-in-metadata	7.1891224781806535	0.0	pass	104	discard	three98304additional-step lineages; no improvement over prior development checkpoints; bounded stop before final test

@@ -1,0 +1,276 @@
+{
+  "created_utc": "2026-09-04T02:07:01.190361+00:00",
+  "selection_split": "development_only",
+  "rounds": 3,
+  "candidates": [
+    {
+      "lineage": 11,
+      "stage": 1,
+      "label": "ppo_lineage11",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round1_seed11/model_best.zip",
+      "sha256": "54a29c5651340383fc33fa198d663564dae2583890151608061abf39ac713379",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.13381940663932596,
+      "model_timesteps": 65536,
+      "actual_round_training_steps": 65536
+    },
+    {
+      "lineage": 11,
+      "stage": 2,
+      "label": "ppo_lineage11",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round2_seed11/model_best.zip",
+      "sha256": "ad837c62454cd1e06a45d5c7815fe60f225897a77d0a8774b1f831a9d79e9509",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.12507811097653163,
+      "model_timesteps": 196608,
+      "actual_round_training_steps": 131072
+    },
+    {
+      "lineage": 11,
+      "stage": 3,
+      "label": "ppo_lineage11",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round3_seed11/model_best.zip",
+      "sha256": "d0ab3aab17a2660c2f754a3a55f3a1e3479bc0f53bacf7ac7b824f6af3bed3f4",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.11412195533327392,
+      "model_timesteps": 229376,
+      "actual_round_training_steps": 196608
+    },
+    {
+      "lineage": 22,
+      "stage": 1,
+      "label": "ppo_lineage22",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round1_seed22/model_best.zip",
+      "sha256": "761d96d1ccee5cf858a8855ce1ba2594fb03aa9cb49d09f31f8f71d1b9878b8b",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.12980875276759363,
+      "model_timesteps": 65536,
+      "actual_round_training_steps": 65536
+    },
+    {
+      "lineage": 22,
+      "stage": 2,
+      "label": "ppo_lineage22",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round2_seed22/model_best.zip",
+      "sha256": "f15e32fab31ea45be462896f8b21ce6fb5809fd7ad66f9f616f074a11f3b03db",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.12213142340902497,
+      "model_timesteps": 196608,
+      "actual_round_training_steps": 131072
+    },
+    {
+      "lineage": 22,
+      "stage": 3,
+      "label": "ppo_lineage22",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round3_seed22/model_best.zip",
+      "sha256": "c6524ce521f2d299f4d80f515727a0a6bbdfde19c1b929aa6b4e09016a2fe022",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.10881857740582293,
+      "model_timesteps": 393216,
+      "actual_round_training_steps": 196608
+    },
+    {
+      "lineage": 33,
+      "stage": 1,
+      "label": "ppo_lineage33",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round1_seed33/model_best.zip",
+      "sha256": "f4093cc325a1d0e14b1b349bea584fa329bf10c0a1ed6e1952378c1934e87ae3",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.15005091224838227,
+      "model_timesteps": 65536,
+      "actual_round_training_steps": 65536
+    },
+    {
+      "lineage": 33,
+      "stage": 2,
+      "label": "ppo_lineage33",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round2_seed33/model_best.zip",
+      "sha256": "10ca03e1d53a5e94feb249e05136a4d3ecb638fd95f78e019bb2e6d038f416dd",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.12202333778751673,
+      "model_timesteps": 196608,
+      "actual_round_training_steps": 131072
+    },
+    {
+      "lineage": 33,
+      "stage": 3,
+      "label": "ppo_lineage33",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round3_seed33/model_best.zip",
+      "sha256": "601aafbc2b1853236c85e84404caef134440718e1fcd78b36edc8a568f1b65d0",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.10628886556930878,
+      "model_timesteps": 360448,
+      "actual_round_training_steps": 196608
+    }
+  ],
+  "selected": [
+    {
+      "lineage": 11,
+      "stage": 3,
+      "label": "ppo_lineage11",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round3_seed11/model_best.zip",
+      "sha256": "d0ab3aab17a2660c2f754a3a55f3a1e3479bc0f53bacf7ac7b824f6af3bed3f4",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.11412195533327392,
+      "model_timesteps": 229376,
+      "actual_round_training_steps": 196608
+    },
+    {
+      "lineage": 22,
+      "stage": 3,
+      "label": "ppo_lineage22",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round3_seed22/model_best.zip",
+      "sha256": "c6524ce521f2d299f4d80f515727a0a6bbdfde19c1b929aa6b4e09016a2fe022",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.10881857740582293,
+      "model_timesteps": 393216,
+      "actual_round_training_steps": 196608
+    },
+    {
+      "lineage": 33,
+      "stage": 3,
+      "label": "ppo_lineage33",
+      "path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260903-1847/round3_seed33/model_best.zip",
+      "sha256": "601aafbc2b1853236c85e84404caef134440718e1fcd78b36edc8a568f1b65d0",
+      "source_hashes": {
+        "Interaction/braking_replay.py": "7c131cd9c3eeab643b238e2f8f86ffe8c45ad86dfb6e317bcb28fcbc0f0ebfea",
+        "Interaction/braking_split_diagnostic.py": "b87aa4433066b11345c1ff1ccb75f1c0a02c698ca4843fc6f5c6753464e99294",
+        "Interaction/braking_trajectory_fit.py": "a8b61245c7a23761302bc21a925544113c54d1e5fc1db1bdaefaf38afbc66ead",
+        "Interaction/braking_validation_simulator.py": "f9f94ab54d038052e2500e9ae0af20f6b57e6427eb55903846ba24f35cefe334",
+        "Interaction/evaluate_braking_snapshots.py": "4defcb5aa275ac04e9933a02de58ddecdefa38ba452c2bbfeef12fc543f06b98",
+        "Interaction/offline_braking_selector.py": "fb94e2fd45f377299eb982b4482275fc60ee8d29339dfddc982c84c52b640bd0",
+        "Interaction/predictive_brake_release.py": "452a538d76c12c31721f2006cf4dfcd4ea55fc174f151d75f1a3ef63df765dc1",
+        "Interaction/rl_braking_env.py": "23e3ee66f9aa05aa3e0b1269d722b4ec1f273503521c0612c2649c696704643e",
+        "Interaction/train_rl_braking.py": "b68ac59f836a470c4914d1418ab264be130f31321e1948c082d7ece5e2fcc29b",
+        "Interaction/validate_predictive_brake_release.py": "9947243044120435a48a64fd8f42964c7270e1f0f84d5ac98f0276e1efe285e4"
+      },
+      "development_mean_loss": 0.10628886556930878,
+      "model_timesteps": 360448,
+      "actual_round_training_steps": 196608
+    }
+  ],
+  "primary": "ppo_lineage33",
+  "final_test_seen": false,
+  "flight_approved": false
+}

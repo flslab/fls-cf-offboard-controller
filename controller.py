@@ -4,6 +4,7 @@ from turtle import forward
 from cflib import crazyflie
 from cflib import crazyflie
 import argparse
+from copy import deepcopy
 import datetime
 import json
 from typing import Callable
@@ -16,6 +17,7 @@ import subprocess
 import signal
 from threading import Event
 import time
+import traceback
 import urllib.request
 import urllib.error
 import zmq
@@ -29,6 +31,8 @@ from cflib.utils.reset_estimator import reset_estimator
 
 from Interaction.interactions import InteractionsControl
 from Interaction.command_wrapper import CommandWrapper
+from Interaction.commander_handoff import HandoffError, handoff_to_high_level
+from Interaction.braking_repeat_test import validate_repeat_test_options
 
 from mocap import Mocap
 from smooth_controller import SmoothController
@@ -104,7 +108,7 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
 class Controller:
     def __init__(self, args):
         self.args = args
-        if getattr(self.args, 'interaction', False):
+        if self._is_interaction_application():
             import Interaction.config as cfg
             self.cfg = cfg
         else:
@@ -132,6 +136,8 @@ class Controller:
         self.servo = None
         self.led = None
         self.tracker = None
+        self.force_sensor = None
+        self.rpi_power_monitor = None
         self.log_manager = None
         self.bat_logger = None
         self.sub_socket = None
@@ -162,6 +168,14 @@ class Controller:
             self._safe_sleep = self._safe_sleep_orchestrated
         else:
             self._safe_sleep = self._safe_sleep_standalone
+
+    def _is_interaction_application(self):
+        return bool(
+            getattr(self.args, 'interaction', False)
+            or getattr(self.args, 'calibrate', False)
+            or getattr(self.args, 'braking_test', False)
+            or getattr(self.args, 'sense', False)
+        )
 
     def __enter__(self):
         if self.args.radio:
@@ -205,6 +219,7 @@ class Controller:
         self.setup_sockets()
         self.download_mission_config()
         self.setup_logging()
+        self.setup_force_sensor()
         self.setup_commander()
         self.setup_motion_capture()
         self.setup_blinker()
@@ -213,6 +228,8 @@ class Controller:
             self.setup_led()
             self.setup_servo()
             self.setup_battery_watcher()
+            if self._is_interaction_application():
+                self.verify_onboard_wrench_logging()
             self.setup_tracker()
             if self.led:
                 self.led.show_single_color(color=(230, 180, 0))
@@ -247,18 +264,29 @@ class Controller:
         if self.mocap:
             self.mocap.stop()
 
+        if self.force_sensor:
+            self.force_sensor.stop()
+
+        if self.rpi_power_monitor:
+            self.rpi_power_monitor.stop()
+
+        logging_shutdown_error = None
         if self.log_manager:
-            self.log_manager.stop(
-                log_dir=self.args.log_dir,
-                tag=self.args.tag,
-                start_times=self.animation_start_times,
-                end_times=self.animation_stop_times,
-                viewpoint_offsets=self.viewpoint_offsets,
-                reference_offsets=self.reference_offsets,
-                mission_start_time=self.mission_start_time,
-                mission_duration=self.mission_duration,
-                args=vars(self.args),
-            )
+            try:
+                self.log_manager.stop(
+                    log_dir=self.args.log_dir,
+                    tag=self.args.tag,
+                    start_times=self.animation_start_times,
+                    end_times=self.animation_stop_times,
+                    viewpoint_offsets=self.viewpoint_offsets,
+                    reference_offsets=self.reference_offsets,
+                    mission_start_time=self.mission_start_time,
+                    mission_duration=self.mission_duration,
+                    args=vars(self.args),
+                )
+            except Exception as error:
+                logging_shutdown_error = error
+                logger.exception('Log shutdown failed; continuing resource cleanup and disconnect.')
             
         if self.tracker_process:
             self.smooth_controller.remove_update_callback(self.fuse_latest_imu_camera_data)
@@ -286,6 +314,8 @@ class Controller:
             del self.servo
 
         self.disconnect()
+        if logging_shutdown_error is not None:
+            raise logging_shutdown_error
 
     def load_manifest(self):
         if not self.args.orchestrated:
@@ -403,7 +433,13 @@ class Controller:
         else:
             on_pose = self._send_position
 
-        self.mocap = Mocap(mode=self.args.vicon_mode)
+        self._last_extpos_send_monotonic_s = None
+        timing_callback = None
+        if self.log_manager is not None:
+            self.log_manager.add_log_group('mocap_timing')
+            timing_callback = self._log_mocap_timing
+        self.mocap = Mocap(mode=self.args.vicon_mode,
+                           timing_callback=timing_callback)
 
         if self.args.vicon_mode == "rigidbody":
             logger.info(f"Subscribing to RigidBody: {self.args.obj_name}")
@@ -496,7 +532,7 @@ class Controller:
         if self.args.skip_takeoff:
             self.flying = True
             return
-        if self.args.interaction:
+        if self._is_interaction_application():
             self.log_manager.start()
 
         takeoff_speed = self.mission.get("takeoff_speed", 0.5)
@@ -512,11 +548,22 @@ class Controller:
             self._send_landing_confirmation(self.voltage)
             return
 
+        # A sticky flight-log failure must abort the experiment, not prevent
+        # its existing landing commands from reaching the vehicle. The clone
+        # preserves payload/offset/execute semantics; normal commands still fail.
+        commander = self.hl_commander
+        if isinstance(commander, CommandWrapper):
+            commander = commander.for_safety_cleanup()
+        low_level = self.ll_commander
+        if isinstance(low_level, CommandWrapper):
+            low_level = low_level.for_safety_cleanup()
+        handoff_dry_run = all(isinstance(c, CommandWrapper) and c.execution is False
+                              for c in (low_level, commander))
         self.cf.param.set_value_raw('stabilizer.controller', 0x08, 1)
         voltage = self.voltage
         voltage_str = f"{voltage:.2f}V" if voltage is not None else "NA"
         logger.info(f"Landing... Battery: {voltage_str}")
-        z = self.args.takeoff_altitude
+        current_x = current_y = current_z = None
 
         if self.log_manager:
             current_x = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.x")
@@ -525,26 +572,67 @@ class Controller:
         elif self.mocap:
             current_x, current_y, current_z = self._get_latest_mocap_frame()["tvec"]
 
-        if self.init_coord and None not in [current_x, current_y, current_z]:
-            initial_x, initial_y, _ = self.init_coord
-            dist = ((initial_x - current_x) ** 2 + (initial_y - current_y) ** 2) ** 0.5
-            dt = 2 * dist + 0.1
-
-            self.hl_commander.go_to(initial_x, initial_y, current_z, self.args.init_yaw, dt, relative=False)
-            time.sleep(dt + 0.5)
-
         if self.flying:
-            # dt = current_z * 6
             takeoff_speed = self.mission.get("takeoff_speed", 0.5)
             dt = self.args.takeoff_altitude / takeoff_speed
             height = 0.1 if self.args.vicon or self.use_flowdeck else 0.02
-            self.hl_commander.land(height, dt)
-            logger.info(f"Landing duration: {dt} seconds")
-            time.sleep(dt + 1)
-            self.hl_commander.stop()
+            try:
+                if (self.init_coord is not None
+                        and all(v is not None and math.isfinite(v)
+                                for v in (current_x, current_y, current_z))):
+                    initial_x, initial_y, _ = self.init_coord
+                    dist = ((initial_x - current_x) ** 2 + (initial_y - current_y) ** 2) ** 0.5
+                    return_duration = max(1.0, 2 * dist + 0.1)
+                    # Pre-arm the HLC plan and wait for its firmware ACK BEFORE
+                    # lowering LL priority. notify alone is not a hover command.
+                    handoff_to_high_level(
+                        low_level, commander, 'go_to', initial_x, initial_y,
+                        current_z, math.radians(self.args.init_yaw),
+                        return_duration, relative=False, dry_run=handoff_dry_run,
+                    )
+                    time.sleep(return_duration + 0.5)
+                handoff_to_high_level(low_level, commander, 'land', height, dt,
+                                      dry_run=handoff_dry_run)
+                logger.info(f"Landing duration: {dt} seconds")
+                time.sleep(dt + 1)
+                commander.stop()
+            except HandoffError:
+                logger.exception('HLC handoff failed; using streamed low-level descent')
+                # A return-to-origin trajectory might already have completed.
+                # Do not reuse its entry XY for fallback position control.
+                if self.log_manager:
+                    current_x = self.log_manager.get_latest_cf_log_data('VEL_POS', 'stateEstimate.x')
+                    current_y = self.log_manager.get_latest_cf_log_data('VEL_POS', 'stateEstimate.y')
+                    current_z = self.log_manager.get_latest_cf_log_data('VEL_POS', 'stateEstimate.z')
+                self._land_with_low_level(
+                    low_level, current_x, current_y, current_z, height, dt,
+                )
             self.flying = False
 
         self._send_landing_confirmation(voltage)
+
+    def _land_with_low_level(self, commander, x, y, z, height, duration):
+        """Bounded fallback when the HLC cannot acknowledge a landing plan.
+
+        Keep sending at 50 Hz, including the settling second. Never notify or
+        wait for a high-level trajectory in this path. Link/send failures still
+        propagate: successful host execution is not proof of physical landing.
+        """
+        position_valid = all(v is not None and math.isfinite(v) for v in (x, y, z))
+        start_z = float(z) if z is not None and math.isfinite(z) else float(self.args.takeoff_altitude)
+        duration = max(float(duration), 2.0)
+        started = time.monotonic()
+        while True:
+            elapsed = time.monotonic() - started
+            z_command = start_z + (height - start_z) * min(elapsed / duration, 1.0)
+            if position_valid:
+                commander.send_position_setpoint(x, y, z_command, self.args.init_yaw)
+            else:
+                commander.send_zdistance_setpoint(0.0, 0.0, 0.0, z_command)
+            if elapsed >= duration + 1.0:
+                break
+            time.sleep(0.02)
+        commander.send_stop_setpoint()
 
     def _recap_takeoff(self):
         """Takeoff for a Recap iteration (flight-only, no log-start side-effects)."""
@@ -602,22 +690,149 @@ class Controller:
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("events")
 
-        elif self.args.interaction:
+        elif self._is_interaction_application():
             from Interaction.log_manager import InteractionLogger
             self.log_manager = InteractionLogger(controller_args=self.args)
             if not self.args.droneless:
                 self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
-            self.log_manager.add_log_group("frames", kf=True)
+            # Legacy interactions still receive Vicon-derived velocity.  The
+            # onboard wrench path consumes stateEstimate velocity directly and
+            # must not run a redundant external position Kalman filter.
+            self.log_manager.add_log_group(
+                "frames", kf=not self._uses_onboard_wrench_state()
+            )
             self.log_manager.add_log_group("events")
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("configs")
+            self.log_manager.add_log_group("wrench_observer")
             self.log_manager.add_log_group("git")
 
 
         else:
-            raise Exception("No mode is passed. Passing either --illumination or --interaction is required.")
+            raise Exception(
+                "No mode is passed. Passing --illumination, --interaction, "
+                "--calibrate, or --braking-test is required."
+            )
 
         logger.debug("logging activated")
+
+    def setup_force_sensor(self):
+        """Start the Arduino potentiometer reader for ``--sense`` runs."""
+        if not getattr(self.args, 'sense', False):
+            return
+
+        from Interaction.potentiometer_force_sensor import (
+            PotentiometerForceSensor,
+        )
+        from Interaction.rpi_power_monitor import RaspberryPiPowerMonitor
+
+        self.force_sensor = PotentiometerForceSensor(
+            port=self.args.sense_port,
+            baud=self.args.sense_baud,
+            spring_constant_n_per_mm=self.args.sense_spring_constant,
+            max_extension_mm=self.args.sense_max_extension,
+        )
+        self.force_sensor.start(startup_timeout_s=self.args.sense_startup_timeout)
+        self.rpi_power_monitor = RaspberryPiPowerMonitor(
+            poll_interval_s=self.args.sense_power_poll_interval,
+        )
+        self.rpi_power_monitor.start()
+        self.force_sensor.rpi_power_monitor = self.rpi_power_monitor
+        sample = self.force_sensor.latest()
+        power_sample = self.rpi_power_monitor.latest()
+        logger.info(
+            "Potentiometer force sensor ready on %s: compression %.3f mm, "
+            "length %.3f mm, %.3f N; "
+            "Arduino Vcc: %s; RPi power flags: %s",
+            self.args.sense_port,
+            sample.compression_mm,
+            sample.length_mm,
+            sample.force_n,
+            (
+                "unavailable"
+                if sample.supply_voltage_v is None
+                else f"{sample.supply_voltage_v:.3f} V"
+            ),
+            (
+                "unavailable"
+                if power_sample is None else f"0x{power_sample.flags:x}"
+            ),
+        )
+
+    def _uses_onboard_wrench_state(self):
+        if not self._is_interaction_application():
+            return False
+        wrench_config = (
+            (self.mission or {}).get('Interaction', {})
+            .get('config', {})
+            .get('wrench_interaction')
+        )
+        translation_config = (
+            (self.mission or {}).get('Interaction', {}).get('config', {})
+        )
+        detection_method = translation_config.get('detection_method')
+        if detection_method is None:
+            detection_method = (
+                (
+                    'momentum_impulse'
+                    if wrench_config.get('state_source') == 'onboard'
+                    else 'mocap_wrench'
+                )
+                if wrench_config is not None else 'velocity'
+            )
+        return (
+            wrench_config is not None
+            and detection_method == 'momentum_impulse'
+            and wrench_config.get('state_source') == 'onboard'
+        )
+
+    def verify_onboard_wrench_logging(self):
+        """Fail before arming if required onboard-state logs are unavailable."""
+        if not self._uses_onboard_wrench_state():
+            return
+        required = {
+            'VEL_ORI': (
+                'stateEstimate.vx', 'stateEstimate.vy', 'stateEstimate.vz',
+                'stateEstimate.roll', 'stateEstimate.pitch', 'stateEstimate.yaw',
+            ),
+            'POS_ACC': (
+                'stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
+            ),
+            'RATE_EST': (
+                'stateEstimateZ.rateRoll',
+                'stateEstimateZ.ratePitch',
+                'stateEstimateZ.rateYaw',
+            ),
+            'YAW_CTL': (
+                'controller.cmd_yaw',
+                'controller.r_yaw',
+            ),
+            'MOT_BAT': (
+                'motor.m1', 'motor.m2', 'motor.m3', 'motor.m4', 'pm.vbat',
+            ),
+        }
+        logger.info('Verifying onboard interaction state logs...')
+        deadline = time.monotonic() + 5.0
+        missing = []
+        while time.monotonic() < deadline:
+            missing = []
+            for group_name, variable_names in required.items():
+                try:
+                    values = self.log_manager.get_latest_group_log_data(group_name)
+                except (KeyError, TypeError):
+                    values = {}
+                for variable_name in variable_names:
+                    value = values.get(variable_name)
+                    if not isinstance(value, (int, float)) or not np.isfinite(value):
+                        missing.append(f'{group_name}.{variable_name}')
+            if not missing:
+                logger.info('Onboard interaction state logs are ready')
+                return
+            time.sleep(0.05)
+        raise RuntimeError(
+            'Required onboard interaction logs did not start: '
+            + ', '.join(missing)
+        )
 
     def setup_battery_watcher(self):
         self.bat_logger = LogConfig(name='Battery', period_in_ms=1000)
@@ -681,10 +896,13 @@ class Controller:
             self.z_tune_pattern()
         elif self.args.trajectory:
             self.fly_trajectory(self.args.trajectory)
+        elif (getattr(self.args, 'calibrate', False)
+              or getattr(self.args, 'braking_test', False)):
+            self.calibration_switch()
         elif self.args.orchestrated:
             if self.args.illumination:
                 self.run_multiple_orchestrated_missions()
-            elif self.args.interaction:
+            elif self.args.interaction or self.args.sense:
                 self.interation_switch()
 
         else:
@@ -863,7 +1081,11 @@ class Controller:
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id,
                                      pub_socket=interact_pub, sub_socket=interact_sub, execute=execution, set_color=self.led.show_single_color,
-                                     orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                     orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                     force_sensor=self.force_sensor,
+                                     sense_axis=self.args.sense_axis,
+                                     sense_sign=self.args.sense_sign,
+                                     sense_max_age_s=self.args.sense_max_age)
             IC.run()
             interact_pub.close()
             interact_sub.close()
@@ -905,7 +1127,11 @@ class Controller:
 
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow, execute=execution,
-                                     orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                     orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                     force_sensor=self.force_sensor,
+                                     sense_axis=self.args.sense_axis,
+                                     sense_sign=self.args.sense_sign,
+                                     sense_max_age_s=self.args.sense_max_age)
             IC.run()
             self.mocap.unsubscribe_point(leader_id)
             self.ll_commander.send_notify_setpoint_stop()
@@ -940,7 +1166,11 @@ class Controller:
             IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                      self.args.smooth_controller_rate, drone_id=self.args.drone_id,
                                      pub_socket=interact_pub, sub_socket=interact_sub, set_color=self.led.show_single_color,
-                                     execute=execution, orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                     execute=execution, orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                     force_sensor=self.force_sensor,
+                                     sense_axis=self.args.sense_axis,
+                                     sense_sign=self.args.sense_sign,
+                                     sense_max_age_s=self.args.sense_max_age)
             IC.run()
             if interact_pub is not None:
                 interact_pub.close()
@@ -978,7 +1208,11 @@ class Controller:
                                      self.args.smooth_controller_rate,
                                      drone_id=self.args.drone_id,
                                      pub_socket=interact_pub, sub_socket=interact_sub,
-                                     execute=execution, orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                     execute=execution, orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                     force_sensor=self.force_sensor,
+                                     sense_axis=self.args.sense_axis,
+                                     sense_sign=self.args.sense_sign,
+                                     sense_max_age_s=self.args.sense_max_age)
             IC.run_passive_avoidance()
             if interact_pub is not None:
                 interact_pub.close()
@@ -1034,7 +1268,11 @@ class Controller:
                             self.cf, self._safe_sleep,
                             self.log_manager, self.mission,
                             self.args.smooth_controller_rate, drone_id=self.args.drone_id,
-                            orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None
+                            orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                            force_sensor=self.force_sensor,
+                            sense_axis=self.args.sense_axis,
+                            sense_sign=self.args.sense_sign,
+                            sense_max_age_s=self.args.sense_max_age,
                         )
                         IC.run_recap(file_path)
             elif self.mission.get('Interaction', {}).get('action') == 'peer_latency_test':
@@ -1048,7 +1286,11 @@ class Controller:
                 IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                          self.args.smooth_controller_rate, drone_id=self.args.drone_id,
                                          pub_socket=interact_pub, sub_socket=interact_sub,
-                                         orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                         orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                         force_sensor=self.force_sensor,
+                                         sense_axis=self.args.sense_axis,
+                                         sense_sign=self.args.sense_sign,
+                                         sense_max_age_s=self.args.sense_max_age)
                 IC.run()
                 interact_pub.close()
                 interact_sub.close()
@@ -1078,7 +1320,11 @@ class Controller:
 
                     IC = InteractionsControl(self.cf, self._safe_sleep, self.log_manager, self.mission,
                                              self.args.smooth_controller_rate, drone_id=self.args.drone_id, leader_info=follow,
-                                             orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None)
+                                             orchestrator_ip=self.manifest['controller']['ip'] if self.manifest else None,
+                                             force_sensor=self.force_sensor,
+                                             sense_axis=self.args.sense_axis,
+                                             sense_sign=self.args.sense_sign,
+                                             sense_max_age_s=self.args.sense_max_age)
                     IC.run()
 
         except Exception as e:
@@ -1086,6 +1332,104 @@ class Controller:
         finally:
             self.ll_commander.send_notify_setpoint_stop()
 
+    def calibration_switch(self):
+        """Run contact-free calibration or the data-only attitude repeat test."""
+        try:
+            targeted_braking = bool(getattr(
+                self.args, 'targeted_braking_calibration', False
+            ))
+            if targeted_braking and (
+                    not getattr(self.args, 'calibrate', False)
+                    or getattr(self.args, 'braking_test', False)
+                    or getattr(self.args, 'interaction', False)
+                    or getattr(self.args, 'ground_test', False)):
+                raise ValueError(
+                    '--targeted-braking-calibration requires --calibrate '
+                    'without --interaction, --braking-test, or --ground-test'
+                )
+            adaptive_selection = getattr(
+                self.args, 'adaptive_braking_calibration', None
+            )
+            adaptive_braking = (
+                bool(getattr(self.args, 'calibrate', False))
+                if adaptive_selection is None
+                else bool(adaptive_selection)
+            )
+            if adaptive_braking and (
+                    not getattr(self.args, 'calibrate', False)
+                    or getattr(self.args, 'braking_test', False)
+                    or getattr(self.args, 'interaction', False)):
+                raise ValueError(
+                    '--adaptive-braking-calibration requires --calibrate '
+                    'without --interaction or --braking-test'
+                )
+            if self.args.ground_test:
+                self._safe_sleep(1)
+                return
+            calibration_mission = self.mission
+            if getattr(self.args, 'calibrate', False):
+                # Calibration defaults to adaptive braking, but the choice is
+                # scoped to an independent mission copy and never leaks into a
+                # later interaction.  Explicit --no-adaptive-braking-calibration
+                # also overrides a stale mission-level true value.
+                calibration_mission = deepcopy(self.mission)
+                wrench_config = calibration_mission.setdefault('Interaction', {}).setdefault(
+                    'config', {}).setdefault('wrench_interaction', {})
+                wrench_config.setdefault('adaptive_braking_calibration', {})[
+                    'enabled'
+                ] = adaptive_braking
+                if adaptive_braking:
+                    wrench_config.setdefault('online_prediction_calibration', {})[
+                        'enabled'
+                    ] = True
+                if targeted_braking:
+                    # The targeted protocol is deliberately deterministic: it
+                    # collects controlled high-speed +/-Y data at three brake
+                    # durations.  Keep the ordinary mission untouched and do
+                    # not let the adaptive controller replace those pulses.
+                    wrench_config.setdefault('adaptive_braking_calibration', {})[
+                        'enabled'
+                    ] = False
+                    wrench_config.setdefault('online_prediction_calibration', {})[
+                        'enabled'
+                    ] = True
+                    wrench_config.setdefault('planar_braking_calibration', {}).update({
+                        'enabled': True,
+                        'tilt_levels_deg': [20.0],
+                        'directions_xy': [[0.0, 1.0], [0.0, -1.0]],
+                        'accelerate_durations_s': [0.32, 0.32, 0.32],
+                        'brake_durations_s': [0.16, 0.20, 0.24],
+                        'repetitions_per_duration': 2,
+                    })
+            controller = InteractionsControl(
+                self.cf,
+                self._safe_sleep,
+                self.log_manager,
+                calibration_mission,
+                self.args.smooth_controller_rate,
+                drone_id=self.args.drone_id,
+                orchestrator_ip=(
+                    self.manifest['controller']['ip'] if self.manifest else None
+                ),
+                force_sensor=self.force_sensor,
+                sense_axis=self.args.sense_axis,
+                sense_sign=self.args.sense_sign,
+                sense_max_age_s=self.args.sense_max_age,
+            )
+            if getattr(self.args, 'braking_test', False):
+                controller.run_braking_test(
+                    direction=getattr(self.args, 'braking_test_direction', None),
+                    repetitions=getattr(self.args, 'braking_test_repetitions', None),
+                )
+            else:
+                controller.run_calibration()
+        except Exception as error:
+            logging.error(
+                "Calibration Error: %s\nTraceback:\n%s",
+                error,
+                traceback.format_exc(),
+            )
+            raise
     def run_multiple_orchestrated_missions(self):
         for i in range(len(self.missions)):
             self.orchestrated_mission(i)
@@ -1689,14 +2033,16 @@ class Controller:
             raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
 
     def _prepare_for_emergency_landing(self):
-        self._set_safe_servo_angles()
-        time.sleep(0.6)
-        # if self.smooth_controller:
-        #     self.smooth_controller.stop()
-        if self.led:
-            self.led.show_single_color((230, 20, 20))
-        self.ll_commander.send_notify_setpoint_stop()
-        time.sleep(0.01)
+        """Mark the request without blocking or changing control ownership.
+
+        The caller immediately raises into ``Controller.__exit__`` and
+        ``stop() -> land()``. Peripheral targets are handled once by stop().
+        Sleeping here used to leave the current LL
+        setpoint unrefreshed for 0.6 s, then notify before any HLC plan existed.
+        Both actions can destabilize the aircraft. The centralized landing
+        path now owns the acknowledged HLC transfer or streamed LL fallback.
+        """
+        self._emergency_landing_requested = True
 
     def _safe_sleep_orchestrated(self, duration):
         end_time = time.time() + duration
@@ -1897,13 +2243,55 @@ class Controller:
         self.cf.extpos.send_extpos(*frame['tvec'])
 
     def _send_position(self, frame):
+        frame = self._prepare_mocap_forward_timing(frame)
         if self.send_vicon_to_cf:
+            started = time.monotonic()
             self.cf.extpos.send_extpos(*frame['tvec'])
+            self._finish_mocap_forward_timing(frame, started)
         self._log_mocap(frame)
 
     def _send_position_orientation(self, frame):
+        frame = self._prepare_mocap_forward_timing(frame)
+        started = time.monotonic()
         self.cf.extpos.send_extpose(*frame['tvec'], *frame['quat'])
+        self._finish_mocap_forward_timing(frame, started)
         self._log_mocap(frame)
+
+    def _prepare_mocap_forward_timing(self, frame):
+        # Add diagnostics only; frame['time'] and extpos payload stay unchanged.
+        copied = dict(frame)
+        copied['mocap_timing'] = dict(frame.get('mocap_timing', {}))
+        copied['mocap_timing']['extpos_send_called'] = False
+        return copied
+
+    def _finish_mocap_forward_timing(self, frame, started):
+        finished = time.monotonic()
+        previous = getattr(self, '_last_extpos_send_monotonic_s', None)
+        self._last_extpos_send_monotonic_s = started
+        timing = frame['mocap_timing']
+        returned = timing.get('wait_return_monotonic_s')
+        timing.update(
+            extpos_send_called=True,
+            extpos_send_start_monotonic_s=started,
+            extpos_send_duration_s=finished-started,
+            extpos_send_interval_s=None if previous is None else started-previous,
+            wait_return_to_send_s=None if returned is None else started-returned,
+        )
+        # This measures only a local API call, not radio delivery or estimator use.
+
+    def _log_mocap_timing(self, timing):
+        if self.log_manager is None:
+            return
+        # Sample queue health once per second, without flushing or waiting on I/O.
+        now = time.monotonic()
+        previous = getattr(self, '_last_mocap_queue_stats_s', None)
+        if previous is None or now-previous >= 1.0:
+            live_logger = getattr(self.log_manager, 'live_logger', None)
+            stats = getattr(live_logger, 'stats_snapshot', None)
+            if stats is not None:
+                timing = dict(timing, logger_queue=stats())
+            self._last_mocap_queue_stats_s = now
+        self.log_manager.add_log_entry('mocap_timing', timing)
 
     def _log_mocap(self, frame, group_name='frames'):
         self.log_manager.add_log_entry(group_name, frame)
@@ -1953,6 +2341,83 @@ if __name__ == '__main__':
     ap.add_argument("--orchestrated", action="store_true", help="orchestrated by orchestrator")
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
+    ap.add_argument(
+        "--sense", action="store_true",
+        help=(
+            "record Arduino potentiometer force and enable configured "
+            "potentiometer-release coasting"
+        ),
+    )
+    ap.add_argument(
+        "--sense-port", default="/dev/serial0",
+        help="Arduino UART device used by --sense (default: /dev/serial0)",
+    )
+    ap.add_argument(
+        "--sense-baud", type=int, default=115200,
+        help="Arduino UART baud rate used by --sense",
+    )
+    ap.add_argument(
+        "--sense-spring-constant", type=float, default=0.16,
+        help="force-sensor spring constant in N/mm",
+    )
+    ap.add_argument(
+        "--sense-max-extension", type=float, default=10.4,
+        help="potentiometer travel / released spring length in mm",
+    )
+    ap.add_argument(
+        "--sense-axis", choices=["x", "y", "z"], default="y",
+        help="body-frame sensor axis compared with the external-force estimate",
+    )
+    ap.add_argument(
+        "--sense-sign", choices=[-1, 1], default=1, type=int,
+        help="sensor-axis direction: +1 or -1",
+    )
+    ap.add_argument(
+        "--sense-max-age", type=float, default=0.25,
+        help="maximum sensor sample age in seconds before it is marked stale",
+    )
+    ap.add_argument(
+        "--sense-power-poll-interval", type=float, default=0.5,
+        help="seconds between Raspberry Pi power-health samples",
+    )
+    ap.add_argument(
+        "--sense-startup-timeout", type=float, default=3.0,
+        help="seconds to wait for the first valid Arduino sample",
+    )
+    ap.add_argument(
+        "--calibrate", action="store_true",
+        help=(
+            "run contact-free position excitation plus bounded planar "
+            "attitude/braking trials, then save both calibration models"
+        ),
+    )
+    ap.add_argument(
+        "--targeted-braking-calibration", action="store_true",
+        help=("during --calibrate, collect a fixed 20-degree +/-Y sweep with "
+              "0.32 s acceleration and 0.16/0.20/0.24 s braking pulses; "
+              "adaptive pulse selection is disabled for this opt-in run"),
+    )
+    ap.add_argument(
+        "--adaptive-braking-calibration",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=("use online-model-guided attitude braking during --calibrate "
+              "(default: enabled; use --no-adaptive-braking-calibration for "
+              "fixed-duration baseline trials)"),
+    )
+    ap.add_argument(
+        "--braking-test", action="store_true",
+        help=("data-only attitude repeat test: 20 deg, paired 0.24s pulses, "
+              "default alternating -Y/+Y three times; skip XYZ and preserve calibration"),
+    )
+    ap.add_argument(
+        "--braking-test-direction", choices=('both', 'positive-y', 'negative-y'),
+        default=None, help="world-axis trial direction; requires --braking-test (default: both)",
+    )
+    ap.add_argument(
+        "--braking-test-repetitions", type=int, choices=(1, 2, 3), default=None,
+        help="trials per selected direction; requires --braking-test (default: 3)",
+    )
     ap.add_argument("--intractable-illumination", action="store_true", help="interaction application with illumination")
     ap.add_argument("--morphing", action="store_true", help="illumination application with morphing emulator")
     ap.add_argument("--takeoff-altitude", help="takeoff altitude", default=None, type=float)
@@ -2016,6 +2481,42 @@ if __name__ == '__main__':
     ap.add_argument("--autotune", action="store_true", help="run automatic pid tuner")
 
     args = ap.parse_args()
+    try:
+        validate_repeat_test_options(args)
+    except ValueError as error:
+        ap.error(str(error))
+    if args.interaction and args.calibrate:
+        ap.error('--interaction and --calibrate are mutually exclusive')
+    if args.targeted_braking_calibration and (
+            not args.calibrate or args.interaction or args.braking_test
+            or args.ground_test):
+        ap.error(
+            '--targeted-braking-calibration requires --calibrate without '
+            '--interaction, --braking-test, or --ground-test'
+        )
+    if args.adaptive_braking_calibration is not None and (
+            not args.calibrate or args.interaction or args.braking_test):
+        ap.error(
+            '--[no-]adaptive-braking-calibration requires --calibrate '
+            'without --interaction or --braking-test'
+        )
+    if args.sense and not args.log:
+        ap.error('--sense requires --log so sensor and estimate data are recorded')
+    if args.calibrate and not args.log:
+        ap.error('--calibrate requires --log so both fitted responses are recorded')
+    if args.calibrate and args.smooth_controller_rate < 50:
+        ap.error(
+            '--calibrate requires --smooth-controller-rate 50 or higher so '
+            'each 0.32s attitude step has enough fit samples'
+        )
+    if args.sense_spring_constant <= 0.0:
+        ap.error('--sense-spring-constant must be positive')
+    if args.sense_max_extension <= 0.0:
+        ap.error('--sense-max-extension must be positive')
+    if args.sense_max_age <= 0.0 or args.sense_startup_timeout <= 0.0:
+        ap.error('--sense timing values must be positive')
+    if args.sense_power_poll_interval <= 0.0:
+        ap.error('--sense-power-poll-interval must be positive')
 
     with Controller(args) as c:
         try:

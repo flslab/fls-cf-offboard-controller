@@ -1,0 +1,5230 @@
+{
+  "schema_version": 1,
+  "kind": "online_prediction_calibration",
+  "drone_id": "lb11",
+  "context": {
+    "command_clock_offset_s": 1788476935.7374144,
+    "command_clock_offset_spread_s": 0.0006275177001953125,
+    "command_clock_method": "median phase-event minus next-command timestamp; approximate send anchor",
+    "flight_git": {
+      "version": "6705d25393505219d1fd8bc30c4913b42357211e"
+    },
+    "source_event": "Wrench Model Calibration Saved",
+    "calibration_saved_path": "/home/fls/fls-cf-offboard-controller/Interaction/wrench_calibration.json",
+    "contains_fitted_model": true,
+    "mode": "offline_sequential_replay",
+    "source_path": "/Users/shuqinzhu/Documents/FLS_Research/lightbender/orchestrator/logs/translation_inertia_2026-09-03_16-07-59/lb11_translation_inertia_2026-09-03_16-07-59.json",
+    "source_sha256": "ade0292b40f7df775b4617af523cc3d45c34c4f03713ce7cdebd86de0315b57d",
+    "clock_scope": "host_receive_effective_delay_with_reconstructed_send_anchors",
+    "prediction_scope": "attitude_command_only",
+    "completion_certification": "logged_actual_recovery_commands",
+    "position_capture_model_identified": false
+  },
+  "status": "completed",
+  "data_complete": true,
+  "expected_segment_ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "received_segment_ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "rejected_trials": [],
+  "fit_errors": [],
+  "validation_history": [
+    {
+      "training_segment_ids": [
+        0,
+        1
+      ],
+      "validation_segment_ids": [
+        2,
+        3
+      ],
+      "candidate_version": 1,
+      "model": {
+        "schema_version": 1,
+        "kind": "delayed_second_order_planar_prediction",
+        "attitude_fit": {
+          "model": "second_order",
+          "delay_s": 0.022065622693926756,
+          "wn_rad_s": 13.797703094545616,
+          "zeta": 0.9105917364998782,
+          "gain": 1.0231268899026469,
+          "bias_world_y_rad": -0.004948400212645229,
+          "training_segments": [
+            0,
+            1
+          ],
+          "train_rmse_deg": 0.20093031222771082,
+          "seed_costs": [
+            1.2298316156169532e-05,
+            1.2298316156410101e-05,
+            1.2298316156172087e-05
+          ],
+          "active_bounds": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "offline_only": true
+        },
+        "motion_gain": 1.0752525637322095,
+        "train_segment_ids": [
+          0,
+          1
+        ],
+        "clock_scope": "host_receive_effective_delay",
+        "prediction_scope": "attitude_command_only",
+        "runtime_enabled": false,
+        "deployment_approved": false,
+        "candidate_status": "requires_held_out_validation",
+        "independent_validation_complete": false,
+        "identifiability": {
+          "method": "local finite-difference sensitivity scaled by declared parameter bounds",
+          "parameter_order": [
+            "delay_s",
+            "wn_rad_s",
+            "zeta",
+            "gain",
+            "bias_world_y_rad"
+          ],
+          "singular_values": [
+            0.8362963728025711,
+            0.14830188634794708,
+            0.06527425968205637,
+            0.04682710923509848,
+            0.03302318393907335
+          ],
+          "rank": 5,
+          "condition_number": 25.324522745762778,
+          "identifiable": true,
+          "bound_active_parameters": [],
+          "uncertainty_interval_available": false
+        },
+        "numerical_diagnostics": {
+          "finite_fit_metadata": true,
+          "residual_objective_independently_checked": true,
+          "checked_training_objective_rad2": 1.2298316156169532e-05,
+          "optimizer_runtime_warnings": []
+        },
+        "parameter_bounds": {
+          "delay_s": [
+            0.0,
+            0.15
+          ],
+          "wn_rad_s": [
+            5.0,
+            100.0
+          ],
+          "zeta": [
+            0.2,
+            2.0
+          ],
+          "gain": [
+            0.7,
+            1.3
+          ],
+          "bias_world_y_rad": [
+            -0.035,
+            0.035
+          ],
+          "motion_gain": [
+            0.2,
+            2.5
+          ]
+        },
+        "parameter_units": {
+          "delay_s": "s",
+          "wn_rad_s": "rad/s",
+          "zeta": "dimensionless",
+          "gain": "dimensionless",
+          "bias_world_y_rad": "rad",
+          "motion_gain": "dimensionless"
+        },
+        "data_ranges": [
+          {
+            "segment_id": 0,
+            "direction_y": 1,
+            "sample_count": 138,
+            "host_time_origin_s": 1788476972.3520586,
+            "observed_duration_s": 1.3706638813018799,
+            "max_sample_gap_s": 0.010838985443115234,
+            "phase_sample_counts": {
+              "level_before_acceleration": 21,
+              "accelerate": 16,
+              "level_before_brake": 20,
+              "brake": 16,
+              "level_after_brake": 65
+            },
+            "phase_command_times_relative_s": {
+              "level_before_acceleration": -0.0006587505340576172,
+              "accelerate": 0.20876455307006836,
+              "level_before_brake": 0.3690989017486572,
+              "brake": 0.5692334175109863,
+              "level_after_brake": 0.7293469905853271
+            },
+            "observed_phase_last_sample_s": {
+              "level_before_acceleration": 0.2000257968902588,
+              "accelerate": 0.3601374626159668,
+              "level_before_brake": 0.5600216388702393,
+              "brake": 0.7200231552124023,
+              "level_after_brake": 1.3706638813018799
+            },
+            "command_acceleration_m_s2": [
+              -3.570547998151445,
+              3.570547998151445
+            ],
+            "theta_rad": [
+              -0.2593865705544175,
+              0.2527490355753624
+            ],
+            "velocity_m_s": [
+              -0.1333400458097458,
+              0.4943373501300812
+            ],
+            "position_m": [
+              0.012175695970654488,
+              0.16464568674564362
+            ],
+            "battery_voltage_V": [
+              7.517355918884277,
+              7.5966949462890625
+            ]
+          },
+          {
+            "segment_id": 1,
+            "direction_y": -1,
+            "sample_count": 137,
+            "host_time_origin_s": 1788476976.0401165,
+            "observed_duration_s": 1.35902738571167,
+            "max_sample_gap_s": 0.01032876968383789,
+            "phase_sample_counts": {
+              "level_before_acceleration": 20,
+              "accelerate": 16,
+              "level_before_brake": 20,
+              "brake": 16,
+              "level_after_brake": 65
+            },
+            "phase_command_times_relative_s": {
+              "level_before_acceleration": -0.004051923751831055,
+              "accelerate": 0.19644379615783691,
+              "level_before_brake": 0.3568587303161621,
+              "brake": 0.5569922924041748,
+              "level_after_brake": 0.7177939414978027
+            },
+            "observed_phase_last_sample_s": {
+              "level_before_acceleration": 0.19001007080078125,
+              "accelerate": 0.35002565383911133,
+              "level_before_brake": 0.5500404834747314,
+              "brake": 0.7100260257720947,
+              "level_after_brake": 1.35902738571167
+            },
+            "command_acceleration_m_s2": [
+              -3.570547998151445,
+              3.570547998151445
+            ],
+            "theta_rad": [
+              -0.2470799044999059,
+              0.2619570763806765
+            ],
+            "velocity_m_s": [
+              -0.003960430156439543,
+              0.5590953826904297
+            ],
+            "position_m": [
+              0.00842104572802782,
+              0.25270557403564453
+            ],
+            "battery_voltage_V": [
+              7.517355918884277,
+              7.576859951019287
+            ]
+          }
+        ],
+        "source_provenance": {
+          "sample_sha256": "f7b764602a479c5c1546d5b2f35c4de5e6131cd7aa90d4ae4bf89303a831e1b7",
+          "sample_count": 275,
+          "source": "reconstructed_flight_log_samples",
+          "command_clock": "median phase-event minus next-command timestamp; approximate send anchor",
+          "command_clock_caveat": "Live samples require actual sends; historical reconstructed sends must be labeled by the caller.",
+          "completion_certified_by": "logged_actual_recovery_commands",
+          "source_log_path": "/Users/shuqinzhu/Documents/FLS_Research/lightbender/orchestrator/logs/translation_inertia_2026-09-03_16-07-59/lb11_translation_inertia_2026-09-03_16-07-59.json",
+          "source_log_sha256": "ade0292b40f7df775b4617af523cc3d45c34c4f03713ce7cdebd86de0315b57d"
+        },
+        "warnings": [
+          "host-receive effective delay includes telemetry and scheduling latency",
+          "world-Y small-planar-angle identification only; cross-axis dynamics are not fitted",
+          "last-phase samples do not certify trial completion; caller must observe actual recovery send",
+          "training fit is a candidate, not independent validation or flight approval"
+        ]
+      },
+      "independent_validation": true,
+      "runtime_enabled": false,
+      "flight_approved": false,
+      "metrics": {
+        "schema_version": 1,
+        "validation_segment_ids": [
+          2,
+          3
+        ],
+        "train_segment_ids": [
+          0,
+          1
+        ],
+        "per_trial": [
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "direction_y": 1,
+            "prediction_anchor_relative_s": 0.6468336582183838,
+            "duration_s": 0.889122486114502,
+            "theta_rmse_deg": 0.5618261096303232,
+            "full_trial_theta_rmse_deg": 0.6547426298764284,
+            "velocity_rmse_m_s": 0.029299161140355554,
+            "actual_terminal_m_s": 0.008158453570848162,
+            "predicted_terminal_m_s": -0.03359000366944707,
+            "terminal_error_m_s": -0.04174845724029523,
+            "end_position_error_m": 0.019032076831880462,
+            "actual_reverse": false,
+            "predicted_reverse": true,
+            "actual_peak_reverse_m_s": 0.0,
+            "predicted_peak_reverse_m_s": 0.03601895317357173,
+            "actual_crossing": null,
+            "predicted_crossing": {
+              "time_s": 0.5352994880344646,
+              "position_m": 0.24950570967603028
+            },
+            "crossing_error_s": null
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "direction_y": -1,
+            "prediction_anchor_relative_s": 0.6311769485473633,
+            "duration_s": 0.8955492973327637,
+            "theta_rmse_deg": 0.5415714244663502,
+            "full_trial_theta_rmse_deg": 0.43760615804798597,
+            "velocity_rmse_m_s": 0.02248985170348047,
+            "actual_terminal_m_s": 0.03228392694145441,
+            "predicted_terminal_m_s": 0.006296007535464676,
+            "terminal_error_m_s": -0.025987919405989733,
+            "end_position_error_m": -0.014494679115248488,
+            "actual_reverse": false,
+            "predicted_reverse": false,
+            "actual_peak_reverse_m_s": 0.0,
+            "predicted_peak_reverse_m_s": 0.0027738859618723355,
+            "actual_crossing": null,
+            "predicted_crossing": {
+              "time_s": 0.5812378475270233,
+              "position_m": 0.24336187838003512
+            },
+            "crossing_error_s": null
+          }
+        ],
+        "aggregates": {
+          "trial_count": 2,
+          "weighting": "equal trial means",
+          "theta_rmse_deg": 0.5516987670483366,
+          "mean_theta_rmse_deg": 0.5516987670483366,
+          "max_abs_theta_rmse_deg": 0.5618261096303232,
+          "velocity_rmse_m_s": 0.025894506421918012,
+          "mean_velocity_rmse_m_s": 0.025894506421918012,
+          "max_abs_velocity_rmse_m_s": 0.029299161140355554,
+          "terminal_error_m_s": -0.03386818832314248,
+          "mean_terminal_error_m_s": -0.03386818832314248,
+          "max_abs_terminal_error_m_s": 0.04174845724029523,
+          "end_position_error_m": 0.0022686988583159873,
+          "mean_end_position_error_m": 0.0022686988583159873,
+          "max_abs_end_position_error_m": 0.019032076831880462,
+          "actual_reverse_trial_count": 0,
+          "predicted_reverse_trial_count": 1,
+          "reverse_classification_mismatch_count": 1,
+          "zero_crossing_presence_mismatch_count": 2,
+          "max_abs_crossing_error_s": null
+        },
+        "rolling_horizons": [
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.6468336582183838,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.051236656925492674,
+            "velocity_error_m_s": 0.014717055501825782,
+            "position_error_m": 0.00466987401170918
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.6468336582183838,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.4834147751672009,
+            "velocity_error_m_s": 0.031919136161698725,
+            "position_error_m": 0.012697178533951914
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.6468336582183838,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.9444846517314293,
+            "velocity_error_m_s": 0.04157700194078584,
+            "position_error_m": 0.02972543884490575
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.6468336582183838,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.6981878572846365,
+            "velocity_error_m_s": 0.005345040996435707,
+            "position_error_m": 0.04212583321939262
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.6968367099761963,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.5939355986794248,
+            "velocity_error_m_s": 0.01675731477009723,
+            "position_error_m": 0.007286494819118167
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.6968367099761963,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.970544537632334,
+            "velocity_error_m_s": 0.024728088580429297,
+            "position_error_m": 0.015545607067896428
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.6968367099761963,
+            "horizon_s": 0.2,
+            "theta_error_deg": -1.0627038444828503,
+            "velocity_error_m_s": 0.02123503116214409,
+            "position_error_m": 0.029206134943237594
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.6968367099761963,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.5160221907262463,
+            "velocity_error_m_s": -0.02269302445546551,
+            "position_error_m": 0.02974729994584363
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.7468342781066895,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.054167909019877426,
+            "velocity_error_m_s": 0.015631517899562408,
+            "position_error_m": 0.007600162666844823
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.7468342781066895,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.2745056180158709,
+            "velocity_error_m_s": 0.023313840595018287,
+            "position_error_m": 0.014493843636063541
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.7468342781066895,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.7939999066490734,
+            "velocity_error_m_s": 0.017404736006522592,
+            "position_error_m": 0.023676144402245913
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.7468342781066895,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.3219357941696398,
+            "velocity_error_m_s": -0.018200540718792988,
+            "position_error_m": 0.021945175902934766
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.796877384185791,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.09429108949920487,
+            "velocity_error_m_s": 0.01012734470405785,
+            "position_error_m": 0.006162117523609956
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.796877384185791,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.17357437736036999,
+            "velocity_error_m_s": 0.01742810233132286,
+            "position_error_m": 0.012248967016067702
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.796877384185791,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.6164002536481796,
+            "velocity_error_m_s": 0.0062664559034109335,
+            "position_error_m": 0.016402412066677585
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.796877384185791,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.11535983928013087,
+            "velocity_error_m_s": -0.028423031928917417,
+            "position_error_m": 0.0091176186408784
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.8468353748321533,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.0071303992720415585,
+            "velocity_error_m_s": 0.007956765759120521,
+            "position_error_m": 0.005587388008752969
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.8468353748321533,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.33082599209476443,
+            "velocity_error_m_s": 0.0036465581783420298,
+            "position_error_m": 0.007302103906761115
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.8468353748321533,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.4176265955598023,
+            "velocity_error_m_s": -0.007677935837353322,
+            "position_error_m": 0.00752244188312684
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.8468353748321533,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.019711313063773193,
+            "velocity_error_m_s": -0.03359334481864824,
+            "position_error_m": -0.0013699820059758783
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.8968393802642822,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.10171233326179349,
+            "velocity_error_m_s": -0.0028328060879654893,
+            "position_error_m": 0.0013434191765056558
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.8968393802642822,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.22927478203434443,
+            "velocity_error_m_s": -0.003586371803166122,
+            "position_error_m": 0.0027669595785249634
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.8968393802642822,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.2500069676808439,
+            "velocity_error_m_s": -0.015287132575622503,
+            "position_error_m": -0.0001663276437724459
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.8968393802642822,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.08736991662449059,
+            "velocity_error_m_s": -0.03601114823163556,
+            "position_error_m": -0.010573087785836266
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.9468560218811035,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.30079607081725634,
+            "velocity_error_m_s": 0.0029403728431890153,
+            "position_error_m": 0.0016453106113104021
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.9468560218811035,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.2691574637106705,
+            "velocity_error_m_s": 0.0018519569348491305,
+            "position_error_m": 0.00048161180367756184
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.9468560218811035,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.03877737111809174,
+            "velocity_error_m_s": -0.0047411743725435836,
+            "position_error_m": -0.0016117298005562941
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.9468560218811035,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.1062408555626378,
+            "velocity_error_m_s": -0.01622361122872933,
+            "position_error_m": -0.008152749921648272
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.9968366622924805,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.09313554889233651,
+            "velocity_error_m_s": -0.00442832497827024,
+            "position_error_m": -0.001391920172058414
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.9968366622924805,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.160156679393359,
+            "velocity_error_m_s": -0.008781941181891025,
+            "position_error_m": -0.002405519994306826
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.9968366622924805,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.04012174235954496,
+            "velocity_error_m_s": -0.023693692628900604,
+            "position_error_m": -0.007083545516326173
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 0.9968366622924805,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.03185765843363716,
+            "velocity_error_m_s": -0.0328755949369502,
+            "position_error_m": -0.01610090585973356
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.0468358993530273,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.13666546219859593,
+            "velocity_error_m_s": -0.003857089981962776,
+            "position_error_m": -0.0007771031482539104
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.0468358993530273,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.15284274461459535,
+            "velocity_error_m_s": -0.011270691231063293,
+            "position_error_m": -0.0025275413668623403
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.0468358993530273,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.038978869631520266,
+            "velocity_error_m_s": -0.020484038271469142,
+            "position_error_m": -0.006581478052880618
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.0468358993530273,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.09577062292555294,
+            "velocity_error_m_s": -0.03359721702490613,
+            "position_error_m": -0.01597403807016795
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.0968565940856934,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.16962255087088648,
+            "velocity_error_m_s": -0.006995195957666029,
+            "position_error_m": -0.0015423604673484026
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.0968565940856934,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.10555429208611924,
+            "velocity_error_m_s": -0.014867668500520313,
+            "position_error_m": -0.003766018308542618
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.0968565940856934,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.047468369440895046,
+            "velocity_error_m_s": -0.02059306142171364,
+            "position_error_m": -0.007201490583129078
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.0968565940856934,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.2196594420202268,
+            "velocity_error_m_s": -0.035181186828144,
+            "position_error_m": -0.016219212825896112
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.1458616256713867,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.056877483116355446,
+            "velocity_error_m_s": -0.00704849095443426,
+            "position_error_m": -0.0018743542278086278
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.1458616256713867,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.011028291119318287,
+            "velocity_error_m_s": -0.009128527633698338,
+            "position_error_m": -0.0029299161376229454
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.1458616256713867,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.049793611692596954,
+            "velocity_error_m_s": -0.015316393482491045,
+            "position_error_m": -0.006036908782258432
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.1958653926849365,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.01333462287578476,
+            "velocity_error_m_s": -0.0017227096919320613,
+            "position_error_m": -0.0006928710642196689
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.1958653926849365,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.04199583461898166,
+            "velocity_error_m_s": -0.005160523090663018,
+            "position_error_m": -0.0019212899332164968
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.1958653926849365,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.007417031857307352,
+            "velocity_error_m_s": -0.010394929265311034,
+            "position_error_m": -0.0043937744798175915
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.2458839416503906,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.016435623515883246,
+            "velocity_error_m_s": -0.003636327055853235,
+            "position_error_m": -0.001146615012574903
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.2458839416503906,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.029367509731714734,
+            "velocity_error_m_s": -0.006427397946337423,
+            "position_error_m": -0.0022019085488562684
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.2458839416503906,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.11569122246232268,
+            "velocity_error_m_s": -0.014897033477146812,
+            "position_error_m": -0.005478475177973119
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.296607494354248,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.04595243517257887,
+            "velocity_error_m_s": -0.003318938268090721,
+            "position_error_m": -0.0008941875759578832
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.296607494354248,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.0827859915071244,
+            "velocity_error_m_s": -0.006865464604453246,
+            "position_error_m": -0.0020348138462408794
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.296607494354248,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.26348234457747466,
+            "velocity_error_m_s": -0.017650535267590896,
+            "position_error_m": -0.005227007540600848
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.345980167388916,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.09833452098673857,
+            "velocity_error_m_s": -0.0034669478264340594,
+            "position_error_m": -0.0009764236457072695
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.345980167388916,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.19970991912692734,
+            "velocity_error_m_s": -0.009922821590971465,
+            "position_error_m": -0.002700574936268796
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.3961036205291748,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.10056172276670607,
+            "velocity_error_m_s": -0.0055155547868443785,
+            "position_error_m": -0.001531653137589073
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.3961036205291748,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.21629347963266943,
+            "velocity_error_m_s": -0.009486484387303868,
+            "position_error_m": -0.0024302315625426285
+          },
+          {
+            "segment": 2,
+            "segment_id": 2,
+            "anchor_s": 1.4464163780212402,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.03638761541954048,
+            "velocity_error_m_s": -0.0025568157019466428,
+            "position_error_m": -0.0005825702031073132
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.6311769485473633,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.060015103949279794,
+            "velocity_error_m_s": 0.013940673646043567,
+            "position_error_m": 0.004480580573748089
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.6311769485473633,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.32109770105163143,
+            "velocity_error_m_s": 0.022006625459279006,
+            "position_error_m": 0.008970604816455341
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.6311769485473633,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.47390436559167326,
+            "velocity_error_m_s": 0.019749378005948115,
+            "position_error_m": 0.019813549308955736
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.6311769485473633,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.2556502634058611,
+            "velocity_error_m_s": -0.015202710522768323,
+            "position_error_m": 0.01713761963220184
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.6821227073669434,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.4451164515141248,
+            "velocity_error_m_s": 0.007532337609977846,
+            "position_error_m": 0.0037551899430645075
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.6821227073669434,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.6557655532644625,
+            "velocity_error_m_s": 0.010602658806549203,
+            "position_error_m": 0.009400075448776357
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.6821227073669434,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.5073083545620891,
+            "velocity_error_m_s": 0.002288876863628664,
+            "position_error_m": 0.01666777071403175
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.6821227073669434,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.28271763438271985,
+            "velocity_error_m_s": -0.04250816876925991,
+            "position_error_m": 0.0012877450041711702
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.7313697338104248,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.022483674638198753,
+            "velocity_error_m_s": 0.00900100847277363,
+            "position_error_m": 0.005433213633323608
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.7313697338104248,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.021892070436583717,
+            "velocity_error_m_s": 0.006823149882517643,
+            "position_error_m": 0.009051945605619505
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.7313697338104248,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.10976636382850337,
+            "velocity_error_m_s": -0.0037463481353804395,
+            "position_error_m": 0.012922865756059776
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.7313697338104248,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.4770639622324319,
+            "velocity_error_m_s": -0.035088410509160256,
+            "position_error_m": -0.003907427397082941
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.7814319133758545,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.1746928687576025,
+            "velocity_error_m_s": -0.0011092670838829255,
+            "position_error_m": 0.0031825074059028124
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.7814319133758545,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.08775007004601439,
+            "velocity_error_m_s": 0.005794895480147111,
+            "position_error_m": 0.006946877576466892
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.7814319133758545,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.11376659735373751,
+            "velocity_error_m_s": -0.009223933284251223,
+            "position_error_m": 0.005724568214209302
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.7814319133758545,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.714069153078526,
+            "velocity_error_m_s": -0.03670835080181998,
+            "position_error_m": -0.013994366891172172
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.8314228057861328,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.11067670241366731,
+            "velocity_error_m_s": 0.006342801889602123,
+            "position_error_m": 0.0037977194484851706
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.8314228057861328,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.34028542577374876,
+            "velocity_error_m_s": -0.0066294477794197615,
+            "position_error_m": 0.0033551777836911545
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.8314228057861328,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.42007855575541103,
+            "velocity_error_m_s": -0.0191514078028186,
+            "position_error_m": -0.004746741371259966
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.8314228057861328,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.8120661253158445,
+            "velocity_error_m_s": -0.03028015999511375,
+            "position_error_m": -0.01908565745601848
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.8820397853851318,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.39096032592900704,
+            "velocity_error_m_s": -0.013060438891159543,
+            "position_error_m": -0.0008478288596484029
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.8820397853851318,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.2675029297858681,
+            "velocity_error_m_s": -0.013167045299678853,
+            "position_error_m": -0.001816170529474137
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.8820397853851318,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.4249205442825348,
+            "velocity_error_m_s": -0.030199157584295096,
+            "position_error_m": -0.014050652571809374
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.8820397853851318,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.8888878454676685,
+            "velocity_error_m_s": -0.0318164439138566,
+            "position_error_m": -0.02780589477231299
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.9314618110656738,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.1680720679137204,
+            "velocity_error_m_s": -0.002239197379346164,
+            "position_error_m": -0.00038539742604520866
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.9314618110656738,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.5031250248873479,
+            "velocity_error_m_s": -0.013546498365484216,
+            "position_error_m": -0.007554094467232153
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.9314618110656738,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.5784027936677487,
+            "velocity_error_m_s": -0.026241758889375848,
+            "position_error_m": -0.01562185176888553
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.9314618110656738,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.8565878793442708,
+            "velocity_error_m_s": -0.019325348398120584,
+            "position_error_m": -0.025970104664965465
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.9877197742462158,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.03910684323199137,
+            "velocity_error_m_s": -0.012628613862413124,
+            "position_error_m": -0.006665673458193966
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.9877197742462158,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.03080088399157692,
+            "velocity_error_m_s": -0.02440304662325228,
+            "position_error_m": -0.011188667896821491
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.9877197742462158,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.5803437438886863,
+            "velocity_error_m_s": -0.036131715541902,
+            "position_error_m": -0.01859206820675141
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 0.9877197742462158,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.7433116626538767,
+            "velocity_error_m_s": -0.027681211070281094,
+            "position_error_m": -0.030224389116951134
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.0377309322357178,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.01820332964235246,
+            "velocity_error_m_s": -0.012214000123566035,
+            "position_error_m": -0.003902811557176533
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.0377309322357178,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.2518179315649796,
+            "velocity_error_m_s": -0.02168174410795747,
+            "position_error_m": -0.007403383649997652
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.0377309322357178,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.7199215736167895,
+            "velocity_error_m_s": -0.02246449453642895,
+            "position_error_m": -0.012277076961744515
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.0377309322357178,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.6017037312549008,
+            "velocity_error_m_s": -0.018279982358804125,
+            "position_error_m": -0.022480640134410534
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.0867092609405518,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.1929086150131111,
+            "velocity_error_m_s": -0.009744028843808004,
+            "position_error_m": -0.0028923228539917134
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.0867092609405518,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.4916639797289856,
+            "velocity_error_m_s": -0.013279460037886586,
+            "position_error_m": -0.005033001140566595
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.0867092609405518,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.8091592767739179,
+            "velocity_error_m_s": -0.009909029044946855,
+            "position_error_m": -0.008499530744687678
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.0867092609405518,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.47556381637006534,
+            "velocity_error_m_s": -0.010863154305027805,
+            "position_error_m": -0.017335118572631314
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.1367316246032715,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.05813966649682787,
+            "velocity_error_m_s": -0.006785549546945331,
+            "position_error_m": -0.0017270144458420567
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.1367316246032715,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.2807483514773209,
+            "velocity_error_m_s": -0.009118495558448233,
+            "position_error_m": -0.0031236815272071006
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.1367316246032715,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.6277261781347391,
+            "velocity_error_m_s": -0.012504222415339402,
+            "position_error_m": -0.007514539553396871
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.1878750324249268,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.07065981348589648,
+            "velocity_error_m_s": -0.0036545632903691,
+            "position_error_m": -0.0010573510243822581
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.1878750324249268,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.3358375127157034,
+            "velocity_error_m_s": -0.006987615517221924,
+            "position_error_m": -0.0026568113373290347
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.1878750324249268,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.5425619221168074,
+            "velocity_error_m_s": -0.00945869242544271,
+            "position_error_m": -0.006516047869678687
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.2367584705352783,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.0895370052263891,
+            "velocity_error_m_s": -0.004902508657492633,
+            "position_error_m": -0.0014241542320455602
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.2367584705352783,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.2526173805801892,
+            "velocity_error_m_s": -0.01086940763216491,
+            "position_error_m": -0.003842605279163136
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.2367584705352783,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.3924670191300207,
+            "velocity_error_m_s": -0.015767837915473672,
+            "position_error_m": -0.008097965547908925
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.286705493927002,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.0012640737129283111,
+            "velocity_error_m_s": -0.007771716135963492,
+            "position_error_m": -0.0022158239448221706
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.286705493927002,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.14694758913421943,
+            "velocity_error_m_s": -0.010758162588753874,
+            "position_error_m": -0.003615174459796533
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.286705493927002,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.2601366053006695,
+            "velocity_error_m_s": -0.022103058481962486,
+            "position_error_m": -0.009419297233175139
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.336707592010498,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.06781587934968522,
+            "velocity_error_m_s": -0.003448213684517143,
+            "position_error_m": -0.0010192763057549903
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.336707592010498,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.14602932089540055,
+            "velocity_error_m_s": -0.010249270600678432,
+            "position_error_m": -0.003436933510755802
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.3867123126983643,
+            "horizon_s": 0.05,
+            "theta_error_deg": 2.0469624557546478e-05,
+            "velocity_error_m_s": -0.007903637237930774,
+            "position_error_m": -0.0022702441448602118
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.3867123126983643,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.06984813866649686,
+            "velocity_error_m_s": -0.01517515680252695,
+            "position_error_m": -0.0049164681796562415
+          },
+          {
+            "segment": 3,
+            "segment_id": 3,
+            "anchor_s": 1.436711311340332,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.006716808220372218,
+            "velocity_error_m_s": -0.007714232676044874,
+            "position_error_m": -0.0022592758692623893
+          }
+        ],
+        "rolling_horizon_aggregates": [
+          {
+            "horizon_s": 0.05,
+            "forecast_count": 34,
+            "theta_rmse_deg": 0.17466942267988106,
+            "velocity_rmse_m_s": 0.008338484219573552,
+            "position_rmse_m": 0.0034321661041249855
+          },
+          {
+            "horizon_s": 0.1,
+            "forecast_count": 32,
+            "theta_rmse_deg": 0.3193312868184417,
+            "velocity_rmse_m_s": 0.01407573935170461,
+            "position_rmse_m": 0.0069409026370695365
+          },
+          {
+            "horizon_s": 0.2,
+            "forecast_count": 28,
+            "theta_rmse_deg": 0.499262695542388,
+            "velocity_rmse_m_s": 0.019338329197631673,
+            "position_rmse_m": 0.01341623261077312
+          },
+          {
+            "horizon_s": 0.4,
+            "forecast_count": 20,
+            "theta_rmse_deg": 0.5077031377574895,
+            "velocity_rmse_m_s": 0.028245628918591243,
+            "position_rmse_m": 0.020272589782709623
+          }
+        ],
+        "evaluation_scope": "conditional_on_executed_command_schedule",
+        "prediction_scope": "attitude_command_only",
+        "clock_scope": "host_receive_effective_delay",
+        "future_measurements_used_for_prediction": false,
+        "validation_contains_opposed_pair": true,
+        "model_parameters_updated": false,
+        "runtime_enabled": false,
+        "deployment_approved": false,
+        "warning": "Executed future commands are explicit evaluation inputs, not an online forecast or flight approval."
+      },
+      "gates": {
+        "at_least_two_trials": true,
+        "velocity_rmse_m_s": true,
+        "terminal_error_m_s": true,
+        "end_position_error_m": true,
+        "no_reversal_misses_or_false_alarms": false,
+        "both_y_directions": true,
+        "reported_segment_ids_match": true,
+        "complete_per_trial_results": true,
+        "per_trial_ids_match": true,
+        "per_trial_directions_match": true,
+        "parameters_identifiable": true,
+        "no_active_parameter_bounds": true
+      },
+      "limits": {
+        "velocity_rmse_m_s": 0.06,
+        "terminal_error_m_s": 0.06,
+        "end_position_error_m": 0.06
+      },
+      "evaluation_elapsed_s": 0.013888542001950555,
+      "validation_passed": false
+    },
+    {
+      "training_segment_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "validation_segment_ids": [
+        4,
+        5
+      ],
+      "candidate_version": 2,
+      "model": {
+        "schema_version": 1,
+        "kind": "delayed_second_order_planar_prediction",
+        "attitude_fit": {
+          "model": "second_order",
+          "delay_s": 0.026248713859991796,
+          "wn_rad_s": 14.683277353342621,
+          "zeta": 0.9922653238113869,
+          "gain": 1.0349037938988435,
+          "bias_world_y_rad": -0.0018620367305335532,
+          "training_segments": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "train_rmse_deg": 0.32232398721120975,
+          "seed_costs": [
+            3.164754227268505e-05,
+            3.164754227167875e-05,
+            3.1647542271758994e-05
+          ],
+          "active_bounds": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "offline_only": true
+        },
+        "motion_gain": 1.08309593746612,
+        "train_segment_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "clock_scope": "host_receive_effective_delay",
+        "prediction_scope": "attitude_command_only",
+        "runtime_enabled": false,
+        "deployment_approved": false,
+        "candidate_status": "requires_held_out_validation",
+        "independent_validation_complete": false,
+        "identifiability": {
+          "method": "local finite-difference sensitivity scaled by declared parameter bounds",
+          "parameter_order": [
+            "delay_s",
+            "wn_rad_s",
+            "zeta",
+            "gain",
+            "bias_world_y_rad"
+          ],
+          "singular_values": [
+            0.7938151202676987,
+            0.14078604911968,
+            0.06535102132297722,
+            0.046885818048512856,
+            0.03220427561256956
+          ],
+          "rank": 5,
+          "condition_number": 24.64937046923878,
+          "identifiable": true,
+          "bound_active_parameters": [],
+          "uncertainty_interval_available": false
+        },
+        "numerical_diagnostics": {
+          "finite_fit_metadata": true,
+          "residual_objective_independently_checked": true,
+          "checked_training_objective_rad2": 3.164754227167875e-05,
+          "optimizer_runtime_warnings": []
+        },
+        "parameter_bounds": {
+          "delay_s": [
+            0.0,
+            0.15
+          ],
+          "wn_rad_s": [
+            5.0,
+            100.0
+          ],
+          "zeta": [
+            0.2,
+            2.0
+          ],
+          "gain": [
+            0.7,
+            1.3
+          ],
+          "bias_world_y_rad": [
+            -0.035,
+            0.035
+          ],
+          "motion_gain": [
+            0.2,
+            2.5
+          ]
+        },
+        "parameter_units": {
+          "delay_s": "s",
+          "wn_rad_s": "rad/s",
+          "zeta": "dimensionless",
+          "gain": "dimensionless",
+          "bias_world_y_rad": "rad",
+          "motion_gain": "dimensionless"
+        },
+        "data_ranges": [
+          {
+            "segment_id": 0,
+            "direction_y": 1,
+            "sample_count": 138,
+            "host_time_origin_s": 1788476972.3520586,
+            "observed_duration_s": 1.3706638813018799,
+            "max_sample_gap_s": 0.010838985443115234,
+            "phase_sample_counts": {
+              "level_before_acceleration": 21,
+              "accelerate": 16,
+              "level_before_brake": 20,
+              "brake": 16,
+              "level_after_brake": 65
+            },
+            "phase_command_times_relative_s": {
+              "level_before_acceleration": -0.0006587505340576172,
+              "accelerate": 0.20876455307006836,
+              "level_before_brake": 0.3690989017486572,
+              "brake": 0.5692334175109863,
+              "level_after_brake": 0.7293469905853271
+            },
+            "observed_phase_last_sample_s": {
+              "level_before_acceleration": 0.2000257968902588,
+              "accelerate": 0.3601374626159668,
+              "level_before_brake": 0.5600216388702393,
+              "brake": 0.7200231552124023,
+              "level_after_brake": 1.3706638813018799
+            },
+            "command_acceleration_m_s2": [
+              -3.570547998151445,
+              3.570547998151445
+            ],
+            "theta_rad": [
+              -0.2593865705544175,
+              0.2527490355753624
+            ],
+            "velocity_m_s": [
+              -0.1333400458097458,
+              0.4943373501300812
+            ],
+            "position_m": [
+              0.012175695970654488,
+              0.16464568674564362
+            ],
+            "battery_voltage_V": [
+              7.517355918884277,
+              7.5966949462890625
+            ]
+          },
+          {
+            "segment_id": 1,
+            "direction_y": -1,
+            "sample_count": 137,
+            "host_time_origin_s": 1788476976.0401165,
+            "observed_duration_s": 1.35902738571167,
+            "max_sample_gap_s": 0.01032876968383789,
+            "phase_sample_counts": {
+              "level_before_acceleration": 20,
+              "accelerate": 16,
+              "level_before_brake": 20,
+              "brake": 16,
+              "level_after_brake": 65
+            },
+            "phase_command_times_relative_s": {
+              "level_before_acceleration": -0.004051923751831055,
+              "accelerate": 0.19644379615783691,
+              "level_before_brake": 0.3568587303161621,
+              "brake": 0.5569922924041748,
+              "level_after_brake": 0.7177939414978027
+            },
+            "observed_phase_last_sample_s": {
+              "level_before_acceleration": 0.19001007080078125,
+              "accelerate": 0.35002565383911133,
+              "level_before_brake": 0.5500404834747314,
+              "brake": 0.7100260257720947,
+              "level_after_brake": 1.35902738571167
+            },
+            "command_acceleration_m_s2": [
+              -3.570547998151445,
+              3.570547998151445
+            ],
+            "theta_rad": [
+              -0.2470799044999059,
+              0.2619570763806765
+            ],
+            "velocity_m_s": [
+              -0.003960430156439543,
+              0.5590953826904297
+            ],
+            "position_m": [
+              0.00842104572802782,
+              0.25270557403564453
+            ],
+            "battery_voltage_V": [
+              7.517355918884277,
+              7.576859951019287
+            ]
+          },
+          {
+            "segment_id": 2,
+            "direction_y": 1,
+            "sample_count": 153,
+            "host_time_origin_s": 1788476979.7114086,
+            "observed_duration_s": 1.5359561443328857,
+            "max_sample_gap_s": 0.020012378692626953,
+            "phase_sample_counts": {
+              "level_before_acceleration": 20,
+              "accelerate": 24,
+              "level_before_brake": 20,
+              "brake": 24,
+              "level_after_brake": 65
+            },
+            "phase_command_times_relative_s": {
+              "level_before_acceleration": -0.00024247169494628906,
+              "accelerate": 0.20003557205200195,
+              "level_before_brake": 0.45403242111206055,
+              "brake": 0.6544592380523682,
+              "level_after_brake": 0.8946082592010498
+            },
+            "observed_phase_last_sample_s": {
+              "level_before_acceleration": 0.19021034240722656,
+              "accelerate": 0.4468569755554199,
+              "level_before_brake": 0.6468336582183838,
+              "brake": 0.8868334293365479,
+              "level_after_brake": 1.5359561443328857
+            },
+            "command_acceleration_m_s2": [
+              -3.570547998151445,
+              3.570547998151445
+            ],
+            "theta_rad": [
+              -0.30364980001961683,
+              0.32608269779113797
+            ],
+            "velocity_m_s": [
+              -0.0017376643372699618,
+              0.8615759015083313
+            ],
+            "position_m": [
+              0.01180402934551239,
+              0.38934430480003357
+            ],
+            "battery_voltage_V": [
+              7.49752140045166,
+              7.576859951019287
+            ]
+          },
+          {
+            "segment_id": 3,
+            "direction_y": -1,
+            "sample_count": 153,
+            "host_time_origin_s": 1788476983.5786195,
+            "observed_duration_s": 1.526726245880127,
+            "max_sample_gap_s": 0.01667475700378418,
+            "phase_sample_counts": {
+              "level_before_acceleration": 20,
+              "accelerate": 24,
+              "level_before_brake": 20,
+              "brake": 24,
+              "level_after_brake": 65
+            },
+            "phase_command_times_relative_s": {
+              "level_before_acceleration": -0.0005145072937011719,
+              "accelerate": 0.19981861114501953,
+              "level_before_brake": 0.4406423568725586,
+              "brake": 0.6406500339508057,
+              "level_after_brake": 0.8810770511627197
+            },
+            "observed_phase_last_sample_s": {
+              "level_before_acceleration": 0.19022607803344727,
+              "accelerate": 0.4308440685272217,
+              "level_before_brake": 0.6311769485473633,
+              "brake": 0.8715004920959473,
+              "level_after_brake": 1.526726245880127
+            },
+            "command_acceleration_m_s2": [
+              -3.570547998151445,
+              3.570547998151445
+            ],
+            "theta_rad": [
+              -0.3074433947021539,
+              0.3214877999827703
+            ],
+            "velocity_m_s": [
+              -0.014572681859135628,
+              0.8381571173667908
+            ],
+            "position_m": [
+              0.028710132464766502,
+              0.44119349122047424
+            ],
+            "battery_voltage_V": [
+              7.477686405181885,
+              7.55702543258667
+            ]
+          }
+        ],
+        "source_provenance": {
+          "sample_sha256": "88e5584135d3f316533fa9f2bdd3fca3a1fe793d65e030f9fccc1e32f1e0a63b",
+          "sample_count": 581,
+          "source": "reconstructed_flight_log_samples",
+          "command_clock": "median phase-event minus next-command timestamp; approximate send anchor",
+          "command_clock_caveat": "Live samples require actual sends; historical reconstructed sends must be labeled by the caller.",
+          "completion_certified_by": "logged_actual_recovery_commands",
+          "source_log_path": "/Users/shuqinzhu/Documents/FLS_Research/lightbender/orchestrator/logs/translation_inertia_2026-09-03_16-07-59/lb11_translation_inertia_2026-09-03_16-07-59.json",
+          "source_log_sha256": "ade0292b40f7df775b4617af523cc3d45c34c4f03713ce7cdebd86de0315b57d"
+        },
+        "warnings": [
+          "host-receive effective delay includes telemetry and scheduling latency",
+          "world-Y small-planar-angle identification only; cross-axis dynamics are not fitted",
+          "last-phase samples do not certify trial completion; caller must observe actual recovery send",
+          "training fit is a candidate, not independent validation or flight approval"
+        ]
+      },
+      "independent_validation": true,
+      "runtime_enabled": false,
+      "flight_approved": false,
+      "metrics": {
+        "schema_version": 1,
+        "validation_segment_ids": [
+          4,
+          5
+        ],
+        "train_segment_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "per_trial": [
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "direction_y": 1,
+            "prediction_anchor_relative_s": 0.7098274230957031,
+            "duration_s": 0.9706990718841553,
+            "theta_rmse_deg": 0.30444172009983744,
+            "full_trial_theta_rmse_deg": 0.2621163158733395,
+            "velocity_rmse_m_s": 0.037456284498625717,
+            "actual_terminal_m_s": -0.1456973671913147,
+            "predicted_terminal_m_s": -0.13326203963390781,
+            "terminal_error_m_s": 0.012435327557406884,
+            "end_position_error_m": 0.056846447401803335,
+            "actual_reverse": true,
+            "predicted_reverse": true,
+            "actual_peak_reverse_m_s": 0.14698387682437897,
+            "predicted_peak_reverse_m_s": 0.1344274297698851,
+            "actual_crossing": {
+              "time_s": 0.47953648781003994,
+              "position_m": 0.2782878325029021
+            },
+            "predicted_crossing": {
+              "time_s": 0.499614729982017,
+              "position_m": 0.33760503910092804
+            },
+            "crossing_error_s": 0.020078242171977068
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "direction_y": -1,
+            "prediction_anchor_relative_s": 0.710003137588501,
+            "duration_s": 0.9717459678649902,
+            "theta_rmse_deg": 0.22357022808955918,
+            "full_trial_theta_rmse_deg": 0.2444308689491368,
+            "velocity_rmse_m_s": 0.045663406959616445,
+            "actual_terminal_m_s": -0.11751637905836106,
+            "predicted_terminal_m_s": -0.12723616621695436,
+            "terminal_error_m_s": -0.009719787158593295,
+            "end_position_error_m": 0.05178072573483239,
+            "actual_reverse": true,
+            "predicted_reverse": true,
+            "actual_peak_reverse_m_s": 0.13785459101200104,
+            "predicted_peak_reverse_m_s": 0.12785576178955882,
+            "actual_crossing": {
+              "time_s": 0.45881311641122274,
+              "position_m": 0.26502749658003577
+            },
+            "predicted_crossing": {
+              "time_s": 0.49233685156623214,
+              "position_m": 0.3280917014558464
+            },
+            "crossing_error_s": 0.03352373515500939
+          }
+        ],
+        "aggregates": {
+          "trial_count": 2,
+          "weighting": "equal trial means",
+          "theta_rmse_deg": 0.2640059740946983,
+          "mean_theta_rmse_deg": 0.2640059740946983,
+          "max_abs_theta_rmse_deg": 0.30444172009983744,
+          "velocity_rmse_m_s": 0.04155984572912108,
+          "mean_velocity_rmse_m_s": 0.04155984572912108,
+          "max_abs_velocity_rmse_m_s": 0.045663406959616445,
+          "terminal_error_m_s": 0.0013577701994067944,
+          "mean_terminal_error_m_s": 0.0013577701994067944,
+          "max_abs_terminal_error_m_s": 0.012435327557406884,
+          "end_position_error_m": 0.05431358656831786,
+          "mean_end_position_error_m": 0.05431358656831786,
+          "max_abs_end_position_error_m": 0.056846447401803335,
+          "actual_reverse_trial_count": 2,
+          "predicted_reverse_trial_count": 2,
+          "reverse_classification_mismatch_count": 0,
+          "zero_crossing_presence_mismatch_count": 0,
+          "max_abs_crossing_error_s": 0.03352373515500939
+        },
+        "rolling_horizons": [
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.7098274230957031,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.24174817397533088,
+            "velocity_error_m_s": 0.019690529587493844,
+            "position_error_m": 0.0059174587157857506
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.7098274230957031,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.1696954372160784,
+            "velocity_error_m_s": 0.03795258363210241,
+            "position_error_m": 0.012938776748774528
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.7098274230957031,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.00408689570784322,
+            "velocity_error_m_s": 0.06510754167866328,
+            "position_error_m": 0.032586402009532056
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.7098274230957031,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.6015608681158634,
+            "velocity_error_m_s": 0.04704716299561604,
+            "position_error_m": 0.058450290469121535
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.7602672576904297,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.5453825601900539,
+            "velocity_error_m_s": 0.013118116014973369,
+            "position_error_m": 0.0059390281670581024
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.7602672576904297,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.6087099560618436,
+            "velocity_error_m_s": 0.024589295732164396,
+            "position_error_m": 0.014673588646107849
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.7602672576904297,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.3198078742989259,
+            "velocity_error_m_s": 0.024271391538197795,
+            "position_error_m": 0.028891950386389142
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.7602672576904297,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.25433972232653507,
+            "velocity_error_m_s": -0.01030884695307404,
+            "position_error_m": 0.03780731427187156
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.8098812103271484,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.17749924390234742,
+            "velocity_error_m_s": 0.018420749446067752,
+            "position_error_m": 0.008264785894034898
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.8098812103271484,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.1941370495465753,
+            "velocity_error_m_s": 0.029257853498553255,
+            "position_error_m": 0.015905055002336077
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.8098812103271484,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.07396611556240765,
+            "velocity_error_m_s": 0.030037277424985742,
+            "position_error_m": 0.027938828404272253
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.8098812103271484,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.04386523429670596,
+            "velocity_error_m_s": -0.002562488518152283,
+            "position_error_m": 0.032415612734064014
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.8599307537078857,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.2675781025621962,
+            "velocity_error_m_s": 0.010615241133091424,
+            "position_error_m": 0.006702722379314796
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.8599307537078857,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.21441257230881794,
+            "velocity_error_m_s": 0.012815488311459289,
+            "position_error_m": 0.012437851289041013
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.8599307537078857,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.2719744458049906,
+            "velocity_error_m_s": 0.013130920536180923,
+            "position_error_m": 0.02154438919092161
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.8599307537078857,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.0009349195658963147,
+            "velocity_error_m_s": -0.02520565271344219,
+            "position_error_m": 0.015759256750384143
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.9099502563476562,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.125403915268461,
+            "velocity_error_m_s": 0.0005619359000993418,
+            "position_error_m": 0.005155814321051888
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.9099502563476562,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.006787986722811723,
+            "velocity_error_m_s": 0.0006897175261475486,
+            "position_error_m": 0.009059275668585831
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.9099502563476562,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.5255510175969236,
+            "velocity_error_m_s": -0.012798980559245388,
+            "position_error_m": 0.013361558559326192
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.9099502563476562,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.06342795703988954,
+            "velocity_error_m_s": -0.040920753595952986,
+            "position_error_m": 0.0020984074928223073
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.9603700637817383,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.12370857800643674,
+            "velocity_error_m_s": 0.0005781998591353199,
+            "position_error_m": 0.003868944065622437
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.9603700637817383,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.12080562562624546,
+            "velocity_error_m_s": 0.0016479421917460768,
+            "position_error_m": 0.007810437419145
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.9603700637817383,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.10321335780318246,
+            "velocity_error_m_s": -0.02078350701437922,
+            "position_error_m": 0.005645259814418768
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 0.9603700637817383,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.1799336964173384,
+            "velocity_error_m_s": -0.037778849241701745,
+            "position_error_m": -0.004637958743524795
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.010009765625,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.024664160655000638,
+            "velocity_error_m_s": 0.0012772219080503522,
+            "position_error_m": 0.003929163819815895
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.010009765625,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.2876150132385415,
+            "velocity_error_m_s": -0.009185673675300932,
+            "position_error_m": 0.00441138903819438
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.010009765625,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.079652014821451,
+            "velocity_error_m_s": -0.023225536402844207,
+            "position_error_m": -0.0005272707777898011
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.010009765625,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.2706632650701132,
+            "velocity_error_m_s": -0.032141326261066056,
+            "position_error_m": -0.009376936486153342
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.0600581169128418,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.4382078568385572,
+            "velocity_error_m_s": -0.00555228757113807,
+            "position_error_m": 0.0005092725756385974
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.0600581169128418,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.6781003974771219,
+            "velocity_error_m_s": -0.008075516916418023,
+            "position_error_m": -0.0016755852235380564
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.0600581169128418,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.3829093693238245,
+            "velocity_error_m_s": -0.009832748895252305,
+            "position_error_m": -0.005298377300755885
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.0600581169128418,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.4210819693448343,
+            "velocity_error_m_s": -0.00847133680858772,
+            "position_error_m": -0.009326459949047683
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.110128402709961,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.23305862095910504,
+            "velocity_error_m_s": -0.007082681492907923,
+            "position_error_m": -0.002024165026446423
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.110128402709961,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.24920590427057593,
+            "velocity_error_m_s": -0.00934030182228215,
+            "position_error_m": -0.003765630766694117
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.110128402709961,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.1631762116055625,
+            "velocity_error_m_s": -0.016720713864344205,
+            "position_error_m": -0.0072486917097437376
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.110128402709961,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.5048905688942338,
+            "velocity_error_m_s": -0.017271145530591142,
+            "position_error_m": -0.013364441673086813
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.1601886749267578,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.1130893676544374,
+            "velocity_error_m_s": -0.005380628158531773,
+            "position_error_m": -0.001460819631126431
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.1601886749267578,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.1208487462804011,
+            "velocity_error_m_s": -0.014211947004266631,
+            "position_error_m": -0.0034780323985083017
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.1601886749267578,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.10451244272350012,
+            "velocity_error_m_s": -0.02095435605976423,
+            "position_error_m": -0.006487538237291091
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.1601886749267578,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.5167664319931675,
+            "velocity_error_m_s": -0.022141975521878382,
+            "position_error_m": -0.01401949896008653
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.2101349830627441,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.07195361637459202,
+            "velocity_error_m_s": -0.0081108451143799,
+            "position_error_m": -0.001726783974877244
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.2101349830627441,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.01428689998182828,
+            "velocity_error_m_s": -0.011773847826247269,
+            "position_error_m": -0.0027824266948329734
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.2101349830627441,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.22228347027051604,
+            "velocity_error_m_s": -0.012725897824081678,
+            "position_error_m": -0.0046327615929140364
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.2101349830627441,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.42920589824425337,
+            "velocity_error_m_s": -0.017016006950183987,
+            "position_error_m": -0.012651837255646003
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.2602910995483398,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.08422988359128786,
+            "velocity_error_m_s": -0.003779687996559422,
+            "position_error_m": -0.0006372001288895701
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.2602910995483398,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.028693510717708363,
+            "velocity_error_m_s": -0.0072073080414448015,
+            "position_error_m": -0.0015772148337452885
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.2602910995483398,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.3187017968330278,
+            "velocity_error_m_s": -0.008589866020666581,
+            "position_error_m": -0.003266575104646008
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.2602910995483398,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.3015883673401388,
+            "velocity_error_m_s": -0.014639655281246111,
+            "position_error_m": -0.010929199531092226
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.3102774620056152,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.03495321098530202,
+            "velocity_error_m_s": -0.0035001662370953285,
+            "position_error_m": -0.0007476434110506025
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.3102774620056152,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.07670908363052319,
+            "velocity_error_m_s": -0.003227098971924719,
+            "position_error_m": -0.0007716121533932752
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.3102774620056152,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.41621469771007374,
+            "velocity_error_m_s": -0.007699444561818397,
+            "position_error_m": -0.0035935867567841173
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.3603520393371582,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.047091848580160606,
+            "velocity_error_m_s": 0.0002124263188368336,
+            "position_error_m": 0.0001485782725842988
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.3603520393371582,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.2194369908906646,
+            "velocity_error_m_s": -0.0031724071998722736,
+            "position_error_m": -0.0010538916227279538
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.3603520393371582,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.4575193654416569,
+            "velocity_error_m_s": -0.005906667931665055,
+            "position_error_m": -0.0038877328483963303
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.4102942943572998,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.12166877229216871,
+            "velocity_error_m_s": -0.004139623208483018,
+            "position_error_m": -0.0012289904823304942
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.4102942943572998,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.3050940004450669,
+            "velocity_error_m_s": -0.006723167375282113,
+            "position_error_m": -0.0026086531086600973
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.4102942943572998,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.3588545120883193,
+            "velocity_error_m_s": -0.010713868756959594,
+            "position_error_m": -0.006245615837929708
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.46040940284729,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.09706006574319019,
+            "velocity_error_m_s": -0.00425999314347425,
+            "position_error_m": -0.0012057465260312261
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.46040940284729,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.2286748344363083,
+            "velocity_error_m_s": -0.007733432479651803,
+            "position_error_m": -0.002767505144425808
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.46040940284729,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.19376529998509076,
+            "velocity_error_m_s": -0.015735853160008362,
+            "position_error_m": -0.007092712945581003
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.5104029178619385,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.0050139136208179015,
+            "velocity_error_m_s": -0.0051752465339960085,
+            "position_error_m": -0.0013867107773796183
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.5104029178619385,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.04942242095238436,
+            "velocity_error_m_s": -0.010819645578182047,
+            "position_error_m": -0.003314438806933495
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.5605037212371826,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.004656225905830152,
+            "velocity_error_m_s": -0.005987141251249523,
+            "position_error_m": -0.0016761177059682053
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.5605037212371826,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.010222026078677953,
+            "velocity_error_m_s": -0.012339626037631973,
+            "position_error_m": -0.0037786851275272704
+          },
+          {
+            "segment": 4,
+            "segment_id": 4,
+            "anchor_s": 1.6104652881622314,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.02537722795181604,
+            "velocity_error_m_s": -0.0062440103415114245,
+            "position_error_m": -0.0018010366211918538
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.710003137588501,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.3067694394991719,
+            "velocity_error_m_s": 0.02178545073856264,
+            "position_error_m": 0.006101627779687313
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.710003137588501,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.1295805295528007,
+            "velocity_error_m_s": 0.04211894121022097,
+            "position_error_m": 0.0140884476388769
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.710003137588501,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.1161665503689621,
+            "velocity_error_m_s": 0.06714412389366553,
+            "position_error_m": 0.03307817299692023
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.710003137588501,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.068547788129508,
+            "velocity_error_m_s": 0.0710085304649812,
+            "position_error_m": 0.06096963765435659
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.7601726055145264,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.5794935347036145,
+            "velocity_error_m_s": 0.014893190230306663,
+            "position_error_m": 0.006769275597355129
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.7601726055145264,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.4932081335295708,
+            "velocity_error_m_s": 0.025524632042499884,
+            "position_error_m": 0.01475941870584474
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.7601726055145264,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.020003329935804667,
+            "velocity_error_m_s": 0.03134135163530327,
+            "position_error_m": 0.029429983810454863
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.7601726055145264,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.05068946026834456,
+            "velocity_error_m_s": 0.01433000887528816,
+            "position_error_m": 0.04026772153904401
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.8101749420166016,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.19639449872355372,
+            "velocity_error_m_s": 0.017003037905990004,
+            "position_error_m": 0.007400382439002651
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.8101749420166016,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.22352424987489916,
+            "velocity_error_m_s": 0.025947917965547296,
+            "position_error_m": 0.014784820870692661
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.8101749420166016,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.5213948739358656,
+            "velocity_error_m_s": 0.0321896536355909,
+            "position_error_m": 0.027682759908577492
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.8101749420166016,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.10228583942577037,
+            "velocity_error_m_s": 0.01191907827105567,
+            "position_error_m": 0.03193210078008013
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.8598518371582031,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.19901418704738177,
+            "velocity_error_m_s": 0.008077024236869623,
+            "position_error_m": 0.006502706380088208
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.8598518371582031,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.38695288578980036,
+            "velocity_error_m_s": 0.015316436445401371,
+            "position_error_m": 0.01261745132756975
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.8598518371582031,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.4014130911638406,
+            "velocity_error_m_s": 0.017429584367102458,
+            "position_error_m": 0.021574684095811314
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.8598518371582031,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.17511824932581888,
+            "velocity_error_m_s": -0.01371669515692292,
+            "position_error_m": 0.016280824703361008
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.9099512100219727,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.3132286472895457,
+            "velocity_error_m_s": 0.0059209844268458545,
+            "position_error_m": 0.005668293815559222
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.9099512100219727,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.5227144826267208,
+            "velocity_error_m_s": 0.0048406380258271264,
+            "position_error_m": 0.010200030368545665
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.9099512100219727,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.10160254890430497,
+            "velocity_error_m_s": 0.0050978356112421075,
+            "position_error_m": 0.014534057779224785
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.9099512100219727,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.2103858055675327,
+            "velocity_error_m_s": -0.03392895842647406,
+            "position_error_m": 0.0028143198763791455
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.9600279331207275,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.22363341059526246,
+            "velocity_error_m_s": -0.004349782204940533,
+            "position_error_m": 0.00415370498635248
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.9600279331207275,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.17909431713917312,
+            "velocity_error_m_s": -0.004419324020614568,
+            "position_error_m": 0.007061281995768942
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.9600279331207275,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.015564416821338774,
+            "velocity_error_m_s": -0.019672770991752405,
+            "position_error_m": 0.004306317971646045
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 0.9600279331207275,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.22321251147542193,
+            "velocity_error_m_s": -0.05945110181201693,
+            "position_error_m": -0.012191131859122017
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.0104506015777588,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.049224451654201,
+            "velocity_error_m_s": -0.0017557227862401437,
+            "position_error_m": 0.0030611508917813834
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.0104506015777588,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.10582889222793684,
+            "velocity_error_m_s": -0.006773401833760823,
+            "position_error_m": 0.0034082268082405998
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.0104506015777588,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.16424128281651953,
+            "velocity_error_m_s": -0.029559110533880995,
+            "position_error_m": -0.0034656758687434674
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.0104506015777588,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.07596145260551755,
+            "velocity_error_m_s": -0.06625332817426022,
+            "position_error_m": -0.02069932006129438
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.0606307983398438,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.44537649552210135,
+            "velocity_error_m_s": -0.0014926175513966522,
+            "position_error_m": 0.0004934628674984065
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.0606307983398438,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.5186388944518501,
+            "velocity_error_m_s": -0.007755611398386795,
+            "position_error_m": -0.00208400589828428
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.0606307983398438,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.04147167152641167,
+            "velocity_error_m_s": -0.020412756777935206,
+            "position_error_m": -0.007917881810707073
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.0606307983398438,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.006357833062767578,
+            "velocity_error_m_s": -0.04922607653051897,
+            "position_error_m": -0.022167259606028833
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.1106462478637695,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.07809046965334207,
+            "velocity_error_m_s": -0.01084048940604614,
+            "position_error_m": -0.002619699120483654
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.1106462478637695,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.09300843843482791,
+            "velocity_error_m_s": -0.02098557334455517,
+            "position_error_m": -0.006116235548098592
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.1106462478637695,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.20278511656725823,
+            "velocity_error_m_s": -0.03967874846504016,
+            "position_error_m": -0.012917521432742163
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.1106462478637695,
+            "horizon_s": 0.4,
+            "theta_error_deg": -0.03636013384253077,
+            "velocity_error_m_s": -0.07041490960434818,
+            "position_error_m": -0.031295285571464715
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.1605503559112549,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.23244591577239293,
+            "velocity_error_m_s": -0.011289170131851309,
+            "position_error_m": -0.0029795474836132874
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.1605503559112549,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.2795150783495338,
+            "velocity_error_m_s": -0.02111952081937779,
+            "position_error_m": -0.005519333680269689
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.1605503559112549,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.2590467384734891,
+            "velocity_error_m_s": -0.04232231875961978,
+            "position_error_m": -0.012836212018981774
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.1605503559112549,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.15120463211960805,
+            "velocity_error_m_s": -0.0683107453289102,
+            "position_error_m": -0.03051099747017283
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.210599422454834,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.19036162502721155,
+            "velocity_error_m_s": -0.008415691072043,
+            "position_error_m": -0.00193274962771961
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.210599422454834,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.25048465221581784,
+            "velocity_error_m_s": -0.0189021107210888,
+            "position_error_m": -0.004694753830730147
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.210599422454834,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.09412699922362909,
+            "velocity_error_m_s": -0.0364436467458113,
+            "position_error_m": -0.011215292638590668
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.210599422454834,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.29542281376297047,
+            "velocity_error_m_s": -0.058873060234429564,
+            "position_error_m": -0.027312427492184932
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.2605931758880615,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.16134723552102334,
+            "velocity_error_m_s": -0.009244207238632146,
+            "position_error_m": -0.0023062777917928212
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.2605931758880615,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.20822113718382496,
+            "velocity_error_m_s": -0.018696024155201746,
+            "position_error_m": -0.005047231901668114
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.2605931758880615,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.03535063971047426,
+            "velocity_error_m_s": -0.0310395307066971,
+            "position_error_m": -0.010416263368156486
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.2605931758880615,
+            "horizon_s": 0.4,
+            "theta_error_deg": 0.37816101811402797,
+            "velocity_error_m_s": -0.052498340924427636,
+            "position_error_m": -0.02626607146429205
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.310628890991211,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.12537988792844945,
+            "velocity_error_m_s": -0.0083631121876033,
+            "position_error_m": -0.0022499490720472304
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.310628890991211,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.03305968655646699,
+            "velocity_error_m_s": -0.015050300746196121,
+            "position_error_m": -0.004478455876523069
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.310628890991211,
+            "horizon_s": 0.2,
+            "theta_error_deg": -0.03174448151169332,
+            "velocity_error_m_s": -0.02868164906416673,
+            "position_error_m": -0.010132690134477373
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.3606863021850586,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.0021584866821112852,
+            "velocity_error_m_s": -0.006015316597991205,
+            "position_error_m": -0.0017899413420315868
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.3606863021850586,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.009596390968802004,
+            "velocity_error_m_s": -0.010661301785218597,
+            "position_error_m": -0.0033850522860111587
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.3606863021850586,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.15320325649818098,
+            "velocity_error_m_s": -0.023616565343526782,
+            "position_error_m": -0.008832650730700942
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.4115877151489258,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.0053562792670808854,
+            "velocity_error_m_s": -0.00450213521528911,
+            "position_error_m": -0.0012562232558765984
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.4115877151489258,
+            "horizon_s": 0.1,
+            "theta_error_deg": -0.031030182408280354,
+            "velocity_error_m_s": -0.013231056355003601,
+            "position_error_m": -0.004064283217721898
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.4115877151489258,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.3002211832247174,
+            "velocity_error_m_s": -0.02131024789002424,
+            "position_error_m": -0.008594718002771007
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.4615850448608398,
+            "horizon_s": 0.05,
+            "theta_error_deg": -0.10827275225851943,
+            "velocity_error_m_s": -0.009173401005399096,
+            "position_error_m": -0.002591150430383604
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.4615850448608398,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.08462924915247638,
+            "velocity_error_m_s": -0.013937804362721143,
+            "position_error_m": -0.004395744418362102
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.4615850448608398,
+            "horizon_s": 0.2,
+            "theta_error_deg": 0.34577317684390513,
+            "velocity_error_m_s": -0.02332460256872987,
+            "position_error_m": -0.009810199774978656
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.51161789894104,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.05904740383251068,
+            "velocity_error_m_s": -0.004516584057121617,
+            "position_error_m": -0.0013344929157368401
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.51161789894104,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.19577932905720422,
+            "velocity_error_m_s": -0.009573926979706979,
+            "position_error_m": -0.0032649232555974628
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.5616941452026367,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.13301655515913863,
+            "velocity_error_m_s": -0.005661227458129581,
+            "position_error_m": -0.0017217721321179935
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.5616941452026367,
+            "horizon_s": 0.1,
+            "theta_error_deg": 0.2572785728772859,
+            "velocity_error_m_s": -0.011336148223424408,
+            "position_error_m": -0.004122405156162134
+          },
+          {
+            "segment": 5,
+            "segment_id": 5,
+            "anchor_s": 1.6117208003997803,
+            "horizon_s": 0.05,
+            "theta_error_deg": 0.01257634571348584,
+            "velocity_error_m_s": -0.007635381653194509,
+            "position_error_m": -0.0021624530796260366
+          }
+        ],
+        "rolling_horizon_aggregates": [
+          {
+            "horizon_s": 0.05,
+            "forecast_count": 38,
+            "theta_rmse_deg": 0.218764700087871,
+            "velocity_rmse_m_s": 0.0091563635480439,
+            "position_rmse_m": 0.003810602998819479
+          },
+          {
+            "horizon_s": 0.1,
+            "forecast_count": 36,
+            "theta_rmse_deg": 0.27242760333233523,
+            "velocity_rmse_m_s": 0.016748130158191744,
+            "position_rmse_m": 0.00783165358126341
+          },
+          {
+            "horizon_s": 0.2,
+            "forecast_count": 32,
+            "theta_rmse_deg": 0.26205997341760645,
+            "velocity_rmse_m_s": 0.028015244636052105,
+            "position_rmse_m": 0.01584840543051872
+          },
+          {
+            "horizon_s": 0.4,
+            "forecast_count": 24,
+            "theta_rmse_deg": 0.28250009133469817,
+            "velocity_rmse_m_s": 0.04152480262913569,
+            "position_rmse_m": 0.027421513178270965
+          }
+        ],
+        "evaluation_scope": "conditional_on_executed_command_schedule",
+        "prediction_scope": "attitude_command_only",
+        "clock_scope": "host_receive_effective_delay",
+        "future_measurements_used_for_prediction": false,
+        "validation_contains_opposed_pair": true,
+        "model_parameters_updated": false,
+        "runtime_enabled": false,
+        "deployment_approved": false,
+        "warning": "Executed future commands are explicit evaluation inputs, not an online forecast or flight approval."
+      },
+      "gates": {
+        "at_least_two_trials": true,
+        "velocity_rmse_m_s": true,
+        "terminal_error_m_s": true,
+        "end_position_error_m": true,
+        "no_reversal_misses_or_false_alarms": true,
+        "both_y_directions": true,
+        "reported_segment_ids_match": true,
+        "complete_per_trial_results": true,
+        "per_trial_ids_match": true,
+        "per_trial_directions_match": true,
+        "parameters_identifiable": true,
+        "no_active_parameter_bounds": true
+      },
+      "limits": {
+        "velocity_rmse_m_s": 0.06,
+        "terminal_error_m_s": 0.06,
+        "end_position_error_m": 0.06
+      },
+      "evaluation_elapsed_s": 0.014911542006302625,
+      "validation_passed": true
+    }
+  ],
+  "candidate": {
+    "version": 3,
+    "training_segment_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "model": {
+      "schema_version": 1,
+      "kind": "delayed_second_order_planar_prediction",
+      "attitude_fit": {
+        "model": "second_order",
+        "delay_s": 0.02537174027845513,
+        "wn_rad_s": 14.566561089287884,
+        "zeta": 0.986853275982254,
+        "gain": 1.0346414855813357,
+        "bias_world_y_rad": -0.0014764842110666135,
+        "training_segments": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "train_rmse_deg": 0.29931883299563605,
+        "seed_costs": [
+          2.729121192007171e-05,
+          2.7291211918591833e-05,
+          2.7291211918768836e-05
+        ],
+        "active_bounds": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "offline_only": true
+      },
+      "motion_gain": 1.0954087248022135,
+      "train_segment_ids": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "clock_scope": "host_receive_effective_delay",
+      "prediction_scope": "attitude_command_only",
+      "runtime_enabled": false,
+      "deployment_approved": false,
+      "candidate_status": "requires_held_out_validation",
+      "independent_validation_complete": false,
+      "identifiability": {
+        "method": "local finite-difference sensitivity scaled by declared parameter bounds",
+        "parameter_order": [
+          "delay_s",
+          "wn_rad_s",
+          "zeta",
+          "gain",
+          "bias_world_y_rad"
+        ],
+        "singular_values": [
+          0.8311658670230706,
+          0.1423081800253204,
+          0.06557021524009335,
+          0.05119681246842314,
+          0.03333003768667842
+        ],
+        "rank": 5,
+        "condition_number": 24.93744156056795,
+        "identifiable": true,
+        "bound_active_parameters": [],
+        "uncertainty_interval_available": false
+      },
+      "numerical_diagnostics": {
+        "finite_fit_metadata": true,
+        "residual_objective_independently_checked": true,
+        "checked_training_objective_rad2": 2.729121191859183e-05,
+        "optimizer_runtime_warnings": [
+          "divide by zero encountered in matmul",
+          "overflow encountered in matmul",
+          "invalid value encountered in matmul"
+        ]
+      },
+      "parameter_bounds": {
+        "delay_s": [
+          0.0,
+          0.15
+        ],
+        "wn_rad_s": [
+          5.0,
+          100.0
+        ],
+        "zeta": [
+          0.2,
+          2.0
+        ],
+        "gain": [
+          0.7,
+          1.3
+        ],
+        "bias_world_y_rad": [
+          -0.035,
+          0.035
+        ],
+        "motion_gain": [
+          0.2,
+          2.5
+        ]
+      },
+      "parameter_units": {
+        "delay_s": "s",
+        "wn_rad_s": "rad/s",
+        "zeta": "dimensionless",
+        "gain": "dimensionless",
+        "bias_world_y_rad": "rad",
+        "motion_gain": "dimensionless"
+      },
+      "data_ranges": [
+        {
+          "segment_id": 0,
+          "direction_y": 1,
+          "sample_count": 138,
+          "host_time_origin_s": 1788476972.3520586,
+          "observed_duration_s": 1.3706638813018799,
+          "max_sample_gap_s": 0.010838985443115234,
+          "phase_sample_counts": {
+            "level_before_acceleration": 21,
+            "accelerate": 16,
+            "level_before_brake": 20,
+            "brake": 16,
+            "level_after_brake": 65
+          },
+          "phase_command_times_relative_s": {
+            "level_before_acceleration": -0.0006587505340576172,
+            "accelerate": 0.20876455307006836,
+            "level_before_brake": 0.3690989017486572,
+            "brake": 0.5692334175109863,
+            "level_after_brake": 0.7293469905853271
+          },
+          "observed_phase_last_sample_s": {
+            "level_before_acceleration": 0.2000257968902588,
+            "accelerate": 0.3601374626159668,
+            "level_before_brake": 0.5600216388702393,
+            "brake": 0.7200231552124023,
+            "level_after_brake": 1.3706638813018799
+          },
+          "command_acceleration_m_s2": [
+            -3.570547998151445,
+            3.570547998151445
+          ],
+          "theta_rad": [
+            -0.2593865705544175,
+            0.2527490355753624
+          ],
+          "velocity_m_s": [
+            -0.1333400458097458,
+            0.4943373501300812
+          ],
+          "position_m": [
+            0.012175695970654488,
+            0.16464568674564362
+          ],
+          "battery_voltage_V": [
+            7.517355918884277,
+            7.5966949462890625
+          ]
+        },
+        {
+          "segment_id": 1,
+          "direction_y": -1,
+          "sample_count": 137,
+          "host_time_origin_s": 1788476976.0401165,
+          "observed_duration_s": 1.35902738571167,
+          "max_sample_gap_s": 0.01032876968383789,
+          "phase_sample_counts": {
+            "level_before_acceleration": 20,
+            "accelerate": 16,
+            "level_before_brake": 20,
+            "brake": 16,
+            "level_after_brake": 65
+          },
+          "phase_command_times_relative_s": {
+            "level_before_acceleration": -0.004051923751831055,
+            "accelerate": 0.19644379615783691,
+            "level_before_brake": 0.3568587303161621,
+            "brake": 0.5569922924041748,
+            "level_after_brake": 0.7177939414978027
+          },
+          "observed_phase_last_sample_s": {
+            "level_before_acceleration": 0.19001007080078125,
+            "accelerate": 0.35002565383911133,
+            "level_before_brake": 0.5500404834747314,
+            "brake": 0.7100260257720947,
+            "level_after_brake": 1.35902738571167
+          },
+          "command_acceleration_m_s2": [
+            -3.570547998151445,
+            3.570547998151445
+          ],
+          "theta_rad": [
+            -0.2470799044999059,
+            0.2619570763806765
+          ],
+          "velocity_m_s": [
+            -0.003960430156439543,
+            0.5590953826904297
+          ],
+          "position_m": [
+            0.00842104572802782,
+            0.25270557403564453
+          ],
+          "battery_voltage_V": [
+            7.517355918884277,
+            7.576859951019287
+          ]
+        },
+        {
+          "segment_id": 2,
+          "direction_y": 1,
+          "sample_count": 153,
+          "host_time_origin_s": 1788476979.7114086,
+          "observed_duration_s": 1.5359561443328857,
+          "max_sample_gap_s": 0.020012378692626953,
+          "phase_sample_counts": {
+            "level_before_acceleration": 20,
+            "accelerate": 24,
+            "level_before_brake": 20,
+            "brake": 24,
+            "level_after_brake": 65
+          },
+          "phase_command_times_relative_s": {
+            "level_before_acceleration": -0.00024247169494628906,
+            "accelerate": 0.20003557205200195,
+            "level_before_brake": 0.45403242111206055,
+            "brake": 0.6544592380523682,
+            "level_after_brake": 0.8946082592010498
+          },
+          "observed_phase_last_sample_s": {
+            "level_before_acceleration": 0.19021034240722656,
+            "accelerate": 0.4468569755554199,
+            "level_before_brake": 0.6468336582183838,
+            "brake": 0.8868334293365479,
+            "level_after_brake": 1.5359561443328857
+          },
+          "command_acceleration_m_s2": [
+            -3.570547998151445,
+            3.570547998151445
+          ],
+          "theta_rad": [
+            -0.30364980001961683,
+            0.32608269779113797
+          ],
+          "velocity_m_s": [
+            -0.0017376643372699618,
+            0.8615759015083313
+          ],
+          "position_m": [
+            0.01180402934551239,
+            0.38934430480003357
+          ],
+          "battery_voltage_V": [
+            7.49752140045166,
+            7.576859951019287
+          ]
+        },
+        {
+          "segment_id": 3,
+          "direction_y": -1,
+          "sample_count": 153,
+          "host_time_origin_s": 1788476983.5786195,
+          "observed_duration_s": 1.526726245880127,
+          "max_sample_gap_s": 0.01667475700378418,
+          "phase_sample_counts": {
+            "level_before_acceleration": 20,
+            "accelerate": 24,
+            "level_before_brake": 20,
+            "brake": 24,
+            "level_after_brake": 65
+          },
+          "phase_command_times_relative_s": {
+            "level_before_acceleration": -0.0005145072937011719,
+            "accelerate": 0.19981861114501953,
+            "level_before_brake": 0.4406423568725586,
+            "brake": 0.6406500339508057,
+            "level_after_brake": 0.8810770511627197
+          },
+          "observed_phase_last_sample_s": {
+            "level_before_acceleration": 0.19022607803344727,
+            "accelerate": 0.4308440685272217,
+            "level_before_brake": 0.6311769485473633,
+            "brake": 0.8715004920959473,
+            "level_after_brake": 1.526726245880127
+          },
+          "command_acceleration_m_s2": [
+            -3.570547998151445,
+            3.570547998151445
+          ],
+          "theta_rad": [
+            -0.3074433947021539,
+            0.3214877999827703
+          ],
+          "velocity_m_s": [
+            -0.014572681859135628,
+            0.8381571173667908
+          ],
+          "position_m": [
+            0.028710132464766502,
+            0.44119349122047424
+          ],
+          "battery_voltage_V": [
+            7.477686405181885,
+            7.55702543258667
+          ]
+        },
+        {
+          "segment_id": 4,
+          "direction_y": 1,
+          "sample_count": 169,
+          "host_time_origin_s": 1788476987.455166,
+          "observed_duration_s": 1.6805264949798584,
+          "max_sample_gap_s": 0.014735221862792969,
+          "phase_sample_counts": {
+            "level_before_acceleration": 20,
+            "accelerate": 32,
+            "level_before_brake": 20,
+            "brake": 32,
+            "level_after_brake": 65
+          },
+          "phase_command_times_relative_s": {
+            "level_before_acceleration": -0.00021338462829589844,
+            "accelerate": 0.19932794570922852,
+            "level_before_brake": 0.5194580554962158,
+            "brake": 0.7196011543273926,
+            "level_after_brake": 1.0398333072662354
+          },
+          "observed_phase_last_sample_s": {
+            "level_before_acceleration": 0.1895155906677246,
+            "accelerate": 0.509713888168335,
+            "level_before_brake": 0.7098274230957031,
+            "brake": 1.0300242900848389,
+            "level_after_brake": 1.6805264949798584
+          },
+          "command_acceleration_m_s2": [
+            -3.570547998151445,
+            3.570547998151445
+          ],
+          "theta_rad": [
+            -0.3355795151910223,
+            0.3457779374891336
+          ],
+          "velocity_m_s": [
+            -0.14698387682437897,
+            1.065661907196045
+          ],
+          "position_m": [
+            0.03651964291930199,
+            0.5365747809410095
+          ],
+          "battery_voltage_V": [
+            7.477686405181885,
+            7.55702543258667
+          ]
+        },
+        {
+          "segment_id": 5,
+          "direction_y": -1,
+          "sample_count": 169,
+          "host_time_origin_s": 1788476991.4525301,
+          "observed_duration_s": 1.6817491054534912,
+          "max_sample_gap_s": 0.011483907699584961,
+          "phase_sample_counts": {
+            "level_before_acceleration": 20,
+            "accelerate": 32,
+            "level_before_brake": 20,
+            "brake": 32,
+            "level_after_brake": 65
+          },
+          "phase_command_times_relative_s": {
+            "level_before_acceleration": -0.0019049644470214844,
+            "accelerate": 0.1983811855316162,
+            "level_before_brake": 0.5187511444091797,
+            "brake": 0.7195844650268555,
+            "level_after_brake": 1.0401628017425537
+          },
+          "observed_phase_last_sample_s": {
+            "level_before_acceleration": 0.19001030921936035,
+            "accelerate": 0.5099802017211914,
+            "level_before_brake": 0.710003137588501,
+            "brake": 1.0306906700134277,
+            "level_after_brake": 1.6817491054534912
+          },
+          "command_acceleration_m_s2": [
+            -3.570547998151445,
+            3.570547998151445
+          ],
+          "theta_rad": [
+            -0.34493434122088146,
+            0.3399802764845696
+          ],
+          "velocity_m_s": [
+            -0.13785459101200104,
+            1.0412646532058716
+          ],
+          "position_m": [
+            0.06216633692383766,
+            0.5519260168075562
+          ],
+          "battery_voltage_V": [
+            7.457851886749268,
+            7.5371904373168945
+          ]
+        }
+      ],
+      "source_provenance": {
+        "sample_sha256": "f2833a59c0ae7e2fc17107d08dfaf8b78f26746bdf9727b6a765c0d9a347e578",
+        "sample_count": 919,
+        "source": "reconstructed_flight_log_samples",
+        "command_clock": "median phase-event minus next-command timestamp; approximate send anchor",
+        "command_clock_caveat": "Live samples require actual sends; historical reconstructed sends must be labeled by the caller.",
+        "completion_certified_by": "logged_actual_recovery_commands",
+        "source_log_path": "/Users/shuqinzhu/Documents/FLS_Research/lightbender/orchestrator/logs/translation_inertia_2026-09-03_16-07-59/lb11_translation_inertia_2026-09-03_16-07-59.json",
+        "source_log_sha256": "ade0292b40f7df775b4617af523cc3d45c34c4f03713ce7cdebd86de0315b57d"
+      },
+      "warnings": [
+        "optimizer emitted numeric warnings; finite metadata and residual objective were independently checked",
+        "host-receive effective delay includes telemetry and scheduling latency",
+        "world-Y small-planar-angle identification only; cross-axis dynamics are not fitted",
+        "last-phase samples do not certify trial completion; caller must observe actual recovery send",
+        "training fit is a candidate, not independent validation or flight approval"
+      ]
+    },
+    "independent_validation": false,
+    "fit_elapsed_s": 0.10975045799568761,
+    "validation_passed": false,
+    "runtime_enabled": false,
+    "flight_approved": false
+  },
+  "validated_candidate": {
+    "training_segment_ids": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "validation_segment_ids": [
+      4,
+      5
+    ],
+    "candidate_version": 2,
+    "model": {
+      "schema_version": 1,
+      "kind": "delayed_second_order_planar_prediction",
+      "attitude_fit": {
+        "model": "second_order",
+        "delay_s": 0.026248713859991796,
+        "wn_rad_s": 14.683277353342621,
+        "zeta": 0.9922653238113869,
+        "gain": 1.0349037938988435,
+        "bias_world_y_rad": -0.0018620367305335532,
+        "training_segments": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "train_rmse_deg": 0.32232398721120975,
+        "seed_costs": [
+          3.164754227268505e-05,
+          3.164754227167875e-05,
+          3.1647542271758994e-05
+        ],
+        "active_bounds": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "offline_only": true
+      },
+      "motion_gain": 1.08309593746612,
+      "train_segment_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "clock_scope": "host_receive_effective_delay",
+      "prediction_scope": "attitude_command_only",
+      "runtime_enabled": false,
+      "deployment_approved": false,
+      "candidate_status": "requires_held_out_validation",
+      "independent_validation_complete": false,
+      "identifiability": {
+        "method": "local finite-difference sensitivity scaled by declared parameter bounds",
+        "parameter_order": [
+          "delay_s",
+          "wn_rad_s",
+          "zeta",
+          "gain",
+          "bias_world_y_rad"
+        ],
+        "singular_values": [
+          0.7938151202676987,
+          0.14078604911968,
+          0.06535102132297722,
+          0.046885818048512856,
+          0.03220427561256956
+        ],
+        "rank": 5,
+        "condition_number": 24.64937046923878,
+        "identifiable": true,
+        "bound_active_parameters": [],
+        "uncertainty_interval_available": false
+      },
+      "numerical_diagnostics": {
+        "finite_fit_metadata": true,
+        "residual_objective_independently_checked": true,
+        "checked_training_objective_rad2": 3.164754227167875e-05,
+        "optimizer_runtime_warnings": []
+      },
+      "parameter_bounds": {
+        "delay_s": [
+          0.0,
+          0.15
+        ],
+        "wn_rad_s": [
+          5.0,
+          100.0
+        ],
+        "zeta": [
+          0.2,
+          2.0
+        ],
+        "gain": [
+          0.7,
+          1.3
+        ],
+        "bias_world_y_rad": [
+          -0.035,
+          0.035
+        ],
+        "motion_gain": [
+          0.2,
+          2.5
+        ]
+      },
+      "parameter_units": {
+        "delay_s": "s",
+        "wn_rad_s": "rad/s",
+        "zeta": "dimensionless",
+        "gain": "dimensionless",
+        "bias_world_y_rad": "rad",
+        "motion_gain": "dimensionless"
+      },
+      "data_ranges": [
+        {
+          "segment_id": 0,
+          "direction_y": 1,
+          "sample_count": 138,
+          "host_time_origin_s": 1788476972.3520586,
+          "observed_duration_s": 1.3706638813018799,
+          "max_sample_gap_s": 0.010838985443115234,
+          "phase_sample_counts": {
+            "level_before_acceleration": 21,
+            "accelerate": 16,
+            "level_before_brake": 20,
+            "brake": 16,
+            "level_after_brake": 65
+          },
+          "phase_command_times_relative_s": {
+            "level_before_acceleration": -0.0006587505340576172,
+            "accelerate": 0.20876455307006836,
+            "level_before_brake": 0.3690989017486572,
+            "brake": 0.5692334175109863,
+            "level_after_brake": 0.7293469905853271
+          },
+          "observed_phase_last_sample_s": {
+            "level_before_acceleration": 0.2000257968902588,
+            "accelerate": 0.3601374626159668,
+            "level_before_brake": 0.5600216388702393,
+            "brake": 0.7200231552124023,
+            "level_after_brake": 1.3706638813018799
+          },
+          "command_acceleration_m_s2": [
+            -3.570547998151445,
+            3.570547998151445
+          ],
+          "theta_rad": [
+            -0.2593865705544175,
+            0.2527490355753624
+          ],
+          "velocity_m_s": [
+            -0.1333400458097458,
+            0.4943373501300812
+          ],
+          "position_m": [
+            0.012175695970654488,
+            0.16464568674564362
+          ],
+          "battery_voltage_V": [
+            7.517355918884277,
+            7.5966949462890625
+          ]
+        },
+        {
+          "segment_id": 1,
+          "direction_y": -1,
+          "sample_count": 137,
+          "host_time_origin_s": 1788476976.0401165,
+          "observed_duration_s": 1.35902738571167,
+          "max_sample_gap_s": 0.01032876968383789,
+          "phase_sample_counts": {
+            "level_before_acceleration": 20,
+            "accelerate": 16,
+            "level_before_brake": 20,
+            "brake": 16,
+            "level_after_brake": 65
+          },
+          "phase_command_times_relative_s": {
+            "level_before_acceleration": -0.004051923751831055,
+            "accelerate": 0.19644379615783691,
+            "level_before_brake": 0.3568587303161621,
+            "brake": 0.5569922924041748,
+            "level_after_brake": 0.7177939414978027
+          },
+          "observed_phase_last_sample_s": {
+            "level_before_acceleration": 0.19001007080078125,
+            "accelerate": 0.35002565383911133,
+            "level_before_brake": 0.5500404834747314,
+            "brake": 0.7100260257720947,
+            "level_after_brake": 1.35902738571167
+          },
+          "command_acceleration_m_s2": [
+            -3.570547998151445,
+            3.570547998151445
+          ],
+          "theta_rad": [
+            -0.2470799044999059,
+            0.2619570763806765
+          ],
+          "velocity_m_s": [
+            -0.003960430156439543,
+            0.5590953826904297
+          ],
+          "position_m": [
+            0.00842104572802782,
+            0.25270557403564453
+          ],
+          "battery_voltage_V": [
+            7.517355918884277,
+            7.576859951019287
+          ]
+        },
+        {
+          "segment_id": 2,
+          "direction_y": 1,
+          "sample_count": 153,
+          "host_time_origin_s": 1788476979.7114086,
+          "observed_duration_s": 1.5359561443328857,
+          "max_sample_gap_s": 0.020012378692626953,
+          "phase_sample_counts": {
+            "level_before_acceleration": 20,
+            "accelerate": 24,
+            "level_before_brake": 20,
+            "brake": 24,
+            "level_after_brake": 65
+          },
+          "phase_command_times_relative_s": {
+            "level_before_acceleration": -0.00024247169494628906,
+            "accelerate": 0.20003557205200195,
+            "level_before_brake": 0.45403242111206055,
+            "brake": 0.6544592380523682,
+            "level_after_brake": 0.8946082592010498
+          },
+          "observed_phase_last_sample_s": {
+            "level_before_acceleration": 0.19021034240722656,
+            "accelerate": 0.4468569755554199,
+            "level_before_brake": 0.6468336582183838,
+            "brake": 0.8868334293365479,
+            "level_after_brake": 1.5359561443328857
+          },
+          "command_acceleration_m_s2": [
+            -3.570547998151445,
+            3.570547998151445
+          ],
+          "theta_rad": [
+            -0.30364980001961683,
+            0.32608269779113797
+          ],
+          "velocity_m_s": [
+            -0.0017376643372699618,
+            0.8615759015083313
+          ],
+          "position_m": [
+            0.01180402934551239,
+            0.38934430480003357
+          ],
+          "battery_voltage_V": [
+            7.49752140045166,
+            7.576859951019287
+          ]
+        },
+        {
+          "segment_id": 3,
+          "direction_y": -1,
+          "sample_count": 153,
+          "host_time_origin_s": 1788476983.5786195,
+          "observed_duration_s": 1.526726245880127,
+          "max_sample_gap_s": 0.01667475700378418,
+          "phase_sample_counts": {
+            "level_before_acceleration": 20,
+            "accelerate": 24,
+            "level_before_brake": 20,
+            "brake": 24,
+            "level_after_brake": 65
+          },
+          "phase_command_times_relative_s": {
+            "level_before_acceleration": -0.0005145072937011719,
+            "accelerate": 0.19981861114501953,
+            "level_before_brake": 0.4406423568725586,
+            "brake": 0.6406500339508057,
+            "level_after_brake": 0.8810770511627197
+          },
+          "observed_phase_last_sample_s": {
+            "level_before_acceleration": 0.19022607803344727,
+            "accelerate": 0.4308440685272217,
+            "level_before_brake": 0.6311769485473633,
+            "brake": 0.8715004920959473,
+            "level_after_brake": 1.526726245880127
+          },
+          "command_acceleration_m_s2": [
+            -3.570547998151445,
+            3.570547998151445
+          ],
+          "theta_rad": [
+            -0.3074433947021539,
+            0.3214877999827703
+          ],
+          "velocity_m_s": [
+            -0.014572681859135628,
+            0.8381571173667908
+          ],
+          "position_m": [
+            0.028710132464766502,
+            0.44119349122047424
+          ],
+          "battery_voltage_V": [
+            7.477686405181885,
+            7.55702543258667
+          ]
+        }
+      ],
+      "source_provenance": {
+        "sample_sha256": "88e5584135d3f316533fa9f2bdd3fca3a1fe793d65e030f9fccc1e32f1e0a63b",
+        "sample_count": 581,
+        "source": "reconstructed_flight_log_samples",
+        "command_clock": "median phase-event minus next-command timestamp; approximate send anchor",
+        "command_clock_caveat": "Live samples require actual sends; historical reconstructed sends must be labeled by the caller.",
+        "completion_certified_by": "logged_actual_recovery_commands",
+        "source_log_path": "/Users/shuqinzhu/Documents/FLS_Research/lightbender/orchestrator/logs/translation_inertia_2026-09-03_16-07-59/lb11_translation_inertia_2026-09-03_16-07-59.json",
+        "source_log_sha256": "ade0292b40f7df775b4617af523cc3d45c34c4f03713ce7cdebd86de0315b57d"
+      },
+      "warnings": [
+        "host-receive effective delay includes telemetry and scheduling latency",
+        "world-Y small-planar-angle identification only; cross-axis dynamics are not fitted",
+        "last-phase samples do not certify trial completion; caller must observe actual recovery send",
+        "training fit is a candidate, not independent validation or flight approval"
+      ]
+    },
+    "independent_validation": true,
+    "runtime_enabled": false,
+    "flight_approved": false,
+    "metrics": {
+      "schema_version": 1,
+      "validation_segment_ids": [
+        4,
+        5
+      ],
+      "train_segment_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "per_trial": [
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "direction_y": 1,
+          "prediction_anchor_relative_s": 0.7098274230957031,
+          "duration_s": 0.9706990718841553,
+          "theta_rmse_deg": 0.30444172009983744,
+          "full_trial_theta_rmse_deg": 0.2621163158733395,
+          "velocity_rmse_m_s": 0.037456284498625717,
+          "actual_terminal_m_s": -0.1456973671913147,
+          "predicted_terminal_m_s": -0.13326203963390781,
+          "terminal_error_m_s": 0.012435327557406884,
+          "end_position_error_m": 0.056846447401803335,
+          "actual_reverse": true,
+          "predicted_reverse": true,
+          "actual_peak_reverse_m_s": 0.14698387682437897,
+          "predicted_peak_reverse_m_s": 0.1344274297698851,
+          "actual_crossing": {
+            "time_s": 0.47953648781003994,
+            "position_m": 0.2782878325029021
+          },
+          "predicted_crossing": {
+            "time_s": 0.499614729982017,
+            "position_m": 0.33760503910092804
+          },
+          "crossing_error_s": 0.020078242171977068
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "direction_y": -1,
+          "prediction_anchor_relative_s": 0.710003137588501,
+          "duration_s": 0.9717459678649902,
+          "theta_rmse_deg": 0.22357022808955918,
+          "full_trial_theta_rmse_deg": 0.2444308689491368,
+          "velocity_rmse_m_s": 0.045663406959616445,
+          "actual_terminal_m_s": -0.11751637905836106,
+          "predicted_terminal_m_s": -0.12723616621695436,
+          "terminal_error_m_s": -0.009719787158593295,
+          "end_position_error_m": 0.05178072573483239,
+          "actual_reverse": true,
+          "predicted_reverse": true,
+          "actual_peak_reverse_m_s": 0.13785459101200104,
+          "predicted_peak_reverse_m_s": 0.12785576178955882,
+          "actual_crossing": {
+            "time_s": 0.45881311641122274,
+            "position_m": 0.26502749658003577
+          },
+          "predicted_crossing": {
+            "time_s": 0.49233685156623214,
+            "position_m": 0.3280917014558464
+          },
+          "crossing_error_s": 0.03352373515500939
+        }
+      ],
+      "aggregates": {
+        "trial_count": 2,
+        "weighting": "equal trial means",
+        "theta_rmse_deg": 0.2640059740946983,
+        "mean_theta_rmse_deg": 0.2640059740946983,
+        "max_abs_theta_rmse_deg": 0.30444172009983744,
+        "velocity_rmse_m_s": 0.04155984572912108,
+        "mean_velocity_rmse_m_s": 0.04155984572912108,
+        "max_abs_velocity_rmse_m_s": 0.045663406959616445,
+        "terminal_error_m_s": 0.0013577701994067944,
+        "mean_terminal_error_m_s": 0.0013577701994067944,
+        "max_abs_terminal_error_m_s": 0.012435327557406884,
+        "end_position_error_m": 0.05431358656831786,
+        "mean_end_position_error_m": 0.05431358656831786,
+        "max_abs_end_position_error_m": 0.056846447401803335,
+        "actual_reverse_trial_count": 2,
+        "predicted_reverse_trial_count": 2,
+        "reverse_classification_mismatch_count": 0,
+        "zero_crossing_presence_mismatch_count": 0,
+        "max_abs_crossing_error_s": 0.03352373515500939
+      },
+      "rolling_horizons": [
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.7098274230957031,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.24174817397533088,
+          "velocity_error_m_s": 0.019690529587493844,
+          "position_error_m": 0.0059174587157857506
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.7098274230957031,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.1696954372160784,
+          "velocity_error_m_s": 0.03795258363210241,
+          "position_error_m": 0.012938776748774528
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.7098274230957031,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.00408689570784322,
+          "velocity_error_m_s": 0.06510754167866328,
+          "position_error_m": 0.032586402009532056
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.7098274230957031,
+          "horizon_s": 0.4,
+          "theta_error_deg": -0.6015608681158634,
+          "velocity_error_m_s": 0.04704716299561604,
+          "position_error_m": 0.058450290469121535
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.7602672576904297,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.5453825601900539,
+          "velocity_error_m_s": 0.013118116014973369,
+          "position_error_m": 0.0059390281670581024
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.7602672576904297,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.6087099560618436,
+          "velocity_error_m_s": 0.024589295732164396,
+          "position_error_m": 0.014673588646107849
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.7602672576904297,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.3198078742989259,
+          "velocity_error_m_s": 0.024271391538197795,
+          "position_error_m": 0.028891950386389142
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.7602672576904297,
+          "horizon_s": 0.4,
+          "theta_error_deg": -0.25433972232653507,
+          "velocity_error_m_s": -0.01030884695307404,
+          "position_error_m": 0.03780731427187156
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.8098812103271484,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.17749924390234742,
+          "velocity_error_m_s": 0.018420749446067752,
+          "position_error_m": 0.008264785894034898
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.8098812103271484,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.1941370495465753,
+          "velocity_error_m_s": 0.029257853498553255,
+          "position_error_m": 0.015905055002336077
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.8098812103271484,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.07396611556240765,
+          "velocity_error_m_s": 0.030037277424985742,
+          "position_error_m": 0.027938828404272253
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.8098812103271484,
+          "horizon_s": 0.4,
+          "theta_error_deg": -0.04386523429670596,
+          "velocity_error_m_s": -0.002562488518152283,
+          "position_error_m": 0.032415612734064014
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.8599307537078857,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.2675781025621962,
+          "velocity_error_m_s": 0.010615241133091424,
+          "position_error_m": 0.006702722379314796
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.8599307537078857,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.21441257230881794,
+          "velocity_error_m_s": 0.012815488311459289,
+          "position_error_m": 0.012437851289041013
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.8599307537078857,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.2719744458049906,
+          "velocity_error_m_s": 0.013130920536180923,
+          "position_error_m": 0.02154438919092161
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.8599307537078857,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.0009349195658963147,
+          "velocity_error_m_s": -0.02520565271344219,
+          "position_error_m": 0.015759256750384143
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.9099502563476562,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.125403915268461,
+          "velocity_error_m_s": 0.0005619359000993418,
+          "position_error_m": 0.005155814321051888
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.9099502563476562,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.006787986722811723,
+          "velocity_error_m_s": 0.0006897175261475486,
+          "position_error_m": 0.009059275668585831
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.9099502563476562,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.5255510175969236,
+          "velocity_error_m_s": -0.012798980559245388,
+          "position_error_m": 0.013361558559326192
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.9099502563476562,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.06342795703988954,
+          "velocity_error_m_s": -0.040920753595952986,
+          "position_error_m": 0.0020984074928223073
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.9603700637817383,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.12370857800643674,
+          "velocity_error_m_s": 0.0005781998591353199,
+          "position_error_m": 0.003868944065622437
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.9603700637817383,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.12080562562624546,
+          "velocity_error_m_s": 0.0016479421917460768,
+          "position_error_m": 0.007810437419145
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.9603700637817383,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.10321335780318246,
+          "velocity_error_m_s": -0.02078350701437922,
+          "position_error_m": 0.005645259814418768
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 0.9603700637817383,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.1799336964173384,
+          "velocity_error_m_s": -0.037778849241701745,
+          "position_error_m": -0.004637958743524795
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.010009765625,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.024664160655000638,
+          "velocity_error_m_s": 0.0012772219080503522,
+          "position_error_m": 0.003929163819815895
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.010009765625,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.2876150132385415,
+          "velocity_error_m_s": -0.009185673675300932,
+          "position_error_m": 0.00441138903819438
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.010009765625,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.079652014821451,
+          "velocity_error_m_s": -0.023225536402844207,
+          "position_error_m": -0.0005272707777898011
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.010009765625,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.2706632650701132,
+          "velocity_error_m_s": -0.032141326261066056,
+          "position_error_m": -0.009376936486153342
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.0600581169128418,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.4382078568385572,
+          "velocity_error_m_s": -0.00555228757113807,
+          "position_error_m": 0.0005092725756385974
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.0600581169128418,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.6781003974771219,
+          "velocity_error_m_s": -0.008075516916418023,
+          "position_error_m": -0.0016755852235380564
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.0600581169128418,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.3829093693238245,
+          "velocity_error_m_s": -0.009832748895252305,
+          "position_error_m": -0.005298377300755885
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.0600581169128418,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.4210819693448343,
+          "velocity_error_m_s": -0.00847133680858772,
+          "position_error_m": -0.009326459949047683
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.110128402709961,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.23305862095910504,
+          "velocity_error_m_s": -0.007082681492907923,
+          "position_error_m": -0.002024165026446423
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.110128402709961,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.24920590427057593,
+          "velocity_error_m_s": -0.00934030182228215,
+          "position_error_m": -0.003765630766694117
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.110128402709961,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.1631762116055625,
+          "velocity_error_m_s": -0.016720713864344205,
+          "position_error_m": -0.0072486917097437376
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.110128402709961,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.5048905688942338,
+          "velocity_error_m_s": -0.017271145530591142,
+          "position_error_m": -0.013364441673086813
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.1601886749267578,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.1130893676544374,
+          "velocity_error_m_s": -0.005380628158531773,
+          "position_error_m": -0.001460819631126431
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.1601886749267578,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.1208487462804011,
+          "velocity_error_m_s": -0.014211947004266631,
+          "position_error_m": -0.0034780323985083017
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.1601886749267578,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.10451244272350012,
+          "velocity_error_m_s": -0.02095435605976423,
+          "position_error_m": -0.006487538237291091
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.1601886749267578,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.5167664319931675,
+          "velocity_error_m_s": -0.022141975521878382,
+          "position_error_m": -0.01401949896008653
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.2101349830627441,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.07195361637459202,
+          "velocity_error_m_s": -0.0081108451143799,
+          "position_error_m": -0.001726783974877244
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.2101349830627441,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.01428689998182828,
+          "velocity_error_m_s": -0.011773847826247269,
+          "position_error_m": -0.0027824266948329734
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.2101349830627441,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.22228347027051604,
+          "velocity_error_m_s": -0.012725897824081678,
+          "position_error_m": -0.0046327615929140364
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.2101349830627441,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.42920589824425337,
+          "velocity_error_m_s": -0.017016006950183987,
+          "position_error_m": -0.012651837255646003
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.2602910995483398,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.08422988359128786,
+          "velocity_error_m_s": -0.003779687996559422,
+          "position_error_m": -0.0006372001288895701
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.2602910995483398,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.028693510717708363,
+          "velocity_error_m_s": -0.0072073080414448015,
+          "position_error_m": -0.0015772148337452885
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.2602910995483398,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.3187017968330278,
+          "velocity_error_m_s": -0.008589866020666581,
+          "position_error_m": -0.003266575104646008
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.2602910995483398,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.3015883673401388,
+          "velocity_error_m_s": -0.014639655281246111,
+          "position_error_m": -0.010929199531092226
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.3102774620056152,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.03495321098530202,
+          "velocity_error_m_s": -0.0035001662370953285,
+          "position_error_m": -0.0007476434110506025
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.3102774620056152,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.07670908363052319,
+          "velocity_error_m_s": -0.003227098971924719,
+          "position_error_m": -0.0007716121533932752
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.3102774620056152,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.41621469771007374,
+          "velocity_error_m_s": -0.007699444561818397,
+          "position_error_m": -0.0035935867567841173
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.3603520393371582,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.047091848580160606,
+          "velocity_error_m_s": 0.0002124263188368336,
+          "position_error_m": 0.0001485782725842988
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.3603520393371582,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.2194369908906646,
+          "velocity_error_m_s": -0.0031724071998722736,
+          "position_error_m": -0.0010538916227279538
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.3603520393371582,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.4575193654416569,
+          "velocity_error_m_s": -0.005906667931665055,
+          "position_error_m": -0.0038877328483963303
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.4102942943572998,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.12166877229216871,
+          "velocity_error_m_s": -0.004139623208483018,
+          "position_error_m": -0.0012289904823304942
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.4102942943572998,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.3050940004450669,
+          "velocity_error_m_s": -0.006723167375282113,
+          "position_error_m": -0.0026086531086600973
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.4102942943572998,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.3588545120883193,
+          "velocity_error_m_s": -0.010713868756959594,
+          "position_error_m": -0.006245615837929708
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.46040940284729,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.09706006574319019,
+          "velocity_error_m_s": -0.00425999314347425,
+          "position_error_m": -0.0012057465260312261
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.46040940284729,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.2286748344363083,
+          "velocity_error_m_s": -0.007733432479651803,
+          "position_error_m": -0.002767505144425808
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.46040940284729,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.19376529998509076,
+          "velocity_error_m_s": -0.015735853160008362,
+          "position_error_m": -0.007092712945581003
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.5104029178619385,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.0050139136208179015,
+          "velocity_error_m_s": -0.0051752465339960085,
+          "position_error_m": -0.0013867107773796183
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.5104029178619385,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.04942242095238436,
+          "velocity_error_m_s": -0.010819645578182047,
+          "position_error_m": -0.003314438806933495
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.5605037212371826,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.004656225905830152,
+          "velocity_error_m_s": -0.005987141251249523,
+          "position_error_m": -0.0016761177059682053
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.5605037212371826,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.010222026078677953,
+          "velocity_error_m_s": -0.012339626037631973,
+          "position_error_m": -0.0037786851275272704
+        },
+        {
+          "segment": 4,
+          "segment_id": 4,
+          "anchor_s": 1.6104652881622314,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.02537722795181604,
+          "velocity_error_m_s": -0.0062440103415114245,
+          "position_error_m": -0.0018010366211918538
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.710003137588501,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.3067694394991719,
+          "velocity_error_m_s": 0.02178545073856264,
+          "position_error_m": 0.006101627779687313
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.710003137588501,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.1295805295528007,
+          "velocity_error_m_s": 0.04211894121022097,
+          "position_error_m": 0.0140884476388769
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.710003137588501,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.1161665503689621,
+          "velocity_error_m_s": 0.06714412389366553,
+          "position_error_m": 0.03307817299692023
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.710003137588501,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.068547788129508,
+          "velocity_error_m_s": 0.0710085304649812,
+          "position_error_m": 0.06096963765435659
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.7601726055145264,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.5794935347036145,
+          "velocity_error_m_s": 0.014893190230306663,
+          "position_error_m": 0.006769275597355129
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.7601726055145264,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.4932081335295708,
+          "velocity_error_m_s": 0.025524632042499884,
+          "position_error_m": 0.01475941870584474
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.7601726055145264,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.020003329935804667,
+          "velocity_error_m_s": 0.03134135163530327,
+          "position_error_m": 0.029429983810454863
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.7601726055145264,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.05068946026834456,
+          "velocity_error_m_s": 0.01433000887528816,
+          "position_error_m": 0.04026772153904401
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.8101749420166016,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.19639449872355372,
+          "velocity_error_m_s": 0.017003037905990004,
+          "position_error_m": 0.007400382439002651
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.8101749420166016,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.22352424987489916,
+          "velocity_error_m_s": 0.025947917965547296,
+          "position_error_m": 0.014784820870692661
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.8101749420166016,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.5213948739358656,
+          "velocity_error_m_s": 0.0321896536355909,
+          "position_error_m": 0.027682759908577492
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.8101749420166016,
+          "horizon_s": 0.4,
+          "theta_error_deg": -0.10228583942577037,
+          "velocity_error_m_s": 0.01191907827105567,
+          "position_error_m": 0.03193210078008013
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.8598518371582031,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.19901418704738177,
+          "velocity_error_m_s": 0.008077024236869623,
+          "position_error_m": 0.006502706380088208
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.8598518371582031,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.38695288578980036,
+          "velocity_error_m_s": 0.015316436445401371,
+          "position_error_m": 0.01261745132756975
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.8598518371582031,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.4014130911638406,
+          "velocity_error_m_s": 0.017429584367102458,
+          "position_error_m": 0.021574684095811314
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.8598518371582031,
+          "horizon_s": 0.4,
+          "theta_error_deg": -0.17511824932581888,
+          "velocity_error_m_s": -0.01371669515692292,
+          "position_error_m": 0.016280824703361008
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.9099512100219727,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.3132286472895457,
+          "velocity_error_m_s": 0.0059209844268458545,
+          "position_error_m": 0.005668293815559222
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.9099512100219727,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.5227144826267208,
+          "velocity_error_m_s": 0.0048406380258271264,
+          "position_error_m": 0.010200030368545665
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.9099512100219727,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.10160254890430497,
+          "velocity_error_m_s": 0.0050978356112421075,
+          "position_error_m": 0.014534057779224785
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.9099512100219727,
+          "horizon_s": 0.4,
+          "theta_error_deg": -0.2103858055675327,
+          "velocity_error_m_s": -0.03392895842647406,
+          "position_error_m": 0.0028143198763791455
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.9600279331207275,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.22363341059526246,
+          "velocity_error_m_s": -0.004349782204940533,
+          "position_error_m": 0.00415370498635248
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.9600279331207275,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.17909431713917312,
+          "velocity_error_m_s": -0.004419324020614568,
+          "position_error_m": 0.007061281995768942
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.9600279331207275,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.015564416821338774,
+          "velocity_error_m_s": -0.019672770991752405,
+          "position_error_m": 0.004306317971646045
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 0.9600279331207275,
+          "horizon_s": 0.4,
+          "theta_error_deg": -0.22321251147542193,
+          "velocity_error_m_s": -0.05945110181201693,
+          "position_error_m": -0.012191131859122017
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.0104506015777588,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.049224451654201,
+          "velocity_error_m_s": -0.0017557227862401437,
+          "position_error_m": 0.0030611508917813834
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.0104506015777588,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.10582889222793684,
+          "velocity_error_m_s": -0.006773401833760823,
+          "position_error_m": 0.0034082268082405998
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.0104506015777588,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.16424128281651953,
+          "velocity_error_m_s": -0.029559110533880995,
+          "position_error_m": -0.0034656758687434674
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.0104506015777588,
+          "horizon_s": 0.4,
+          "theta_error_deg": -0.07596145260551755,
+          "velocity_error_m_s": -0.06625332817426022,
+          "position_error_m": -0.02069932006129438
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.0606307983398438,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.44537649552210135,
+          "velocity_error_m_s": -0.0014926175513966522,
+          "position_error_m": 0.0004934628674984065
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.0606307983398438,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.5186388944518501,
+          "velocity_error_m_s": -0.007755611398386795,
+          "position_error_m": -0.00208400589828428
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.0606307983398438,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.04147167152641167,
+          "velocity_error_m_s": -0.020412756777935206,
+          "position_error_m": -0.007917881810707073
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.0606307983398438,
+          "horizon_s": 0.4,
+          "theta_error_deg": -0.006357833062767578,
+          "velocity_error_m_s": -0.04922607653051897,
+          "position_error_m": -0.022167259606028833
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.1106462478637695,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.07809046965334207,
+          "velocity_error_m_s": -0.01084048940604614,
+          "position_error_m": -0.002619699120483654
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.1106462478637695,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.09300843843482791,
+          "velocity_error_m_s": -0.02098557334455517,
+          "position_error_m": -0.006116235548098592
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.1106462478637695,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.20278511656725823,
+          "velocity_error_m_s": -0.03967874846504016,
+          "position_error_m": -0.012917521432742163
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.1106462478637695,
+          "horizon_s": 0.4,
+          "theta_error_deg": -0.03636013384253077,
+          "velocity_error_m_s": -0.07041490960434818,
+          "position_error_m": -0.031295285571464715
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.1605503559112549,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.23244591577239293,
+          "velocity_error_m_s": -0.011289170131851309,
+          "position_error_m": -0.0029795474836132874
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.1605503559112549,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.2795150783495338,
+          "velocity_error_m_s": -0.02111952081937779,
+          "position_error_m": -0.005519333680269689
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.1605503559112549,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.2590467384734891,
+          "velocity_error_m_s": -0.04232231875961978,
+          "position_error_m": -0.012836212018981774
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.1605503559112549,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.15120463211960805,
+          "velocity_error_m_s": -0.0683107453289102,
+          "position_error_m": -0.03051099747017283
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.210599422454834,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.19036162502721155,
+          "velocity_error_m_s": -0.008415691072043,
+          "position_error_m": -0.00193274962771961
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.210599422454834,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.25048465221581784,
+          "velocity_error_m_s": -0.0189021107210888,
+          "position_error_m": -0.004694753830730147
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.210599422454834,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.09412699922362909,
+          "velocity_error_m_s": -0.0364436467458113,
+          "position_error_m": -0.011215292638590668
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.210599422454834,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.29542281376297047,
+          "velocity_error_m_s": -0.058873060234429564,
+          "position_error_m": -0.027312427492184932
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.2605931758880615,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.16134723552102334,
+          "velocity_error_m_s": -0.009244207238632146,
+          "position_error_m": -0.0023062777917928212
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.2605931758880615,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.20822113718382496,
+          "velocity_error_m_s": -0.018696024155201746,
+          "position_error_m": -0.005047231901668114
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.2605931758880615,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.03535063971047426,
+          "velocity_error_m_s": -0.0310395307066971,
+          "position_error_m": -0.010416263368156486
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.2605931758880615,
+          "horizon_s": 0.4,
+          "theta_error_deg": 0.37816101811402797,
+          "velocity_error_m_s": -0.052498340924427636,
+          "position_error_m": -0.02626607146429205
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.310628890991211,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.12537988792844945,
+          "velocity_error_m_s": -0.0083631121876033,
+          "position_error_m": -0.0022499490720472304
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.310628890991211,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.03305968655646699,
+          "velocity_error_m_s": -0.015050300746196121,
+          "position_error_m": -0.004478455876523069
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.310628890991211,
+          "horizon_s": 0.2,
+          "theta_error_deg": -0.03174448151169332,
+          "velocity_error_m_s": -0.02868164906416673,
+          "position_error_m": -0.010132690134477373
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.3606863021850586,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.0021584866821112852,
+          "velocity_error_m_s": -0.006015316597991205,
+          "position_error_m": -0.0017899413420315868
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.3606863021850586,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.009596390968802004,
+          "velocity_error_m_s": -0.010661301785218597,
+          "position_error_m": -0.0033850522860111587
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.3606863021850586,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.15320325649818098,
+          "velocity_error_m_s": -0.023616565343526782,
+          "position_error_m": -0.008832650730700942
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.4115877151489258,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.0053562792670808854,
+          "velocity_error_m_s": -0.00450213521528911,
+          "position_error_m": -0.0012562232558765984
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.4115877151489258,
+          "horizon_s": 0.1,
+          "theta_error_deg": -0.031030182408280354,
+          "velocity_error_m_s": -0.013231056355003601,
+          "position_error_m": -0.004064283217721898
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.4115877151489258,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.3002211832247174,
+          "velocity_error_m_s": -0.02131024789002424,
+          "position_error_m": -0.008594718002771007
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.4615850448608398,
+          "horizon_s": 0.05,
+          "theta_error_deg": -0.10827275225851943,
+          "velocity_error_m_s": -0.009173401005399096,
+          "position_error_m": -0.002591150430383604
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.4615850448608398,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.08462924915247638,
+          "velocity_error_m_s": -0.013937804362721143,
+          "position_error_m": -0.004395744418362102
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.4615850448608398,
+          "horizon_s": 0.2,
+          "theta_error_deg": 0.34577317684390513,
+          "velocity_error_m_s": -0.02332460256872987,
+          "position_error_m": -0.009810199774978656
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.51161789894104,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.05904740383251068,
+          "velocity_error_m_s": -0.004516584057121617,
+          "position_error_m": -0.0013344929157368401
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.51161789894104,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.19577932905720422,
+          "velocity_error_m_s": -0.009573926979706979,
+          "position_error_m": -0.0032649232555974628
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.5616941452026367,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.13301655515913863,
+          "velocity_error_m_s": -0.005661227458129581,
+          "position_error_m": -0.0017217721321179935
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.5616941452026367,
+          "horizon_s": 0.1,
+          "theta_error_deg": 0.2572785728772859,
+          "velocity_error_m_s": -0.011336148223424408,
+          "position_error_m": -0.004122405156162134
+        },
+        {
+          "segment": 5,
+          "segment_id": 5,
+          "anchor_s": 1.6117208003997803,
+          "horizon_s": 0.05,
+          "theta_error_deg": 0.01257634571348584,
+          "velocity_error_m_s": -0.007635381653194509,
+          "position_error_m": -0.0021624530796260366
+        }
+      ],
+      "rolling_horizon_aggregates": [
+        {
+          "horizon_s": 0.05,
+          "forecast_count": 38,
+          "theta_rmse_deg": 0.218764700087871,
+          "velocity_rmse_m_s": 0.0091563635480439,
+          "position_rmse_m": 0.003810602998819479
+        },
+        {
+          "horizon_s": 0.1,
+          "forecast_count": 36,
+          "theta_rmse_deg": 0.27242760333233523,
+          "velocity_rmse_m_s": 0.016748130158191744,
+          "position_rmse_m": 0.00783165358126341
+        },
+        {
+          "horizon_s": 0.2,
+          "forecast_count": 32,
+          "theta_rmse_deg": 0.26205997341760645,
+          "velocity_rmse_m_s": 0.028015244636052105,
+          "position_rmse_m": 0.01584840543051872
+        },
+        {
+          "horizon_s": 0.4,
+          "forecast_count": 24,
+          "theta_rmse_deg": 0.28250009133469817,
+          "velocity_rmse_m_s": 0.04152480262913569,
+          "position_rmse_m": 0.027421513178270965
+        }
+      ],
+      "evaluation_scope": "conditional_on_executed_command_schedule",
+      "prediction_scope": "attitude_command_only",
+      "clock_scope": "host_receive_effective_delay",
+      "future_measurements_used_for_prediction": false,
+      "validation_contains_opposed_pair": true,
+      "model_parameters_updated": false,
+      "runtime_enabled": false,
+      "deployment_approved": false,
+      "warning": "Executed future commands are explicit evaluation inputs, not an online forecast or flight approval."
+    },
+    "gates": {
+      "at_least_two_trials": true,
+      "velocity_rmse_m_s": true,
+      "terminal_error_m_s": true,
+      "end_position_error_m": true,
+      "no_reversal_misses_or_false_alarms": true,
+      "both_y_directions": true,
+      "reported_segment_ids_match": true,
+      "complete_per_trial_results": true,
+      "per_trial_ids_match": true,
+      "per_trial_directions_match": true,
+      "parameters_identifiable": true,
+      "no_active_parameter_bounds": true
+    },
+    "limits": {
+      "velocity_rmse_m_s": 0.06,
+      "terminal_error_m_s": 0.06,
+      "end_position_error_m": 0.06
+    },
+    "evaluation_elapsed_s": 0.014911542006302625,
+    "validation_passed": true
+  },
+  "validation_passed": true,
+  "runtime_enabled": false,
+  "flight_approved": false,
+  "output_path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/Interaction/analysis/online_prediction_2026-09-04_verified/report.json",
+  "report_path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/Interaction/analysis/online_prediction_2026-09-04_verified/report.json",
+  "raw_samples_path": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/Interaction/analysis/online_prediction_2026-09-04_verified/report.samples.jsonl",
+  "events_dropped": 0,
+  "cautions": [
+    "Numeric gates are diagnostic only, not flight approval.",
+    "The latest all-data refit has no independent validation.",
+    "Sequential maneuver amplitude/duration may confound time and battery.",
+    "Queued samples interrupted before worker receipt remain in flight logs."
+  ],
+  "worker_phase": "finished",
+  "submission_summary": {
+    "accepted_submissions": 6,
+    "rejected_submissions": 0
+  },
+  "missing_segment_ids": [],
+  "candidate_training_complete": true
+}

@@ -9,12 +9,15 @@ logger = logging.getLogger(__name__)
 
 
 class Mocap(threading.Thread):
-    def __init__(self, mocap_system_type="vicon", host_name="192.168.1.39", mode="mixed"):
+    def __init__(self, mocap_system_type="vicon", host_name="192.168.1.39", mode="mixed",
+                 *, timing_callback=None):
         """
         Args:
             mocap_system_type (str): Type of system (vicon, optitrack, etc).
             host_name (str): Hostname or IP of the mocap server.
             mode (str): 'rigidbody', 'pointcloud', 'shape', or 'mixed'.
+            timing_callback: Optional host-side per-loop diagnostics. These are
+                NOT camera capture timestamps or source frame sequence numbers.
         """
         threading.Thread.__init__(self)
 
@@ -22,6 +25,8 @@ class Mocap(threading.Thread):
         self.mocap_system_type = mocap_system_type
         self.host_name = host_name
         self.mode = mode.lower()
+        self.timing_callback = timing_callback
+        self._frame_timing = None
 
         # Shared state
         self.objects_to_track = []  # For RigidBodies: list of (name, callback)
@@ -31,6 +36,30 @@ class Mocap(threading.Thread):
 
         # Lock is ONLY for writers (subscribe/unsubscribe), not the reader (run)
         self._write_lock = threading.Lock()
+
+    def _emit_frame(self, callback, frame):
+        """Time a synchronous subscriber without changing its frame timestamp."""
+        timing = self._frame_timing
+        if timing is None:
+            callback(frame)
+            return
+        started = time.monotonic()
+        frame['mocap_timing'] = dict(
+            frame_id_scope='local_loop', frame_time_scope='host_after_wait',
+            source_capture_time_available=False,
+            wait_return_monotonic_s=timing['wait_return_monotonic_s'],
+            wait_duration_s=timing['wait_duration_s'],
+            callback_entry_monotonic_s=started,
+            wait_return_to_callback_s=started-timing['wait_return_monotonic_s'],
+        )
+        try:
+            callback(frame)
+        finally:
+            elapsed = time.monotonic()-started
+            timing['callback_count'] += 1
+            timing['callback_duration_s'] += elapsed
+            timing['max_callback_duration_s'] = max(
+                timing['max_callback_duration_s'], elapsed)
 
     def stop(self):
         self.running = False
@@ -98,7 +127,7 @@ class Mocap(threading.Thread):
                     corrected_pos = pos - offset
 
                     if callback:
-                        callback({
+                        self._emit_frame(callback, {
                             "frame_id": frame_count,
                             "tvec": [float(corrected_pos[0]), float(corrected_pos[1]), float(corrected_pos[2])],
                             "noise": offset.tolist(),
@@ -167,7 +196,7 @@ class Mocap(threading.Thread):
 
                 if pt_data['callback']:
                     corrected_pos = (closest_point / 1000.0) - offset
-                    pt_data['callback']({
+                    self._emit_frame(pt_data['callback'], {
                         "frame_id": frame_count,
                         "tvec": corrected_pos.tolist(),
                         "noise": offset.tolist(),
@@ -210,7 +239,7 @@ class Mocap(threading.Thread):
                 corrected_pos = (centroid_mm / 1000.0) - offset
                 raw_m = (positions_mm / 1000.0).tolist()
 
-                shape['callback']({
+                self._emit_frame(shape['callback'], {
                     'frame_id': frame_count,
                     'tvec': corrected_pos.tolist(),
                     'quat': quat,
@@ -229,7 +258,10 @@ class Mocap(threading.Thread):
             return
 
         frame_count = 0
+        previous_return = None
+        previous_processing_end = None
         while self.running:
+            wait_started = time.monotonic()
             try:
                 mc.waitForNextFrame()
             except Exception as e:
@@ -237,6 +269,21 @@ class Mocap(threading.Thread):
                 continue
 
             now = time.time()
+            wait_returned = time.monotonic()
+            if self.timing_callback is not None:
+                self._frame_timing = dict(
+                    frame_id=frame_count, time=now,
+                    frame_id_scope='local_loop', frame_time_scope='host_after_wait',
+                    source_capture_time_available=False,
+                    wait_return_monotonic_s=wait_returned,
+                    wait_duration_s=wait_returned-wait_started,
+                    local_loop_interval_s=(None if previous_return is None
+                                           else wait_returned-previous_return),
+                    between_processing_and_wait_s=(None if previous_processing_end is None
+                                                   else wait_started-previous_processing_end),
+                    callback_count=0, callback_duration_s=0.0,
+                    max_callback_duration_s=0.0,
+                )
 
             # Grab references once per frame
             with self._write_lock:
@@ -251,6 +298,19 @@ class Mocap(threading.Thread):
             self._process_rigid_bodies(mc, current_targets_rb, current_noise_offset, frame_count, now)
             self._process_point_clouds(cloud_arr, current_targets_pc, current_noise_offset, frame_count, now)
             self._process_marker_shapes(cloud_arr, current_targets_ms, current_noise_offset, frame_count, now)
+
+            processing_end = time.monotonic()
+            if self._frame_timing is not None:
+                timing = self._frame_timing
+                timing['processing_duration_s'] = processing_end-wait_returned
+                timing['processing_excluding_callbacks_s'] = max(
+                    0.0, timing['processing_duration_s']-timing['callback_duration_s'])
+                # Emit even when tracking found no target. Its own cost is
+                # visible in the next between_processing_and_wait_s value.
+                self.timing_callback(dict(timing))
+                self._frame_timing = None
+            previous_return = wait_returned
+            previous_processing_end = processing_end
 
             frame_count += 1
 

@@ -1,0 +1,37 @@
+{
+  "version": "2.1.0",
+  "source": "loop",
+  "timestamp": "2026-09-04T16:30:04Z",
+  "status": "BOUNDED",
+  "task_complete": true,
+  "performance_objective_met": false,
+  "stop_reason": "Completed the preregistered three development rounds, immutable development-only selection and one final paired evaluation. Round three did not improve earlier best checkpoints; no fourth round, test-driven retuning or flight deployment.",
+  "results_tsv": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/loop-260904-0904/loop-results.tsv",
+  "findings": [
+    "Added a separate causal 117-observation v2 environment, PPO trainer and evaluator for fixed original coast targets and irreversible position takeover. Existing v1 sources and 27 checkpoints remain byte-identical.",
+    "Trained three CPU PPO lineages through three bounded rounds, sampling 589824 transitions. This is simulator-trained PPO, not fixed-dataset-only offline RL.",
+    "Primary ppo_lineage63 was selected on 64 development scenarios before reading final outcomes. Round2 checkpoint has 98304 model timesteps, development loss 7.1891224781806535 and SHA256 90b67bbf9d11af862aa8b315b15ae2eab2ec0712e800b4d77fae4d62ab0dabf5.",
+    "All eight methods were paired on 256 new synthetic cases plus 21 separately labeled regressions made from seven previously observed initial states and three synthetic target gaps: 2216 unique metric rows. Evaluation completed once in 49.12 seconds.",
+    "Against the development-preselected v1 position adapter on synthetic holdout, mean loss improved from 8.5195 to 6.5767, joint settling from 125/256 to 166/256, and mean maximum rollback from 9.52cm to 6.69cm.",
+    "The intended no-pullback stopping behavior is not achieved: only24/256 cases both never reversed and settled,180/256 exceeded0.04m/s reverse speed, and worst rollback increased from40.28cm to47.59cm.",
+    "All21 observed-initial/assigned-target regressions eventually settled but all reversed. Their primary loss7.6749 was worse than v1adapter7.1225. They are simulated continuations, not new successful flights.",
+    "The attitude-response model comes from frozen measurement-based estimates, but the delayed position PD loop and its randomized ranges remain assumptions. Prior empirical position-capture evaluation passed4/12 and did not identify position dynamics. Current evidence cannot support real-drone deployment.",
+    "All13 v2 source hashes,11 v1 source hashes,27 v1 checkpoint hashes and final selected/model/provenance checks passed.104 focused tests passed; original flight environment discovered348 with299passing and49expected optional-dependency skips.",
+    "Every case retains full-horizon metrics; only16 diagnostic trajectories with decimated states are archived. Audits distinguish recomputation from recorded extrema and aggregates from unavailable full raw-trajectory reconstruction.",
+    "No SSH, vehicle connection, flight, runtime/calibration mutation, commit, push or deployment was performed. Next meaningful work is position-handoff model identification/validation and testing of stopping behavior, not additional tuning on this final test set."
+  ],
+  "config": {
+    "goal": "Build and execute an independent offline v2 experiment with a fixed coast endpoint, remaining-distance observations and delayed position takeover; preserve failures and report what physical evidence is missing.",
+    "scope": "Local simulator, separate PPO environment/trainer/evaluator, immutable development selection, paired final comparison, source and input provenance only.",
+    "metric": "Mean terminal loss over64 fixed development scenarios generated with seed19001",
+    "direction": "lower_is_better",
+    "verify": ".codex_tmp/braking-rl-venv/bin/python -m Interaction.rl_experiment_ledger --run autoresearch/loop-260904-0904 --metric",
+    "max_development_rounds": 3,
+    "selection": "selection.json",
+    "report": "RESULTS_zh.md",
+    "verification": "verification.md",
+    "independent_audit": "audit_final.md",
+    "position_model_identified": false,
+    "flight_approved": false
+  }
+}
