@@ -250,6 +250,7 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_velocity_unwind_command_switch_delay_s": 0.0,
         "coast_velocity_unwind_integrated_leveling_enabled": False,
         "coast_velocity_unwind_tail_calibration_scale": 1.0,
+        "coast_velocity_unwind_direct_level_attitude_enabled": False,
         "coast_velocity_unwind_position_control_enabled": False,
         # Conservative physical leveling rate measured in flight. This is not
         # the 720 deg/s command-setpoint slew limit.

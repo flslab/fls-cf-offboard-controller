@@ -2429,6 +2429,7 @@ class TranslationControlHandoff:
             coast_velocity_unwind_command_switch_delay_s=0.0,
             coast_velocity_unwind_integrated_leveling_enabled=False,
             coast_velocity_unwind_tail_calibration_scale=1.0,
+            coast_velocity_unwind_direct_level_attitude_enabled=False,
             coast_velocity_unwind_position_control_enabled=False,
             coast_velocity_unwind_leveling_rate_deg_s=100.0,
             coast_velocity_unwind_integration_step_s=0.01,
@@ -2549,6 +2550,9 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_tail_calibration_scale = float(
             coast_velocity_unwind_tail_calibration_scale
         )
+        self.coast_velocity_unwind_direct_level_attitude_enabled = bool(
+            coast_velocity_unwind_direct_level_attitude_enabled
+        )
         self.coast_velocity_unwind_position_control_enabled = bool(
             coast_velocity_unwind_position_control_enabled
         )
@@ -2629,6 +2633,21 @@ class TranslationControlHandoff:
         self.coast_alignment_dwell_s = float(coast_alignment_dwell_s)
         self.coast_attitude_timeout_s = float(coast_attitude_timeout_s)
         self.rearm_delay_s = float(rearm_delay_s)
+        if (
+            self.coast_velocity_unwind_direct_level_attitude_enabled
+            and not self.coast_velocity_predictive_unwind_enabled
+        ):
+            raise ValueError(
+                'direct level-attitude unwind requires predictive unwind'
+            )
+        if (
+            self.coast_velocity_unwind_direct_level_attitude_enabled
+            and self.coast_velocity_unwind_position_control_enabled
+        ):
+            raise ValueError(
+                'direct level-attitude unwind and position-controlled unwind '
+                'are mutually exclusive'
+            )
         translation_limits = np.asarray([
             self.brake_xy_acceleration_m_s2,
             self.brake_xy_speed_m_s,
@@ -4166,7 +4185,14 @@ class TranslationControlHandoff:
                     )
 
             if self.coast_velocity_phase == 'predictive_unwind':
-                if self.coast_velocity_unwind_position_control_enabled:
+                if self.coast_velocity_unwind_direct_level_attitude_enabled:
+                    self.coast_velocity_command_xy_m_s.fill(0.0)
+                    self.set_contact_attitude(0.0, 0.0, 0.0)
+                    self.hover_z = self.velocity_coast_fixed_zdistance_m
+                    self.coast_tracking_action = (
+                        'direct_level_attitude_unwind'
+                    )
+                elif self.coast_velocity_unwind_position_control_enabled:
                     self.coast_velocity_command_xy_m_s.fill(0.0)
                     self._update_predictive_unwind_position_target(
                         position,
@@ -4240,7 +4266,10 @@ class TranslationControlHandoff:
                 )
 
             if not (
-                self.coast_velocity_unwind_position_control_enabled
+                (
+                    self.coast_velocity_unwind_position_control_enabled
+                    or self.coast_velocity_unwind_direct_level_attitude_enabled
+                )
                 and self.coast_velocity_phase == 'predictive_unwind'
             ):
                 self.coast_tracking_velocity_error_m_s = (
@@ -4288,7 +4317,11 @@ class TranslationControlHandoff:
             )
             if not self.coast_handoff_state_ready:
                 return False
-            handoff_reason = 'velocity_predictive_unwind_position_handoff'
+            handoff_reason = (
+                'velocity_predictive_unwind_attitude_handoff'
+                if self.coast_velocity_unwind_direct_level_attitude_enabled
+                else 'velocity_predictive_unwind_position_handoff'
+            )
 
         position_unwind_active = bool(
             self.coast_velocity_unwind_position_control_enabled
@@ -4914,9 +4947,23 @@ class TranslationControlHandoff:
         )
 
     @property
+    def direct_level_unwind_active(self):
+        return bool(
+            self.mode == self.VELOCITY_COAST
+            and self.coast_velocity_phase == 'predictive_unwind'
+            and self.coast_velocity_unwind_direct_level_attitude_enabled
+        )
+
+    @property
     def command_mode(self):
         if self.shadow_mode:
             return 'shadow_position_hold'
+        if (
+            self.mode == self.VELOCITY_COAST
+            and self.coast_velocity_phase == 'predictive_unwind'
+            and self.coast_velocity_unwind_direct_level_attitude_enabled
+        ):
+            return 'predictive_unwind_attitude_zdistance'
         if (
             self.mode == self.VELOCITY_COAST
             and self.coast_velocity_phase == 'predictive_unwind'
@@ -5009,6 +5056,32 @@ class TranslationControlHandoff:
                 'position', sent_at,
                 position_m=self.hold_position.tolist(),
                 yaw_deg=float(self.yaw_deg),
+            )
+            return sent_at
+        elif self.direct_level_unwind_active:
+            commander.send_zdistance_setpoint(
+                0.0,
+                0.0,
+                0.0,
+                self.velocity_coast_fixed_zdistance_m,
+            )
+            sent_at = float(
+                time.time()
+                if command_timestamp is None else command_timestamp
+            )
+            current_yaw_deg = float(
+                self.yaw_deg if yaw_deg is None else yaw_deg
+            )
+            self._record_attitude_command(sent_at, current_yaw_deg)
+            self._record_sent_command(
+                'attitude_zdistance', sent_at,
+                roll_deg=0.0,
+                pitch_deg=0.0,
+                yaw_rate_deg_s=0.0,
+                zdistance_m=float(
+                    self.velocity_coast_fixed_zdistance_m
+                ),
+                yaw_deg=current_yaw_deg,
             )
             return sent_at
         elif self.mode in (
@@ -6938,6 +7011,17 @@ class InteractionsControl:
                 'control_handoff.coast_velocity_predictive_unwind_enabled '
                 'must be boolean'
             )
+        velocity_unwind_direct_level_attitude_enabled = (
+            config['control_handoff'].get(
+                'coast_velocity_unwind_direct_level_attitude_enabled', False
+            )
+        )
+        if type(velocity_unwind_direct_level_attitude_enabled) is not bool:
+            raise ValueError(
+                'control_handoff.'
+                'coast_velocity_unwind_direct_level_attitude_enabled must be '
+                'boolean'
+            )
         velocity_unwind_position_control_enabled = (
             config['control_handoff'].get(
                 'coast_velocity_unwind_position_control_enabled', False
@@ -6964,6 +7048,22 @@ class InteractionsControl:
             raise ValueError(
                 'position-controlled velocity unwind requires '
                 'coast_velocity_predictive_unwind_enabled'
+            )
+        if (
+            velocity_unwind_direct_level_attitude_enabled
+            and not velocity_predictive_unwind_enabled
+        ):
+            raise ValueError(
+                'direct level-attitude velocity unwind requires '
+                'coast_velocity_predictive_unwind_enabled'
+            )
+        if (
+            velocity_unwind_direct_level_attitude_enabled
+            and velocity_unwind_position_control_enabled
+        ):
+            raise ValueError(
+                'direct level-attitude unwind and position-controlled unwind '
+                'cannot both be enabled'
             )
         velocity_coast_handoff_speed_m_s = float(
             config['control_handoff'].get(
@@ -7399,7 +7499,9 @@ class InteractionsControl:
                                 (
                                     (
                                         (
-                                            'release_line_position_unwind'
+                                            'direct_level_attitude_unwind_then_position'
+                                            if velocity_unwind_direct_level_attitude_enabled
+                                            else 'release_line_position_unwind'
                                             if velocity_unwind_position_control_enabled
                                             else 'predictive_velocity_unwind_then_position'
                                         )
@@ -7445,6 +7547,9 @@ class InteractionsControl:
                                     'coast_velocity_unwind_tail_calibration_scale',
                                     1.0,
                                 )
+                            ),
+                            'velocity_unwind_direct_level_attitude_enabled': (
+                                velocity_unwind_direct_level_attitude_enabled
                             ),
                             'velocity_unwind_position_control_enabled': (
                                 velocity_unwind_position_control_enabled
@@ -11780,6 +11885,9 @@ class InteractionsControl:
                             },
                         )
                     if translation_control.consume_velocity_pid_reset_request():
+                        direct_level_unwind = bool(
+                            translation_control.direct_level_unwind_active
+                        )
                         position_unwind = bool(
                             translation_control
                             .coast_velocity_unwind_position_control_enabled
@@ -11808,15 +11916,29 @@ class InteractionsControl:
                                 'control_owner': (
                                     'native_position_pid'
                                     if position_unwind
+                                    else 'direct_attitude_zdistance'
+                                    if direct_level_unwind
                                     else 'native_velocity_pid'
                                 ),
                                 'position_target_m': (
                                     translation_control.hold_position.tolist()
                                     if position_unwind else None
                                 ),
+                                'attitude_target_rp_deg': (
+                                    [0.0, 0.0]
+                                    if direct_level_unwind else None
+                                ),
+                                'zdistance_target_m': (
+                                    translation_control
+                                    .velocity_coast_fixed_zdistance_m
+                                    if direct_level_unwind else None
+                                ),
                                 'velocity_target_m_s': (
                                     None
-                                    if position_unwind
+                                    if (
+                                        position_unwind
+                                        or direct_level_unwind
+                                    )
                                     else [
                                         *translation_control
                                         .coast_velocity_command_xy_m_s.tolist(),
@@ -12003,6 +12125,7 @@ class InteractionsControl:
                             'terminal_current_position_handoff',
                             'velocity_zero_position_handoff',
                             'velocity_predictive_unwind_position_handoff',
+                            'velocity_predictive_unwind_attitude_handoff',
                         )
                         and not (
                             translation_control.coast_handoff_reason
@@ -12137,8 +12260,12 @@ class InteractionsControl:
                             ),
                             'target_velocity_m_s': (
                                 None
-                                if translation_control
-                                .coast_velocity_unwind_position_control_enabled
+                                if (
+                                    translation_control
+                                    .coast_velocity_unwind_position_control_enabled
+                                    or translation_control
+                                    .coast_velocity_unwind_direct_level_attitude_enabled
+                                )
                                 else [
                                     *translation_control
                                     .coast_velocity_command_xy_m_s.tolist(),
@@ -13361,7 +13488,9 @@ class InteractionsControl:
                     (
                         (
                             (
-                                'release_line_position_unwind'
+                                'direct_level_attitude_unwind_then_position'
+                                if velocity_unwind_direct_level_attitude_enabled
+                                else 'release_line_position_unwind'
                                 if velocity_unwind_position_control_enabled
                                 else 'predictive_velocity_unwind_then_position'
                             )
@@ -13633,8 +13762,12 @@ class InteractionsControl:
                         translation_control.hover_z
                         if (
                             not translation_control.uses_position_setpoint
-                            and translation_control.mode
-                            != translation_control.VELOCITY_COAST
+                            and (
+                                translation_control.mode
+                                != translation_control.VELOCITY_COAST
+                                or translation_control
+                                .direct_level_unwind_active
+                            )
                         )
                         else None
                     )
@@ -13646,8 +13779,12 @@ class InteractionsControl:
                         translation_control.contact_roll_deg
                         if (
                             not translation_control.uses_position_setpoint
-                            and translation_control.mode
-                            != translation_control.VELOCITY_COAST
+                            and (
+                                translation_control.mode
+                                != translation_control.VELOCITY_COAST
+                                or translation_control
+                                .direct_level_unwind_active
+                            )
                         )
                         else None
                     )
@@ -13659,8 +13796,12 @@ class InteractionsControl:
                         translation_control.contact_pitch_deg
                         if (
                             not translation_control.uses_position_setpoint
-                            and translation_control.mode
-                            != translation_control.VELOCITY_COAST
+                            and (
+                                translation_control.mode
+                                != translation_control.VELOCITY_COAST
+                                or translation_control
+                                .direct_level_unwind_active
+                            )
                         )
                         else None
                     )
@@ -13703,6 +13844,7 @@ class InteractionsControl:
                         translation_control.mode
                         == translation_control.VELOCITY_COAST
                         and not translation_control.uses_position_setpoint
+                        and not translation_control.direct_level_unwind_active
                     )
                     else None
                 ),
@@ -13713,6 +13855,7 @@ class InteractionsControl:
                         translation_control.mode
                         == translation_control.VELOCITY_COAST
                         and not translation_control.uses_position_setpoint
+                        and not translation_control.direct_level_unwind_active
                     )
                     else None
                 ),
@@ -13816,6 +13959,10 @@ class InteractionsControl:
                 'coast_velocity_unwind_position_control_enabled': (
                     translation_control
                     .coast_velocity_unwind_position_control_enabled
+                ),
+                'coast_velocity_unwind_direct_level_attitude_enabled': (
+                    translation_control
+                    .coast_velocity_unwind_direct_level_attitude_enabled
                 ),
                 'coast_velocity_unwind_position_target_m': (
                     None
