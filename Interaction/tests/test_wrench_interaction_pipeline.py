@@ -82,6 +82,7 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(
             handoff["coast_velocity_unwind_low_speed_fallback_m_s"], 0.03
         )
+        self.assertTrue(handoff["coast_velocity_rebrake_enabled"])
         self.assertEqual(
             handoff["coast_velocity_rebrake_speed_m_s"], 0.04
         )

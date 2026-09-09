@@ -3704,6 +3704,38 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             commander.calls[-1][1], [0.0, 0.0, 0.0, 1.0]
         )
 
+    def test_predictive_velocity_coast_can_disable_rebrake(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_rebrake_enabled=False,
+            coast_velocity_rebrake_speed_m_s=0.02,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.10, 1.0], [0.0, 0.60, 0.0], 1.05,
+            current_orientation_rpy=np.radians([20.0, 0.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.20, 1.0], [0.0, 0.20, 0.0], 1.15,
+            current_orientation_rpy=np.radians([0.3, 0.0, 0.0]),
+            current_angular_velocity=np.radians([2.0, 0.0, 0.0]),
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+        self.assertEqual(control.coast_velocity_rebrake_count, 0)
+        self.assertFalse(control.consume_velocity_rebrake_request())
+
     def test_predictive_velocity_coast_does_not_rebrake_lateral_speed(self):
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],

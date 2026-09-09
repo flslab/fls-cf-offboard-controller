@@ -2439,6 +2439,7 @@ class TranslationControlHandoff:
             coast_velocity_unwind_one_step_lookahead_enabled=False,
             coast_velocity_unwind_one_step_max_dt_s=0.03,
             coast_velocity_unwind_low_speed_fallback_m_s=0.03,
+            coast_velocity_rebrake_enabled=True,
             coast_velocity_rebrake_speed_m_s=0.04,
             coast_velocity_handoff_min_projected_speed_m_s=-0.03,
             coast_velocity_handoff_max_rate_deg_s=5.0,
@@ -2579,6 +2580,9 @@ class TranslationControlHandoff:
         )
         self.coast_velocity_unwind_low_speed_fallback_m_s = float(
             coast_velocity_unwind_low_speed_fallback_m_s
+        )
+        self.coast_velocity_rebrake_enabled = bool(
+            coast_velocity_rebrake_enabled
         )
         self.coast_velocity_rebrake_speed_m_s = float(
             coast_velocity_rebrake_speed_m_s
@@ -2735,6 +2739,7 @@ class TranslationControlHandoff:
             or self.coast_velocity_unwind_low_speed_fallback_m_s <= 0
             or (
                 self.coast_velocity_predictive_unwind_enabled
+                and self.coast_velocity_rebrake_enabled
                 and self.coast_velocity_rebrake_speed_m_s
                 <= self.coast_velocity_handoff_speed_m_s
             )
@@ -4124,6 +4129,7 @@ class TranslationControlHandoff:
             rebrake_started = False
             if (
                 self.coast_velocity_phase == 'predictive_unwind'
+                and self.coast_velocity_rebrake_enabled
                 and not self.coast_velocity_unwind_position_control_enabled
                 and self.brake_projected_speed_m_s
                 >= self.coast_velocity_rebrake_speed_m_s
@@ -7011,6 +7017,14 @@ class InteractionsControl:
                 'control_handoff.coast_velocity_predictive_unwind_enabled '
                 'must be boolean'
             )
+        velocity_rebrake_enabled = config['control_handoff'].get(
+            'coast_velocity_rebrake_enabled', True
+        )
+        if type(velocity_rebrake_enabled) is not bool:
+            raise ValueError(
+                'control_handoff.coast_velocity_rebrake_enabled must be '
+                'boolean'
+            )
         velocity_unwind_direct_level_attitude_enabled = (
             config['control_handoff'].get(
                 'coast_velocity_unwind_direct_level_attitude_enabled', False
@@ -7582,6 +7596,9 @@ class InteractionsControl:
                                 config['control_handoff'].get(
                                     'coast_velocity_rebrake_speed_m_s', 0.04
                                 )
+                            ),
+                            'velocity_rebrake_enabled': (
+                                velocity_rebrake_enabled
                             ),
                             'ignored_during_calibration': bool(
                                 calibration_mode
@@ -14064,6 +14081,9 @@ class InteractionsControl:
                 ),
                 'coast_velocity_rebrake_count': (
                     translation_control.coast_velocity_rebrake_count
+                ),
+                'coast_velocity_rebrake_enabled': (
+                    translation_control.coast_velocity_rebrake_enabled
                 ),
                 'coast_velocity_predicted_unwind_terminal_speed_m_s': (
                     translation_control

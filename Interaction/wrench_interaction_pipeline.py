@@ -264,6 +264,7 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_velocity_unwind_one_step_lookahead_enabled": False,
         "coast_velocity_unwind_one_step_max_dt_s": 0.03,
         "coast_velocity_unwind_low_speed_fallback_m_s": 0.03,
+        "coast_velocity_rebrake_enabled": True,
         # Once level, resume zero-velocity braking only if signed speed along
         # the locked interaction direction remains above this hysteresis band.
         # Lateral drift can delay handoff but does not trigger full re-braking.
