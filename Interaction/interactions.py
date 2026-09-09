@@ -7826,6 +7826,11 @@ class InteractionsControl:
                     mpc_automatic_attempt.ABORTED,
             ):
                 mpc_automatic_attempt.finish()
+            return_target_m = (
+                translation_control.hold_position.copy()
+                if mpc_automatic_abort_after_safe_stop is not None else
+                nominal_position.copy()
+            )
             self._log_event(
                 'Learning MPC Bootstrap Automatic Attempt Finished',
                 {
@@ -7835,7 +7840,7 @@ class InteractionsControl:
                     'retry_count_for_cell': mpc_automatic_retry_counts.get(
                         cell_key, 0
                     ),
-                    'return_target_m': nominal_position.tolist(),
+                    'return_target_m': return_target_m.tolist(),
                     'offline_only': True,
                     'lmpc_command_authority': False,
                     'state_source': 'crazyflie_state_estimate',
@@ -7846,8 +7851,9 @@ class InteractionsControl:
             mpc_automatic_last_phase = None
             mpc_last_decision_send_monotonic = None
             mpc_next_decision_deadline_monotonic = None
-            translation_control.hold_position = nominal_position.copy()
-            translation_control.yaw_deg = nominal_yaw_deg
+            if mpc_automatic_abort_after_safe_stop is None:
+                translation_control.hold_position = nominal_position.copy()
+                translation_control.yaw_deg = nominal_yaw_deg
 
         def level_mpc_attitude_before_fault(reason, yaw_deg=None):
             """Synchronously replace a latched automatic/coast tilt."""
@@ -8053,6 +8059,7 @@ class InteractionsControl:
             mpc_scheduled_decision_deadline = None
             mpc_decision_state_age_at_send_s = None
             mpc_automatic_decision = None
+            mpc_automatic_finish_after_handoff_send_reason = None
             calibration_wait_this_cycle = False
             if calibration_mode and interaction_start is not None:
                 calibration_trial_wait = begin_trial_wait(now)
@@ -8276,9 +8283,13 @@ class InteractionsControl:
                     'Onboard state-group skew contains an invalid value'
                 )
             state_group_skew = float(np.max(state_group_skew_values))
+            active_state_group_skew_limit_s = (
+                release_dataset_terminal_gate.limits.max_state_group_skew_s
+                if mpc_attitude_motion_active else max_state_group_skew_s
+            )
             if (
-                enforce_state_group_skew
-                and state_group_skew > max_state_group_skew_s
+                (enforce_state_group_skew or mpc_attitude_motion_active)
+                and state_group_skew > active_state_group_skew_limit_s
             ):
                 check_trial_wait(now, invalidate=True)
                 if mpc_attitude_motion_active:
@@ -8288,7 +8299,8 @@ class InteractionsControl:
                     raise StaleLocalizationError(
                         'Onboard state groups became unsynchronized during '
                         'automatic LMPC bootstrap motion '
-                        f'({state_group_skew:.3f}s)'
+                        f'({state_group_skew:.3f}s; limit '
+                        f'{active_state_group_skew_limit_s:.3f}s)'
                     )
                 if planar_attitude_active:
                     # Never resume an open-loop tilt after losing synchronized
@@ -9778,21 +9790,6 @@ class InteractionsControl:
                         'state_source': 'crazyflie_state_estimate',
                     },
                 )
-                if (
-                    mpc_automatic_attempt is not None
-                    and mpc_automatic_release_confirmed
-                    and release_dataset_episode_id is None
-                ):
-                    automatic_failure_reason = (
-                        mpc_automatic_attempt.prelude_failure_reasons[0]
-                        if mpc_automatic_attempt.prelude_failure_reasons else
-                        'automatic_attempt_stopped_without_dataset'
-                    )
-                    finish_mpc_automatic_attempt(
-                        counted=False,
-                        reason=automatic_failure_reason,
-                    )
-
             if (
                 release_mode == 'potentiometer_coast'
                 and potentiometer_release_decision is not None
@@ -10487,6 +10484,8 @@ class InteractionsControl:
                     and translation_control.mode
                     == translation_control.POSITION_HOLD
                     and not bootstrap_coverage.complete
+                    and mpc_automatic_abort_after_safe_stop is None
+                    and not output.estimate.measurement_rejected
                 ):
                     automatic_cell = bootstrap_coverage.next_required_cell(
                         mpc_automatic_previous_cell
@@ -11444,6 +11443,114 @@ class InteractionsControl:
                         'unknown predictive braking action: '
                         + str(predictive_action)
                     )
+            # Revalidate the terminal set with this exact measured state before
+            # allowing the coast controller to transfer command ownership.
+            # The gate deliberately drops out of ``complete`` on any later
+            # velocity/tilt/rate/command violation, so using the prior loop's
+            # status here would create a one-sample early-handoff race.
+            if release_dataset_episode_id is not None:
+                if self.bounds is None:
+                    release_dataset_boundary_margin_m = float('nan')
+                else:
+                    release_dataset_boundary_margin_m = float(min(
+                        position[0]-self.bounds['x_min'],
+                        self.bounds['x_max']-position[0],
+                        position[1]-self.bounds['y_min'],
+                        self.bounds['y_max']-position[1],
+                    ))
+                if bootstrap_coverage is not None:
+                    bootstrap_coverage.observe(
+                        release_dataset_episode_id,
+                        velocity_xy_m_s=output.estimate.velocity[:2],
+                        attitude_rp_rad=(
+                            output.estimate.orientation_rpy[:2]
+                        ),
+                        attitude_rate_rp_rad_s=(
+                            output.estimate.angular_velocity[:2]
+                        ),
+                        boundary_margin_m=(
+                            release_dataset_boundary_margin_m
+                        ),
+                        state_age_s=state_age,
+                        state_group_skew_s=state_group_skew,
+                        measurement_rejected=(
+                            output.estimate.measurement_rejected
+                        ),
+                    )
+                applied_command_kind = ''
+                applied_attitude_rp_rad = (float('nan'), float('nan'))
+                if actual_command_applied_at_state is not None:
+                    applied_command_kind = str(
+                        actual_command_applied_at_state.get('kind', '')
+                    )
+                    if applied_command_kind == ATTITUDE_ZDISTANCE_COMMAND:
+                        try:
+                            applied_attitude_rp_rad = tuple(np.radians([
+                                actual_command_applied_at_state['roll_deg'],
+                                actual_command_applied_at_state['pitch_deg'],
+                            ]))
+                        except (KeyError, TypeError, ValueError):
+                            applied_attitude_rp_rad = (
+                                float('nan'), float('nan')
+                            )
+                pending_dataset_commands = (
+                    translation_control.sent_commands_in_window(
+                        state_time
+                        - release_dataset_effective_command_delay_s,
+                        state_observed_at,
+                    )
+                )
+                pending_dataset_command_kinds = tuple(
+                    str(command.get('kind', ''))
+                    for command in pending_dataset_commands
+                )
+                pending_dataset_attitudes_rp_rad = []
+                for command in pending_dataset_commands:
+                    if command.get('kind') == ATTITUDE_ZDISTANCE_COMMAND:
+                        try:
+                            pending_dataset_attitudes_rp_rad.append(
+                                tuple(np.radians([
+                                    command['roll_deg'],
+                                    command['pitch_deg'],
+                                ]))
+                            )
+                        except (KeyError, TypeError, ValueError):
+                            pending_dataset_attitudes_rp_rad.append((
+                                float('nan'), float('nan')
+                            ))
+                    else:
+                        pending_dataset_attitudes_rp_rad.append((0.0, 0.0))
+                release_dataset_terminal_status = (
+                    release_dataset_terminal_gate.update(
+                        ReleaseLMPCTerminalSample(
+                            state_time_s=state_time,
+                            velocity_xy_m_s=tuple(
+                                output.estimate.velocity[:2]
+                            ),
+                            attitude_rp_rad=tuple(
+                                output.estimate.orientation_rpy[:2]
+                            ),
+                            attitude_rate_rp_rad_s=tuple(
+                                output.estimate.angular_velocity[:2]
+                            ),
+                            applied_command_kind=applied_command_kind,
+                            applied_attitude_rp_rad=(
+                                applied_attitude_rp_rad
+                            ),
+                            pending_command_kinds=(
+                                pending_dataset_command_kinds
+                            ),
+                            pending_attitude_rp_rad=tuple(
+                                pending_dataset_attitudes_rp_rad
+                            ),
+                            state_age_s=state_age,
+                            state_group_skew_s=state_group_skew,
+                            boundary_margin_m=(
+                                release_dataset_boundary_margin_m
+                            ),
+                        )
+                    )
+                )
             if translation_control.mode in (
                     translation_control.ATTITUDE_COAST,
                     translation_control.VELOCITY_COAST,
@@ -11470,6 +11577,19 @@ class InteractionsControl:
                             mpc_automatic_attempt.direction_xy, dtype=float
                         )
                     )
+                    automatic_cross_speed_m_s = float(
+                        output.estimate.velocity[0]
+                        * -mpc_automatic_attempt.target_cell.direction_sign
+                    )
+                    automatic_actual_tilt_rad = float(np.max(np.abs(
+                        output.estimate.orientation_rpy[:2]
+                    )))
+                    automatic_actual_rate_rad_s = float(np.max(np.abs(
+                        output.estimate.angular_velocity[:2]
+                    )))
+                    automatic_safe_set_limits = (
+                        release_dataset_terminal_gate.limits
+                    )
                     automatic_motion_failures = []
                     if automatic_maneuver_displacement_m > (
                         bootstrap_coverage.config
@@ -11495,6 +11615,32 @@ class InteractionsControl:
                     ):
                         automatic_motion_failures.append(
                             'maneuver_aligned_speed_limit_exceeded'
+                        )
+                    if automatic_aligned_speed_m_s < (
+                        -bootstrap_coverage.config.wrong_way_land_speed_m_s
+                        - 1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_wrong_way_speed_limit_exceeded'
+                        )
+                    if abs(automatic_cross_speed_m_s) > (
+                        automatic_safe_set_limits.max_abs_cross_velocity_m_s
+                        + 1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_cross_speed_limit_exceeded'
+                        )
+                    if automatic_actual_tilt_rad > (
+                        automatic_safe_set_limits.max_path_tilt_rad+1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_attitude_limit_exceeded'
+                        )
+                    if automatic_actual_rate_rad_s > (
+                        automatic_safe_set_limits.max_path_rate_rad_s+1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_attitude_rate_limit_exceeded'
                         )
                     if automatic_motion_failures:
                         if release_dataset_episode_id is not None:
@@ -11525,6 +11671,13 @@ class InteractionsControl:
                                 'aligned_speed_m_s': (
                                     automatic_aligned_speed_m_s
                                 ),
+                                'cross_speed_m_s': automatic_cross_speed_m_s,
+                                'actual_tilt_deg': float(np.degrees(
+                                    automatic_actual_tilt_rad
+                                )),
+                                'actual_attitude_rate_deg_s': float(np.degrees(
+                                    automatic_actual_rate_rad_s
+                                )),
                                 'safe_command': 'level_attitude_then_land',
                                 'offline_only': True,
                                 'lmpc_command_authority': False,
@@ -11568,6 +11721,24 @@ class InteractionsControl:
                 )
                 force_virtual_drag_N = virtual_motion_state['drag_force_N']
                 attitude_command_planned_at = time.time()
+                if (
+                    mpc_calibration_mode
+                    and mpc_next_decision_deadline_monotonic is not None
+                    and translation_control.mode
+                    == translation_control.ATTITUDE_COAST
+                ):
+                    # Finish the delayed-response calculation before the send
+                    # deadline, while telling the predictor when its selected
+                    # command will actually begin.  Sleeping before this
+                    # calculation would add its runtime to every 20 ms command
+                    # interval and systematically violate the offline cadence
+                    # contract on the Pi.
+                    mpc_scheduled_decision_deadline = (
+                        mpc_next_decision_deadline_monotonic
+                    )
+                    attitude_command_planned_at += max(
+                        mpc_scheduled_decision_deadline-time.monotonic(), 0.0
+                    )
                 coast_handoff_completed = False
                 if (
                     predictive_brake_episode is None
@@ -12095,118 +12266,6 @@ class InteractionsControl:
                         },
                     )
 
-            if release_dataset_episode_id is not None:
-                if self.bounds is None:
-                    release_dataset_boundary_margin_m = float('nan')
-                else:
-                    release_dataset_boundary_margin_m = float(min(
-                        position[0]-self.bounds['x_min'],
-                        self.bounds['x_max']-position[0],
-                        position[1]-self.bounds['y_min'],
-                        self.bounds['y_max']-position[1],
-                    ))
-                if bootstrap_coverage is not None:
-                    bootstrap_coverage.observe(
-                        release_dataset_episode_id,
-                        velocity_xy_m_s=output.estimate.velocity[:2],
-                        attitude_rp_rad=(
-                            output.estimate.orientation_rpy[:2]
-                        ),
-                        attitude_rate_rp_rad_s=(
-                            output.estimate.angular_velocity[:2]
-                        ),
-                        boundary_margin_m=(
-                            release_dataset_boundary_margin_m
-                        ),
-                        state_age_s=state_age,
-                        state_group_skew_s=state_group_skew,
-                        measurement_rejected=(
-                            output.estimate.measurement_rejected
-                        ),
-                    )
-                applied_command_kind = ''
-                applied_attitude_rp_rad = (float('nan'), float('nan'))
-                if actual_command_applied_at_state is not None:
-                    applied_command_kind = str(
-                        actual_command_applied_at_state.get('kind', '')
-                    )
-                    if applied_command_kind == ATTITUDE_ZDISTANCE_COMMAND:
-                        try:
-                            applied_attitude_rp_rad = tuple(np.radians([
-                                actual_command_applied_at_state['roll_deg'],
-                                actual_command_applied_at_state['pitch_deg'],
-                            ]))
-                        except (KeyError, TypeError, ValueError):
-                            applied_attitude_rp_rad = (
-                                float('nan'), float('nan')
-                            )
-                pending_dataset_commands = (
-                    translation_control.sent_commands_in_window(
-                        state_time
-                        - release_dataset_effective_command_delay_s,
-                        state_observed_at,
-                    )
-                )
-                pending_dataset_command_kinds = tuple(
-                    str(command.get('kind', ''))
-                    for command in pending_dataset_commands
-                )
-                pending_dataset_attitudes_rp_rad = []
-                for command in pending_dataset_commands:
-                    if command.get('kind') == ATTITUDE_ZDISTANCE_COMMAND:
-                        try:
-                            pending_dataset_attitudes_rp_rad.append(
-                                tuple(np.radians([
-                                    command['roll_deg'],
-                                    command['pitch_deg'],
-                                ]))
-                            )
-                        except (KeyError, TypeError, ValueError):
-                            pending_dataset_attitudes_rp_rad.append((
-                                float('nan'), float('nan')
-                            ))
-                    else:
-                        pending_dataset_attitudes_rp_rad.append((0.0, 0.0))
-                release_dataset_terminal_status = (
-                    release_dataset_terminal_gate.update(
-                        ReleaseLMPCTerminalSample(
-                            state_time_s=state_time,
-                            velocity_xy_m_s=tuple(
-                                output.estimate.velocity[:2]
-                            ),
-                            attitude_rp_rad=tuple(
-                                output.estimate.orientation_rpy[:2]
-                            ),
-                            attitude_rate_rp_rad_s=tuple(
-                                output.estimate.angular_velocity[:2]
-                            ),
-                            applied_command_kind=applied_command_kind,
-                            applied_attitude_rp_rad=(
-                                applied_attitude_rp_rad
-                            ),
-                            pending_command_kinds=(
-                                pending_dataset_command_kinds
-                            ),
-                            pending_attitude_rp_rad=tuple(
-                                pending_dataset_attitudes_rp_rad
-                            ),
-                            state_age_s=state_age,
-                            state_group_skew_s=state_group_skew,
-                            boundary_margin_m=(
-                                release_dataset_boundary_margin_m
-                            ),
-                        )
-                    )
-                )
-                if release_dataset_terminal_status.complete:
-                    release_dataset_close_after_row = {
-                        'event_name': (
-                            'Release Dataset Terminal Dwell Complete'
-                        ),
-                        'release_dataset_outcome': 'terminal_handoff',
-                        'reason': 'full_measured_terminal_dwell_complete',
-                    }
-
             braking_completed = bool(
                 coast_handoff_completed or velocity_mpc_handoff_completed
             )
@@ -12224,13 +12283,29 @@ class InteractionsControl:
                     release_dataset_episode_id is not None
                     and release_dataset_close_after_row is None
                 ):
-                    release_dataset_close_after_row = {
-                        'event_name': 'Release Dataset Episode Closed',
-                        'release_dataset_outcome': 'rejected',
-                        'reason': (
-                            'position_handoff_before_measured_terminal_dwell'
-                        ),
-                    }
+                    if release_dataset_terminal_status.complete:
+                        # A terminal dwell only authorizes the legacy coast
+                        # controller to hand off.  Its delayed level-command
+                        # queue may still need to settle, so count the sample
+                        # only on the loop where position control actually
+                        # takes ownership and sends the final command.
+                        release_dataset_close_after_row = {
+                            'event_name': (
+                                'Release Dataset Terminal Dwell Complete'
+                            ),
+                            'release_dataset_outcome': 'terminal_handoff',
+                            'reason': (
+                                'full_measured_terminal_dwell_complete'
+                            ),
+                        }
+                    else:
+                        release_dataset_close_after_row = {
+                            'event_name': 'Release Dataset Episode Closed',
+                            'release_dataset_outcome': 'rejected',
+                            'reason': (
+                                'position_handoff_before_measured_terminal_dwell'
+                            ),
+                        }
                 last_command_position = translation_control.hold_position.copy()
                 completed_render_mode = selected_render_mode
                 completed_render_relation = render_relation
@@ -12289,6 +12364,19 @@ class InteractionsControl:
                         'state_source': 'crazyflie_state_estimate',
                     },
                 )
+                if (
+                    mpc_automatic_attempt is not None
+                    and mpc_automatic_release_confirmed
+                    and release_dataset_episode_id is None
+                ):
+                    # Do not clear the attempt yet: the handoff's first
+                    # current-position command must be sent below before the
+                    # return-to-nominal target is installed for the next trial.
+                    mpc_automatic_finish_after_handoff_send_reason = (
+                        mpc_automatic_attempt.prelude_failure_reasons[0]
+                        if mpc_automatic_attempt.prelude_failure_reasons else
+                        'automatic_attempt_stopped_without_dataset'
+                    )
 
             if (
                 (
@@ -12963,6 +13051,26 @@ class InteractionsControl:
                 last_command_position = command_position.copy()
                 last_command_yaw = float(command_yaw)
                 translation_control.send(self.lo_commander)
+                if (
+                    mpc_automatic_finish_after_handoff_send_reason is not None
+                ):
+                    safe_handoff_command = (
+                        translation_control.sent_command_snapshot()
+                    )
+                    if (
+                        safe_handoff_command is None
+                        or safe_handoff_command.get('kind') != 'position'
+                    ):
+                        raise RuntimeError(
+                            'automatic LMPC safe-stop handoff produced no '
+                            'position command'
+                        )
+                    finish_mpc_automatic_attempt(
+                        counted=False,
+                        reason=(
+                            mpc_automatic_finish_after_handoff_send_reason
+                        ),
+                    )
 
             if mpc_control_grid_active:
                 mpc_command = translation_control.sent_command_snapshot()
@@ -13110,7 +13218,7 @@ class InteractionsControl:
                         commands_sent_after_state,
                         translation_control.mode,
                         release_dataset_terminal_gate.limits,
-                        terminal_position_m=position,
+                        terminal_position_m=position.tolist(),
                     )
                 )
                 if post_terminal_command_state == 'position_handoff':

@@ -1372,6 +1372,186 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
 
 
 class WrenchInteractionLoopTests(unittest.TestCase):
+    def _run_automatic_mpc_loop_harness(
+            self, *, stop_exception, state_mutator=None,
+            event_callback=None, record_callback=None,
+            bootstrap_overrides=None, handoff_overrides=None):
+        class DeterministicClock:
+            def __init__(self):
+                self.wall_s = 1000.0
+                self.monotonic_s = 500.0
+
+            def time(self):
+                return self.wall_s
+
+            def monotonic(self):
+                return self.monotonic_s
+
+            def advance(self, duration_s):
+                duration_s = max(float(duration_s), 0.0)
+                self.wall_s += duration_s
+                self.monotonic_s += duration_s
+
+        context = SimpleNamespace(
+            clock=DeterministicClock(),
+            commander=None,
+            events=[],
+            timeline=[],
+        )
+
+        class RecordingCommander(FakeCommander):
+            def send_position_setpoint(self, *args):
+                super().send_position_setpoint(*args)
+                context.timeline.append(('command', 'position', args))
+
+            def send_zdistance_setpoint(self, *args):
+                super().send_zdistance_setpoint(*args)
+                context.timeline.append(('command', 'zdistance', args))
+
+        context.commander = RecordingCommander()
+
+        class AutomaticMPCLogManager(FakeOnboardLogManager):
+            def get_nearest_group_log_data(self, group_name, timestamp):
+                packet, skew = super().get_nearest_group_log_data(
+                    group_name, timestamp
+                )
+                if state_mutator is not None:
+                    state_mutator(context, group_name, packet)
+                return packet, skew
+
+            def add_log_entry(self, group_name, entry, *args, **kwargs):
+                super().add_log_entry(group_name, entry, *args, **kwargs)
+                if record_callback is not None:
+                    record_callback(
+                        context, group_name, kwargs.get('name'), entry
+                    )
+
+        logs = AutomaticMPCLogManager(context.clock.time())
+        context.logs = logs
+        controller = InteractionsControl.__new__(InteractionsControl)
+        context.controller = controller
+        controller.drone_id = 'lb11'
+        controller.log_manager = logs
+        controller.ctrl_rate = 100
+        controller.bounds = {
+            'x_min': -1.0, 'x_max': 1.0,
+            'y_min': -1.0, 'y_max': 1.0,
+            'z_min': 0.3, 'z_max': 2.0,
+        }
+        controller.hl_commander = FakeCommander()
+        controller.lo_commander = context.commander
+        controller.force_sensor = None
+        controller.cf = SimpleNamespace(param=SimpleNamespace(
+            set_value_raw=lambda *args: None,
+        ))
+
+        def safe_sleep(duration_s):
+            context.clock.advance(duration_s)
+            logs.packet_time = context.clock.time()
+
+        controller._safe_sleep = safe_sleep
+
+        def log_event(name, data=None):
+            payload = {} if data is None else data
+            context.events.append((name, payload))
+            context.timeline.append(('event', name, payload))
+            logs.add_log_entry('events', payload, name=name)
+            if event_callback is not None:
+                event_callback(context, name, payload)
+
+        controller._log_event = log_event
+        contracts = {
+            'positive_y': {
+                'direction_label': 'positive_y',
+                'direction_xy': [0.0, 1.0],
+                'command_delay_s': 0.02,
+                'model_fingerprint': 'test-positive-model',
+                'state_dimension': 4,
+            },
+            'negative_y': {
+                'direction_label': 'negative_y',
+                'direction_xy': [0.0, -1.0],
+                'command_delay_s': 0.02,
+                'model_fingerprint': 'test-negative-model',
+                'state_dimension': 4,
+            },
+        }
+
+        def contract_for_direction(_contracts, direction_xy):
+            return contracts[
+                'positive_y' if direction_xy[1] > 0.0 else 'negative_y'
+            ]
+
+        bootstrap_config = {
+            'enabled': True,
+            'initial_speed_targets_m_s': [0.25],
+            'speed_tolerance_m_s': 0.04,
+            'repetitions_per_cell': 1,
+            'max_release_speed_m_s': 0.40,
+            'ready_dwell_s': 0.02,
+            'level_warmup_min_s': 0.02,
+            'prediction_step_s': 0.02,
+            'max_acceleration_duration_s': 0.20,
+            'max_maneuver_displacement_m': 0.20,
+        }
+        bootstrap_config.update(bootstrap_overrides or {})
+        handoff_config = {
+            'coast_attitude_response_delay_s': 0.02,
+            'coast_velocity_braking_enabled': False,
+            'coast_velocity_predictive_unwind_enabled': False,
+        }
+        handoff_config.update(handoff_overrides or {})
+        config = {
+            'state_source': 'onboard',
+            'shadow_mode': False,
+            'startup_bias_calibration_enabled': False,
+            'initial_contact_arming': {'enabled': False},
+            'detection': {
+                'translation': {'enabled': False},
+                'yaw': {'enabled': False},
+            },
+            'predictive_braking': {'enabled': False},
+            'learning_velocity_mpc_shadow': {
+                'enabled': False,
+                'command_authority': False,
+            },
+            'mpc_bootstrap_calibration': bootstrap_config,
+            'mpc_bootstrap_model_contracts': contracts,
+            'control_handoff': handoff_config,
+        }
+        virtual_object = {
+            'inertia_command': 'orientation',
+            'force_rendering': {'enabled': False},
+            'contact_detection': {'source': 'wrench_observer'},
+            'release_behavior': {'mode': 'observer_brake'},
+        }
+
+        try:
+            with patch(
+                'Interaction.interactions.time.time',
+                side_effect=context.clock.time,
+            ), patch(
+                'Interaction.interactions.time.monotonic',
+                side_effect=context.clock.monotonic,
+            ), patch(
+                'Interaction.interactions.validate_mpc_bootstrap_model_contracts',
+                return_value=contracts,
+            ), patch(
+                'Interaction.interactions.mpc_bootstrap_model_contract_for_direction',
+                side_effect=contract_for_direction,
+            ):
+                controller.interaction_onboard_wrench_admittance(
+                    duration=10.0,
+                    nominal_position=[0.0, 0.0, 1.0],
+                    nominal_yaw_deg=0.0,
+                    config=config,
+                    virtual_object_config=virtual_object,
+                    mpc_calibration_mode=True,
+                )
+        except stop_exception:
+            return context
+        self.fail('automatic MPC loop did not reach the requested stop point')
+
     def test_task_detection_method_selects_legacy_velocity(self):
         controller = InteractionsControl.__new__(InteractionsControl)
         controller.drone_id = 'lb11'
@@ -1794,6 +1974,523 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             start['initial_command_mode'],
             TranslationControlHandoff.ATTITUDE_COAST,
         )
+
+    def test_mpc_terminal_gate_revalidates_rebound_before_position_handoff(self):
+        class StopAfterReboundRow(RuntimeError):
+            pass
+
+        scenario = SimpleNamespace(
+            phase='prelude',
+            terminal_complete_row=None,
+            rebound_row=None,
+            position_count_at_start=None,
+        )
+
+        def state_mutator(context, group_name, packet):
+            if group_name == 'VEL_ORI':
+                if scenario.phase == 'terminal':
+                    packet['stateEstimate.vy'] = 0.0
+                    packet['stateEstimate.roll'] = 0.0
+                elif scenario.phase == 'rebound':
+                    packet['stateEstimate.vy'] = 0.06
+                    packet['stateEstimate.roll'] = 4.0
+                else:
+                    attitude_calls = [
+                        call for call in context.commander.calls
+                        if call[0] == 'zdistance'
+                    ]
+                    if (
+                        attitude_calls
+                        and attitude_calls[-1][1][0] <= -7.99
+                    ):
+                        packet['stateEstimate.vy'] = 0.25
+                        packet['stateEstimate.roll'] = -8.0
+            elif (
+                group_name == 'POS_ACC'
+                and scenario.phase in ('terminal', 'rebound')
+            ):
+                packet['stateEstimate.y'] = 0.12
+
+        def event_callback(context, name, _payload):
+            if name == 'Learning MPC Bootstrap Braking Started':
+                scenario.phase = 'terminal'
+                scenario.position_count_at_start = sum(
+                    call[0] == 'position'
+                    for call in context.commander.calls
+                )
+
+        def record_callback(_context, group_name, _name, entry):
+            if (
+                group_name != 'wrench_observer'
+                or entry.get('release_dataset_episode_id') is None
+            ):
+                return
+            gate = entry['release_dataset_terminal_gate']
+            if scenario.phase == 'terminal' and gate['complete']:
+                scenario.terminal_complete_row = entry
+                scenario.phase = 'rebound'
+            elif scenario.phase == 'rebound':
+                scenario.rebound_row = entry
+                raise StopAfterReboundRow
+
+        context = self._run_automatic_mpc_loop_harness(
+            stop_exception=StopAfterReboundRow,
+            state_mutator=state_mutator,
+            event_callback=event_callback,
+            record_callback=record_callback,
+            handoff_overrides={'coast_level_handoff_delay_s': 0.30},
+        )
+
+        self.assertIsNotNone(scenario.terminal_complete_row)
+        self.assertTrue(
+            scenario.terminal_complete_row[
+                'release_dataset_terminal_gate'
+            ]['complete']
+        )
+        self.assertEqual(
+            scenario.terminal_complete_row['release_dataset_command_owner'],
+            TranslationControlHandoff.ATTITUDE_COAST,
+        )
+        self.assertIsNone(
+            scenario.terminal_complete_row['release_dataset_pending_outcome']
+        )
+
+        rebound = scenario.rebound_row
+        self.assertIsNotNone(rebound)
+        self.assertEqual(rebound['velocity_m_s'], [0.0, 0.06, 0.0])
+        self.assertAlmostEqual(
+            np.degrees(rebound['orientation_rpy_rad'][0]), 4.0
+        )
+        rebound_gate = rebound['release_dataset_terminal_gate']
+        self.assertFalse(rebound_gate['complete'])
+        self.assertIn(
+            'xy_speed_above_terminal_limit', rebound_gate['violations']
+        )
+        self.assertIn(
+            'attitude_above_terminal_limit', rebound_gate['violations']
+        )
+        self.assertEqual(
+            rebound['release_dataset_command_owner'],
+            TranslationControlHandoff.ATTITUDE_COAST,
+        )
+        self.assertTrue(
+            rebound['actual_commands_sent_since_previous_state']
+        )
+        self.assertTrue(all(
+            command['kind'] == 'attitude_zdistance'
+            for command in rebound[
+                'actual_commands_sent_since_previous_state'
+            ]
+        ))
+        self.assertEqual(
+            sum(
+                call[0] == 'position'
+                for call in context.commander.calls
+            ),
+            scenario.position_count_at_start,
+        )
+        self.assertEqual(context.commander.calls[-1][0], 'zdistance')
+
+    def test_mpc_terminal_dwell_waits_for_real_handoff_and_upper_bracket(self):
+        class StopAfterTerminalFinalize(RuntimeError):
+            pass
+
+        scenario = SimpleNamespace(
+            phase='prelude',
+            dataset_rows=[],
+            prehandoff_complete_rows=[],
+            handoff_row=None,
+            upper_bracket_row=None,
+            terminal_event=None,
+        )
+
+        def state_mutator(context, group_name, packet):
+            if group_name == 'VEL_ORI':
+                if scenario.phase == 'terminal':
+                    packet['stateEstimate.vy'] = 0.0
+                    packet['stateEstimate.roll'] = 0.0
+                else:
+                    attitude_calls = [
+                        call for call in context.commander.calls
+                        if call[0] == 'zdistance'
+                    ]
+                    if (
+                        attitude_calls
+                        and attitude_calls[-1][1][0] <= -7.99
+                    ):
+                        packet['stateEstimate.vy'] = 0.25
+                        packet['stateEstimate.roll'] = -8.0
+            elif group_name == 'POS_ACC' and scenario.phase == 'terminal':
+                packet['stateEstimate.y'] = 0.12
+
+        def event_callback(_context, name, payload):
+            if name == 'Learning MPC Bootstrap Braking Started':
+                scenario.phase = 'terminal'
+            elif name == 'Release Dataset Terminal Dwell Complete':
+                scenario.terminal_event = payload
+                raise StopAfterTerminalFinalize
+
+        def record_callback(_context, group_name, _name, entry):
+            if (
+                group_name != 'wrench_observer'
+                or entry.get('release_dataset_episode_id') is None
+            ):
+                return
+            scenario.dataset_rows.append(entry)
+            if entry.get('release_dataset_resample_upper_bracket'):
+                scenario.upper_bracket_row = entry
+            elif entry.get('release_dataset_pending_outcome') == (
+                'terminal_handoff'
+            ):
+                scenario.handoff_row = entry
+            elif entry['release_dataset_terminal_gate']['complete']:
+                scenario.prehandoff_complete_rows.append(entry)
+
+        self._run_automatic_mpc_loop_harness(
+            stop_exception=StopAfterTerminalFinalize,
+            state_mutator=state_mutator,
+            event_callback=event_callback,
+            record_callback=record_callback,
+            handoff_overrides={'coast_level_handoff_delay_s': 0.30},
+        )
+
+        self.assertTrue(scenario.prehandoff_complete_rows)
+        first_complete = scenario.prehandoff_complete_rows[0]
+        self.assertAlmostEqual(
+            first_complete['release_dataset_terminal_gate']['dwell_s'],
+            0.08,
+            places=8,
+        )
+        for row in scenario.prehandoff_complete_rows:
+            self.assertEqual(
+                row['release_dataset_command_owner'],
+                TranslationControlHandoff.ATTITUDE_COAST,
+            )
+            self.assertIsNone(row['release_dataset_pending_outcome'])
+            self.assertTrue(row['actual_commands_sent_since_previous_state'])
+            self.assertTrue(all(
+                command['kind'] == 'attitude_zdistance'
+                for command in row[
+                    'actual_commands_sent_since_previous_state'
+                ]
+            ))
+
+        handoff_row = scenario.handoff_row
+        self.assertIsNotNone(handoff_row)
+        self.assertEqual(
+            handoff_row['release_dataset_command_owner'],
+            TranslationControlHandoff.POSITION_HOLD,
+        )
+        self.assertTrue(
+            handoff_row['release_dataset_terminal_gate']['complete']
+        )
+        self.assertEqual(
+            handoff_row['release_dataset_pending_outcome'],
+            'terminal_handoff',
+        )
+        handoff_commands = handoff_row[
+            'actual_commands_sent_since_previous_state'
+        ]
+        self.assertEqual(len(handoff_commands), 1)
+        self.assertEqual(handoff_commands[0]['kind'], 'position')
+        self.assertEqual(
+            handoff_commands[0]['position_m'], [0.0, 0.12, 1.0]
+        )
+
+        level_commands = [
+            command
+            for row in scenario.dataset_rows
+            for command in (
+                row.get('actual_commands_sent_since_previous_state') or []
+            )
+            if (
+                command['kind'] == 'attitude_zdistance'
+                and abs(command['roll_deg']) <= 1e-12
+                and abs(command['pitch_deg']) <= 1e-12
+            )
+        ]
+        self.assertTrue(level_commands)
+        self.assertGreaterEqual(
+            handoff_commands[0]['sent_at']-level_commands[0]['sent_at'],
+            0.30-1e-12,
+        )
+
+        upper = scenario.upper_bracket_row
+        self.assertIsNotNone(upper)
+        self.assertTrue(upper['release_dataset_resample_upper_bracket'])
+        self.assertIsNone(upper['release_dataset_pending_outcome'])
+        self.assertEqual(
+            upper['release_dataset_final_position_sequence'],
+            handoff_commands[0]['sequence'],
+        )
+        self.assertEqual(
+            upper['release_dataset_final_position_sent_at'],
+            handoff_commands[0]['sent_at'],
+        )
+        self.assertGreaterEqual(
+            upper['state_time'],
+            upper['release_dataset_final_position_sent_at'],
+        )
+        self.assertEqual(
+            upper['actual_commands_sent_since_previous_state'], []
+        )
+        terminal_event = scenario.terminal_event
+        self.assertIsNotNone(terminal_event)
+        self.assertEqual(
+            terminal_event['release_dataset_outcome'], 'terminal_handoff'
+        )
+        self.assertEqual(
+            terminal_event['final_position_sequence'],
+            handoff_commands[0]['sequence'],
+        )
+        self.assertEqual(
+            terminal_event['resample_upper_bracket_state_time'],
+            upper['state_time'],
+        )
+
+    def test_mpc_coast_predictor_runtime_does_not_drift_command_cadence(self):
+        class StopAfterCoastCadenceRows(RuntimeError):
+            pass
+
+        scenario = SimpleNamespace(
+            phase='prelude',
+            context=None,
+            start_wall_s=None,
+            predictor_calls=[],
+            coast_commands={},
+        )
+
+        def state_mutator(context, group_name, packet):
+            scenario.context = context
+            if group_name != 'VEL_ORI':
+                return
+            if scenario.phase == 'coast':
+                packet['stateEstimate.vy'] = 0.20
+                packet['stateEstimate.roll'] = 0.0
+                return
+            attitude_calls = [
+                call for call in context.commander.calls
+                if call[0] == 'zdistance'
+            ]
+            if attitude_calls and attitude_calls[-1][1][0] <= -7.99:
+                packet['stateEstimate.vy'] = 0.25
+                packet['stateEstimate.roll'] = -8.0
+
+        def event_callback(context, name, _payload):
+            if name == 'Learning MPC Bootstrap Braking Started':
+                scenario.phase = 'coast'
+                scenario.start_wall_s = context.clock.time()
+
+        def record_callback(_context, group_name, _name, entry):
+            if (
+                group_name != 'wrench_observer'
+                or entry.get('release_dataset_episode_id') is None
+                or scenario.start_wall_s is None
+            ):
+                return
+            for command in (
+                entry.get('actual_commands_sent_since_previous_state') or []
+            ):
+                if (
+                    command['kind'] == 'attitude_zdistance'
+                    and command['sent_at'] > scenario.start_wall_s+1e-9
+                ):
+                    scenario.coast_commands[command['sequence']] = command
+            if len(scenario.coast_commands) >= 5:
+                raise StopAfterCoastCadenceRows
+
+        real_update = TranslationControlHandoff.update_coast_attitude
+
+        def update_with_pi_runtime(control, *args, **kwargs):
+            context = scenario.context
+            entry_wall_s = context.clock.time()
+            entry_monotonic_s = context.clock.monotonic()
+            planned_wall_s = kwargs['command_timestamp']
+            planned_monotonic_s = (
+                entry_monotonic_s+planned_wall_s-entry_wall_s
+            )
+            # Model a bounded Pi-side predictor calculation without sleeping
+            # the test process. The later production pacing wait must absorb
+            # this runtime instead of adding it to the 20 ms send interval.
+            context.clock.advance(0.0015)
+            scenario.predictor_calls.append({
+                'entry_wall_s': entry_wall_s,
+                'planned_wall_s': planned_wall_s,
+                'planned_monotonic_s': planned_monotonic_s,
+                'finished_monotonic_s': context.clock.monotonic(),
+            })
+            return real_update(control, *args, **kwargs)
+
+        with patch.object(
+            TranslationControlHandoff,
+            'update_coast_attitude',
+            autospec=True,
+            side_effect=update_with_pi_runtime,
+        ):
+            context = self._run_automatic_mpc_loop_harness(
+                stop_exception=StopAfterCoastCadenceRows,
+                state_mutator=state_mutator,
+                event_callback=event_callback,
+                record_callback=record_callback,
+            )
+
+        self.assertGreaterEqual(len(scenario.predictor_calls), 5)
+        for call in scenario.predictor_calls:
+            self.assertGreater(
+                call['planned_wall_s'], call['entry_wall_s']
+            )
+            self.assertLess(
+                call['finished_monotonic_s'], call['planned_monotonic_s']
+            )
+
+        commands = [
+            scenario.coast_commands[sequence]
+            for sequence in sorted(scenario.coast_commands)
+        ]
+        self.assertGreaterEqual(len(commands), 5)
+        send_intervals_s = [
+            later['sent_at']-earlier['sent_at']
+            for earlier, later in zip(commands, commands[1:])
+        ]
+        self.assertTrue(send_intervals_s)
+        for interval_s in send_intervals_s:
+            self.assertAlmostEqual(interval_s, 0.020, delta=0.001)
+        planned_times_s = [
+            call['planned_wall_s'] for call in scenario.predictor_calls
+        ]
+        for command in commands:
+            self.assertTrue(any(
+                abs(command['sent_at']-planned_s) <= 1e-9
+                for planned_s in planned_times_s
+            ))
+        self.assertNotIn(
+            'Learning MPC Bootstrap Command Cadence Rejected',
+            [name for name, _payload in context.events],
+        )
+
+    def test_mpc_recoverable_prelude_sends_current_position_before_reschedule(self):
+        class StopAfterReschedule(RuntimeError):
+            pass
+
+        scenario = SimpleNamespace(
+            phase='prelude',
+            scheduled_count=0,
+        )
+
+        def state_mutator(context, group_name, packet):
+            if group_name == 'VEL_ORI':
+                if scenario.phase == 'safe_stop':
+                    packet['stateEstimate.vy'] = 0.0
+                    packet['stateEstimate.roll'] = 0.0
+                else:
+                    attitude_calls = [
+                        call for call in context.commander.calls
+                        if call[0] == 'zdistance'
+                    ]
+                    if (
+                        attitude_calls
+                        and attitude_calls[-1][1][0] <= -7.99
+                    ):
+                        # Skip the 0.25 +/- 0.02 m/s release window without
+                        # crossing the recoverable 0.40 m/s absolute limit.
+                        packet['stateEstimate.vy'] = 0.30
+                        packet['stateEstimate.roll'] = -8.0
+            elif group_name == 'POS_ACC' and scenario.phase == 'safe_stop':
+                packet['stateEstimate.y'] = 0.12
+
+        def event_callback(_context, name, _payload):
+            if name == 'Learning MPC Bootstrap Automatic Attempt Scheduled':
+                scenario.scheduled_count += 1
+                if scenario.scheduled_count == 2:
+                    raise StopAfterReschedule
+            elif name == 'Learning MPC Bootstrap Automatic Prelude Rejected':
+                scenario.phase = 'safe_stop'
+
+        context = self._run_automatic_mpc_loop_harness(
+            stop_exception=StopAfterReschedule,
+            state_mutator=state_mutator,
+            event_callback=event_callback,
+            handoff_overrides={'coast_level_handoff_delay_s': 0.02},
+        )
+
+        event_names = [name for name, _payload in context.events]
+        self.assertNotIn(
+            'Learning MPC Bootstrap Braking Started', event_names
+        )
+        rejected = next(
+            payload for name, payload in context.events
+            if name == 'Learning MPC Bootstrap Automatic Prelude Rejected'
+        )
+        self.assertIn(
+            'target_window_skipped_automatic_prelude_violation',
+            rejected['prelude_failure_reasons'],
+        )
+        self.assertFalse(rejected['dataset_started'])
+        self.assertEqual(
+            rejected['safe_fallback'], 'legacy_attitude_coast_to_rest'
+        )
+
+        handoff = next(
+            payload for name, payload in context.events
+            if name == 'Coast Position Control Handoff'
+        )
+        self.assertEqual(
+            handoff['reason'], 'terminal_current_position_handoff'
+        )
+        self.assertEqual(handoff['target_position_m'], [0.0, 0.12, 1.0])
+        finished = next(
+            payload for name, payload in context.events
+            if name == 'Learning MPC Bootstrap Automatic Attempt Finished'
+        )
+        self.assertFalse(finished['counted'])
+        self.assertEqual(finished['retry_count_for_cell'], 1)
+        self.assertEqual(
+            finished['reason'],
+            'target_window_skipped_automatic_prelude_violation',
+        )
+        self.assertEqual(finished['return_target_m'], [0.0, 0.0, 1.0])
+
+        rejection_index = next(
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == (
+                'event',
+                'Learning MPC Bootstrap Automatic Prelude Rejected',
+            )
+        )
+        finish_index = next(
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == (
+                'event',
+                'Learning MPC Bootstrap Automatic Attempt Finished',
+            )
+        )
+        scheduled_indices = [
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == (
+                'event',
+                'Learning MPC Bootstrap Automatic Attempt Scheduled',
+            )
+        ]
+        safe_position_indices = [
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == ('command', 'position')
+            and rejection_index < index < finish_index
+        ]
+        self.assertEqual(len(safe_position_indices), 1)
+        safe_position_index = safe_position_indices[0]
+        self.assertEqual(
+            context.timeline[safe_position_index][2],
+            (0.0, 0.12, 1.0, 0.0),
+        )
+        self.assertLess(rejection_index, safe_position_index)
+        self.assertLess(safe_position_index, finish_index)
+        self.assertLess(finish_index, scheduled_indices[1])
+        scheduled_payloads = [
+            payload for name, payload in context.events
+            if name == 'Learning MPC Bootstrap Automatic Attempt Scheduled'
+        ]
+        self.assertEqual(len(scheduled_payloads), 2)
+        self.assertEqual(scheduled_payloads[1]['direction_sign'], -1)
 
     def test_active_translation_aims_release_tilt_along_braking_direction_then_holds(self):
         commander = FakeCommander()

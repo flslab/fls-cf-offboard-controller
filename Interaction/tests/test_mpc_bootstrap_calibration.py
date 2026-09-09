@@ -167,6 +167,9 @@ class MPCBootstrapCalibrationTests(unittest.TestCase):
         self.assertFalse(wrench["shadow_mode"])
         self.assertFalse(wrench["detection"]["translation"]["enabled"])
         self.assertFalse(wrench["detection"]["yaw"]["enabled"])
+        self.assertTrue(wrench["safety"]["enforce_state_group_skew"])
+        self.assertEqual(wrench["safety"]["max_state_age_s"], 0.10)
+        self.assertEqual(wrench["safety"]["max_state_group_skew_s"], 0.03)
         for name in (
             "calibration_excitation", "planar_braking_calibration",
             "adaptive_braking_calibration", "online_prediction_calibration",

@@ -1643,6 +1643,18 @@ def configure_mpc_bootstrap_mission(mission):
     wrench["state_source"] = "onboard"
     wrench["shadow_mode"] = False
     wrench["startup_bias_calibration_enabled"] = False
+    # Automatic acceleration and braking use position, velocity, attitude, and
+    # angular-rate callbacks in the same decision.  Freeze the same strict
+    # synchronization limits as the offline safe-set contract; the normal
+    # translation mission is allowed to keep its more permissive logging-only
+    # policy outside this private --mpc copy.
+    bootstrap_limits = SafeSetLimits()
+    safety = wrench.setdefault("safety", {})
+    safety["enforce_state_group_skew"] = True
+    safety["max_state_age_s"] = bootstrap_limits.max_state_age_s
+    safety["max_state_group_skew_s"] = (
+        bootstrap_limits.max_state_group_skew_s
+    )
     wrench.setdefault("detection", {}).setdefault("translation", {})[
         "enabled"
     ] = False
