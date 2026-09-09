@@ -261,6 +261,7 @@ class Controller:
             self.mission,
             drone_id=self.args.drone_id,
             sense_axis=self.args.sense_axis,
+            controller_rate_hz=self.args.smooth_controller_rate,
         )
         if self.missions:
             self.missions[0] = self.mission

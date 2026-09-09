@@ -2194,6 +2194,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             coast_velocity_unwind_integrated_leveling_enabled=True,
             coast_velocity_unwind_leveling_rate_deg_s=100.0,
             coast_attitude_response_delay_s=0.07,
+            coast_velocity_unwind_command_switch_delay_s=0.03,
         )
         self.assertTrue(control.start_contact('orientation'))
         self.assertTrue(control.end_contact(
@@ -2213,7 +2214,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             orientation,
             np.zeros(3),
             [0.0, 1.0],
-            response_delay_s=0.082,
+            response_delay_s=0.112,
             leveling_rate_deg_s=100.0,
             integration_step_s=0.01,
         )
@@ -2222,8 +2223,12 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             0.012,
         )
         self.assertAlmostEqual(
+            control.coast_velocity_unwind_command_switch_delay_s,
+            0.03,
+        )
+        self.assertAlmostEqual(
             control.coast_velocity_unwind_total_response_delay_s,
-            0.082,
+            0.112,
         )
         self.assertAlmostEqual(
             control.coast_velocity_unwind_integrated_velocity_delta_m_s,
@@ -2233,6 +2238,92 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.coast_velocity_unwind_response_horizon_s,
             expected['duration_s'],
         )
+
+    def test_position_unwind_stays_on_release_line_without_retreat(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_unwind_position_control_enabled=True,
+            coast_velocity_unwind_low_speed_fallback_m_s=1.0,
+            coast_velocity_handoff_speed_m_s=0.03,
+            coast_attitude_response_delay_s=0.07,
+            coast_velocity_unwind_command_switch_delay_s=0.03,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.40, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        # Although the measured vehicle has drifted +0.10 m in X, the target
+        # remains on the +Y interaction line through the release point. The
+        # forward lookahead covers the observed decision and response delay.
+        self.assertFalse(control.update_coast_velocity(
+            [0.10, 0.20, 1.10], [0.0, 0.40, 0.0], 1.01,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.022,
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+        self.assertTrue(control.uses_position_setpoint)
+        self.assertEqual(control.command_mode, 'predictive_unwind_position')
+        np.testing.assert_allclose(
+            control.coast_velocity_unwind_position_target_m,
+            [0.0, 0.2448, 1.0],
+        )
+        self.assertAlmostEqual(
+            control.coast_velocity_unwind_lateral_error_m, -0.10
+        )
+        self.assertTrue(control.consume_velocity_pid_reset_request())
+        control.send(commander, command_timestamp=1.022)
+        self.assertEqual(commander.calls[-1][0], 'position')
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.08, 0.26, 1.0], [0.0, 0.20, 0.0], 1.02,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.03,
+        ))
+        target_before_reversal = (
+            control.coast_velocity_unwind_position_target_m.copy()
+        )
+        np.testing.assert_allclose(target_before_reversal, [0.0, 0.282, 1.0])
+
+        # Once residual attitude creates reverse velocity, the target neither
+        # follows the vehicle backward nor re-enters zero-velocity braking.
+        self.assertFalse(control.update_coast_velocity(
+            [0.06, 0.24, 1.0], [0.0, -0.10, 0.0], 1.03,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.04,
+        ))
+        np.testing.assert_allclose(
+            control.coast_velocity_unwind_position_target_m,
+            target_before_reversal,
+        )
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+        self.assertFalse(control.consume_velocity_rebrake_request())
+
+        # The final POSITION_HOLD retains the same release-line target instead
+        # of latching the laterally drifted measured pose.
+        self.assertFalse(control.update_coast_velocity(
+            [0.04, 0.25, 1.0], [0.0, 0.02, 0.0], 1.12,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+        ))
+        self.assertTrue(control.update_coast_velocity(
+            [0.03, 0.26, 1.0], [0.0, 0.01, 0.0], 1.21,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+        ))
+        np.testing.assert_allclose(control.hold_position, target_before_reversal)
+        self.assertFalse(control.coast_target_clamped_to_actual)
+        self.assertFalse(control.coast_lateral_target_latched_to_actual)
 
     def test_integrated_leveling_delays_overoptimistic_predictive_unwind(self):
         control = TranslationControlHandoff(

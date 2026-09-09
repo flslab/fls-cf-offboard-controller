@@ -7,13 +7,49 @@ import numpy as np
 from Interaction.mpc_bootstrap_calibration import (
     MPCBootstrapCalibrationConfig,
     MPCBootstrapCoverage,
+    build_mpc_bootstrap_model_contracts,
     configure_mpc_bootstrap_mission,
+    mpc_bootstrap_model_contract_for_direction,
     mpc_bootstrap_world_y_direction,
+    mpc_decision_state_age_is_fresh,
     prepare_mpc_bootstrap_mission,
+    validate_mpc_bootstrap_model_contracts,
 )
+from Interaction.tests.test_predictive_brake_handoff import validated_model
 
 
 class MPCBootstrapCalibrationTests(unittest.TestCase):
+    @staticmethod
+    def mission():
+        return {
+            "drones": {"lb11": {"target": [0.0, -1.0, 1.0]}},
+            "boundary_limits": {
+                "x_min": -1.5, "x_max": 1.5,
+                "y_min": -1.5, "y_max": 1.5,
+            },
+            "Interaction": {"action": "translation", "config": {
+                "wrench_interaction": {
+                    "calibration_nominal_position": [0.0, 0.0, 1.0],
+                },
+            }},
+        }
+
+    @staticmethod
+    def saved(*, positive_delay=0.03, negative_delay=0.05):
+        prediction = validated_model()
+        prediction["directional_models"]["positive_y"][
+            "attitude_fit"
+        ]["delay_s"] = positive_delay
+        prediction["directional_models"]["negative_y"][
+            "attitude_fit"
+        ]["delay_s"] = negative_delay
+        return {
+            "planar_braking_fit": {
+                "fit": "current", "command_delay_s": 0.12,
+            },
+            "prediction_model": prediction,
+        }
+
     def test_private_overlay_disables_every_nonbaseline_owner(self):
         mission = {
             "Interaction": {"action": "translation", "config": {
@@ -222,23 +258,23 @@ class MPCBootstrapCalibrationTests(unittest.TestCase):
             result["path_failure_reasons"],
         )
 
+    def test_scheduled_send_rechecks_state_age_boundaries(self):
+        self.assertTrue(mpc_decision_state_age_is_fresh(1.0, 1.0, 0.1))
+        self.assertTrue(mpc_decision_state_age_is_fresh(1.0, 1.1, 0.1))
+        self.assertFalse(mpc_decision_state_age_is_fresh(1.0, 1.1001, 0.1))
+        self.assertFalse(mpc_decision_state_age_is_fresh(1.0, 0.999, 0.1))
+        self.assertFalse(mpc_decision_state_age_is_fresh(1.0, float("nan"), 0.1))
+
     def test_prearm_preparation_applies_and_requires_baseline_fit(self):
-        mission = {
-            "drones": {"lb11": {"target": [0.0, -1.0, 1.0]}},
-            "boundary_limits": {
-                "x_min": -1.5, "x_max": 1.5,
-                "y_min": -1.5, "y_max": 1.5,
+        mission = self.mission()
+        saved = self.saved()
+        resolved = {
+            "resolved": True,
+            "mpc_bootstrap_calibration": {"enabled": True},
+            "control_handoff": {
+                "coast_attitude_response_delay_s": 0.12,
             },
-            "Interaction": {"action": "translation", "config": {
-                "wrench_interaction": {
-                    "calibration_nominal_position": [0.0, 0.0, 1.0],
-                },
-            }},
         }
-        saved = {"planar_braking_fit": {"fit": "current"}}
-        resolved = {"resolved": True, "mpc_bootstrap_calibration": {
-            "enabled": True,
-        }}
         with patch(
             "Interaction.mpc_bootstrap_calibration.apply_drone_calibration",
             return_value=(resolved, saved),
@@ -247,11 +283,21 @@ class MPCBootstrapCalibrationTests(unittest.TestCase):
             return_value=True,
         ):
             prepared = prepare_mpc_bootstrap_mission(
-                mission, drone_id="lb11", sense_axis="y"
+                mission, drone_id="lb11", sense_axis="y",
+                controller_rate_hz=100,
             )
+        wrench = prepared["Interaction"]["config"]["wrench_interaction"]
+        self.assertTrue(wrench["resolved"])
         self.assertEqual(
-            prepared["Interaction"]["config"]["wrench_interaction"],
-            resolved,
+            wrench["control_handoff"]["coast_attitude_response_delay_s"],
+            0.12,
+        )
+        contracts = wrench["mpc_bootstrap_model_contracts"]
+        self.assertEqual(contracts["positive_y"]["command_delay_s"], 0.03)
+        self.assertEqual(contracts["negative_y"]["command_delay_s"], 0.05)
+        self.assertNotEqual(
+            contracts["positive_y"]["model_fingerprint"],
+            contracts["negative_y"]["model_fingerprint"],
         )
         apply_fit.assert_called_once()
 
@@ -260,13 +306,139 @@ class MPCBootstrapCalibrationTests(unittest.TestCase):
             return_value=({}, None),
         ), self.assertRaisesRegex(ValueError, "run --calibrate first"):
             prepare_mpc_bootstrap_mission(
-                mission, drone_id="lb11", sense_axis="y"
+                mission, drone_id="lb11", sense_axis="y",
+                controller_rate_hz=100,
+            )
+
+    def test_directional_contract_selects_exact_delay_and_state_shape(self):
+        contracts = build_mpc_bootstrap_model_contracts(
+            self.saved(
+                positive_delay=0.021,
+                negative_delay=0.061,
+            )["prediction_model"],
+            prediction_step_s=0.02,
+        )
+        positive = mpc_bootstrap_model_contract_for_direction(
+            contracts, [0.0, 1.0]
+        )
+        negative = mpc_bootstrap_model_contract_for_direction(
+            contracts, [0.0, -1.0]
+        )
+        self.assertEqual(positive["command_delay_s"], 0.021)
+        self.assertEqual(negative["command_delay_s"], 0.061)
+        self.assertEqual(positive["state_dimension"], 5)
+        self.assertEqual(negative["state_dimension"], 7)
+        self.assertNotEqual(
+            positive["model_fingerprint"], negative["model_fingerprint"]
+        )
+        self.assertEqual(
+            positive["conditional_velocity_lmpc_config"][
+                "prediction_step_s"
+            ],
+            0.02,
+        )
+
+    def test_directional_contract_tampering_fails_closed(self):
+        contracts = build_mpc_bootstrap_model_contracts(
+            self.saved()["prediction_model"], prediction_step_s=0.02
+        )
+        contracts["positive_y"]["command_delay_s"] = 0.031
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            validate_mpc_bootstrap_model_contracts(
+                contracts, expected_prediction_step_s=0.02
+            )
+
+    def test_prearm_rejects_missing_unvalidated_or_zero_directional_model(self):
+        mission = self.mission()
+        cases = []
+        missing = self.saved()
+        missing["prediction_model"]["directional_models"].pop("negative_y")
+        cases.append(("missing", missing, "prediction_model"))
+        unvalidated = self.saved()
+        unvalidated["prediction_model"]["validation_passed"] = False
+        unvalidated["prediction_model"]["validation"][
+            "validation_passed"
+        ] = False
+        cases.append(("unvalidated", unvalidated, "not independently validated"))
+        zero = self.saved(negative_delay=0.0)
+        cases.append(("zero", zero, "positive directional command delay"))
+        for name, saved, expected in cases:
+            resolved = {
+                "mpc_bootstrap_calibration": {"enabled": True},
+                "control_handoff": {
+                    "coast_attitude_response_delay_s": 0.12,
+                },
+            }
+            with self.subTest(name=name), patch(
+                "Interaction.mpc_bootstrap_calibration.apply_drone_calibration",
+                return_value=(resolved, saved),
+            ), patch(
+                "Interaction.mpc_bootstrap_calibration.planar_braking_fit_is_current",
+                return_value=True,
+            ), self.assertRaisesRegex(ValueError, expected):
+                prepare_mpc_bootstrap_mission(
+                    mission, drone_id="lb11", sense_axis="y",
+                    controller_rate_hz=100,
+                )
+
+    def test_prearm_preparation_rejects_zero_fitted_delay(self):
+        mission = {
+            "drones": {"lb11": {"target": [0.0, 0.0, 1.0]}},
+            "boundary_limits": {
+                "x_min": -1.5, "x_max": 1.5,
+                "y_min": -1.5, "y_max": 1.5,
+            },
+            "Interaction": {"action": "translation", "config": {
+                "wrench_interaction": {},
+            }},
+        }
+        resolved = {
+            "mpc_bootstrap_calibration": {"enabled": True},
+            "control_handoff": {
+                "coast_attitude_response_delay_s": 0.0,
+            },
+        }
+        saved = {"planar_braking_fit": {
+            "fit": "current", "command_delay_s": 0.0,
+        }}
+        with patch(
+            "Interaction.mpc_bootstrap_calibration.apply_drone_calibration",
+            return_value=(resolved, saved),
+        ), patch(
+            "Interaction.mpc_bootstrap_calibration.planar_braking_fit_is_current",
+            return_value=True,
+        ), self.assertRaisesRegex(ValueError, "positive fitted command delay"):
+            prepare_mpc_bootstrap_mission(
+                mission, drone_id="lb11", sense_axis="y",
+                controller_rate_hz=100,
+            )
+
+    def test_prearm_preparation_rejects_nonintegral_decision_rate(self):
+        mission = {
+            "drones": {"lb11": {"target": [0.0, 0.0, 1.0]}},
+            "boundary_limits": {
+                "x_min": -1.5, "x_max": 1.5,
+                "y_min": -1.5, "y_max": 1.5,
+            },
+            "Interaction": {"action": "translation", "config": {
+                "wrench_interaction": {
+                    "mpc_bootstrap_calibration": {
+                        "prediction_step_s": 0.015,
+                    },
+                },
+            }},
+        }
+        with self.assertRaisesRegex(ValueError, "integral multiple"):
+            prepare_mpc_bootstrap_mission(
+                mission, drone_id="lb11", sense_axis="y",
+                controller_rate_hz=100,
             )
 
     def test_prearm_preparation_rejects_wrong_sensor_axis(self):
         with self.assertRaisesRegex(ValueError, "sense-axis y"):
             prepare_mpc_bootstrap_mission(
-                {}, drone_id="lb11", sense_axis="x"
+                {}, drone_id="lb11", sense_axis="x",
+                controller_rate_hz=100,
             )
 
 

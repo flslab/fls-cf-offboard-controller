@@ -63,6 +63,7 @@ from Interaction.velocity_lmpc_safe_set import (
 START_EVENT = "Potentiometer Release Coasting Started"
 TERMINAL_DWELL_EVENT = "Release Dataset Terminal Dwell Complete"
 CLOSE_EVENT = "Release Dataset Episode Closed"
+BOOTSTRAP_ATTEMPT_CLOSED_EVENT = "Learning MPC Bootstrap Attempt Closed"
 # Export the legacy name for callers that used the first draft, but never use
 # it as an extraction boundary or as evidence of success.
 LEGACY_HANDOFF_EVENT = "Translation Position Hold Resumed"
@@ -323,6 +324,48 @@ def _is_hazard_event(record):
     )
 
 
+def _validate_resampled_bootstrap_eligibility(data, episode_id):
+    """Bind final replay to the raw flight-side sticky path audit."""
+    if data.get("decision_time_resampled") is not True:
+        return
+    eligibility = data.get("release_dataset_bootstrap_eligibility")
+    if not isinstance(eligibility, dict):
+        raise ReplayValidationError(
+            "resampled terminal marker has no bootstrap eligibility audit"
+        )
+    if eligibility.get("event_name") != BOOTSTRAP_ATTEMPT_CLOSED_EVENT:
+        raise ReplayValidationError(
+            "resampled bootstrap eligibility has the wrong source event"
+        )
+    if eligibility.get("episode_id") != episode_id:
+        raise ReplayValidationError(
+            "resampled bootstrap eligibility episode_id does not match"
+        )
+    source_index = eligibility.get("source_record_index")
+    if (
+        isinstance(source_index, bool)
+        or not isinstance(source_index, numbers.Integral)
+        or int(source_index) < 0
+    ):
+        raise ReplayValidationError(
+            "resampled bootstrap eligibility source_record_index is invalid"
+        )
+    for field_name in (
+        "terminal_success", "countable", "provisional_path_eligible",
+        "counted",
+    ):
+        if eligibility.get(field_name) is not True:
+            raise ReplayValidationError(
+                "resampled bootstrap eligibility "
+                f"{field_name} must be true"
+            )
+    if eligibility.get("path_failure_reasons") != []:
+        raise ReplayValidationError(
+            "resampled bootstrap eligibility path_failure_reasons must be "
+            "exactly an empty array"
+        )
+
+
 def _segments(records, config):
     active = None
     seen_starts = set()
@@ -404,6 +447,30 @@ def _segments(records, config):
                         f"record {index} release_pending_command_history "
                         "must be an array"
                     )
+                if data.get("decision_time_resampled") is True:
+                    logged_fingerprint = data.get(
+                        "release_dataset_model_fingerprint"
+                    )
+                    if logged_fingerprint != config.model_fingerprint:
+                        raise ReplayValidationError(
+                            f"record {index} frozen model fingerprint does "
+                            "not match the replay contract"
+                        )
+                    logged_state_dimension = data.get(
+                        "release_dataset_state_dimension"
+                    )
+                    if (
+                        isinstance(logged_state_dimension, bool)
+                        or not isinstance(
+                            logged_state_dimension, numbers.Integral
+                        )
+                        or int(logged_state_dimension)
+                        != config.state_dimension
+                    ):
+                        raise ReplayValidationError(
+                            f"record {index} state dimension does not match "
+                            "the replay contract"
+                        )
             except ReplayValidationError as error:
                 reject(None, str(error), index, index)
                 lingering_id = None
@@ -443,6 +510,7 @@ def _segments(records, config):
                     data.get("terminal_state_time"),
                     f"record {index} terminal_state_time",
                 )
+                _validate_resampled_bootstrap_eligibility(data, episode_id)
             except ReplayValidationError as error:
                 reject(None, str(error), None, index)
                 continue
@@ -546,7 +614,17 @@ def _segments(records, config):
             continue
 
         if record_type == "wrench_observer":
-            data = _record_data(record, index)
+            try:
+                data = _record_data(record, index)
+            except ReplayValidationError as error:
+                if active is not None:
+                    # Keep parsing to the episode boundary so one structurally
+                    # bad trajectory becomes one explicit rejection without
+                    # discarding later independent releases in the same file.
+                    active["errors"].append(str(error))
+                else:
+                    reject(None, str(error), index, index)
+                continue
             row_id = data.get("release_dataset_episode_id")
             if active is not None:
                 if row_id != active["episode_id"]:

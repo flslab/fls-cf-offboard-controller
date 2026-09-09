@@ -10,13 +10,24 @@ world-Y/initial-speed cells produced complete terminal trajectories.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import hashlib
+import json
 import math
 import numbers
 
 import numpy as np
 
-from Interaction.velocity_lmpc_safe_set import SafeSetLimits
+from Interaction.conditional_velocity_lmpc import (
+    ConditionalVelocityLMPCConfig,
+    OfflineConditionalVelocityLMPC,
+    conditional_velocity_lmpc_fingerprint,
+)
+from Interaction.learning_velocity_mpc import (
+    frozen_velocity_model_from_prediction_model,
+)
+from Interaction.offline_braking_selector import FrozenTiltModel
+from Interaction.velocity_lmpc_safe_set import SafeSetLimits, StageCostSpec
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH,
     apply_drone_calibration,
@@ -161,6 +172,238 @@ def mpc_bootstrap_world_y_direction(
     ):
         return None
     return np.asarray([0.0, float(np.sign(velocity[1]))])
+
+
+def mpc_decision_state_age_is_fresh(
+        state_time_s, checked_at_s, max_state_age_s):
+    """Return whether a scheduled send still has a fresh causal state."""
+    if any(
+        isinstance(value, bool) or not isinstance(value, numbers.Real)
+        for value in (state_time_s, checked_at_s, max_state_age_s)
+    ):
+        return False
+    values = np.asarray([
+        state_time_s, checked_at_s, max_state_age_s,
+    ], dtype=float)
+    if not np.all(np.isfinite(values)) or float(max_state_age_s) <= 0.0:
+        return False
+    age_s = float(checked_at_s)-float(state_time_s)
+    return 0.0 <= age_s <= float(max_state_age_s)+1e-12
+
+
+def _prediction_model_sha256(prediction_model):
+    try:
+        encoded = json.dumps(
+            prediction_model,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "--mpc saved prediction_model is not canonical JSON"
+        ) from error
+    return "sha256:"+hashlib.sha256(encoded).hexdigest()
+
+
+def build_mpc_bootstrap_model_contracts(
+        prediction_model, *, prediction_step_s):
+    """Freeze exact per-direction LMPC contracts before the vehicle arms."""
+    if not isinstance(prediction_model, dict):
+        raise ValueError(
+            "--mpc requires a saved independently validated directional "
+            "prediction_model; run the prediction calibration first"
+        )
+    prediction_step = _positive_float(
+        prediction_step_s, "prediction_step_s"
+    )
+    lmpc_config = ConditionalVelocityLMPCConfig(
+        prediction_step_s=prediction_step
+    )
+    lmpc_config.validate()
+    safe_set_limits = SafeSetLimits()
+    stage_cost_spec = StageCostSpec()
+    source_sha256 = _prediction_model_sha256(prediction_model)
+    contracts = {}
+    for expected_label, direction_sign in (
+            ("positive_y", 1), ("negative_y", -1)):
+        try:
+            frozen_model, selected_label = (
+                frozen_velocity_model_from_prediction_model(
+                    prediction_model,
+                    direction_y=direction_sign,
+                    require_validated_evidence=True,
+                )
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                f"--mpc {expected_label} prediction_model is missing or "
+                "not independently validated"
+            ) from error
+        if selected_label != expected_label:
+            raise ValueError(
+                f"--mpc {expected_label} prediction_model selected "
+                f"unexpected direction {selected_label!r}"
+            )
+        if not math.isfinite(float(frozen_model.delay_s)) or (
+                float(frozen_model.delay_s) <= 0.0):
+            raise ValueError(
+                f"--mpc {expected_label} prediction_model requires a "
+                "positive directional command delay"
+            )
+        planner = OfflineConditionalVelocityLMPC(
+            frozen_model,
+            config=lmpc_config,
+            safe_set_limits=safe_set_limits,
+            stage_cost_spec=stage_cost_spec,
+        )
+        model_fingerprint = conditional_velocity_lmpc_fingerprint(
+            frozen_model,
+            lmpc_config,
+            safe_set_limits,
+            stage_cost_spec,
+        )
+        if planner.model_fingerprint != model_fingerprint:
+            raise RuntimeError("conditional LMPC fingerprint implementation drift")
+        contracts[expected_label] = {
+            "schema_version": 1,
+            "kind": "directional_conditional_velocity_lmpc_contract",
+            "direction_label": expected_label,
+            "direction_sign": direction_sign,
+            "direction_xy": [0.0, float(direction_sign)],
+            "command_delay_s": float(frozen_model.delay_s),
+            "prediction_step_s": prediction_step,
+            "model_fingerprint": model_fingerprint,
+            "state_dimension": int(planner.state_dimension),
+            "delay_steps": int(planner.delay_steps),
+            "delay_remainder_s": float(planner.delay_remainder_s),
+            "frozen_model": asdict(frozen_model),
+            "conditional_velocity_lmpc_config": asdict(lmpc_config),
+            "safe_set_limits": safe_set_limits.to_dict(),
+            "stage_cost_spec": stage_cost_spec.to_dict(),
+            "source_prediction_model_sha256": source_sha256,
+            "source_prediction_model_schema_version": (
+                prediction_model.get("schema_version")
+            ),
+            "source_prediction_model_kind": prediction_model.get("kind"),
+        }
+    return contracts
+
+
+def validate_mpc_bootstrap_model_contracts(
+        value, *, expected_prediction_step_s=None):
+    """Validate stored contracts by rebuilding their exact fingerprints."""
+    if not isinstance(value, dict) or set(value) != {
+            "positive_y", "negative_y"}:
+        raise ValueError(
+            "--mpc requires positive_y and negative_y model contracts"
+        )
+    expected_step = (
+        None if expected_prediction_step_s is None else
+        _positive_float(
+            expected_prediction_step_s, "expected_prediction_step_s"
+        )
+    )
+    validated = {}
+    for label, direction_sign in (("positive_y", 1), ("negative_y", -1)):
+        contract = value[label]
+        if not isinstance(contract, dict):
+            raise ValueError(f"--mpc {label} model contract must be a mapping")
+        try:
+            if (
+                contract["schema_version"] != 1
+                or contract["kind"]
+                != "directional_conditional_velocity_lmpc_contract"
+                or contract["direction_label"] != label
+                or contract["direction_sign"] != direction_sign
+                or contract["direction_xy"] != [0.0, float(direction_sign)]
+            ):
+                raise ValueError("direction identity mismatch")
+            frozen_model = FrozenTiltModel(**contract["frozen_model"])
+            lmpc_config = ConditionalVelocityLMPCConfig(
+                **contract["conditional_velocity_lmpc_config"]
+            )
+            lmpc_config.validate()
+            safe_set_limits = SafeSetLimits.from_dict(
+                contract["safe_set_limits"]
+            )
+            stage_cost_spec = StageCostSpec.from_dict(
+                contract["stage_cost_spec"]
+            )
+            planner = OfflineConditionalVelocityLMPC(
+                frozen_model,
+                config=lmpc_config,
+                safe_set_limits=safe_set_limits,
+                stage_cost_spec=stage_cost_spec,
+            )
+            exact_fingerprint = conditional_velocity_lmpc_fingerprint(
+                frozen_model,
+                lmpc_config,
+                safe_set_limits,
+                stage_cost_spec,
+            )
+            command_delay = float(contract["command_delay_s"])
+            prediction_step = float(contract["prediction_step_s"])
+            valid = (
+                math.isfinite(command_delay)
+                and command_delay > 0.0
+                and math.isclose(
+                    command_delay,
+                    float(frozen_model.delay_s),
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+                and math.isclose(
+                    prediction_step,
+                    float(lmpc_config.prediction_step_s),
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+                and (
+                    expected_step is None
+                    or math.isclose(
+                        prediction_step,
+                        expected_step,
+                        rel_tol=0.0,
+                        abs_tol=1e-12,
+                    )
+                )
+                and contract["model_fingerprint"] == exact_fingerprint
+                and contract["state_dimension"] == planner.state_dimension
+                and contract["delay_steps"] == planner.delay_steps
+                and math.isclose(
+                    float(contract["delay_remainder_s"]),
+                    planner.delay_remainder_s,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                f"--mpc {label} model contract is malformed"
+            ) from error
+        if not valid:
+            raise ValueError(
+                f"--mpc {label} model contract does not match its exact "
+                "directional LMPC model/configuration"
+            )
+        validated[label] = deepcopy(contract)
+    return validated
+
+
+def mpc_bootstrap_model_contract_for_direction(contracts, direction_xy):
+    """Select the already-frozen contract for one locked world-Y release."""
+    direction = np.asarray(direction_xy, dtype=float)
+    if (
+        direction.shape != (2,)
+        or not np.all(np.isfinite(direction))
+        or abs(float(direction[0])) > 1e-9
+        or abs(abs(float(direction[1]))-1.0) > 1e-9
+    ):
+        raise ValueError("--mpc release direction must be world +Y or -Y")
+    validated = validate_mpc_bootstrap_model_contracts(contracts)
+    label = "positive_y" if direction[1] > 0.0 else "negative_y"
+    return deepcopy(validated[label])
 
 
 @dataclass(frozen=True)
@@ -465,7 +708,8 @@ def configure_mpc_bootstrap_mission(mission):
     return configured
 
 
-def prepare_mpc_bootstrap_mission(mission, *, drone_id, sense_axis):
+def prepare_mpc_bootstrap_mission(
+        mission, *, drone_id, sense_axis, controller_rate_hz):
     """Build and fully validate the private mission before arming.
 
     In addition to the mode overlay, this verifies the world-Y sensor geometry,
@@ -483,6 +727,26 @@ def prepare_mpc_bootstrap_mission(mission, *, drone_id, sense_axis):
     if len(drone_target) < 3:
         raise ValueError("--mpc drone target must contain XYZ")
     wrench = translation["wrench_interaction"]
+    controller_rate = _positive_float(
+        controller_rate_hz, "controller_rate_hz"
+    )
+    bootstrap_config = MPCBootstrapCalibrationConfig.from_mapping(
+        wrench.get("mpc_bootstrap_calibration")
+    )
+    decision_ratio = bootstrap_config.prediction_step_s*controller_rate
+    if (
+        decision_ratio < 2.0-1e-12
+        or not math.isclose(
+            decision_ratio,
+            round(decision_ratio),
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    ):
+        raise ValueError(
+            "--mpc prediction_step_s must be an integral multiple of at "
+            "least two controller periods"
+        )
     target = list(wrench.get("calibration_nominal_position", drone_target[:3]))
     if len(target) != 3 or not np.all(np.isfinite(np.asarray(target, dtype=float))):
         raise ValueError("--mpc calibration_nominal_position must be finite XYZ")
@@ -528,5 +792,40 @@ def prepare_mpc_bootstrap_mission(mission, *, drone_id, sense_axis):
             "--mpc requires a current quality-gated planar braking "
             "calibration; run --calibrate first"
         )
+    try:
+        saved_delay_s = float(saved_fit["command_delay_s"])
+        runtime_delay_s = float(
+            resolved["control_handoff"][
+                "coast_attitude_response_delay_s"
+            ]
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            "--mpc baseline calibration has no usable command delay; "
+            "rerun --calibrate"
+        ) from error
+    if (
+        not np.all(np.isfinite([saved_delay_s, runtime_delay_s]))
+        or saved_delay_s <= 0.0
+        or runtime_delay_s <= 0.0
+        or not math.isclose(
+            saved_delay_s,
+            runtime_delay_s,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    ):
+        raise ValueError(
+            "--mpc requires a positive fitted command delay that matches "
+            "the runtime baseline; rerun --calibrate"
+        )
+    prediction_model = None if saved is None else saved.get("prediction_model")
+    contracts = build_mpc_bootstrap_model_contracts(
+        prediction_model,
+        prediction_step_s=bootstrap_config.prediction_step_s,
+    )
+    # These learned timing contracts are logging/offline-replay metadata only.
+    # The planar fit above remains the legacy attitude-coast flight authority.
+    resolved["mpc_bootstrap_model_contracts"] = contracts
     configured["Interaction"]["config"]["wrench_interaction"] = resolved
     return configured

@@ -39,7 +39,10 @@ from Interaction.learning_velocity_mpc import (
 from Interaction.mpc_bootstrap_calibration import (
     MPCBootstrapCalibrationConfig,
     MPCBootstrapCoverage,
+    mpc_bootstrap_model_contract_for_direction,
     mpc_bootstrap_world_y_direction,
+    mpc_decision_state_age_is_fresh,
+    validate_mpc_bootstrap_model_contracts,
 )
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
 from Interaction.potentiometer_force_sensor import (
@@ -2420,7 +2423,9 @@ class TranslationControlHandoff:
             coast_velocity_predictive_unwind_enabled=False,
             coast_velocity_unwind_terminal_speed_m_s=0.10,
             coast_velocity_unwind_prediction_margin_s=0.15,
+            coast_velocity_unwind_command_switch_delay_s=0.0,
             coast_velocity_unwind_integrated_leveling_enabled=False,
+            coast_velocity_unwind_position_control_enabled=False,
             coast_velocity_unwind_leveling_rate_deg_s=100.0,
             coast_velocity_unwind_integration_step_s=0.01,
             coast_velocity_unwind_min_deceleration_m_s2=0.30,
@@ -2531,8 +2536,14 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_prediction_margin_s = float(
             coast_velocity_unwind_prediction_margin_s
         )
+        self.coast_velocity_unwind_command_switch_delay_s = float(
+            coast_velocity_unwind_command_switch_delay_s
+        )
         self.coast_velocity_unwind_integrated_leveling_enabled = bool(
             coast_velocity_unwind_integrated_leveling_enabled
+        )
+        self.coast_velocity_unwind_position_control_enabled = bool(
+            coast_velocity_unwind_position_control_enabled
         )
         self.coast_velocity_unwind_leveling_rate_deg_s = float(
             coast_velocity_unwind_leveling_rate_deg_s
@@ -2632,6 +2643,7 @@ class TranslationControlHandoff:
             self.coast_velocity_handoff_speed_m_s,
             self.coast_velocity_unwind_terminal_speed_m_s,
             self.coast_velocity_unwind_prediction_margin_s,
+            self.coast_velocity_unwind_command_switch_delay_s,
             self.coast_velocity_unwind_leveling_rate_deg_s,
             self.coast_velocity_unwind_integration_step_s,
             self.coast_velocity_unwind_min_deceleration_m_s2,
@@ -2685,6 +2697,7 @@ class TranslationControlHandoff:
             or self.coast_velocity_handoff_speed_m_s <= 0
             or self.coast_velocity_unwind_terminal_speed_m_s < 0
             or self.coast_velocity_unwind_prediction_margin_s < 0
+            or self.coast_velocity_unwind_command_switch_delay_s < 0
             or self.coast_velocity_unwind_leveling_rate_deg_s <= 0
             or self.coast_velocity_unwind_integration_step_s <= 0
             or self.coast_velocity_unwind_min_deceleration_m_s2 <= 0
@@ -2819,6 +2832,9 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_response_horizon_s = None
         self.coast_velocity_unwind_observed_decision_latency_s = None
         self.coast_velocity_unwind_total_response_delay_s = None
+        self.coast_velocity_unwind_position_target_m = None
+        self.coast_velocity_unwind_position_progress_m = None
+        self.coast_velocity_unwind_lateral_error_m = None
         self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
         self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
@@ -2965,6 +2981,9 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_response_horizon_s = None
         self.coast_velocity_unwind_observed_decision_latency_s = None
         self.coast_velocity_unwind_total_response_delay_s = None
+        self.coast_velocity_unwind_position_target_m = None
+        self.coast_velocity_unwind_position_progress_m = None
+        self.coast_velocity_unwind_lateral_error_m = None
         self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
         self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
@@ -3488,6 +3507,9 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_response_horizon_s = None
         self.coast_velocity_unwind_observed_decision_latency_s = None
         self.coast_velocity_unwind_total_response_delay_s = None
+        self.coast_velocity_unwind_position_target_m = None
+        self.coast_velocity_unwind_position_progress_m = None
+        self.coast_velocity_unwind_lateral_error_m = None
         self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
         self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
@@ -3654,6 +3676,67 @@ class TranslationControlHandoff:
             self._level_attitude_command_started_at = None
         self._release_candidate_mode = None
 
+    def _update_predictive_unwind_position_target(
+            self, position, response_delay_s):
+        """Keep a delay-compensated capture point on the release line."""
+        if self.release_position_m is None:
+            raise RuntimeError(
+                'position unwind requires a latched release position'
+            )
+        direction_xy = self.brake_direction[:2].copy()
+        direction_norm = float(np.linalg.norm(direction_xy))
+        if direction_norm <= 1e-9:
+            raise RuntimeError(
+                'position unwind requires a locked interaction direction'
+            )
+        direction_xy /= direction_norm
+        lateral_xy = np.array([-direction_xy[1], direction_xy[0]])
+        release_xy = self.release_position_m[:2]
+        offset_xy = position[:2] - release_xy
+        current_progress_m = float(offset_xy @ direction_xy)
+        current_lateral_error_m = float(offset_xy @ lateral_xy)
+
+        # Place the target where the current state is expected to be when this
+        # command can affect the vehicle. Never move that scalar target back
+        # toward release: if residual attitude starts a reversal, position
+        # control continues pulling toward the furthest capture point instead
+        # of following the reverse motion.
+        candidate_progress_m = float(
+            current_progress_m
+            + max(self.brake_projected_speed_m_s, 0.0) * response_delay_s
+        )
+        previous_progress_m = 0.0
+        if self.coast_velocity_unwind_position_target_m is not None:
+            previous_progress_m = float(
+                (
+                    self.coast_velocity_unwind_position_target_m[:2]
+                    - release_xy
+                ) @ direction_xy
+            )
+        target_progress_m = max(
+            0.0,
+            current_progress_m,
+            candidate_progress_m,
+            previous_progress_m,
+        )
+        target = self.release_position_m.copy()
+        target[:2] = release_xy + target_progress_m * direction_xy
+        target[2] = self.velocity_coast_fixed_zdistance_m
+        self.hold_position = target.copy()
+        self.stopping_position_m = target.copy()
+        self.coast_velocity_unwind_position_target_m = target.copy()
+        self.coast_velocity_unwind_position_progress_m = target_progress_m
+        self.coast_velocity_unwind_lateral_error_m = (
+            current_lateral_error_m
+        )
+        self.coast_tracking_position_error_m = target - position
+        self.coast_tracking_velocity_error_m_s = None
+        self.coast_target_clamped_to_actual = False
+        self.coast_lateral_target_latched_to_actual = False
+        self.coast_tracking_action = (
+            'track_delay_compensated_release_line_position'
+        )
+
     def update_coast_velocity(
             self,
             current_position,
@@ -3668,11 +3751,11 @@ class TranslationControlHandoff:
 
         The legacy experimental path remains a zero-velocity command followed
         by a speed-only handoff.  The predictive-unwind variant first uses that
-        same aggressive command, then changes the velocity target to the
-        measured velocity before the zero crossing.  With the velocity-loop
-        integral reset once at that transition, this asks the onboard cascade
-        for level attitude while the already-present tilt consumes the remaining
-        forward speed.
+        same aggressive command, then either changes the velocity target to the
+        measured velocity or transfers to a delay-compensated position target
+        on the release line before the zero crossing. The position variant
+        resets both cascade integrators once at that transition and keeps its
+        longitudinal target from following a later reversal.
         """
         if self.shadow_mode or self.mode != self.VELOCITY_COAST:
             return False
@@ -3848,13 +3931,15 @@ class TranslationControlHandoff:
             handoff_reason = 'velocity_zero_position_handoff'
         else:
             # The estimator state is already old when this decision is made.
-            # Add the observed state-to-decision latency to the calibrated
-            # command/attitude response delay before integrating the remaining
-            # braking impulse. Scheduler, telemetry, and command dispatch delay
-            # are therefore represented in the same state-time reference.
+            # Add both the observed state-to-decision latency and the measured
+            # brake-to-unwind command-switch delay to the calibrated attitude
+            # response delay before integrating the remaining braking impulse.
+            # All three terms therefore share the state-time reference.
             decision_latency_s = max(0.0, command_timestamp - timestamp)
             response_delay_s = (
-                self.coast_attitude_response_delay_s + decision_latency_s
+                self.coast_attitude_response_delay_s
+                + self.coast_velocity_unwind_command_switch_delay_s
+                + decision_latency_s
             )
             self.coast_velocity_unwind_observed_decision_latency_s = (
                 decision_latency_s
@@ -3978,6 +4063,7 @@ class TranslationControlHandoff:
             rebrake_started = False
             if (
                 self.coast_velocity_phase == 'predictive_unwind'
+                and not self.coast_velocity_unwind_position_control_enabled
                 and self.brake_projected_speed_m_s
                 >= self.coast_velocity_rebrake_speed_m_s
                 and self.coast_actual_tilt_deg
@@ -4038,60 +4124,71 @@ class TranslationControlHandoff:
                     )
 
             if self.coast_velocity_phase == 'predictive_unwind':
-                update_dt = coast_update_dt_s
-                alpha = 1.0 - np.exp(
-                    -update_dt
-                    / self.coast_velocity_unwind_filter_time_constant_s
-                )
-                filtered_target = (
-                    alpha * velocity[:2]
-                    + (1.0 - alpha) * self.coast_velocity_command_xy_m_s
-                )
-                target_error = filtered_target - velocity[:2]
-                target_error_norm = float(np.linalg.norm(target_error))
-                if (
-                    target_error_norm
-                    > self.coast_velocity_unwind_max_target_error_m_s
-                ):
-                    target_error *= (
-                        self.coast_velocity_unwind_max_target_error_m_s
-                        / target_error_norm
-                    )
-                self.coast_velocity_command_xy_m_s = (
-                    velocity[:2] + target_error
-                )
-                if (
-                    self.brake_projected_speed_m_s
-                    < self.coast_velocity_handoff_min_projected_speed_m_s
-                ):
-                    # Do not let measured-velocity tracking settle below the
-                    # signed handoff boundary. Correct only to that boundary;
-                    # using the unwind terminal-speed target here would turn a
-                    # tiny negative estimate into an unnecessary +0.10 m/s
-                    # forward command. Lateral velocity remains bumpless.
-                    brake_direction_xy = self.brake_direction[:2].copy()
-                    direction_norm = float(np.linalg.norm(brake_direction_xy))
-                    if direction_norm > 1e-9:
-                        brake_direction_xy /= direction_norm
-                        recovery_error_m_s = min(
-                            self.coast_velocity_unwind_max_target_error_m_s,
-                            max(
-                                0.0,
-                                self.coast_velocity_handoff_min_projected_speed_m_s
-                                - self.brake_projected_speed_m_s,
-                            ),
-                        )
-                        self.coast_velocity_command_xy_m_s = (
-                            velocity[:2]
-                            + recovery_error_m_s * brake_direction_xy
-                        )
-                    self.coast_tracking_action = (
-                        'recover_reverse_velocity_while_unwinding'
+                if self.coast_velocity_unwind_position_control_enabled:
+                    self.coast_velocity_command_xy_m_s.fill(0.0)
+                    self._update_predictive_unwind_position_target(
+                        position,
+                        response_delay_s,
                     )
                 else:
-                    self.coast_tracking_action = (
-                        'track_measured_velocity_to_unwind_attitude'
+                    update_dt = coast_update_dt_s
+                    alpha = 1.0 - np.exp(
+                        -update_dt
+                        / self.coast_velocity_unwind_filter_time_constant_s
                     )
+                    filtered_target = (
+                        alpha * velocity[:2]
+                        + (1.0 - alpha)
+                        * self.coast_velocity_command_xy_m_s
+                    )
+                    target_error = filtered_target - velocity[:2]
+                    target_error_norm = float(np.linalg.norm(target_error))
+                    if (
+                        target_error_norm
+                        > self.coast_velocity_unwind_max_target_error_m_s
+                    ):
+                        target_error *= (
+                            self.coast_velocity_unwind_max_target_error_m_s
+                            / target_error_norm
+                        )
+                    self.coast_velocity_command_xy_m_s = (
+                        velocity[:2] + target_error
+                    )
+                    if (
+                        self.brake_projected_speed_m_s
+                        < self.coast_velocity_handoff_min_projected_speed_m_s
+                    ):
+                        # Do not let measured-velocity tracking settle below
+                        # the signed handoff boundary. Correct only to that
+                        # boundary; using the unwind terminal-speed target here
+                        # would turn a tiny negative estimate into an
+                        # unnecessary +0.10 m/s forward command. Lateral
+                        # velocity remains bumpless.
+                        brake_direction_xy = self.brake_direction[:2].copy()
+                        direction_norm = float(
+                            np.linalg.norm(brake_direction_xy)
+                        )
+                        if direction_norm > 1e-9:
+                            brake_direction_xy /= direction_norm
+                            recovery_error_m_s = min(
+                                self.coast_velocity_unwind_max_target_error_m_s,
+                                max(
+                                    0.0,
+                                    self.coast_velocity_handoff_min_projected_speed_m_s
+                                    - self.brake_projected_speed_m_s,
+                                ),
+                            )
+                            self.coast_velocity_command_xy_m_s = (
+                                velocity[:2]
+                                + recovery_error_m_s * brake_direction_xy
+                            )
+                        self.coast_tracking_action = (
+                            'recover_reverse_velocity_while_unwinding'
+                        )
+                    else:
+                        self.coast_tracking_action = (
+                            'track_measured_velocity_to_unwind_attitude'
+                        )
             else:
                 self.coast_velocity_command_xy_m_s.fill(0.0)
                 self.coast_tracking_action = (
@@ -4100,9 +4197,13 @@ class TranslationControlHandoff:
                     else 'predictive_zero_world_velocity_brake'
                 )
 
-            self.coast_tracking_velocity_error_m_s = (
-                self.coast_velocity_command_xy_m_s - velocity[:2]
-            )
+            if not (
+                self.coast_velocity_unwind_position_control_enabled
+                and self.coast_velocity_phase == 'predictive_unwind'
+            ):
+                self.coast_tracking_velocity_error_m_s = (
+                    self.coast_velocity_command_xy_m_s - velocity[:2]
+                )
             self.coast_velocity_handoff_speed_ready = bool(
                 xy_speed <= self.coast_velocity_handoff_speed_m_s
                 and self.brake_projected_speed_m_s
@@ -4147,12 +4248,26 @@ class TranslationControlHandoff:
                 return False
             handoff_reason = 'velocity_predictive_unwind_position_handoff'
 
-        self.hold_position = position.copy()
-        self.hover_z = float(position[2])
-        self.stopping_position_m = position.copy()
+        position_unwind_active = bool(
+            self.coast_velocity_unwind_position_control_enabled
+            and self.coast_velocity_phase == 'predictive_unwind'
+            and self.coast_velocity_unwind_position_target_m is not None
+        )
+        if position_unwind_active:
+            self.hold_position = (
+                self.coast_velocity_unwind_position_target_m.copy()
+            )
+            self.hover_z = self.velocity_coast_fixed_zdistance_m
+            self.stopping_position_m = self.hold_position.copy()
+            self.coast_target_clamped_to_actual = False
+            self.coast_lateral_target_latched_to_actual = False
+        else:
+            self.hold_position = position.copy()
+            self.hover_z = float(position[2])
+            self.stopping_position_m = position.copy()
+            self.coast_target_clamped_to_actual = True
+            self.coast_lateral_target_latched_to_actual = True
         self.coast_handoff_actual_position_m = position.copy()
-        self.coast_target_clamped_to_actual = True
-        self.coast_lateral_target_latched_to_actual = True
         self.coast_response_queue_settled = True
         self.coast_velocity_phase = 'position_handoff'
         self.coast_handoff_reason = handoff_reason
@@ -4737,16 +4852,31 @@ class TranslationControlHandoff:
 
     @property
     def uses_position_setpoint(self):
-        return self.shadow_mode or self.mode in (
-            self.POSITION_HOLD,
-            self.CONTACT_POSITION,
-            self.POSITION_COAST,
+        return bool(
+            self.shadow_mode
+            or self.mode in (
+                self.POSITION_HOLD,
+                self.CONTACT_POSITION,
+                self.POSITION_COAST,
+            )
+            or (
+                self.mode == self.VELOCITY_COAST
+                and self.coast_velocity_phase == 'predictive_unwind'
+                and self.coast_velocity_unwind_position_control_enabled
+                and self.coast_velocity_unwind_position_target_m is not None
+            )
         )
 
     @property
     def command_mode(self):
         if self.shadow_mode:
             return 'shadow_position_hold'
+        if (
+            self.mode == self.VELOCITY_COAST
+            and self.coast_velocity_phase == 'predictive_unwind'
+            and self.coast_velocity_unwind_position_control_enabled
+        ):
+            return 'predictive_unwind_position'
         return self.mode
 
     def _record_sent_command(self, kind, sent_at, **values):
@@ -4821,10 +4951,7 @@ class TranslationControlHandoff:
         ]
 
     def send(self, commander, command_timestamp=None, yaw_deg=None):
-        if self.shadow_mode or self.mode in (
-                self.POSITION_HOLD,
-                self.CONTACT_POSITION,
-                self.POSITION_COAST):
+        if self.uses_position_setpoint:
             commander.send_position_setpoint(
                 *self.hold_position, self.yaw_deg
             )
@@ -6518,6 +6645,7 @@ class InteractionsControl:
         pipeline = OnboardMomentumWrenchPipeline(config)
         config = pipeline.config
         bootstrap_coverage = None
+        bootstrap_model_contracts = None
         if mpc_calibration_mode:
             bootstrap_enabled = dict(
                 config.get('mpc_bootstrap_calibration') or {}
@@ -6530,6 +6658,14 @@ class InteractionsControl:
             bootstrap_coverage = MPCBootstrapCoverage(
                 MPCBootstrapCalibrationConfig.from_mapping(
                     config.get('mpc_bootstrap_calibration')
+                )
+            )
+            bootstrap_model_contracts = (
+                validate_mpc_bootstrap_model_contracts(
+                    config.get('mpc_bootstrap_model_contracts'),
+                    expected_prediction_step_s=(
+                        bootstrap_coverage.config.prediction_step_s
+                    ),
                 )
             )
             if pipeline.shadow_mode:
@@ -6745,6 +6881,17 @@ class InteractionsControl:
                 'control_handoff.coast_velocity_predictive_unwind_enabled '
                 'must be boolean'
             )
+        velocity_unwind_position_control_enabled = (
+            config['control_handoff'].get(
+                'coast_velocity_unwind_position_control_enabled', False
+            )
+        )
+        if type(velocity_unwind_position_control_enabled) is not bool:
+            raise ValueError(
+                'control_handoff.'
+                'coast_velocity_unwind_position_control_enabled must be '
+                'boolean'
+            )
         if (
             velocity_predictive_unwind_enabled
             and not velocity_coast_braking_enabled
@@ -6752,6 +6899,14 @@ class InteractionsControl:
             raise ValueError(
                 'predictive velocity unwind requires '
                 'coast_velocity_braking_enabled'
+            )
+        if (
+            velocity_unwind_position_control_enabled
+            and not velocity_predictive_unwind_enabled
+        ):
+            raise ValueError(
+                'position-controlled velocity unwind requires '
+                'coast_velocity_predictive_unwind_enabled'
             )
         velocity_coast_handoff_speed_m_s = float(
             config['control_handoff'].get(
@@ -7186,7 +7341,11 @@ class InteractionsControl:
                             'coast_control_policy': (
                                 (
                                     (
-                                        'predictive_velocity_unwind_then_position'
+                                        (
+                                            'release_line_position_unwind'
+                                            if velocity_unwind_position_control_enabled
+                                            else 'predictive_velocity_unwind_then_position'
+                                        )
                                         if velocity_predictive_unwind_enabled
                                         else 'zero_world_velocity_then_position'
                                     )
@@ -7212,11 +7371,20 @@ class InteractionsControl:
                                     0.15,
                                 )
                             ),
+                            'velocity_unwind_command_switch_delay_s': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_command_switch_delay_s',
+                                    0.0,
+                                )
+                            ),
                             'velocity_unwind_integrated_leveling_enabled': (
                                 config['control_handoff'].get(
                                     'coast_velocity_unwind_integrated_leveling_enabled',
                                     False,
                                 )
+                            ),
+                            'velocity_unwind_position_control_enabled': (
+                                velocity_unwind_position_control_enabled
                             ),
                             'velocity_unwind_leveling_rate_deg_s': (
                                 config['control_handoff'].get(
@@ -7338,11 +7506,20 @@ class InteractionsControl:
                 'prediction_step_s': (
                     bootstrap_coverage.config.prediction_step_s
                 ),
-                'command_delay_s': float(
+                'legacy_coast_command_delay_s': float(
                     config['control_handoff'][
                         'coast_attitude_response_delay_s'
                     ]
                 ),
+                'directional_model_contracts': {
+                    label: {
+                        'direction_xy': contract['direction_xy'],
+                        'command_delay_s': contract['command_delay_s'],
+                        'model_fingerprint': contract['model_fingerprint'],
+                        'state_dimension': contract['state_dimension'],
+                    }
+                    for label, contract in bootstrap_model_contracts.items()
+                },
                 'coverage_is_provisional_until_offline_replay': True,
                 'state_source': 'crazyflie_state_estimate',
             })
@@ -7496,6 +7673,7 @@ class InteractionsControl:
         release_dataset_episode_sequence = 0
         release_dataset_episode_id = None
         release_dataset_direction_xy = None
+        release_dataset_model_contract = None
         release_dataset_measured_sensor_axis_world_xy = None
         release_dataset_last_logged_command_sequence = 0
         release_dataset_terminal_gate = ReleaseLMPCTerminalGate()
@@ -7791,10 +7969,15 @@ class InteractionsControl:
             state_observed_at = now
             state_time = state['time']
             state_age = now - state_time
+            release_dataset_effective_command_delay_s = (
+                float(release_dataset_model_contract['command_delay_s'])
+                if release_dataset_model_contract is not None else
+                translation_control.coast_attitude_response_delay_s
+            )
             actual_command_applied_at_state = (
                 translation_control.sent_command_effective_at(
                     state_time,
-                    translation_control.coast_attitude_response_delay_s,
+                    release_dataset_effective_command_delay_s,
                 )
             )
             if state_age < -0.5:
@@ -8317,6 +8500,7 @@ class InteractionsControl:
                 })
                 release_dataset_episode_id = None
                 release_dataset_direction_xy = None
+                release_dataset_model_contract = None
                 release_dataset_measured_sensor_axis_world_xy = None
                 release_dataset_terminal_status = (
                     release_dataset_terminal_gate.reset()
@@ -8683,6 +8867,7 @@ class InteractionsControl:
                 )
                 release_dataset_episode_id = None
                 release_dataset_direction_xy = None
+                release_dataset_model_contract = None
                 release_dataset_measured_sensor_axis_world_xy = None
                 release_dataset_terminal_status = (
                     release_dataset_terminal_gate.reset()
@@ -8737,6 +8922,7 @@ class InteractionsControl:
                         )
                         release_dataset_episode_id = None
                         release_dataset_direction_xy = None
+                        release_dataset_model_contract = None
                         release_dataset_measured_sensor_axis_world_xy = None
                         release_dataset_terminal_status = (
                             release_dataset_terminal_gate.reset()
@@ -9502,6 +9688,7 @@ class InteractionsControl:
                         )
                         release_dataset_episode_id = None
                         release_dataset_direction_xy = None
+                        release_dataset_model_contract = None
                         release_dataset_measured_sensor_axis_world_xy = None
                         release_dataset_terminal_status = (
                             release_dataset_terminal_gate.reset()
@@ -9524,6 +9711,27 @@ class InteractionsControl:
                         ),
                     )
                     if release_dataset_direction_xy is not None:
+                        if bootstrap_coverage is not None:
+                            release_dataset_model_contract = (
+                                mpc_bootstrap_model_contract_for_direction(
+                                    bootstrap_model_contracts,
+                                    release_dataset_direction_xy,
+                                )
+                            )
+                            release_dataset_effective_command_delay_s = float(
+                                release_dataset_model_contract[
+                                    'command_delay_s'
+                                ]
+                            )
+                            # This is still the release-state sample. Rebind
+                            # its causal command history to the exact learned
+                            # directional delay before emitting START.
+                            actual_command_applied_at_state = (
+                                translation_control.sent_command_effective_at(
+                                    state_time,
+                                    release_dataset_effective_command_delay_s,
+                                )
+                            )
                         release_dataset_episode_sequence += 1
                         release_dataset_episode_id = (
                             f'{self.drone_id}-release-'
@@ -9545,6 +9753,26 @@ class InteractionsControl:
                                 'Learning MPC Bootstrap Release Classified',
                                 {
                                     **bootstrap_assignment.to_dict(),
+                                    'release_dataset_model_label': (
+                                        release_dataset_model_contract[
+                                            'direction_label'
+                                        ]
+                                    ),
+                                    'release_dataset_model_fingerprint': (
+                                        release_dataset_model_contract[
+                                            'model_fingerprint'
+                                        ]
+                                    ),
+                                    'release_dataset_state_dimension': (
+                                        release_dataset_model_contract[
+                                            'state_dimension'
+                                        ]
+                                    ),
+                                    'release_dataset_command_delay_s': (
+                                        release_dataset_model_contract[
+                                            'command_delay_s'
+                                        ]
+                                    ),
                                     'coverage': bootstrap_coverage.summary(),
                                     'offline_only': True,
                                     'lmpc_command_authority': False,
@@ -9573,6 +9801,7 @@ class InteractionsControl:
                     else:
                         release_dataset_episode_id = None
                         release_dataset_direction_xy = None
+                        release_dataset_model_contract = None
                         release_dataset_terminal_status = (
                             release_dataset_terminal_gate.reset()
                         )
@@ -9917,12 +10146,31 @@ class InteractionsControl:
                                 if bootstrap_coverage is None else
                                 bootstrap_coverage.config.prediction_step_s
                             ),
+                            'release_dataset_model_label': (
+                                None
+                                if release_dataset_model_contract is None else
+                                release_dataset_model_contract[
+                                    'direction_label'
+                                ]
+                            ),
+                            'release_dataset_model_fingerprint': (
+                                None
+                                if release_dataset_model_contract is None else
+                                release_dataset_model_contract[
+                                    'model_fingerprint'
+                                ]
+                            ),
+                            'release_dataset_state_dimension': (
+                                None
+                                if release_dataset_model_contract is None else
+                                release_dataset_model_contract[
+                                    'state_dimension'
+                                ]
+                            ),
                             'release_dataset_command_delay_s': (
                                 None
-                                if bootstrap_coverage is None else float(
-                                    translation_control
-                                    .coast_attitude_response_delay_s
-                                )
+                                if release_dataset_model_contract is None else
+                                release_dataset_effective_command_delay_s
                             ),
                             'release_command_effective_at_state': (
                                 actual_command_applied_at_state
@@ -9930,8 +10178,7 @@ class InteractionsControl:
                             'release_pending_command_history': (
                                 translation_control.sent_commands_in_window(
                                     state_time
-                                    - translation_control
-                                    .coast_attitude_response_delay_s,
+                                    - release_dataset_effective_command_delay_s,
                                     state_observed_at,
                                 )
                             ),
@@ -10536,10 +10783,20 @@ class InteractionsControl:
                             },
                         )
                     if translation_control.consume_velocity_pid_reset_request():
+                        position_unwind = bool(
+                            translation_control
+                            .coast_velocity_unwind_position_control_enabled
+                            and translation_control.uses_position_setpoint
+                        )
+                        integrator_names = (
+                            ('posCtlPid.resetI', 'velCtlPid.resetI')
+                            if position_unwind
+                            else ('velCtlPid.resetI',)
+                        )
                         reset_started_at = time.time()
                         velocity_reset_method = (
                             reset_pid_integrators_without_ack(
-                                self.cf, ('velCtlPid.resetI',)
+                                self.cf, integrator_names
                             )
                         )
                         velocity_reset_elapsed_s = (
@@ -10551,11 +10808,24 @@ class InteractionsControl:
                                 'measured_velocity_m_s': (
                                     output.estimate.velocity.tolist()
                                 ),
-                                'velocity_target_m_s': [
-                                    *translation_control
-                                    .coast_velocity_command_xy_m_s.tolist(),
-                                    0.0,
-                                ],
+                                'control_owner': (
+                                    'native_position_pid'
+                                    if position_unwind
+                                    else 'native_velocity_pid'
+                                ),
+                                'position_target_m': (
+                                    translation_control.hold_position.tolist()
+                                    if position_unwind else None
+                                ),
+                                'velocity_target_m_s': (
+                                    None
+                                    if position_unwind
+                                    else [
+                                        *translation_control
+                                        .coast_velocity_command_xy_m_s.tolist(),
+                                        0.0,
+                                    ]
+                                ),
                                 'projected_speed_m_s': (
                                     translation_control
                                     .brake_projected_speed_m_s
@@ -10600,9 +10870,30 @@ class InteractionsControl:
                                     translation_control
                                     .coast_attitude_response_delay_s
                                 ),
+                                'configured_command_switch_delay_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_command_switch_delay_s
+                                ),
                                 'modeled_total_response_delay_s': (
                                     translation_control
                                     .coast_velocity_unwind_total_response_delay_s
+                                ),
+                                'release_line_position_target_m': (
+                                    None
+                                    if translation_control
+                                    .coast_velocity_unwind_position_target_m
+                                    is None
+                                    else translation_control
+                                    .coast_velocity_unwind_position_target_m
+                                    .tolist()
+                                ),
+                                'release_line_target_progress_m': (
+                                    translation_control
+                                    .coast_velocity_unwind_position_progress_m
+                                ),
+                                'release_line_lateral_error_m': (
+                                    translation_control
+                                    .coast_velocity_unwind_lateral_error_m
                                 ),
                                 'integrated_velocity_delta_m_s': (
                                     translation_control
@@ -10621,6 +10912,7 @@ class InteractionsControl:
                                     .coast_velocity_unwind_integration_step_s
                                 ),
                                 'velocity_integrator_reset': True,
+                                'position_integrator_reset': position_unwind,
                                 'integrator_reset_method': (
                                     velocity_reset_method
                                 ),
@@ -10702,6 +10994,12 @@ class InteractionsControl:
                             'terminal_current_position_handoff',
                             'velocity_zero_position_handoff',
                             'velocity_predictive_unwind_position_handoff',
+                        )
+                        and not (
+                            translation_control.coast_handoff_reason
+                            == 'velocity_predictive_unwind_position_handoff'
+                            and translation_control
+                            .coast_velocity_unwind_position_control_enabled
                         )
                     ):
                         # Clear both controller integrators without adding two
@@ -10821,11 +11119,40 @@ class InteractionsControl:
                             'actual_velocity_m_s': (
                                 output.estimate.velocity.tolist()
                             ),
-                            'target_velocity_m_s': [
-                                *translation_control
-                                .coast_velocity_command_xy_m_s.tolist(),
-                                0.0,
-                            ],
+                            'handoff_control_already_position': bool(
+                                translation_control
+                                .coast_velocity_unwind_position_control_enabled
+                                and translation_control
+                                .coast_velocity_unwind_position_target_m
+                                is not None
+                            ),
+                            'target_velocity_m_s': (
+                                None
+                                if translation_control
+                                .coast_velocity_unwind_position_control_enabled
+                                else [
+                                    *translation_control
+                                    .coast_velocity_command_xy_m_s.tolist(),
+                                    0.0,
+                                ]
+                            ),
+                            'release_line_position_target_m': (
+                                None
+                                if translation_control
+                                .coast_velocity_unwind_position_target_m
+                                is None
+                                else translation_control
+                                .coast_velocity_unwind_position_target_m
+                                .tolist()
+                            ),
+                            'release_line_target_progress_m': (
+                                translation_control
+                                .coast_velocity_unwind_position_progress_m
+                            ),
+                            'release_line_lateral_error_m': (
+                                translation_control
+                                .coast_velocity_unwind_lateral_error_m
+                            ),
                             'virtual_target_velocity_m_s': (
                                 braking_kwargs['coast_velocity'].tolist()
                             ),
@@ -10843,7 +11170,13 @@ class InteractionsControl:
                                 else translation_control
                                 .coast_tracking_velocity_error_m_s.tolist()
                             ),
-                            'position_pullback_disabled': True,
+                            'position_pullback_disabled': bool(
+                                not translation_control
+                                .coast_velocity_unwind_position_control_enabled
+                                or translation_control
+                                .coast_velocity_unwind_position_target_m
+                                is not None
+                            ),
                             'tail_neutralization_allowed': True,
                             'response_queue_settled': (
                                 translation_control
@@ -10972,7 +11305,7 @@ class InteractionsControl:
                 pending_dataset_commands = (
                     translation_control.sent_commands_in_window(
                         state_time
-                        - translation_control.coast_attitude_response_delay_s,
+                        - release_dataset_effective_command_delay_s,
                         state_observed_at,
                     )
                 )
@@ -11495,6 +11828,55 @@ class InteractionsControl:
                 self._safe_sleep(max(
                     mpc_scheduled_decision_deadline-time.monotonic(), 0.0
                 ))
+            if (
+                mpc_calibration_mode
+                and release_dataset_episode_id is not None
+            ):
+                # The state was sampled before the wall-clock pacing wait.
+                # Check every decision, including the first immediate send,
+                # directly before the sole command sender. A host stall must
+                # never turn an otherwise fresh sample into a stale attitude
+                # decision that is merely rejected offline.
+                mpc_decision_send_check_time = time.time()
+                mpc_decision_state_age_at_send_s = (
+                    mpc_decision_send_check_time-state_time
+                )
+                mpc_state_age_limit_s = (
+                    release_dataset_terminal_gate.limits.max_state_age_s
+                )
+                if (
+                    not mpc_decision_state_age_is_fresh(
+                        state_time,
+                        mpc_decision_send_check_time,
+                        mpc_state_age_limit_s,
+                    )
+                ):
+                    bootstrap_coverage.mark_path_failure(
+                        release_dataset_episode_id,
+                        'decision_state_age_path_violation',
+                    )
+                    self._log_event(
+                        'Learning MPC Bootstrap Decision State Rejected',
+                        {
+                            'release_dataset_episode_id': (
+                                release_dataset_episode_id
+                            ),
+                            'decision_state_age_at_send_s': (
+                                mpc_decision_state_age_at_send_s
+                            ),
+                            'maximum_state_age_s': mpc_state_age_limit_s,
+                            'command_sent': False,
+                            'reason': 'state_stale_before_scheduled_send',
+                            'offline_only': True,
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+                    raise StaleLocalizationError(
+                        'LMPC bootstrap state became stale before its '
+                        'scheduled command send '
+                        f'({mpc_decision_state_age_at_send_s:.3f}s; '
+                        f'limit {mpc_state_age_limit_s:.3f}s)'
+                    )
 
             if calibration_wait_this_cycle:
                 command_position = nominal_position.copy()
@@ -11743,16 +12125,21 @@ class InteractionsControl:
                     )
                 mpc_sent_at = float(mpc_command['sent_at'])
                 mpc_sent_monotonic = time.monotonic()
-                mpc_decision_state_age_at_send_s = max(
-                    mpc_sent_at-state_time, 0.0
-                )
-                if mpc_decision_state_age_at_send_s > (
-                    release_dataset_terminal_gate.limits.max_state_age_s
-                    + 1e-12
+                mpc_decision_state_age_at_send_s = mpc_sent_at-state_time
+                if (
+                    not mpc_decision_state_age_is_fresh(
+                        state_time,
+                        mpc_sent_at,
+                        release_dataset_terminal_gate.limits.max_state_age_s,
+                    )
                 ):
                     bootstrap_coverage.mark_path_failure(
                         release_dataset_episode_id,
                         'decision_state_age_path_violation',
+                    )
+                    raise StaleLocalizationError(
+                        'LMPC bootstrap command send completed outside the '
+                        'fresh-state window'
                     )
                 if mpc_last_decision_send_monotonic is not None:
                     mpc_send_interval_s = (
@@ -11980,7 +12367,11 @@ class InteractionsControl:
                 'coast_control_policy': (
                     (
                         (
-                            'predictive_velocity_unwind_then_position'
+                            (
+                                'release_line_position_unwind'
+                                if velocity_unwind_position_control_enabled
+                                else 'predictive_velocity_unwind_then_position'
+                            )
                             if velocity_predictive_unwind_enabled
                             else 'zero_world_velocity_then_position'
                         )
@@ -12315,15 +12706,21 @@ class InteractionsControl:
                 'command_xy_velocity_m_s': (
                     translation_control
                     .coast_velocity_command_xy_m_s.tolist()
-                    if translation_control.mode
-                    == translation_control.VELOCITY_COAST
+                    if (
+                        translation_control.mode
+                        == translation_control.VELOCITY_COAST
+                        and not translation_control.uses_position_setpoint
+                    )
                     else None
                 ),
                 'command_xy_velocity_world_m_s': (
                     translation_control
                     .coast_velocity_command_xy_m_s.tolist()
-                    if translation_control.mode
-                    == translation_control.VELOCITY_COAST
+                    if (
+                        translation_control.mode
+                        == translation_control.VELOCITY_COAST
+                        and not translation_control.uses_position_setpoint
+                    )
                     else None
                 ),
                 'command_yaw_deg': float(command_yaw),
@@ -12415,9 +12812,32 @@ class InteractionsControl:
                     translation_control
                     .coast_velocity_unwind_observed_decision_latency_s
                 ),
+                'coast_velocity_unwind_command_switch_delay_s': (
+                    translation_control
+                    .coast_velocity_unwind_command_switch_delay_s
+                ),
                 'coast_velocity_unwind_total_response_delay_s': (
                     translation_control
                     .coast_velocity_unwind_total_response_delay_s
+                ),
+                'coast_velocity_unwind_position_control_enabled': (
+                    translation_control
+                    .coast_velocity_unwind_position_control_enabled
+                ),
+                'coast_velocity_unwind_position_target_m': (
+                    None
+                    if translation_control
+                    .coast_velocity_unwind_position_target_m is None
+                    else translation_control
+                    .coast_velocity_unwind_position_target_m.tolist()
+                ),
+                'coast_velocity_unwind_position_progress_m': (
+                    translation_control
+                    .coast_velocity_unwind_position_progress_m
+                ),
+                'coast_velocity_unwind_lateral_error_m': (
+                    translation_control
+                    .coast_velocity_unwind_lateral_error_m
                 ),
                 'coast_attitude_time_constant_s': (
                     translation_control.coast_attitude_time_constant_s
@@ -12675,6 +13095,7 @@ class InteractionsControl:
                     )
                     release_dataset_episode_id = None
                     release_dataset_direction_xy = None
+                    release_dataset_model_contract = None
                     release_dataset_measured_sensor_axis_world_xy = None
                     release_dataset_terminal_status = (
                         release_dataset_terminal_gate.reset()
@@ -12719,6 +13140,9 @@ class InteractionsControl:
                     reason='mpc_bootstrap_collection_ended_mid_episode',
                 )
                 release_dataset_episode_id = None
+                release_dataset_direction_xy = None
+                release_dataset_model_contract = None
+                release_dataset_measured_sensor_axis_world_xy = None
             summary = bootstrap_coverage.summary()
             self._log_event('Learning MPC Bootstrap Calibration Complete', {
                 **summary,

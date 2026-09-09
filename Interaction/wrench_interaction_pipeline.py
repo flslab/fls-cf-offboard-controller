@@ -247,7 +247,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # Legacy constant-tail predictor settings. Missions can instead enable
         # the rate-limited leveling integration below.
         "coast_velocity_unwind_prediction_margin_s": 0.15,
+        "coast_velocity_unwind_command_switch_delay_s": 0.0,
         "coast_velocity_unwind_integrated_leveling_enabled": False,
+        "coast_velocity_unwind_position_control_enabled": False,
         # Conservative physical leveling rate measured in flight. This is not
         # the 720 deg/s command-setpoint slew limit.
         "coast_velocity_unwind_leveling_rate_deg_s": 100.0,

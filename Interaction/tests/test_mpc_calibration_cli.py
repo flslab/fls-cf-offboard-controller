@@ -15,6 +15,7 @@ from Interaction.braking_repeat_test import validate_repeat_test_options
 
 
 SOURCE = Path(__file__).resolve().parents[2] / "controller.py"
+INTERACTIONS_SOURCE = SOURCE.parent / "Interaction" / "interactions.py"
 
 
 def parse_controller_args(tokens):
@@ -69,6 +70,45 @@ def controller_methods(*names):
 
 
 class MPCBootstrapCliTests(unittest.TestCase):
+    def test_start_payload_is_bound_to_directional_model_contract(self):
+        source = INTERACTIONS_SOURCE.read_text()
+        self.assertIn(
+            "mpc_bootstrap_model_contract_for_direction(", source
+        )
+        for field in (
+            "release_dataset_model_label",
+            "release_dataset_model_fingerprint",
+            "release_dataset_state_dimension",
+            "release_dataset_command_delay_s",
+        ):
+            self.assertIn(f"'{field}'", source)
+        self.assertIn(
+            "- release_dataset_effective_command_delay_s", source
+        )
+        self.assertGreaterEqual(
+            source.count("- release_dataset_effective_command_delay_s"), 2
+        )
+        self.assertIn(
+            "state_time,\n"
+            "                                    "
+            "release_dataset_effective_command_delay_s,",
+            source,
+        )
+
+    def test_every_episode_direction_reset_also_clears_model_contract(self):
+        lines = INTERACTIONS_SOURCE.read_text().splitlines()
+        direction_resets = [
+            index for index, line in enumerate(lines)
+            if "release_dataset_direction_xy = None" in line
+        ]
+        self.assertGreater(len(direction_resets), 1)
+        for index in direction_resets:
+            with self.subTest(line=index+1):
+                self.assertTrue(any(
+                    "release_dataset_model_contract = None" in line
+                    for line in lines[index:index+3]
+                ))
+
     def test_one_orchestrated_flag_enables_sensor_reader(self):
         args = parse_controller_args([
             "--orchestrated", "--mpc", "--log",
@@ -192,7 +232,8 @@ class MPCBootstrapCliTests(unittest.TestCase):
         prepared = {"name": "validated-private-overlay"}
         instance = SimpleNamespace(
             args=SimpleNamespace(
-                mpc=True, drone_id="lb11", sense_axis="y"
+                mpc=True, drone_id="lb11", sense_axis="y",
+                smooth_controller_rate=100,
             ),
             mission=original,
             missions=[original],
@@ -205,7 +246,8 @@ class MPCBootstrapCliTests(unittest.TestCase):
         self.assertIs(instance.mission, prepared)
         self.assertIs(instance.missions[0], prepared)
         prepare.assert_called_once_with(
-            original, drone_id="lb11", sense_axis="y"
+            original, drone_id="lb11", sense_axis="y",
+            controller_rate_hz=100,
         )
 
 

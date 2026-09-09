@@ -1,5 +1,5 @@
 """Tests for fail-closed offline decision-time flight-log resampling."""
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 import io
 import json
@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 from Interaction.tests.test_velocity_lmpc_replay import (
+    FINGERPRINT,
     complete_records,
     config,
 )
@@ -19,7 +20,9 @@ from Interaction.velocity_lmpc_replay import (
     extract_velocity_lmpc_episodes,
 )
 from Interaction.velocity_lmpc_resample import (
+    BOOTSTRAP_ATTEMPT_CLOSED_EVENT,
     RESAMPLE_METHOD,
+    ResampleValidationError,
     main,
     resample_velocity_lmpc_records,
 )
@@ -41,6 +44,8 @@ def raw_records(*, episode_id="lb11-raw-release-1", sign=1):
     start["data"].update({
         "release_dataset_prediction_step_s": 0.02,
         "release_dataset_command_delay_s": 0.04,
+        "release_dataset_model_fingerprint": FINGERPRINT,
+        "release_dataset_state_dimension": 5,
     })
     start["data"]["release_command_effective_at_state"][
         "effective_query_time"
@@ -68,6 +73,19 @@ def raw_records(*, episode_id="lb11-raw-release-1", sign=1):
     terminal["data"]["resample_upper_bracket_state_time"] = 1.22
     terminal["data"]["final_position_sent_at"] = final_position["sent_at"]
     terminal["data"]["final_position_sequence"] = final_position["sequence"]
+    records.append({
+        "type": "events",
+        "name": BOOTSTRAP_ATTEMPT_CLOSED_EVENT,
+        "data": {
+            "time": 1.2205,
+            "episode_id": episode_id,
+            "terminal_success": True,
+            "countable": True,
+            "provisional_path_eligible": True,
+            "path_failure_reasons": [],
+            "counted": True,
+        },
+    })
     records.append(terminal)
     return records
 
@@ -76,6 +94,14 @@ def observer_rows(records):
     return [
         record for record in records
         if record.get("type") == "wrench_observer"
+    ]
+
+
+def bootstrap_attempt_rows(records):
+    return [
+        record for record in records
+        if record.get("type") == "events"
+        and record.get("name") == BOOTSTRAP_ATTEMPT_CLOSED_EVENT
     ]
 
 
@@ -105,6 +131,10 @@ def shift_timeline(records, offset_s):
 class SuccessfulResampleTests(unittest.TestCase):
     def test_interpolates_at_actual_send_epochs_and_feeds_replay(self):
         raw = raw_records()
+        raw_attempt_index = next(
+            index for index, record in enumerate(raw)
+            if record.get("name") == BOOTSTRAP_ATTEMPT_CLOSED_EVENT
+        )
         raw_rows = observer_rows(raw)
         raw_rows[0]["data"]["angular_velocity_rad_s"] = [0.0, 0.0, 0.0]
         raw_rows[1]["data"]["angular_velocity_rad_s"] = [0.04, 0.08, 0.0]
@@ -127,6 +157,7 @@ class SuccessfulResampleTests(unittest.TestCase):
             raw,
             prediction_step_s=0.02,
             command_delay_s=0.04,
+            direction_sign="positive-y",
             raw_sha256=RAW_SHA256,
         )
 
@@ -171,10 +202,56 @@ class SuccessfulResampleTests(unittest.TestCase):
             if record.get("name") == TERMINAL_DWELL_EVENT
         )
         self.assertTrue(terminal["data"]["terminal_gate"]["complete"])
+        eligibility = terminal["data"][
+            "release_dataset_bootstrap_eligibility"
+        ]
+        self.assertEqual(eligibility, {
+            "event_name": BOOTSTRAP_ATTEMPT_CLOSED_EVENT,
+            "source_record_index": raw_attempt_index,
+            "episode_id": "lb11-raw-release-1",
+            "terminal_success": True,
+            "countable": True,
+            "provisional_path_eligible": True,
+            "counted": True,
+            "path_failure_reasons": [],
+        })
 
         replay = extract_velocity_lmpc_episodes(result.records, config())
         self.assertEqual(len(replay.episodes), 1)
         self.assertEqual(replay.rejections, ())
+
+        missing_audit = deepcopy(list(result.records))
+        missing_terminal = next(
+            record for record in missing_audit
+            if record.get("name") == TERMINAL_DWELL_EVENT
+        )
+        del missing_terminal["data"][
+            "release_dataset_bootstrap_eligibility"
+        ]
+        rejected_replay = extract_velocity_lmpc_episodes(
+            missing_audit, config()
+        )
+        self.assertEqual(rejected_replay.episodes, ())
+        self.assertRegex(
+            rejected_replay.rejections[0].reason,
+            "no bootstrap eligibility audit",
+        )
+        wrong_model = deepcopy(list(result.records))
+        wrong_start = next(
+            record for record in wrong_model
+            if record.get("name") == START_EVENT
+        )
+        wrong_start["data"]["release_dataset_model_fingerprint"] = (
+            "reduced-v3:"+("d"*64)
+        )
+        wrong_model_replay = extract_velocity_lmpc_episodes(
+            wrong_model, config()
+        )
+        self.assertEqual(wrong_model_replay.episodes, ())
+        self.assertRegex(
+            wrong_model_replay.rejections[0].reason,
+            "fingerprint.*does not match",
+        )
         self.assertAlmostEqual(
             replay.episodes[0].samples[0].aligned_velocity_m_s,
             0.3775,
@@ -193,6 +270,7 @@ class SuccessfulResampleTests(unittest.TestCase):
             raw,
             prediction_step_s=0.02,
             command_delay_s=0.04,
+            direction_sign="positive-y",
             raw_sha256=RAW_SHA256,
         )
 
@@ -222,6 +300,7 @@ class SuccessfulResampleTests(unittest.TestCase):
             raw,
             prediction_step_s=0.02,
             command_delay_s=0.04,
+            direction_sign="positive-y",
             raw_sha256=RAW_SHA256,
         )
 
@@ -233,13 +312,14 @@ class SuccessfulResampleTests(unittest.TestCase):
         bad = raw_records(episode_id="bad-release")
         observer_rows(bad)[2]["data"]["xy_boundary_margin_m"] = -0.01
         good = shift_timeline(
-            raw_records(episode_id="good-release", sign=-1), 10.0
+            raw_records(episode_id="good-release"), 10.0
         )
 
         result = resample_velocity_lmpc_records(
             bad+good,
             prediction_step_s=0.02,
             command_delay_s=0.04,
+            direction_sign="positive-y",
             raw_sha256=RAW_SHA256,
         )
 
@@ -255,6 +335,119 @@ class SuccessfulResampleTests(unittest.TestCase):
             ("good-release",),
         )
 
+    def test_malformed_observer_rejects_only_its_episode(self):
+        bad = raw_records(episode_id="malformed-release")
+        observer_rows(bad)[0]["data"] = None
+        good = shift_timeline(
+            raw_records(episode_id="good-after-malformed"), 10.0
+        )
+
+        result = resample_velocity_lmpc_records(
+            bad+good,
+            prediction_step_s=0.02,
+            command_delay_s=0.04,
+            direction_sign="positive-y",
+            raw_sha256=RAW_SHA256,
+        )
+
+        self.assertEqual(result.episode_ids, ("good-after-malformed",))
+        self.assertEqual(len(result.rejections), 1)
+        self.assertEqual(
+            result.rejections[0].episode_id, "malformed-release"
+        )
+        self.assertRegex(
+            result.rejections[0].reason, "data must be an object"
+        )
+
+    def test_mixed_directions_are_filtered_into_distinct_results(self):
+        positive = raw_records(episode_id="positive-release", sign=1)
+        negative = shift_timeline(
+            raw_records(episode_id="negative-release", sign=-1), 10.0
+        )
+        mixed = positive+negative
+
+        positive_result = resample_velocity_lmpc_records(
+            mixed,
+            prediction_step_s=0.02,
+            command_delay_s=0.04,
+            direction_sign="positive-y",
+            raw_sha256=RAW_SHA256,
+        )
+        negative_result = resample_velocity_lmpc_records(
+            mixed,
+            prediction_step_s=0.02,
+            command_delay_s=0.04,
+            direction_sign="negative-y",
+            raw_sha256=RAW_SHA256,
+        )
+
+        self.assertEqual(positive_result.episode_ids, ("positive-release",))
+        self.assertEqual(negative_result.episode_ids, ("negative-release",))
+        self.assertEqual(
+            positive_result.skipped_opposite_direction_episode_ids,
+            ("negative-release",),
+        )
+        self.assertEqual(
+            negative_result.skipped_opposite_direction_episode_ids,
+            ("positive-release",),
+        )
+        self.assertEqual(positive_result.rejections, ())
+        self.assertEqual(negative_result.rejections, ())
+        self.assertTrue(all(
+            row["data"]["release_dataset_direction_xy"] == [0.0, 1.0]
+            for row in observer_rows(positive_result.records)
+        ))
+        self.assertTrue(all(
+            row["data"]["release_dataset_direction_xy"] == [0.0, -1.0]
+            for row in observer_rows(negative_result.records)
+        ))
+        positive_report = positive_result.to_dict()
+        self.assertEqual(positive_report["direction_sign"], "positive-y")
+        self.assertEqual(positive_report["model_fingerprint"], FINGERPRINT)
+        self.assertEqual(positive_report["state_dimension"], 5)
+        self.assertEqual(
+            positive_report["skipped_opposite_direction_episode_count"], 1
+        )
+
+    def test_same_direction_different_model_contract_is_not_mixed(self):
+        first = raw_records(episode_id="first-model")
+        second = shift_timeline(
+            raw_records(episode_id="second-model"), 10.0
+        )
+        second_start = next(
+            record for record in second if record.get("name") == START_EVENT
+        )
+        second_start["data"]["release_dataset_model_fingerprint"] = (
+            "reduced-v3:"+("c"*64)
+        )
+
+        result = resample_velocity_lmpc_records(
+            first+second,
+            prediction_step_s=0.02,
+            command_delay_s=0.04,
+            direction_sign="positive-y",
+            raw_sha256=RAW_SHA256,
+        )
+
+        self.assertEqual(result.episode_ids, ("first-model",))
+        self.assertEqual(result.model_fingerprint, FINGERPRINT)
+        self.assertEqual(result.rejections[0].episode_id, "second-model")
+        self.assertRegex(
+            result.rejections[0].reason, "multiple frozen model contracts"
+        )
+
+    def test_invalid_function_direction_is_rejected(self):
+        with self.assertRaisesRegex(
+            ResampleValidationError, "direction_sign"
+        ):
+            resample_velocity_lmpc_records(
+                raw_records(),
+                prediction_step_s=0.02,
+                command_delay_s=0.04,
+                direction_sign="both",
+                raw_sha256=RAW_SHA256,
+            )
+
 
 class FailClosedResampleTests(unittest.TestCase):
     def assert_rejected(self, raw, pattern=None):
@@ -262,6 +455,7 @@ class FailClosedResampleTests(unittest.TestCase):
             raw,
             prediction_step_s=0.02,
             command_delay_s=0.04,
+            direction_sign="positive-y",
             raw_sha256=RAW_SHA256,
         )
         self.assertEqual(result.episode_ids, ())
@@ -277,6 +471,56 @@ class FailClosedResampleTests(unittest.TestCase):
             for record in result.records
         ))
         return result
+
+    def test_missing_bootstrap_attempt_closed_is_rejected(self):
+        raw = raw_records()
+        raw[:] = [
+            record for record in raw
+            if record.get("name") != BOOTSTRAP_ATTEMPT_CLOSED_EVENT
+        ]
+
+        self.assert_rejected(raw, "exactly one.*Attempt Closed")
+
+    def test_duplicate_bootstrap_attempt_closed_is_rejected(self):
+        raw = raw_records()
+        duplicate = deepcopy(bootstrap_attempt_rows(raw)[0])
+        raw.insert(-1, duplicate)
+
+        self.assert_rejected(raw, "exactly one.*Attempt Closed")
+
+    def test_bootstrap_attempt_episode_id_must_match(self):
+        raw = raw_records()
+        bootstrap_attempt_rows(raw)[0]["data"]["episode_id"] = "other"
+
+        self.assert_rejected(raw, "episode_id does not match")
+
+    def test_every_bootstrap_eligibility_flag_must_be_true(self):
+        for field_name in (
+            "terminal_success",
+            "countable",
+            "provisional_path_eligible",
+            "counted",
+        ):
+            with self.subTest(field_name=field_name):
+                raw = raw_records()
+                bootstrap_attempt_rows(raw)[0]["data"][field_name] = False
+
+                self.assert_rejected(raw, field_name+" must be true")
+
+    def test_pretty_state_age_cannot_hide_sticky_cadence_failure(self):
+        raw = raw_records()
+        for row in observer_rows(raw):
+            row["data"][
+                "release_dataset_decision_state_age_at_send_s"
+            ] = 0.0
+        attempt = bootstrap_attempt_rows(raw)[0]["data"]
+        attempt["provisional_path_eligible"] = False
+        attempt["counted"] = False
+        attempt["path_failure_reasons"] = [
+            "decision_command_cadence_path_violation"
+        ]
+
+        self.assert_rejected(raw, "path_failure_reasons")
 
     def test_missing_upper_source_bracket_forbids_extrapolation(self):
         raw = raw_records()
@@ -294,7 +538,13 @@ class FailClosedResampleTests(unittest.TestCase):
 
     def test_upper_bracket_after_terminal_marker_is_rejected(self):
         raw = raw_records()
-        bracket = raw.pop(-2)
+        bracket_index = next(
+            index for index, record in enumerate(raw)
+            if record.get("data", {}).get(
+                "release_dataset_resample_upper_bracket"
+            )
+        )
+        bracket = raw.pop(bracket_index)
         raw.append(bracket)
 
         self.assert_rejected(raw, "explicit resample upper bracket")
@@ -327,11 +577,26 @@ class FailClosedResampleTests(unittest.TestCase):
             raw,
             prediction_step_s=0.02,
             command_delay_s=0.03,
+            direction_sign="positive-y",
             raw_sha256=RAW_SHA256,
         )
 
         self.assertEqual(result.episode_ids, ())
         self.assertRegex(result.rejections[0].reason, "command_delay_s")
+
+    def test_logged_frozen_model_contract_is_required(self):
+        for field_name in (
+            "release_dataset_model_fingerprint",
+            "release_dataset_state_dimension",
+        ):
+            with self.subTest(field_name=field_name):
+                raw = raw_records()
+                start = next(
+                    record for record in raw
+                    if record.get("name") == START_EVENT
+                )
+                del start["data"][field_name]
+                self.assert_rejected(raw, "fingerprint|state_dimension")
 
     def test_effective_query_time_must_match_logged_delay(self):
         raw = raw_records()
@@ -414,6 +679,7 @@ class CommandLineTests(unittest.TestCase):
                 "--output", str(output),
                 "--prediction-step-s", "0.02",
                 "--command-delay-s", "0.04",
+                "--direction-sign", "positive-y",
             ]
             stdout = io.StringIO()
             with redirect_stdout(stdout):
@@ -423,6 +689,7 @@ class CommandLineTests(unittest.TestCase):
             self.assertEqual(first_status, 0)
             report = json.loads(stdout.getvalue())
             self.assertEqual(report["status"], "written")
+            self.assertEqual(report["direction_sign"], "positive-y")
             written = json.loads(first_bytes)
             replay = extract_velocity_lmpc_episodes(written, config())
             self.assertEqual(len(replay.episodes), 1)
@@ -431,6 +698,18 @@ class CommandLineTests(unittest.TestCase):
                 second_status = main(argv)
             self.assertEqual(second_status, 2)
             self.assertEqual(output.read_bytes(), first_bytes)
+
+    def test_cli_requires_direction_sign(self):
+        argv = [
+            "--input", "/tmp/raw.json",
+            "--output", "/tmp/resampled.json",
+            "--prediction-step-s", "0.02",
+            "--command-delay-s", "0.04",
+        ]
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                main(argv)
+        self.assertEqual(raised.exception.code, 2)
 
 
 if __name__ == "__main__":

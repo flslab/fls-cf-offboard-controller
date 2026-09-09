@@ -31,6 +31,7 @@ from Interaction.release_lmpc_terminal_gate import (
     classify_terminal_post_state_commands,
 )
 from Interaction.velocity_lmpc_replay import (
+    BOOTSTRAP_ATTEMPT_CLOSED_EVENT,
     CLOSE_EVENT,
     START_EVENT,
     TERMINAL_DWELL_EVENT,
@@ -53,7 +54,9 @@ from Interaction.velocity_lmpc_safe_set import SafeSetLimits
 
 
 RESAMPLE_METHOD = "linear_fresh_wrench_observer_angle_unwrap_v1"
+DIRECTION_SIGNS = ("positive-y", "negative-y")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_CONDITIONAL_FINGERPRINT_RE = re.compile(r"reduced-v3:[0-9a-f]{64}\Z")
 _TIME_ATOL_S = 1e-9
 
 
@@ -66,10 +69,14 @@ class VelocityLMPCResampleResult:
     records: tuple[dict, ...]
     episode_ids: tuple[str, ...]
     rejections: tuple[VelocityLMPCReplayRejection, ...]
+    direction_sign: str
+    skipped_opposite_direction_episode_ids: tuple[str, ...]
     raw_sha256: str
     source_record_count: int
     prediction_step_s: float
     command_delay_s: float
+    model_fingerprint: str | None
+    state_dimension: int
     offline_only: bool = True
     flight_commands_generated: bool = False
 
@@ -81,11 +88,20 @@ class VelocityLMPCResampleResult:
             "output_record_count": len(self.records),
             "episode_count": len(self.episode_ids),
             "episode_ids": list(self.episode_ids),
+            "direction_sign": self.direction_sign,
+            "skipped_opposite_direction_episode_count": len(
+                self.skipped_opposite_direction_episode_ids
+            ),
+            "skipped_opposite_direction_episode_ids": list(
+                self.skipped_opposite_direction_episode_ids
+            ),
             "rejected_episode_count": len(self.rejections),
             "rejections": [item.to_dict() for item in self.rejections],
             "raw_sha256": self.raw_sha256,
             "prediction_step_s": self.prediction_step_s,
             "command_delay_s": self.command_delay_s,
+            "model_fingerprint": self.model_fingerprint,
+            "state_dimension": self.state_dimension,
             "resample_method": RESAMPLE_METHOD,
         }
 
@@ -104,6 +120,58 @@ def _finite_number(value, name):
     if not math.isfinite(result):
         raise ResampleValidationError(f"{name} must be a finite number")
     return result
+
+
+def _validated_direction_sign(value):
+    if value not in DIRECTION_SIGNS:
+        raise ResampleValidationError(
+            "direction_sign must be exactly 'positive-y' or 'negative-y'"
+        )
+    return value
+
+
+def _direction_sign(direction):
+    return "positive-y" if float(direction[1]) > 0.0 else "negative-y"
+
+
+def _start_direction_sign(records, start_index, config):
+    """Best-effort direction classification for filtering parse rejections."""
+    if start_index is None or not 0 <= start_index < len(records):
+        return None
+    record = records[start_index]
+    if record.get("type") != "events" or record.get("name") != START_EVENT:
+        return None
+    try:
+        data = _record_data(record, start_index)
+        direction = _direction(
+            data.get("release_dataset_direction_xy"),
+            config,
+            f"record {start_index} release_dataset_direction_xy",
+        )
+    except (ReplayValidationError, ResampleValidationError):
+        return None
+    return _direction_sign(direction)
+
+
+def _rejection_direction_sign(records, rejection, config):
+    direct = _start_direction_sign(records, rejection.start_index, config)
+    if direct is not None:
+        return direct
+    if not isinstance(rejection.episode_id, str) or not rejection.episode_id:
+        return None
+    matches = set()
+    for index, record in enumerate(records):
+        if record.get("type") != "events" or record.get("name") != START_EVENT:
+            continue
+        data = record.get("data")
+        if not isinstance(data, dict) or data.get(
+            "release_dataset_episode_id"
+        ) != rejection.episode_id:
+            continue
+        sign = _start_direction_sign(records, index, config)
+        if sign is not None:
+            matches.add(sign)
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
 def _raw_digest(records):
@@ -195,6 +263,76 @@ def _validate_raw_timing_identity(records, segment, config):
             "release effective_query_time does not match release state minus "
             "the logged command delay"
         )
+    model_fingerprint = start_data.get(
+        "release_dataset_model_fingerprint"
+    )
+    if (
+        not isinstance(model_fingerprint, str)
+        or _CONDITIONAL_FINGERPRINT_RE.fullmatch(model_fingerprint) is None
+    ):
+        raise ResampleValidationError(
+            "release_dataset_model_fingerprint must identify the frozen "
+            "conditional LMPC model contract"
+        )
+    state_dimension = start_data.get("release_dataset_state_dimension")
+    if (
+        isinstance(state_dimension, bool)
+        or not isinstance(state_dimension, numbers.Integral)
+        or int(state_dimension) != config.state_dimension
+    ):
+        raise ResampleValidationError(
+            "release_dataset_state_dimension does not match the directional "
+            "model delay contract"
+        )
+    return model_fingerprint, int(state_dimension)
+
+
+def _validated_bootstrap_eligibility(records, segment):
+    """Require the flight-side sticky path audit before offline admission."""
+    matching_indices = [
+        index
+        for index in range(segment.start_index, segment.terminal_dwell_index+1)
+        if (
+            records[index].get("type") == "events"
+            and records[index].get("name") == BOOTSTRAP_ATTEMPT_CLOSED_EVENT
+        )
+    ]
+    if len(matching_indices) != 1:
+        raise ResampleValidationError(
+            "episode must contain exactly one Learning MPC Bootstrap Attempt "
+            "Closed event before its terminal marker"
+        )
+    record_index = matching_indices[0]
+    data = _record_data(records[record_index], record_index)
+    if data.get("episode_id") != segment.episode_id:
+        raise ResampleValidationError(
+            "Learning MPC Bootstrap Attempt Closed episode_id does not match "
+            "the release episode"
+        )
+    required_true = (
+        "terminal_success",
+        "countable",
+        "provisional_path_eligible",
+        "counted",
+    )
+    if data.get("path_failure_reasons") != []:
+        raise ResampleValidationError(
+            "Learning MPC Bootstrap Attempt Closed path_failure_reasons must "
+            "be exactly an empty array"
+        )
+    for field_name in required_true:
+        if data.get(field_name) is not True:
+            raise ResampleValidationError(
+                "Learning MPC Bootstrap Attempt Closed "
+                f"{field_name} must be true"
+            )
+    return {
+        "event_name": BOOTSTRAP_ATTEMPT_CLOSED_EVENT,
+        "source_record_index": record_index,
+        "episode_id": segment.episode_id,
+        **{field_name: True for field_name in required_true},
+        "path_failure_reasons": [],
+    }
 
 
 def _command_inventory(records, segment):
@@ -665,7 +803,8 @@ def _resampled_observer(
 
 
 def _resample_segment(records, segment, config, raw_sha256):
-    _validate_raw_timing_identity(records, segment, config)
+    bootstrap_eligibility = _validated_bootstrap_eligibility(records, segment)
+    model_contract = _validate_raw_timing_identity(records, segment, config)
     (
         timeline, inventory, actions, final_position, epochs,
     ) = _decision_commands(records, segment, config)
@@ -803,6 +942,9 @@ def _resample_segment(records, segment, config, raw_sha256):
     terminal_data["release_dataset_outcome"] = "terminal_handoff"
     terminal_data["decision_time_resampled"] = True
     terminal_data["offline_lmpc_dataset_only"] = True
+    terminal_data["release_dataset_bootstrap_eligibility"] = (
+        bootstrap_eligibility
+    )
     terminal_data["resample_provenance"] = {
         "raw_sha256": raw_sha256,
         "source_record_indices": [segment.terminal_dwell_index],
@@ -811,7 +953,7 @@ def _resample_segment(records, segment, config, raw_sha256):
         "interpolation_weight": None,
         "method": RESAMPLE_METHOD,
     }
-    return (start, *output_rows, terminal)
+    return (start, *output_rows, terminal), model_contract
 
 
 def _rejected_block(records, rejection, raw_sha256):
@@ -867,11 +1009,12 @@ def _rejected_block(records, rejection, raw_sha256):
 
 def resample_velocity_lmpc_records(
         records: Sequence[dict], *, prediction_step_s, command_delay_s,
-        raw_sha256=None, limits=None):
-    """Resample independent release episodes without cross-contamination."""
+        direction_sign, raw_sha256=None, limits=None):
+    """Resample only one explicit world-Y direction at a time."""
     if not isinstance(records, (list, tuple)):
         raise ResampleValidationError("flight records must be a complete array")
     records = tuple(records)
+    direction_sign = _validated_direction_sign(direction_sign)
     limits = SafeSetLimits() if limits is None else limits
     config = _config(prediction_step_s, command_delay_s, limits)
     digest = _raw_digest(records) if raw_sha256 is None else raw_sha256
@@ -883,11 +1026,35 @@ def resample_velocity_lmpc_records(
         raise ResampleValidationError(str(error)) from error
 
     blocks = []
-    rejections = list(parse_rejections)
+    rejections = []
+    skipped_opposite_ids = []
+    for rejection in parse_rejections:
+        rejection_sign = _rejection_direction_sign(
+            records, rejection, config
+        )
+        if rejection_sign is not None and rejection_sign != direction_sign:
+            if rejection.episode_id is not None:
+                skipped_opposite_ids.append(rejection.episode_id)
+            continue
+        rejections.append(rejection)
     successful_ids = []
+    selected_model_contract = None
     for segment in segments:
+        if _direction_sign(segment.direction) != direction_sign:
+            skipped_opposite_ids.append(segment.episode_id)
+            continue
         try:
-            block = _resample_segment(records, segment, config, digest)
+            block, model_contract = _resample_segment(
+                records, segment, config, digest
+            )
+            if (
+                selected_model_contract is not None
+                and model_contract != selected_model_contract
+            ):
+                raise ResampleValidationError(
+                    "selected direction contains multiple frozen model "
+                    "contracts; resample them into separate artifacts"
+                )
         except (ResampleValidationError, ReplayValidationError) as error:
             rejection = VelocityLMPCReplayRejection(
                 episode_id=segment.episode_id,
@@ -898,10 +1065,14 @@ def resample_velocity_lmpc_records(
             rejections.append(rejection)
             block = _rejected_block(records, rejection, digest)
         else:
+            selected_model_contract = model_contract
             successful_ids.append(segment.episode_id)
         blocks.append((segment.start_index, block))
-    segment_starts = {segment.start_index for segment in segments}
-    for rejection in parse_rejections:
+    segment_starts = {
+        segment.start_index for segment in segments
+        if _direction_sign(segment.direction) == direction_sign
+    }
+    for rejection in rejections:
         if rejection.start_index in segment_starts:
             continue
         block = _rejected_block(records, rejection, digest)
@@ -915,10 +1086,20 @@ def resample_velocity_lmpc_records(
         records=output,
         episode_ids=tuple(successful_ids),
         rejections=tuple(rejections),
+        direction_sign=direction_sign,
+        skipped_opposite_direction_episode_ids=tuple(dict.fromkeys(
+            skipped_opposite_ids
+        )),
         raw_sha256=digest,
         source_record_count=len(records),
         prediction_step_s=config.prediction_step_s,
         command_delay_s=config.command_delay_s,
+        model_fingerprint=(
+            None
+            if selected_model_contract is None else
+            selected_model_contract[0]
+        ),
+        state_dimension=config.state_dimension,
     )
 
 
@@ -974,6 +1155,10 @@ def _parser():
     parser.add_argument("--output", required=True)
     parser.add_argument("--prediction-step-s", required=True, type=float)
     parser.add_argument("--command-delay-s", required=True, type=float)
+    parser.add_argument(
+        "--direction-sign", required=True, choices=DIRECTION_SIGNS,
+        help="emit only releases in the selected world-Y direction",
+    )
     return parser
 
 
@@ -995,6 +1180,7 @@ def main(argv=None):
             records,
             prediction_step_s=args.prediction_step_s,
             command_delay_s=args.command_delay_s,
+            direction_sign=args.direction_sign,
             raw_sha256=hashlib.sha256(raw_bytes).hexdigest(),
         )
         save_new_resampled_records(result, args.output)

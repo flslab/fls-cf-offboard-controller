@@ -119,8 +119,9 @@ release-to-rest episodes:
 1. Start the dedicated flight from the LightBender orchestrator with
    `python3 orchestrator.py --mpc` (`--skip-record` is optional). This is a real
    flight command. The controller validates the mission, world-Y sensor
-   geometry, clear-volume margin, and current quality-gated baseline braking
-   fit before arming.
+   geometry, clear-volume margin, current quality-gated baseline braking fit,
+   and independently held-out-validated +Y and -Y prediction models before
+   arming.
 2. `--mpc` creates an in-memory mission overlay. It turns off velocity-hover,
    predictive/online LMPC, and all LMPC command authority; the bounded legacy
    attitude-coast controller remains the only roll/pitch owner. It does not
@@ -129,20 +130,31 @@ release-to-rest episodes:
    speed, make real releases in both world +Y and -Y; two terminal-success
    attempts per direction are required by the current mission. Cells are
    independent, so a higher-speed attempt is not discarded merely because a
-   lower cell is incomplete. The cell is classified from measured release
-   velocity, not from an intended speed. Cross-axis motion, reversal,
+   lower cell is incomplete, and useful cells may be accumulated offline over
+   multiple battery-bounded flights. The cell is classified from measured
+   release velocity, not from an intended speed. More than 0.03 m/s world-X
+   release speed, reversal,
    stale/skewed state, path tilt/rate, and boundary failures do not count.
-4. Record the confirmed-release state, every fresh synchronized state, every
-   actually sent roll/pitch command, the current-position terminal handoff,
-   and one command-free fresh state after that send. Duplicate callback states
-   do not generate extra commands in this mode.
+4. Configure the Crazyflie source stream at 100 Hz, then record one latest
+   fresh source state and one actual command on each 50 Hz decision epoch, the
+   current-position terminal handoff, and one command-free fresh state after
+   that send. Intermediate asynchronous callbacks may be superseded before the
+   next decision; duplicate callback states never generate extra commands.
 5. Preserve that raw log unchanged, then run
    `Interaction.velocity_lmpc_resample`. It interpolates state only between
    fresh measurements that bracket each actual send time, reconstructs the
-   delayed command queue, recomputes terminal dwell, and refuses extrapolation,
-   hazards, timing gaps, or output-file replacement. Raw flight-loop rows are
-   evidence, not directly admissible LMPC samples.
-6. Choose the LMPC prediction step from the actual command cadence. In the
+   physical state at that send and the delayed command queue, recomputes
+   terminal dwell, and refuses extrapolation, hazards, timing gaps, model
+   contract mismatches, or output-file replacement. This is feasible trajectory
+   evidence for LMPC, not a behavior-cloning label claiming that the baseline
+   computed its command from the interpolated send-time state. Raw flight-loop
+   rows are not directly admissible LMPC samples.
+6. Choose the LMPC prediction step from the actual command cadence. Each
+   release locks the exact directional frozen model before its START record;
+   that record carries its model fingerprint, state dimension, and positive
+   direction-specific command delay. The +Y and -Y delays may differ from one
+   another and from the planar baseline delay used by the flight controller.
+   In the
    validated record, every non-terminal state timestamp must equal its action
    send timestamp, every delayed-command queue must match both the complete raw
    send history and the exact fixed-grid queue successor, and each transition
@@ -150,7 +162,9 @@ release-to-rest episodes:
    command delay--do not infer a fractional delay from queue dimension. The
    strict replay currently rejects a zero-delay contract because state-before-
    send ordering at an identical timestamp is ambiguous.
-7. Admit an episode offline only if it has no safety/localization event, no
+7. Admit an episode offline only if its matching flight-side bootstrap close
+   event says it was countable, terminal-successful, and free of every sticky
+   path/timing failure, and if it has no safety/localization event, no
    reverse-speed violation, stays inside the workspace/attitude/rate/command
    limits, remains in the full measured terminal set for the configured dwell,
    and hands position control a target within 1 cm of the final measurement.
@@ -159,10 +173,13 @@ release-to-rest episodes:
    coverage, run the conservative baseline and add it only after post-flight
    validation.
 
-The old fitted closed-loop response is still the prediction model for this
-high-level roll/pitch interface. LMPC learns safe trajectories and cost-to-go;
-it does not remove the need for dynamics. Replacing that fitted response needs
-a separately validated dynamics model with the same delayed-state contract.
+Two saved calibration products have deliberately separate jobs. The current
+quality-gated planar braking fit drives the bounded legacy attitude-coast
+controller during collection. Independently held-out-validated directional
+prediction models define the exact frozen dynamics, delay, state layout, and
+fingerprint that the offline LMPC artifact must use. `--mpc` requires both but
+does not refit or overwrite either. LMPC learns safe trajectories and
+cost-to-go; it does not remove the need for those dynamics.
 
 Normal `lb11` interaction still has `coast_velocity_braking_enabled: true` and
 sends `velocity_hover`; those ordinary runs remain deliberately incompatible
@@ -174,22 +191,33 @@ until resampling and strict replay both accept the episodes.
 ## Offline extraction
 
 `velocity_lmpc_resample.py` converts the raw complete-flight array into a new
-decision-time-aligned array. The current `--mpc` contract logs state at 100 Hz
-but paces actual attitude decisions on a separate 0.02 s grid; the positive
-command delay must be read from the same frozen baseline fit logged by the
-calibration run:
+decision-time-aligned array. The current `--mpc` contract configures the
+Crazyflie source at 100 Hz and paces the single command owner on a separate
+0.02 s grid. The raw observer rows retain the latest source sample used around
+each decision rather than claiming that every intermediate callback was logged.
+The positive command delay must be copied from the selected direction's
+`release_dataset_command_delay_s` START field (also reported by the
+resampler), not from the legacy planar baseline fit:
 
 ```bash
 venv/bin/python -m Interaction.velocity_lmpc_resample \
   --input /absolute/path/to/complete-flight-log.json \
-  --output /absolute/path/to/new-resampled-log.json \
+  --output /absolute/path/to/resampled-positive-y.json \
   --prediction-step-s 0.02 \
-  --command-delay-s 0.12
+  --command-delay-s 0.12 \
+  --direction-sign positive-y
 ```
 
-`0.12` is only an example. Use the run's logged `command_delay_s`; never copy a
-delay from another drone/model. If +Y and -Y are bound to different frozen
-models or delays, resample and publish them separately.
+`0.12` is only an example. Use the same run and direction's logged delay; never
+copy a delay from another drone, direction, or model. Run the command again
+with a different output path and `--direction-sign negative-y` for -Y. The
+direction argument is
+mandatory: the resampler filters out the opposite-direction episodes, reports
+their IDs as skipped, and never places +Y and -Y episodes in the same output.
+Keep the subsequent replay, model fingerprint, and safe-set artifact separate
+for the two directions as well. Successful resampling prints the locked
+`model_fingerprint`, `state_dimension`, prediction step, and command delay;
+use those exact four values for the replay below.
 
 `velocity_lmpc_replay.py` is the final strict validator from that resampled
 record into the safe set. It
@@ -207,8 +235,8 @@ The extractor never overwrites an artifact:
 
 ```bash
 venv/bin/python -m Interaction.velocity_lmpc_replay \
-  --input /absolute/path/to/new-resampled-log.json \
-  --output /absolute/path/to/new-safe-set.json \
+  --input /absolute/path/to/resampled-positive-y.json \
+  --output /absolute/path/to/safe-set-positive-y.json \
   --model-fingerprint reduced-v3:<sha256> \
   --state-dimension 9 \
   --prediction-step-s 0.02 \
