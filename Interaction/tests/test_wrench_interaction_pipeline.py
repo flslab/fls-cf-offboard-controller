@@ -64,6 +64,9 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertFalse(
             handoff["coast_velocity_unwind_position_control_enabled"]
         )
+        self.assertFalse(
+            handoff["coast_velocity_brake_direct_level_attitude_enabled"]
+        )
         self.assertEqual(
             handoff["coast_velocity_unwind_leveling_rate_deg_s"], 100.0
         )

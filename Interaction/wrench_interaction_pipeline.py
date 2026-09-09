@@ -236,6 +236,7 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # velocity after release, then latch the measured pose for position
         # control only after speed, tilt, and angular rate are all settled.
         "coast_velocity_braking_enabled": False,
+        "coast_velocity_brake_direct_level_attitude_enabled": False,
         "coast_velocity_handoff_speed_m_s": 0.03,
         # Optional staged variant of velocity braking.  First request zero
         # velocity, then predict when the measured braking attitude has enough

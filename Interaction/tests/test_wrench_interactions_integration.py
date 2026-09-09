@@ -3295,6 +3295,39 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         control.send(commander, command_timestamp=1.12)
         self.assertEqual(commander.calls[-1][0], 'position')
 
+    def test_fast_brake_can_send_direct_level_attitude_at_fixed_z(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_brake_direct_level_attitude_enabled=True,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.18], [0.0, 0.40, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        self.assertEqual(control.coast_velocity_phase, 'fast_brake')
+        self.assertTrue(control.direct_level_brake_active)
+        self.assertTrue(control.direct_level_attitude_active)
+        self.assertFalse(control.direct_level_unwind_active)
+        self.assertEqual(control.command_mode, 'fast_brake_attitude_zdistance')
+        control.send(commander, command_timestamp=1.01, yaw_deg=3.0)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(
+            commander.calls[-1][1], [0.0, 0.0, 0.0, 1.0]
+        )
+        sent = control.sent_command_snapshot()
+        self.assertEqual(sent['kind'], 'attitude_zdistance')
+        self.assertEqual(sent['roll_deg'], 0.0)
+        self.assertEqual(sent['pitch_deg'], 0.0)
+        self.assertEqual(sent['zdistance_m'], 1.0)
+
     def test_direct_level_and_position_unwind_are_mutually_exclusive(self):
         with self.assertRaisesRegex(ValueError, 'mutually exclusive'):
             TranslationControlHandoff(
