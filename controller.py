@@ -260,7 +260,6 @@ class Controller:
         self.mission = prepare_mpc_bootstrap_mission(
             self.mission,
             drone_id=self.args.drone_id,
-            sense_axis=self.args.sense_axis,
             controller_rate_hz=self.args.smooth_controller_rate,
         )
         if self.missions:
@@ -2424,9 +2423,9 @@ if __name__ == '__main__':
     ap.add_argument(
         "--mpc", action="store_true",
         help=(
-            "collect offline LMPC bootstrap release-to-rest trajectories; "
-            "uses the legacy attitude coast controller and never grants "
-            "LMPC command authority"
+            "automatically collect offline LMPC accelerate-to-rest "
+            "trajectories on world +/-Y; uses the legacy attitude coast "
+            "controller and never grants LMPC command authority"
         ),
     )
     ap.add_argument(
@@ -2582,8 +2581,6 @@ if __name__ == '__main__':
         ap.error('--mpc requires --smooth-controller-rate 100')
     if args.mpc and args.cf_log_period != 10:
         ap.error('--mpc requires --cf-log-period 10 ms')
-    if args.mpc and args.sense_axis != 'y':
-        ap.error('--mpc requires --sense-axis y for world +/-Y collection')
     if args.sense_spring_constant <= 0.0:
         ap.error('--sense-spring-constant must be positive')
     if args.sense_max_extension <= 0.0:
@@ -2592,12 +2589,6 @@ if __name__ == '__main__':
         ap.error('--sense timing values must be positive')
     if args.sense_power_poll_interval <= 0.0:
         ap.error('--sense-power-poll-interval must be positive')
-
-    # ``--mpc`` is intentionally a one-flag entry point.  It uses real
-    # potentiometer releases, so enable the same reader only after rejecting an
-    # ambiguous explicit mode combination above.
-    if args.mpc:
-        args.sense = True
 
     with Controller(args) as c:
         try:

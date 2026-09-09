@@ -10,12 +10,16 @@ import unittest
 
 from Interaction.tests.test_velocity_lmpc_replay import (
     FINGERPRINT,
+    automatic_records,
     complete_records,
     config,
 )
 from Interaction.velocity_lmpc_replay import (
+    AUTOMATIC_BOOTSTRAP_START_EVENT,
+    AUTOMATIC_WORLD_Y_AXIS_SOURCE,
     CLOSE_EVENT,
     START_EVENT,
+    START_EVENTS,
     TERMINAL_DWELL_EVENT,
     extract_velocity_lmpc_episodes,
 )
@@ -31,15 +35,16 @@ from Interaction.velocity_lmpc_resample import (
 RAW_SHA256 = "b"*64
 
 
-def raw_records(*, episode_id="lb11-raw-release-1", sign=1):
+def raw_records(*, episode_id="lb11-raw-release-1", sign=1, automatic=False):
     """Return a raw state-before-send fixture with a real upper bracket."""
-    records = complete_records(
+    fixture = automatic_records if automatic else complete_records
+    records = fixture(
         decision_phase_s=0.005,
         episode_id=episode_id,
         sign=sign,
     )
     start = next(
-        record for record in records if record.get("name") == START_EVENT
+        record for record in records if record.get("name") in START_EVENTS
     )
     start["data"].update({
         "release_dataset_prediction_step_s": 0.02,
@@ -129,6 +134,34 @@ def shift_timeline(records, offset_s):
 
 
 class SuccessfulResampleTests(unittest.TestCase):
+    def test_automatic_start_provenance_survives_resample_and_replay(self):
+        raw = raw_records(automatic=True, sign=-1)
+
+        result = resample_velocity_lmpc_records(
+            raw,
+            prediction_step_s=0.02,
+            command_delay_s=0.04,
+            direction_sign="negative-y",
+            raw_sha256=RAW_SHA256,
+        )
+
+        self.assertEqual(result.episode_ids, ("lb11-raw-release-1",))
+        self.assertEqual(result.rejections, ())
+        start = next(
+            record for record in result.records
+            if record.get("name") == AUTOMATIC_BOOTSTRAP_START_EVENT
+        )
+        self.assertEqual(
+            start["data"]["release_dataset_axis_source"],
+            AUTOMATIC_WORLD_Y_AXIS_SOURCE,
+        )
+        self.assertNotIn(
+            "release_dataset_measured_sensor_axis_world_xy", start["data"]
+        )
+        replay = extract_velocity_lmpc_episodes(result.records, config())
+        self.assertEqual(len(replay.episodes), 1)
+        self.assertEqual(replay.episodes[0].context.direction_sign, -1)
+
     def test_interpolates_at_actual_send_epochs_and_feeds_replay(self):
         raw = raw_records()
         raw_attempt_index = next(
@@ -362,7 +395,10 @@ class SuccessfulResampleTests(unittest.TestCase):
     def test_mixed_directions_are_filtered_into_distinct_results(self):
         positive = raw_records(episode_id="positive-release", sign=1)
         negative = shift_timeline(
-            raw_records(episode_id="negative-release", sign=-1), 10.0
+            raw_records(
+                episode_id="negative-release", sign=-1, automatic=True
+            ),
+            10.0,
         )
         mixed = positive+negative
 

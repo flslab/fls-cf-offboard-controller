@@ -118,23 +118,28 @@ release-to-rest episodes:
 
 1. Start the dedicated flight from the LightBender orchestrator with
    `python3 orchestrator.py --mpc` (`--skip-record` is optional). This is a real
-   flight command. The controller validates the mission, world-Y sensor
-   geometry, clear-volume margin, current quality-gated baseline braking fit,
+   flight command. The controller validates the mission, world-Y flight
+   geometry, 0.70 m clear-volume margin, current quality-gated baseline braking fit,
    and independently held-out-validated +Y and -Y prediction models before
    arming.
-2. `--mpc` creates an in-memory mission overlay. It turns off velocity-hover,
-   predictive/online LMPC, and all LMPC command authority; the bounded legacy
-   attitude-coast controller remains the only roll/pitch owner. It does not
-   rewrite the mission YAML or calibration file.
-3. Collect near 0.25, 0.45, and 0.65 m/s, preferably low to high. At each
-   speed, make real releases in both world +Y and -Y; two terminal-success
-   attempts per direction are required by the current mission. Cells are
-   independent, so a higher-speed attempt is not discarded merely because a
-   lower cell is incomplete, and useful cells may be accumulated offline over
-   multiple battery-bounded flights. The cell is classified from measured
-   release velocity, not from an intended speed. More than 0.03 m/s world-X
-   release speed, reversal,
-   stale/skewed state, path tilt/rate, and boundary failures do not count.
+2. `--mpc` creates an in-memory mission overlay. It turns off contact/force
+   rendering, velocity-hover, predictive/online LMPC, and all LMPC command
+   authority. The automatic prelude owns a fixed-Z, bounded 8-degree attitude
+   command only until a fresh measured speed reaches its target window; the
+   bounded legacy attitude-coast controller then owns braking. It does not need
+   a potentiometer and does not rewrite the mission YAML or calibration file.
+3. The drone automatically runs 0.25, 0.45, and 0.65 m/s in order. At each
+   speed it alternates world +Y and -Y until two terminal-success attempts per
+   direction are complete, then advances to the next tier. Every attempt first
+   returns to the nominal hover, dwells inside the readiness gates, and sends a
+   level warm-up long enough to cover the learned command delay. The release is
+   classified from the fresh measured velocity, not from the requested speed;
+   it occurs only inside a +/-0.02 m/s window. More than 0.03 m/s world-X
+   release speed, reversal, stale/skewed state, path tilt/rate, and boundary
+   failures do not count. The automatic maneuver is also hard-limited to 0.60 m
+   from nominal while retaining 0.10 m of boundary reserve; a telemetry,
+   altitude, speed, attitude, timing, or boundary safety fault sends a level
+   command before the normal landing path.
 4. Configure the Crazyflie source stream at 100 Hz, then record one latest
    fresh source state and one actual command on each 50 Hz decision epoch, the
    current-position terminal handoff, and one command-free fresh state after

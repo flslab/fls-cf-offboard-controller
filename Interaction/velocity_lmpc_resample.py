@@ -33,7 +33,7 @@ from Interaction.release_lmpc_terminal_gate import (
 from Interaction.velocity_lmpc_replay import (
     BOOTSTRAP_ATTEMPT_CLOSED_EVENT,
     CLOSE_EVENT,
-    START_EVENT,
+    START_EVENTS,
     TERMINAL_DWELL_EVENT,
     ReplayValidationError,
     VelocityLMPCReplayConfig,
@@ -139,7 +139,10 @@ def _start_direction_sign(records, start_index, config):
     if start_index is None or not 0 <= start_index < len(records):
         return None
     record = records[start_index]
-    if record.get("type") != "events" or record.get("name") != START_EVENT:
+    if (
+        record.get("type") != "events"
+        or record.get("name") not in START_EVENTS
+    ):
         return None
     try:
         data = _record_data(record, start_index)
@@ -161,7 +164,10 @@ def _rejection_direction_sign(records, rejection, config):
         return None
     matches = set()
     for index, record in enumerate(records):
-        if record.get("type") != "events" or record.get("name") != START_EVENT:
+        if (
+            record.get("type") != "events"
+            or record.get("name") not in START_EVENTS
+        ):
             continue
         data = record.get("data")
         if not isinstance(data, dict) or data.get(
@@ -577,7 +583,7 @@ def _source_states(
         record = records[index]
         if (
             record.get("type") == "events"
-            and record.get("name") == START_EVENT
+            and record.get("name") in START_EVENTS
         ):
             next_start_seen = True
             break
@@ -962,7 +968,10 @@ def _rejected_block(records, rejection, raw_sha256):
     ):
         return ()
     start = deepcopy(records[rejection.start_index])
-    if start.get("type") != "events" or start.get("name") != START_EVENT:
+    if (
+        start.get("type") != "events"
+        or start.get("name") not in START_EVENTS
+    ):
         return ()
     start_data = start.get("data")
     if not isinstance(start_data, dict):

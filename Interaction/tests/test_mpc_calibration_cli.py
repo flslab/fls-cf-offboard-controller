@@ -109,14 +109,24 @@ class MPCBootstrapCliTests(unittest.TestCase):
                     for line in lines[index:index+3]
                 ))
 
-    def test_one_orchestrated_flag_enables_sensor_reader(self):
+    def test_one_orchestrated_flag_keeps_sensor_reader_disabled(self):
         args = parse_controller_args([
             "--orchestrated", "--mpc", "--log",
             "--smooth-controller-rate", "100",
             "--cf-log-period", "10",
         ])
         self.assertTrue(args.mpc)
-        self.assertTrue(args.sense)
+        self.assertFalse(args.sense)
+
+    def test_sensor_axis_option_does_not_change_automatic_mpc_entry(self):
+        args = parse_controller_args([
+            "--orchestrated", "--mpc", "--sense-axis", "x", "--log",
+            "--smooth-controller-rate", "100", "--cf-log-period", "10",
+        ])
+
+        self.assertTrue(args.mpc)
+        self.assertFalse(args.sense)
+        self.assertEqual(args.sense_axis, "x")
 
     def test_requires_logging_fresh_state_rate_and_exclusive_mode(self):
         bad = (
@@ -138,8 +148,6 @@ class MPCBootstrapCliTests(unittest.TestCase):
             ["--orchestrated", "--mpc", "--trajectory", "path.json", "--log",
              "--smooth-controller-rate", "100", "--cf-log-period", "10"],
             ["--orchestrated", "--mpc", "--illumination", "--log",
-             "--smooth-controller-rate", "100", "--cf-log-period", "10"],
-            ["--orchestrated", "--mpc", "--sense-axis", "x", "--log",
              "--smooth-controller-rate", "100", "--cf-log-period", "10"],
         )
         for tokens in bad:
@@ -184,11 +192,12 @@ class MPCBootstrapCliTests(unittest.TestCase):
             cf=Mock(),
             log_manager=Mock(),
             manifest=None,
-            force_sensor=Mock(),
+            force_sensor=None,
             _safe_sleep=Mock(),
         )
         namespace["calibration_switch"](instance)
         factory = namespace["InteractionsControl"]
+        self.assertIsNone(factory.call_args.kwargs["force_sensor"])
         configured = factory.call_args.args[3]
         self.assertEqual(mission, before)
         self.assertIsNot(configured, mission)
@@ -212,7 +221,7 @@ class MPCBootstrapCliTests(unittest.TestCase):
             calibrate=False,
             braking_test=False,
             interaction=False,
-            sense=True,
+            sense=False,
             orchestrated=True,
             autotune=False,
             simple_takeoff=False,
@@ -232,8 +241,7 @@ class MPCBootstrapCliTests(unittest.TestCase):
         prepared = {"name": "validated-private-overlay"}
         instance = SimpleNamespace(
             args=SimpleNamespace(
-                mpc=True, drone_id="lb11", sense_axis="y",
-                smooth_controller_rate=100,
+                mpc=True, drone_id="lb11", smooth_controller_rate=100,
             ),
             mission=original,
             missions=[original],
@@ -246,8 +254,7 @@ class MPCBootstrapCliTests(unittest.TestCase):
         self.assertIs(instance.mission, prepared)
         self.assertIs(instance.missions[0], prepared)
         prepare.assert_called_once_with(
-            original, drone_id="lb11", sense_axis="y",
-            controller_rate_hz=100,
+            original, drone_id="lb11", controller_rate_hz=100,
         )
 
 

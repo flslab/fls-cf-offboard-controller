@@ -16,10 +16,14 @@ the configured delay and actual send history, not a radio or motor hardware
 acknowledgement.  This module has no commander, radio, or device imports and
 every public report is explicitly offline-only.
 
-Only complete world ``+/-Y`` episodes beginning at
-``Potentiometer Release Coasting Started`` are considered.  A dedicated
-``Release Dataset Terminal Dwell Complete`` marker is the successful close;
-``Release Dataset Episode Closed`` records a rejected/non-terminal close.
+Only complete world ``+/-Y`` episodes beginning at either the legacy
+``Potentiometer Release Coasting Started`` event or the automatic-profile
+``Learning MPC Bootstrap Braking Started`` event are considered.  The legacy
+event must retain measured sensor-axis evidence; the automatic event instead
+must identify its axis provenance and agree with the actual release velocity.
+A dedicated ``Release Dataset Terminal Dwell Complete`` marker is the
+successful close; ``Release Dataset Episode Closed`` records a
+rejected/non-terminal close.
 The successful marker, the measured samples, the applied/pending command
 timeline, and the actual position-handoff send must all agree.  The older
 position-hold event is deliberately ignored: a controller transition is not
@@ -61,6 +65,9 @@ from Interaction.velocity_lmpc_safe_set import (
 
 
 START_EVENT = "Potentiometer Release Coasting Started"
+AUTOMATIC_BOOTSTRAP_START_EVENT = "Learning MPC Bootstrap Braking Started"
+AUTOMATIC_WORLD_Y_AXIS_SOURCE = "automatic_world_y_profile"
+START_EVENTS = frozenset((START_EVENT, AUTOMATIC_BOOTSTRAP_START_EVENT))
 TERMINAL_DWELL_EVENT = "Release Dataset Terminal Dwell Complete"
 CLOSE_EVENT = "Release Dataset Episode Closed"
 BOOTSTRAP_ATTEMPT_CLOSED_EVENT = "Learning MPC Bootstrap Attempt Closed"
@@ -74,6 +81,8 @@ _HAZARD_EVENT_RE = re.compile(
     re.IGNORECASE,
 )
 _MIN_DIRECTION_ALIGNMENT_DOT = 0.98
+_AUTOMATIC_MAX_ABS_CROSS_VELOCITY_M_S = 0.03
+_AUTOMATIC_MAX_ABS_ALIGNED_VELOCITY_M_S = 0.75
 
 
 class ReplayValidationError(ValueError):
@@ -260,7 +269,7 @@ class VelocityLMPCReplayResult:
 class _Segment:
     episode_id: str
     direction: np.ndarray
-    measured_sensor_axis_world_xy: np.ndarray
+    measured_sensor_axis_world_xy: np.ndarray | None
     start_index: int
     release_state_time: float
     terminal_dwell_index: int
@@ -311,6 +320,64 @@ def _measured_sensor_axis(value, direction, config, name):
     return measured
 
 
+def _validate_automatic_world_y_axis(data, direction, record_index):
+    """Validate non-sensor axis provenance from the actual release state."""
+    if data.get("release_dataset_axis_source") != AUTOMATIC_WORLD_Y_AXIS_SOURCE:
+        raise ReplayValidationError(
+            f"record {record_index} automatic START must declare "
+            "release_dataset_axis_source=automatic_world_y_profile"
+        )
+    if data.get("release_dataset_measured_sensor_axis_world_xy") is not None:
+        raise ReplayValidationError(
+            f"record {record_index} automatic START must not claim a measured "
+            "sensor axis"
+        )
+    release_velocity = _vector(
+        data.get("measured_velocity_m_s"),
+        3,
+        f"record {record_index} measured_velocity_m_s",
+    )
+    coast_velocity = _vector(
+        data.get("coast_initial_velocity_m_s"),
+        3,
+        f"record {record_index} coast_initial_velocity_m_s",
+    )
+    if not np.allclose(
+        coast_velocity, release_velocity, rtol=0.0, atol=1e-12
+    ):
+        raise ReplayValidationError(
+            f"record {record_index} automatic START release velocities "
+            "disagree"
+        )
+    if abs(float(release_velocity[1])) <= 1e-12:
+        raise ReplayValidationError(
+            f"record {record_index} automatic START actual release velocity "
+            "has no world-Y direction"
+        )
+    if abs(float(release_velocity[0])) > (
+        _AUTOMATIC_MAX_ABS_CROSS_VELOCITY_M_S+1e-12
+    ):
+        raise ReplayValidationError(
+            f"record {record_index} automatic START actual release velocity "
+            "exceeds the fixed 0.03 m/s cross-axis limit"
+        )
+    if abs(float(release_velocity[1])) > (
+        _AUTOMATIC_MAX_ABS_ALIGNED_VELOCITY_M_S+1e-12
+    ):
+        raise ReplayValidationError(
+            f"record {record_index} automatic START actual release velocity "
+            "exceeds the fixed 0.75 m/s aligned-axis limit"
+        )
+    derived_direction = np.asarray([
+        0.0, float(np.sign(release_velocity[1])),
+    ])
+    if not np.array_equal(direction, derived_direction):
+        raise ReplayValidationError(
+            f"record {record_index} automatic START direction disagrees with "
+            "the actual release velocity"
+        )
+
+
 def _is_hazard_event(record):
     if record.get("type") != "events":
         return False
@@ -327,7 +394,10 @@ def _is_hazard_event(record):
 def _validate_resampled_bootstrap_eligibility(data, episode_id):
     """Bind final replay to the raw flight-side sticky path audit."""
     if data.get("decision_time_resampled") is not True:
-        return
+        raise ReplayValidationError(
+            "terminal marker must explicitly declare "
+            "decision_time_resampled=true"
+        )
     eligibility = data.get("release_dataset_bootstrap_eligibility")
     if not isinstance(eligibility, dict):
         raise ReplayValidationError(
@@ -366,7 +436,7 @@ def _validate_resampled_bootstrap_eligibility(data, episode_id):
         )
 
 
-def _segments(records, config):
+def _segments(records, config, *, require_resampled=False):
     active = None
     seen_starts = set()
     lingering_id = None
@@ -400,7 +470,7 @@ def _segments(records, config):
         if active is not None and _is_hazard_event(record):
             active["errors"].append(f"contains hazard event {name!r}")
 
-        if record_type == "events" and name == START_EVENT:
+        if record_type == "events" and name in START_EVENTS:
             if active is not None:
                 reject_active(
                     "episode is incomplete because another release started "
@@ -417,15 +487,19 @@ def _segments(records, config):
                     data.get("release_dataset_direction_xy"), config,
                     f"record {index} release_dataset_direction_xy",
                 )
-                measured_sensor_axis = _measured_sensor_axis(
-                    data.get(
-                        "release_dataset_measured_sensor_axis_world_xy"
-                    ),
-                    direction,
-                    config,
-                    f"record {index} "
-                    "release_dataset_measured_sensor_axis_world_xy",
-                )
+                if name == START_EVENT:
+                    measured_sensor_axis = _measured_sensor_axis(
+                        data.get(
+                            "release_dataset_measured_sensor_axis_world_xy"
+                        ),
+                        direction,
+                        config,
+                        f"record {index} "
+                        "release_dataset_measured_sensor_axis_world_xy",
+                    )
+                else:
+                    _validate_automatic_world_y_axis(data, direction, index)
+                    measured_sensor_axis = None
                 _finite_number(data.get("time"), f"record {index} event time")
                 release_state_time = _finite_number(
                     data.get("release_state_time"),
@@ -447,7 +521,12 @@ def _segments(records, config):
                         f"record {index} release_pending_command_history "
                         "must be an array"
                     )
-                if data.get("decision_time_resampled") is True:
+                if require_resampled:
+                    if data.get("decision_time_resampled") is not True:
+                        raise ReplayValidationError(
+                            f"record {index} START must explicitly declare "
+                            "decision_time_resampled=true"
+                        )
                     logged_fingerprint = data.get(
                         "release_dataset_model_fingerprint"
                     )
@@ -510,7 +589,10 @@ def _segments(records, config):
                     data.get("terminal_state_time"),
                     f"record {index} terminal_state_time",
                 )
-                _validate_resampled_bootstrap_eligibility(data, episode_id)
+                if require_resampled:
+                    _validate_resampled_bootstrap_eligibility(
+                        data, episode_id
+                    )
             except ReplayValidationError as error:
                 reject(None, str(error), None, index)
                 continue
@@ -631,6 +713,15 @@ def _segments(records, config):
                     active["errors"].append(
                         f"observer record {index} has missing or mismatched "
                         "episode ID"
+                    )
+                    continue
+                if (
+                    require_resampled
+                    and data.get("decision_time_resampled") is not True
+                ):
+                    active["errors"].append(
+                        f"observer record {index} must explicitly declare "
+                        "decision_time_resampled=true"
                     )
                     continue
                 try:
@@ -1436,7 +1527,9 @@ def extract_velocity_lmpc_episodes(records: Sequence[dict], config):
     if not isinstance(records, (list, tuple)):
         raise ReplayValidationError("flight records must be a complete array")
     records = tuple(records)
-    segments, parse_rejections = _segments(records, config)
+    segments, parse_rejections = _segments(
+        records, config, require_resampled=True
+    )
     episodes = []
     rejections = list(parse_rejections)
     for segment in segments:

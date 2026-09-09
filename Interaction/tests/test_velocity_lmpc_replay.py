@@ -8,10 +8,14 @@ import tempfile
 import unittest
 
 from Interaction.velocity_lmpc_replay import (
+    AUTOMATIC_BOOTSTRAP_START_EVENT,
+    AUTOMATIC_WORLD_Y_AXIS_SOURCE,
+    BOOTSTRAP_ATTEMPT_CLOSED_EVENT,
     CLOSE_EVENT,
     LEGACY_HANDOFF_EVENT,
     ReplayValidationError,
     START_EVENT,
+    START_EVENTS,
     TERMINAL_DWELL_EVENT,
     VelocityLMPCReplayConfig,
     build_safe_set_artifact,
@@ -101,6 +105,7 @@ def observer(*, stamp, state_time=None, episode_id=None, direction=None,
         "xy_boundary_margin_m": boundary,
         "battery_voltage_V": battery,
         "measurement_rejected": False,
+        "decision_time_resampled": True,
     }
     data.update(extra)
     return {"type": "wrench_observer", "name": None, "data": data}
@@ -136,6 +141,9 @@ def complete_records(*, sign=1, episode_id="lb11-release-1",
             attitude_command(0.96, sign*2.0, sequence=2),
             attitude_command(0.98, sign*3.0, sequence=3),
         ],
+        "release_dataset_model_fingerprint": FINGERPRINT,
+        "release_dataset_state_dimension": 5,
+        "decision_time_resampled": True,
         "offline_lmpc_dataset_only": True,
     }))
 
@@ -217,6 +225,17 @@ def complete_records(*, sign=1, episode_id="lb11-release-1",
         "reason": "full_measured_terminal_dwell_complete",
         "terminal_gate": terminal_gate(complete=True),
         "terminal_state_time": 1.20,
+        "decision_time_resampled": True,
+        "release_dataset_bootstrap_eligibility": {
+            "event_name": BOOTSTRAP_ATTEMPT_CLOSED_EVENT,
+            "source_record_index": 1,
+            "episode_id": episode_id,
+            "terminal_success": True,
+            "countable": True,
+            "provisional_path_eligible": True,
+            "counted": True,
+            "path_failure_reasons": [],
+        },
     }))
     # This is expected flight-loop behavior: the completed ID lingers until
     # the next release, but the post-handoff position row is not in the episode.
@@ -236,6 +255,24 @@ def complete_records(*, sign=1, episode_id="lb11-release-1",
     return records
 
 
+def automatic_records(
+        *, sign=1, episode_id="lb11-auto-release-1", **updates):
+    """Use the automatic world-Y START provenance without sensor evidence."""
+    records = complete_records(
+        sign=sign, episode_id=episode_id, **updates
+    )
+    start = records[0]
+    start["name"] = AUTOMATIC_BOOTSTRAP_START_EVENT
+    release_velocity = [0.01, sign*0.40, 0.0]
+    start["data"].update({
+        "release_dataset_axis_source": AUTOMATIC_WORLD_Y_AXIS_SOURCE,
+        "coast_initial_velocity_m_s": list(release_velocity),
+        "measured_velocity_m_s": list(release_velocity),
+    })
+    start["data"].pop("release_dataset_measured_sensor_axis_world_xy")
+    return records
+
+
 def config(**updates):
     values = dict(
         model_fingerprint=FINGERPRINT,
@@ -248,6 +285,23 @@ def config(**updates):
 
 
 class SuccessfulExtractionTests(unittest.TestCase):
+    def test_accepts_automatic_world_y_start_without_sensor_axis(self):
+        records = automatic_records(sign=-1)
+
+        result = extract_velocity_lmpc_episodes(records, config())
+
+        self.assertEqual(len(result.episodes), 1)
+        self.assertEqual(result.episodes[0].context.direction_sign, -1)
+        start = records[0]
+        self.assertEqual(start["name"], AUTOMATIC_BOOTSTRAP_START_EVENT)
+        self.assertEqual(
+            start["data"]["release_dataset_axis_source"],
+            AUTOMATIC_WORLD_Y_AXIS_SOURCE,
+        )
+        self.assertNotIn(
+            "release_dataset_measured_sensor_axis_world_xy", start["data"]
+        )
+
     def test_extracts_aligned_state_command_and_oldest_first_delay_queue(self):
         result = extract_velocity_lmpc_episodes(complete_records(), config())
         self.assertTrue(result.offline_only)
@@ -386,7 +440,7 @@ class SuccessfulExtractionTests(unittest.TestCase):
 class StrictRejectionTests(unittest.TestCase):
     def active_rows(self, records):
         start = next(index for index, record in enumerate(records)
-                     if record.get("name") == START_EVENT)
+                     if record.get("name") in START_EVENTS)
         close = next(index for index, record in enumerate(records)
                      if record.get("name") in (
                          TERMINAL_DWELL_EVENT, CLOSE_EVENT
@@ -403,6 +457,45 @@ class StrictRejectionTests(unittest.TestCase):
             " | ".join(item.reason for item in result.rejections), pattern
         )
         return result
+
+    def test_resampled_provenance_cannot_be_downgraded_by_omission(self):
+        cases = {}
+
+        missing_start = complete_records()
+        missing_start[0]["data"].pop("decision_time_resampled")
+        cases["START"] = missing_start
+
+        missing_observer = complete_records()
+        self.active_rows(missing_observer)[3]["data"].pop(
+            "decision_time_resampled"
+        )
+        cases["observer"] = missing_observer
+
+        missing_terminal = complete_records()
+        terminal = next(
+            record for record in missing_terminal
+            if record.get("name") == TERMINAL_DWELL_EVENT
+        )
+        terminal["data"].pop("decision_time_resampled")
+        cases["terminal marker"] = missing_terminal
+
+        for expected, records in cases.items():
+            with self.subTest(expected=expected):
+                self.assert_rejected(
+                    records,
+                    expected + ".*decision_time_resampled=true|"
+                    "decision_time_resampled=true.*" + expected,
+                )
+
+    def test_bootstrap_eligibility_is_unconditionally_required_for_replay(self):
+        records = complete_records()
+        terminal = next(
+            record for record in records
+            if record.get("name") == TERMINAL_DWELL_EVENT
+        )
+        terminal["data"].pop("release_dataset_bootstrap_eligibility")
+
+        self.assert_rejected(records, "no bootstrap eligibility audit")
 
     def test_rejects_missing_actual_command_timestamp(self):
         records = complete_records()
@@ -548,6 +641,72 @@ class StrictRejectionTests(unittest.TestCase):
         records[0]["data"].pop(
             "release_dataset_measured_sensor_axis_world_xy"
         )
+
+        self.assert_rejected(records, "measured_sensor_axis_world_xy")
+
+    def test_automatic_start_requires_exact_axis_and_velocity_provenance(self):
+        cases = []
+
+        wrong_source = automatic_records()
+        wrong_source[0]["data"]["release_dataset_axis_source"] = "sensor_axis"
+        cases.append((wrong_source, "axis_source=automatic_world_y_profile"))
+
+        missing_velocity = automatic_records()
+        missing_velocity[0]["data"].pop("coast_initial_velocity_m_s")
+        cases.append((missing_velocity, "coast_initial_velocity_m_s"))
+
+        missing_measured_velocity = automatic_records()
+        missing_measured_velocity[0]["data"].pop("measured_velocity_m_s")
+        cases.append((missing_measured_velocity, "measured_velocity_m_s"))
+
+        wrong_direction = automatic_records()
+        wrong_direction[0]["data"]["coast_initial_velocity_m_s"][1] *= -1.0
+        wrong_direction[0]["data"]["measured_velocity_m_s"][1] *= -1.0
+        cases.append((wrong_direction, "direction disagrees"))
+
+        fake_sensor_axis = automatic_records()
+        fake_sensor_axis[0]["data"][
+            "release_dataset_measured_sensor_axis_world_xy"
+        ] = [0.0, 1.0]
+        cases.append((fake_sensor_axis, "must not claim a measured sensor axis"))
+
+        disagreeing_velocity = automatic_records()
+        disagreeing_velocity[0]["data"]["measured_velocity_m_s"][1] = 0.39
+        cases.append((disagreeing_velocity, "release velocities disagree"))
+
+        for records, pattern in cases:
+            with self.subTest(pattern=pattern):
+                self.assert_rejected(records, pattern)
+
+    def test_automatic_start_uses_fixed_release_velocity_envelope(self):
+        exact_boundary = automatic_records()
+        for field in (
+                "coast_initial_velocity_m_s", "measured_velocity_m_s"):
+            exact_boundary[0]["data"][field] = [0.03, 0.75, 0.0]
+        result = extract_velocity_lmpc_episodes(exact_boundary, config())
+        self.assertEqual(len(result.episodes), 1)
+
+        cases = (
+            ([0.030001, 0.40, 0.0], "fixed 0.03 m/s cross-axis limit"),
+            ([0.01, 0.750001, 0.0], "fixed 0.75 m/s aligned-axis limit"),
+        )
+        for velocity, pattern in cases:
+            records = automatic_records()
+            for field in (
+                    "coast_initial_velocity_m_s", "measured_velocity_m_s"):
+                records[0]["data"][field] = list(velocity)
+            with self.subTest(velocity=velocity):
+                self.assert_rejected(records, pattern)
+
+    def test_legacy_start_cannot_use_automatic_axis_source_as_a_bypass(self):
+        records = complete_records()
+        records[0]["data"].pop(
+            "release_dataset_measured_sensor_axis_world_xy"
+        )
+        records[0]["data"]["release_dataset_axis_source"] = (
+            AUTOMATIC_WORLD_Y_AXIS_SOURCE
+        )
+        records[0]["data"]["coast_initial_velocity_m_s"] = [0.01, 0.40, 0.0]
 
         self.assert_rejected(records, "measured_sensor_axis_world_xy")
 

@@ -2,6 +2,7 @@ import tempfile
 import time
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
@@ -1573,6 +1574,227 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertNotIn('position_capture_calibration', calls[0]['config'])
 
+    def test_mpc_automatic_acceleration_has_explicit_attitude_owner(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_calibrated_direction_xy=[0.0, 1.0],
+        )
+
+        self.assertTrue(control.start_contact(
+            'mpc_bootstrap_acceleration', [0.0, 0.0, 1.0]
+        ))
+        self.assertTrue(control.mpc_bootstrap_acceleration_mode)
+        self.assertFalse(control.attitude_mode)
+        self.assertEqual(
+            control.command_mode, control.MPC_BOOTSTRAP_ACCELERATION
+        )
+        control.set_contact_attitude(-8.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=1.0, yaw_deg=0.0)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        self.assertEqual(
+            control.sent_command_snapshot()['kind'],
+            'attitude_zdistance',
+        )
+
+        self.assertTrue(control.end_contact(
+            [0.0, 0.1, 1.0],
+            [0.0, 0.25, 0.0],
+            1.02,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.radians([-8.0, 0.0, 0.0]),
+            coast=True,
+        ))
+        self.assertEqual(control.command_mode, control.ATTITUDE_COAST)
+        self.assertFalse(control.mpc_bootstrap_acceleration_mode)
+
+    def test_mpc_loop_automatically_accelerates_and_logs_sensor_free_start(self):
+        class StopAfterBootstrapStart(RuntimeError):
+            pass
+
+        class DeterministicClock:
+            def __init__(self):
+                self.wall_s = 1000.0
+                self.monotonic_s = 500.0
+
+            def time(self):
+                return self.wall_s
+
+            def monotonic(self):
+                return self.monotonic_s
+
+            def advance(self, duration_s):
+                duration_s = max(float(duration_s), 0.0)
+                self.wall_s += duration_s
+                self.monotonic_s += duration_s
+
+        clock = DeterministicClock()
+        commander = FakeCommander()
+
+        class AutomaticMPCLogManager(FakeOnboardLogManager):
+            def get_nearest_group_log_data(self, group_name, timestamp):
+                packet, skew = super().get_nearest_group_log_data(
+                    group_name, timestamp
+                )
+                if group_name == 'VEL_ORI':
+                    attitude_calls = [
+                        call for call in commander.calls
+                        if call[0] == 'zdistance'
+                    ]
+                    if (
+                        attitude_calls
+                        and attitude_calls[-1][1][0] <= -7.99
+                    ):
+                        packet['stateEstimate.vy'] = 0.25
+                        packet['stateEstimate.roll'] = -8.0
+                return packet, skew
+
+        logs = AutomaticMPCLogManager(clock.time())
+        controller = InteractionsControl.__new__(InteractionsControl)
+        controller.drone_id = 'lb11'
+        controller.log_manager = logs
+        controller.ctrl_rate = 100
+        controller.bounds = {
+            'x_min': -1.0, 'x_max': 1.0,
+            'y_min': -1.0, 'y_max': 1.0,
+            'z_min': 0.3, 'z_max': 2.0,
+        }
+        controller.hl_commander = FakeCommander()
+        controller.lo_commander = commander
+        controller.force_sensor = None
+
+        def safe_sleep(duration_s):
+            clock.advance(duration_s)
+            logs.packet_time = clock.time()
+
+        controller._safe_sleep = safe_sleep
+        start_events = []
+
+        def log_event(name, data=None):
+            payload = {} if data is None else data
+            logs.add_log_entry('events', payload, name=name)
+            if name == 'Learning MPC Bootstrap Braking Started':
+                start_events.append(payload)
+                raise StopAfterBootstrapStart
+
+        controller._log_event = log_event
+        contracts = {
+            'positive_y': {
+                'direction_label': 'positive_y',
+                'direction_xy': [0.0, 1.0],
+                'command_delay_s': 0.02,
+                'model_fingerprint': 'test-positive-model',
+                'state_dimension': 4,
+            },
+            'negative_y': {
+                'direction_label': 'negative_y',
+                'direction_xy': [0.0, -1.0],
+                'command_delay_s': 0.02,
+                'model_fingerprint': 'test-negative-model',
+                'state_dimension': 4,
+            },
+        }
+
+        def contract_for_direction(_contracts, direction_xy):
+            return contracts[
+                'positive_y' if direction_xy[1] > 0.0 else 'negative_y'
+            ]
+
+        config = {
+            'state_source': 'onboard',
+            'shadow_mode': False,
+            'startup_bias_calibration_enabled': False,
+            'initial_contact_arming': {'enabled': False},
+            'detection': {
+                'translation': {'enabled': False},
+                'yaw': {'enabled': False},
+            },
+            'predictive_braking': {'enabled': False},
+            'learning_velocity_mpc_shadow': {
+                'enabled': False,
+                'command_authority': False,
+            },
+            'mpc_bootstrap_calibration': {
+                'enabled': True,
+                'initial_speed_targets_m_s': [0.25],
+                'speed_tolerance_m_s': 0.04,
+                'repetitions_per_cell': 1,
+                'max_release_speed_m_s': 0.40,
+                'ready_dwell_s': 0.02,
+                'level_warmup_min_s': 0.02,
+                'prediction_step_s': 0.02,
+                'max_acceleration_duration_s': 0.20,
+                'max_maneuver_displacement_m': 0.20,
+            },
+            'mpc_bootstrap_model_contracts': contracts,
+            'control_handoff': {
+                'coast_attitude_response_delay_s': 0.02,
+                'coast_velocity_braking_enabled': False,
+                'coast_velocity_predictive_unwind_enabled': False,
+            },
+        }
+        virtual_object = {
+            'inertia_command': 'orientation',
+            'force_rendering': {'enabled': False},
+            'contact_detection': {'source': 'wrench_observer'},
+            'release_behavior': {'mode': 'observer_brake'},
+        }
+
+        with patch(
+            'Interaction.interactions.time.time', side_effect=clock.time
+        ), patch(
+            'Interaction.interactions.time.monotonic',
+            side_effect=clock.monotonic,
+        ), patch(
+            'Interaction.interactions.validate_mpc_bootstrap_model_contracts',
+            return_value=contracts,
+        ), patch(
+            'Interaction.interactions.mpc_bootstrap_model_contract_for_direction',
+            side_effect=contract_for_direction,
+        ), self.assertRaises(StopAfterBootstrapStart):
+            controller.interaction_onboard_wrench_admittance(
+                duration=10.0,
+                nominal_position=[0.0, 0.0, 1.0],
+                nominal_yaw_deg=0.0,
+                config=config,
+                virtual_object_config=virtual_object,
+                mpc_calibration_mode=True,
+            )
+
+        self.assertIsNone(controller.force_sensor)
+        attitude_calls = [
+            call[1] for call in commander.calls if call[0] == 'zdistance'
+        ]
+        level_index = next(
+            index for index, call in enumerate(attitude_calls)
+            if call[:2] == (0.0, 0.0)
+        )
+        acceleration_index = next(
+            index for index, call in enumerate(attitude_calls)
+            if call[:2] == (-8.0, 0.0)
+        )
+        self.assertLess(level_index, acceleration_index)
+        self.assertEqual(len(start_events), 1)
+        start = start_events[0]
+        self.assertEqual(
+            start['release_dataset_axis_source'],
+            'automatic_world_y_profile',
+        )
+        self.assertEqual(
+            start['measured_velocity_m_s'],
+            start['coast_initial_velocity_m_s'],
+        )
+        self.assertEqual(start['measured_velocity_m_s'], [0.0, 0.25, 0.0])
+        self.assertIsNone(
+            start['release_dataset_measured_sensor_axis_world_xy']
+        )
+        self.assertEqual(
+            start['initial_command_mode'],
+            TranslationControlHandoff.ATTITUDE_COAST,
+        )
+
     def test_active_translation_aims_release_tilt_along_braking_direction_then_holds(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
@@ -2237,6 +2459,79 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertAlmostEqual(
             control.coast_velocity_unwind_response_horizon_s,
             expected['duration_s'],
+        )
+
+    def test_real_tail_calibration_unwinds_before_logged_reverse_case(self):
+        direction = np.array([-0.0330945357, 0.9994522258, 0.0])
+        orientation = np.array([
+            0.1390151197, -0.0224977337, 0.0308844128,
+        ])
+        angular_velocity = np.array([1.762, -0.071, -0.175])
+        velocity = np.array([
+            -0.0418995507, 0.9507858157, -0.0472133756,
+        ])
+
+        def evaluate(tail_scale):
+            control = TranslationControlHandoff(
+                initial_position=[0.0, 0.0, 1.0],
+                yaw_deg=0.0,
+                shadow_mode=False,
+                brake_max_attitude_deg=20.0,
+                coast_attitude_acceleration_scale=1.038742,
+                coast_velocity_braking_enabled=True,
+                coast_velocity_predictive_unwind_enabled=True,
+                coast_velocity_unwind_terminal_speed_m_s=0.10,
+                coast_velocity_unwind_integrated_leveling_enabled=True,
+                coast_velocity_unwind_tail_calibration_scale=tail_scale,
+                coast_velocity_unwind_leveling_rate_deg_s=100.0,
+                coast_velocity_unwind_integration_step_s=0.01,
+                coast_velocity_unwind_one_step_lookahead_enabled=True,
+                coast_velocity_unwind_one_step_max_dt_s=0.01,
+                coast_attitude_response_delay_s=0.07,
+                coast_velocity_unwind_command_switch_delay_s=0.03,
+            )
+            self.assertTrue(control.start_contact('orientation'))
+            self.assertTrue(control.end_contact(
+                [0.0015076570, -0.6077401042, 1.0182486773],
+                [-0.0562, 0.7223, 0.0082],
+                1.0,
+                interaction_direction=direction,
+                coast=True,
+            ))
+            control.confirm_release_candidate(timestamp=1.0)
+            self.assertFalse(control.update_coast_velocity(
+                [-0.0110512525, -0.3728695810, 1.0292502642],
+                velocity,
+                1.01,
+                current_orientation_rpy=orientation,
+                current_angular_velocity=angular_velocity,
+                command_timestamp=1.0184571838,
+            ))
+            return control
+
+        uncalibrated = evaluate(1.0)
+        calibrated = evaluate(1.60)
+
+        self.assertEqual(uncalibrated.coast_velocity_phase, 'fast_brake')
+        self.assertEqual(calibrated.coast_velocity_phase, 'predictive_unwind')
+        self.assertGreater(
+            uncalibrated.coast_velocity_predicted_unwind_terminal_speed_m_s,
+            uncalibrated.coast_velocity_dynamic_unwind_threshold_m_s,
+        )
+        self.assertLessEqual(
+            calibrated.coast_velocity_predicted_unwind_terminal_speed_m_s,
+            calibrated.coast_velocity_dynamic_unwind_threshold_m_s,
+        )
+        self.assertAlmostEqual(
+            calibrated.coast_velocity_unwind_raw_integrated_velocity_delta_m_s,
+            uncalibrated.coast_velocity_unwind_integrated_velocity_delta_m_s,
+        )
+        self.assertAlmostEqual(
+            calibrated.coast_velocity_unwind_integrated_velocity_delta_m_s,
+            1.60 * (
+                calibrated
+                .coast_velocity_unwind_raw_integrated_velocity_delta_m_s
+            ),
         )
 
     def test_position_unwind_stays_on_release_line_without_retreat(self):
