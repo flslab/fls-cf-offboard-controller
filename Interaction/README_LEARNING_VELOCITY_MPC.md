@@ -1,9 +1,13 @@
-# Learning velocity MPC
+# Legacy learned-model velocity pulse MPC
 
-`learning_velocity_mpc.py` is a minimum-time, receding-horizon controller for
-one planar velocity transition. It is inspired by *Learning Model Predictive
-Control for Quadrotors* (Rosolia et al., 2022), but it is not a reproduction of
-that paper's repeated-track sampled-safe-set implementation.
+`learning_velocity_mpc.py` is the earlier learned-model pulse selector for one
+planar velocity transition. It is not the Learning MPC method in *Learning
+Model Predictive Control for Quadrotors* (Li, Tunchez, and Loianno, 2022): it
+does not learn a sampled safe set or a trajectory cost-to-go across releases.
+
+The paper-structured, varying-release-speed implementation is documented in
+`README_CONDITIONAL_VELOCITY_LMPC.md`. Keep this older controller in shadow
+while that offline LMPC is seeded and validated.
 
 ## Objective
 

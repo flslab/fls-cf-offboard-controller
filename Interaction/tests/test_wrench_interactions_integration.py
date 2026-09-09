@@ -70,11 +70,25 @@ class InitialContactArmingGateTests(unittest.TestCase):
         gate.update([0.0, 0.0, 0.0], 1.0)
         self.assertTrue(gate.update([0.0, 0.0, 0.0], 1.5))
 
-        gate.reset()
+        gate.reset(after_interaction=True)
 
         self.assertFalse(gate.armed)
         self.assertFalse(gate.update([0.0, 0.0, 0.0], 2.0))
         self.assertTrue(gate.update([0.0, 0.0, 0.0], 2.5))
+
+    def test_post_interaction_stationary_dwell_can_be_skipped(self):
+        gate = InitialContactArmingGate(
+            max_xy_speed_m_s=0.03,
+            stationary_dwell_s=0.5,
+            apply_after_each_interaction=False,
+        )
+        gate.update([0.0, 0.0, 0.0], 1.0)
+        self.assertTrue(gate.update([0.0, 0.0, 0.0], 1.5))
+
+        gate.reset(after_interaction=True)
+
+        self.assertTrue(gate.armed)
+        self.assertFalse(gate.update([1.0, 0.0, 0.0], 2.0))
 
 
 class ReleaseModeTests(unittest.TestCase):
@@ -2070,7 +2084,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             shadow_mode=False,
             coast_velocity_braking_enabled=True,
             coast_velocity_predictive_unwind_enabled=True,
-            coast_velocity_handoff_min_projected_speed_m_s=-0.03,
+            coast_velocity_handoff_min_projected_speed_m_s=0.0,
             coast_alignment_dwell_s=0.0,
         )
         self.assertTrue(control.start_contact('orientation'))
@@ -2085,8 +2099,8 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             current_angular_velocity=np.zeros(3),
         ))
         self.assertFalse(control.coast_velocity_handoff_speed_ready)
-        self.assertGreater(
-            float(control.coast_velocity_command_xy_m_s[1]), -0.05
+        self.assertAlmostEqual(
+            float(control.coast_velocity_command_xy_m_s[1]), 0.0
         )
         # With the stricter default speed gate, this sample remains in the
         # zero-velocity brake instead of accepting or tracking reverse motion.
@@ -2109,6 +2123,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             coast_velocity_predictive_unwind_enabled=True,
             coast_velocity_unwind_terminal_speed_m_s=0.10,
             coast_velocity_unwind_one_step_lookahead_enabled=True,
+            coast_velocity_unwind_one_step_max_dt_s=0.01,
         )
         self.assertTrue(control.start_contact('orientation'))
         self.assertTrue(control.end_contact(
@@ -2118,17 +2133,21 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         control.confirm_release_candidate(timestamp=1.0)
 
         self.assertFalse(control.update_coast_velocity(
-            [0.0, 0.008, 1.0], [0.0, 0.40, 0.0], 1.02,
-            current_orientation_rpy=np.zeros(3),
-            current_angular_velocity=np.radians([50.0, 0.0, 0.0]),
+            [0.0, 0.027, 1.0], [0.0, 1.37, 0.0], 1.02,
+            current_orientation_rpy=np.radians([20.0, 0.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
         ))
         self.assertGreater(
             control.coast_velocity_predicted_unwind_terminal_speed_m_s,
             control.coast_velocity_unwind_terminal_speed_m_s,
         )
         self.assertLessEqual(
-            control.coast_velocity_predicted_next_step_terminal_speed_m_s,
-            control.coast_velocity_unwind_terminal_speed_m_s,
+            control.coast_velocity_predicted_unwind_terminal_speed_m_s,
+            control.coast_velocity_dynamic_unwind_threshold_m_s,
+        )
+        self.assertAlmostEqual(
+            control.coast_velocity_dynamic_unwind_step_guard_m_s,
+            -control.coast_velocity_projected_acceleration_m_s2 * 0.01,
         )
         self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
         self.assertEqual(
@@ -2161,6 +2180,62 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             [0.0, 0.2, 1.0], 1.2
         ))
         self.assertEqual(control.mode, control.POSITION_HOLD)
+
+    def test_actual_send_snapshot_distinguishes_position_velocity_and_attitude(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+        )
+        commander = FakeCommander()
+
+        control.send(commander, command_timestamp=0.90)
+        position = control.sent_command_snapshot()
+        self.assertEqual(position['kind'], 'position')
+        self.assertEqual(position['sent_at'], 0.90)
+
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.4, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
+        velocity = control.sent_command_snapshot()
+        self.assertEqual(velocity['kind'], 'velocity_hover')
+        self.assertEqual(velocity['world_velocity_xy_m_s'], [0.0, 0.0])
+        self.assertGreater(velocity['sequence'], position['sequence'])
+
+        self.assertTrue(control.acquire_external_attitude_coast())
+        control.set_contact_attitude(-4.0, 1.0, 0.0)
+        control.send(commander, command_timestamp=1.02, yaw_deg=0.0)
+        attitude = control.sent_command_snapshot()
+        self.assertEqual(attitude['kind'], 'attitude_zdistance')
+        self.assertEqual(attitude['roll_deg'], -4.0)
+        self.assertEqual(attitude['pitch_deg'], 1.0)
+        self.assertGreater(attitude['sequence'], velocity['sequence'])
+
+        history = control.sent_commands_after_sequence(position['sequence'])
+        self.assertEqual(
+            [command['kind'] for command in history],
+            ['velocity_hover', 'attitude_zdistance'],
+        )
+        window = control.sent_commands_in_window(1.00, 1.02)
+        self.assertEqual(
+            [command['sequence'] for command in window],
+            [velocity['sequence'], attitude['sequence']],
+        )
+        before_attitude_delay = control.sent_command_effective_at(
+            1.049, delay_s=0.04
+        )
+        self.assertEqual(before_attitude_delay['kind'], 'position')
+        attitude_effective = control.sent_command_effective_at(
+            1.060, delay_s=0.04
+        )
+        self.assertEqual(attitude_effective['kind'], 'attitude_zdistance')
+        self.assertAlmostEqual(
+            attitude_effective['effective_query_time'], 1.02
+        )
 
     def test_velocity_coast_rejects_impossible_kinematic_state_jump(self):
         control = TranslationControlHandoff(
@@ -3063,6 +3138,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         self.assertEqual(config_rows[-1]['initial_contact_arming'], {
             'enabled': True,
+            'apply_after_each_interaction': True,
             'max_xy_speed_m_s': 0.03,
             'stationary_dwell_s': 0.5,
         })

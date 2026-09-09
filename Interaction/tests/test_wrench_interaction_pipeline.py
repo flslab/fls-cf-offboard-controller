@@ -53,6 +53,9 @@ class DefaultConfigTests(unittest.TestCase):
             handoff["coast_velocity_unwind_one_step_max_dt_s"], 0.03
         )
         self.assertEqual(
+            handoff["coast_velocity_unwind_low_speed_fallback_m_s"], 0.03
+        )
+        self.assertEqual(
             handoff["coast_velocity_rebrake_speed_m_s"], 0.04
         )
         self.assertEqual(
