@@ -11214,6 +11214,10 @@ class InteractionsControl:
             braking_kwargs = {}
             coast_handoff_completed = False
             velocity_mpc_handoff_completed = False
+            position_handoff_completed_this_cycle = False
+            position_integrators_reset = False
+            position_integrator_reset_method = None
+            position_integrator_reset_elapsed_s = None
             predictive_brake_decision = None
             if (
                 velocity_mpc_shadow_episode is not None
@@ -11352,7 +11356,7 @@ class InteractionsControl:
                             >= velocity_mpc_config_object.terminal_dwell_s
                         ):
                             position_reset_started_at = time.time()
-                            position_reset_method = (
+                            position_integrator_reset_method = (
                                 reset_pid_integrators_without_ack(
                                     self.cf,
                                     (
@@ -11361,6 +11365,11 @@ class InteractionsControl:
                                     ),
                                 )
                             )
+                            position_integrator_reset_elapsed_s = (
+                                time.time() - position_reset_started_at
+                            )
+                            position_integrators_reset = True
+                            position_handoff_completed_this_cycle = True
                             handoff_target = np.array([
                                 position[0], position[1],
                                 translation_control.hover_z,
@@ -11393,10 +11402,10 @@ class InteractionsControl:
                                     ),
                                     'position_integrators_reset': True,
                                     'integrator_reset_method': (
-                                        position_reset_method
+                                        position_integrator_reset_method
                                     ),
                                     'integrator_reset_elapsed_s': (
-                                        time.time()-position_reset_started_at
+                                        position_integrator_reset_elapsed_s
                                     ),
                                     'state_source': (
                                         'crazyflie_state_estimate'
@@ -11573,6 +11582,22 @@ class InteractionsControl:
                         predictive_brake_decision['position_target'],
                         dtype=float,
                     )
+                    if not predictive_position_handoff_logged:
+                        reset_started_at = time.time()
+                        position_integrator_reset_method = (
+                            reset_pid_integrators_without_ack(
+                                self.cf,
+                                (
+                                    'posCtlPid.resetI',
+                                    'velCtlPid.resetI',
+                                ),
+                            )
+                        )
+                        position_integrator_reset_elapsed_s = (
+                            time.time() - reset_started_at
+                        )
+                        position_integrators_reset = True
+                        position_handoff_completed_this_cycle = True
                     translation_control.set_predictive_position_target(
                         self._bounded_wrench_reference(predictive_target),
                         state_time,
@@ -11596,6 +11621,15 @@ class InteractionsControl:
                                     predictive_brake_decision.get(
                                         'target_clamped_to_actual'
                                     )
+                                ),
+                                'position_integrators_reset': (
+                                    position_integrators_reset
+                                ),
+                                'integrator_reset_method': (
+                                    position_integrator_reset_method
+                                ),
+                                'integrator_reset_elapsed_s': (
+                                    position_integrator_reset_elapsed_s
                                 ),
                                 'state_source': (
                                     'crazyflie_state_estimate'
@@ -12175,43 +12209,25 @@ class InteractionsControl:
                         )
                     )
                 if coast_handoff_completed:
-                    position_integrators_reset = False
-                    position_integrator_reset_method = None
-                    position_integrator_reset_elapsed_s = None
-                    if (
-                        translation_control.coast_handoff_reason
-                        in (
-                            'direct_current_position_handoff',
-                            'terminal_current_position_handoff',
-                            'velocity_zero_position_handoff',
-                            'velocity_predictive_unwind_position_handoff',
-                            'velocity_predictive_unwind_attitude_handoff',
+                    # Every coast handoff must clear both native position-loop
+                    # integrators before the first position setpoint. Use the
+                    # no-ack path so the reset itself does not recreate the
+                    # observed handoff command/telemetry gap.
+                    reset_started_at = time.time()
+                    position_integrator_reset_method = (
+                        reset_pid_integrators_without_ack(
+                            self.cf,
+                            (
+                                'posCtlPid.resetI',
+                                'velCtlPid.resetI',
+                            ),
                         )
-                        and not (
-                            translation_control.coast_handoff_reason
-                            == 'velocity_predictive_unwind_position_handoff'
-                            and translation_control
-                            .coast_velocity_unwind_position_control_enabled
-                        )
-                    ):
-                        # Clear both controller integrators without adding two
-                        # acknowledged parameter transactions to the handoff
-                        # command path. The first staged flight showed a 0.52 s
-                        # command/telemetry gap at this exact transition.
-                        reset_started_at = time.time()
-                        position_integrator_reset_method = (
-                            reset_pid_integrators_without_ack(
-                                self.cf,
-                                (
-                                    'posCtlPid.resetI',
-                                    'velCtlPid.resetI',
-                                ),
-                            )
-                        )
-                        position_integrator_reset_elapsed_s = (
-                            time.time() - reset_started_at
-                        )
-                        position_integrators_reset = True
+                    )
+                    position_integrator_reset_elapsed_s = (
+                        time.time() - reset_started_at
+                    )
+                    position_integrators_reset = True
+                    position_handoff_completed_this_cycle = True
                     self._log_event(
                         'Coast Position Control Handoff',
                         {
@@ -12482,6 +12498,22 @@ class InteractionsControl:
                         current_force=braking_force_world,
                         current_mass_kg=force_current_mass,
                         **braking_kwargs)
+                if braking_completed:
+                    reset_started_at = time.time()
+                    position_integrator_reset_method = (
+                        reset_pid_integrators_without_ack(
+                            self.cf,
+                            (
+                                'posCtlPid.resetI',
+                                'velCtlPid.resetI',
+                            ),
+                        )
+                    )
+                    position_integrator_reset_elapsed_s = (
+                        time.time() - reset_started_at
+                    )
+                    position_integrators_reset = True
+                    position_handoff_completed_this_cycle = True
             if braking_completed:
                 if (
                     release_dataset_episode_id is not None
@@ -12561,6 +12593,15 @@ class InteractionsControl:
                         ),
                         'brake_completion_reason': (
                             translation_control.brake_completion_reason
+                        ),
+                        'position_integrators_reset': (
+                            position_integrators_reset
+                        ),
+                        'integrator_reset_method': (
+                            position_integrator_reset_method
+                        ),
+                        'integrator_reset_elapsed_s': (
+                            position_integrator_reset_elapsed_s
                         ),
                         'detector_rearm_delay_s': (
                             translation_control.rearm_delay_s
@@ -13254,6 +13295,14 @@ class InteractionsControl:
                 command_yaw = translation_control.yaw_deg
                 last_command_position = command_position.copy()
                 last_command_yaw = float(command_yaw)
+                if (
+                    position_handoff_completed_this_cycle
+                    and not position_integrators_reset
+                ):
+                    raise RuntimeError(
+                        'position handoff attempted its first position command '
+                        'before PID integrator reset'
+                    )
                 translation_control.send(self.lo_commander)
                 if (
                     mpc_automatic_finish_after_handoff_send_reason is not None

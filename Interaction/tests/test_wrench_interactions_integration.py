@@ -1441,9 +1441,14 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         controller.hl_commander = FakeCommander()
         controller.lo_commander = context.commander
         controller.force_sensor = None
-        controller.cf = SimpleNamespace(param=SimpleNamespace(
-            set_value_raw=lambda *args: None,
-        ))
+
+        class RecordingParameters:
+            def set_value_raw(self, name, parameter_type, value):
+                context.timeline.append((
+                    'integrator_reset', name, parameter_type, value,
+                ))
+
+        controller.cf = SimpleNamespace(param=RecordingParameters())
 
         def safe_sleep(duration_s):
             context.clock.advance(duration_s)
@@ -2481,6 +2486,19 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(
             context.timeline[safe_position_index][2],
             (0.0, 0.12, 1.0, 0.0),
+        )
+        reset_indices = {
+            item[1]: index
+            for index, item in enumerate(context.timeline)
+            if item[0] == 'integrator_reset'
+            and rejection_index < index < safe_position_index
+        }
+        self.assertEqual(
+            set(reset_indices),
+            {'posCtlPid.resetI', 'velCtlPid.resetI'},
+        )
+        self.assertLess(
+            max(reset_indices.values()), safe_position_index
         )
         self.assertLess(rejection_index, safe_position_index)
         self.assertLess(safe_position_index, finish_index)
