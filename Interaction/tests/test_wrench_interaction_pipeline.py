@@ -51,7 +51,7 @@ class DefaultConfigTests(unittest.TestCase):
             handoff["coast_velocity_unwind_integrated_leveling_enabled"]
         )
         self.assertEqual(
-            handoff["coast_velocity_unwind_leveling_rate_deg_s"], 720.0
+            handoff["coast_velocity_unwind_leveling_rate_deg_s"], 100.0
         )
         self.assertEqual(
             handoff["coast_velocity_unwind_integration_step_s"], 0.01

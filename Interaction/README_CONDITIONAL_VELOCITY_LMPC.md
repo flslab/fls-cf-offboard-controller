@@ -116,17 +116,33 @@ This is not the earlier open-loop accelerate/brake pulse fitting procedure.
 LMPC cannot start from an empty safe set. Bootstrap it with actual conservative
 release-to-rest episodes:
 
-1. Keep LMPC command authority off and use the existing bounded legacy braking
-   controller.
-2. Begin at the lowest planned release-speed cell, separately for +Y and -Y.
-3. Record the confirmed-release state, every fresh synchronized state, every
-   actually sent roll/pitch command (including duplicate-state send cycles),
-   and the real position-control handoff.
-4. Preserve that raw log unchanged, then estimate state at the actual command
-   decision epochs on a fixed command-time grid. This resampling stage is not
-   yet implemented in this repository; raw flight-loop rows are evidence, not
-   directly admissible LMPC samples.
-5. Choose the LMPC prediction step from the actual command cadence. In the
+1. Start the dedicated flight from the LightBender orchestrator with
+   `python3 orchestrator.py --mpc` (`--skip-record` is optional). This is a real
+   flight command. The controller validates the mission, world-Y sensor
+   geometry, clear-volume margin, and current quality-gated baseline braking
+   fit before arming.
+2. `--mpc` creates an in-memory mission overlay. It turns off velocity-hover,
+   predictive/online LMPC, and all LMPC command authority; the bounded legacy
+   attitude-coast controller remains the only roll/pitch owner. It does not
+   rewrite the mission YAML or calibration file.
+3. Collect near 0.25, 0.45, and 0.65 m/s, preferably low to high. At each
+   speed, make real releases in both world +Y and -Y; two terminal-success
+   attempts per direction are required by the current mission. Cells are
+   independent, so a higher-speed attempt is not discarded merely because a
+   lower cell is incomplete. The cell is classified from measured release
+   velocity, not from an intended speed. Cross-axis motion, reversal,
+   stale/skewed state, path tilt/rate, and boundary failures do not count.
+4. Record the confirmed-release state, every fresh synchronized state, every
+   actually sent roll/pitch command, the current-position terminal handoff,
+   and one command-free fresh state after that send. Duplicate callback states
+   do not generate extra commands in this mode.
+5. Preserve that raw log unchanged, then run
+   `Interaction.velocity_lmpc_resample`. It interpolates state only between
+   fresh measurements that bracket each actual send time, reconstructs the
+   delayed command queue, recomputes terminal dwell, and refuses extrapolation,
+   hazards, timing gaps, or output-file replacement. Raw flight-loop rows are
+   evidence, not directly admissible LMPC samples.
+6. Choose the LMPC prediction step from the actual command cadence. In the
    validated record, every non-terminal state timestamp must equal its action
    send timestamp, every delayed-command queue must match both the complete raw
    send history and the exact fixed-grid queue successor, and each transition
@@ -134,11 +150,11 @@ release-to-rest episodes:
    command delay--do not infer a fractional delay from queue dimension. The
    strict replay currently rejects a zero-delay contract because state-before-
    send ordering at an identical timestamp is ambiguous.
-6. Admit an episode offline only if it has no safety/localization event, no
+7. Admit an episode offline only if it has no safety/localization event, no
    reverse-speed violation, stays inside the workspace/attitude/rate/command
    limits, remains in the full measured terminal set for the configured dwell,
    and hands position control a target within 1 cm of the final measurement.
-7. Collect successful lower and upper speed brackets before asking LMPC to
+8. Collect successful lower and upper speed brackets before asking LMPC to
    interpolate an intermediate release. If a new speed or context is outside
    coverage, run the conservative baseline and add it only after post-flight
    validation.
@@ -148,21 +164,35 @@ high-level roll/pitch interface. LMPC learns safe trajectories and cost-to-go;
 it does not remove the need for dynamics. Replacing that fitted response needs
 a separately validated dynamics model with the same delayed-state contract.
 
-The current `lb11` mission has `coast_velocity_braking_enabled: true`, so its
-legacy release controller sends `velocity_hover`, not roll/pitch. Those runs
-are deliberately rejected by this attitude-input LMPC pipeline. Do not call
-that a calibration failure and do not relabel the hover input as attitude. A
-compatible initial safe set needs a separately authorized conservative
-attitude-controller collection run (or a different LMPC plant/input contract).
-Even such a run produces raw evidence first: because the controller sends each
-command after observing state, its rows must pass a separately implemented and
-validated command-grid state resampler before this strict replay can admit
-them. There is currently no flight-derived LMPC artifact.
+Normal `lb11` interaction still has `coast_velocity_braking_enabled: true` and
+sends `velocity_hover`; those ordinary runs remain deliberately incompatible
+with this attitude-input LMPC pipeline. Only the private `--mpc` overlay selects
+the attitude baseline. Even a completed in-flight speed-cell report is only
+provisional raw collection coverage. There is no flight-derived LMPC artifact
+until resampling and strict replay both accept the episodes.
 
 ## Offline extraction
 
-`velocity_lmpc_replay.py` is the final strict validator from a decision-time-
-resampled record into the safe set; it is not itself the missing resampler. It
+`velocity_lmpc_resample.py` converts the raw complete-flight array into a new
+decision-time-aligned array. The current `--mpc` contract logs state at 100 Hz
+but paces actual attitude decisions on a separate 0.02 s grid; the positive
+command delay must be read from the same frozen baseline fit logged by the
+calibration run:
+
+```bash
+venv/bin/python -m Interaction.velocity_lmpc_resample \
+  --input /absolute/path/to/complete-flight-log.json \
+  --output /absolute/path/to/new-resampled-log.json \
+  --prediction-step-s 0.02 \
+  --command-delay-s 0.12
+```
+
+`0.12` is only an example. Use the run's logged `command_delay_s`; never copy a
+delay from another drone/model. If +Y and -Y are bound to different frozen
+models or delays, resample and publish them separately.
+
+`velocity_lmpc_replay.py` is the final strict validator from that resampled
+record into the safe set. It
 independently reconstructs the configured delayed input from the actual send
 history on every row, compares the entire raw and fixed-grid pending queues,
 and rejects any post-observation state/action phase. It ignores the legacy
@@ -177,7 +207,7 @@ The extractor never overwrites an artifact:
 
 ```bash
 venv/bin/python -m Interaction.velocity_lmpc_replay \
-  --input /absolute/path/to/complete-flight-log.json \
+  --input /absolute/path/to/new-resampled-log.json \
   --output /absolute/path/to/new-safe-set.json \
   --model-fingerprint reduced-v3:<sha256> \
   --state-dimension 9 \
@@ -227,6 +257,8 @@ venv/bin/python -m unittest \
   Interaction.tests.test_velocity_lmpc_safe_set \
   Interaction.tests.test_conditional_velocity_lmpc \
   Interaction.tests.test_release_lmpc_terminal_gate \
+  Interaction.tests.test_mpc_bootstrap_calibration \
+  Interaction.tests.test_velocity_lmpc_resample \
   Interaction.tests.test_velocity_lmpc_replay \
   Interaction.tests.test_wrench_interactions_integration
 ```
@@ -235,8 +267,9 @@ The interaction loop records raw evidence: a unique release dataset id, release
 direction/state, a bounded pre-release delay queue, every actual command send,
 the modeled command effective at each measured state (not a hardware ACK),
 workspace margin, terminal-gate audit, and explicit success/rejection closure.
-Those fields are logging only; raw rows still require state resampling, and the
-LMPC remains offline and does not change the active controller.
+Those fields are logging only; raw rows still require state resampling and
+strict replay, and the LMPC remains offline and does not change the active
+controller.
 
 Reference: Guanrui Li, Alex Tunchez, and Giuseppe Loianno, *Learning Model
 Predictive Control for Quadrotors*, ICRA 2022,

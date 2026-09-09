@@ -174,6 +174,7 @@ class Controller:
             getattr(self.args, 'interaction', False)
             or getattr(self.args, 'calibrate', False)
             or getattr(self.args, 'braking_test', False)
+            or getattr(self.args, 'mpc', False)
             or getattr(self.args, 'sense', False)
         )
 
@@ -218,6 +219,7 @@ class Controller:
         self.load_manifest()
         self.setup_sockets()
         self.download_mission_config()
+        self.prepare_mpc_mission()
         self.setup_logging()
         self.setup_force_sensor()
         self.setup_commander()
@@ -247,6 +249,21 @@ class Controller:
             self.arm()
             self.takeoff()
         self.run_mission()
+
+    def prepare_mpc_mission(self):
+        """Validate and freeze the private LMPC bootstrap mission pre-arm."""
+        if not getattr(self.args, 'mpc', False):
+            return
+        from Interaction.mpc_bootstrap_calibration import (
+            prepare_mpc_bootstrap_mission,
+        )
+        self.mission = prepare_mpc_bootstrap_mission(
+            self.mission,
+            drone_id=self.args.drone_id,
+            sense_axis=self.args.sense_axis,
+        )
+        if self.missions:
+            self.missions[0] = self.mission
 
     def stop(self):
         self.mission_duration = time.time() - self.mission_start_time
@@ -711,13 +728,13 @@ class Controller:
         else:
             raise Exception(
                 "No mode is passed. Passing --illumination, --interaction, "
-                "--calibrate, or --braking-test is required."
+                "--calibrate, --braking-test, or --mpc is required."
             )
 
         logger.debug("logging activated")
 
     def setup_force_sensor(self):
-        """Start the Arduino potentiometer reader for ``--sense`` runs."""
+        """Start the Arduino potentiometer reader for sensor-backed runs."""
         if not getattr(self.args, 'sense', False):
             return
 
@@ -897,7 +914,8 @@ class Controller:
         elif self.args.trajectory:
             self.fly_trajectory(self.args.trajectory)
         elif (getattr(self.args, 'calibrate', False)
-              or getattr(self.args, 'braking_test', False)):
+              or getattr(self.args, 'braking_test', False)
+              or getattr(self.args, 'mpc', False)):
             self.calibration_switch()
         elif self.args.orchestrated:
             if self.args.illumination:
@@ -1333,7 +1351,7 @@ class Controller:
             self.ll_commander.send_notify_setpoint_stop()
 
     def calibration_switch(self):
-        """Run contact-free calibration or the data-only attitude repeat test."""
+        """Run one isolated calibration/data-collection flight mode."""
         try:
             targeted_braking = bool(getattr(
                 self.args, 'targeted_braking_calibration', False
@@ -1342,6 +1360,7 @@ class Controller:
                     not getattr(self.args, 'calibrate', False)
                     or getattr(self.args, 'braking_test', False)
                     or getattr(self.args, 'interaction', False)
+                    or getattr(self.args, 'mpc', False)
                     or getattr(self.args, 'ground_test', False)):
                 raise ValueError(
                     '--targeted-braking-calibration requires --calibrate '
@@ -1358,7 +1377,8 @@ class Controller:
             if adaptive_braking and (
                     not getattr(self.args, 'calibrate', False)
                     or getattr(self.args, 'braking_test', False)
-                    or getattr(self.args, 'interaction', False)):
+                    or getattr(self.args, 'interaction', False)
+                    or getattr(self.args, 'mpc', False)):
                 raise ValueError(
                     '--adaptive-braking-calibration requires --calibrate '
                     'without --interaction or --braking-test'
@@ -1367,7 +1387,14 @@ class Controller:
                 self._safe_sleep(1)
                 return
             calibration_mission = self.mission
-            if getattr(self.args, 'calibrate', False):
+            if getattr(self.args, 'mpc', False):
+                from Interaction.mpc_bootstrap_calibration import (
+                    configure_mpc_bootstrap_mission,
+                )
+                calibration_mission = configure_mpc_bootstrap_mission(
+                    self.mission
+                )
+            elif getattr(self.args, 'calibrate', False):
                 # Calibration defaults to adaptive braking, but the choice is
                 # scoped to an independent mission copy and never leaks into a
                 # later interaction.  Explicit --no-adaptive-braking-calibration
@@ -1416,7 +1443,9 @@ class Controller:
                 sense_sign=self.args.sense_sign,
                 sense_max_age_s=self.args.sense_max_age,
             )
-            if getattr(self.args, 'braking_test', False):
+            if getattr(self.args, 'mpc', False):
+                controller.run_mpc_calibration()
+            elif getattr(self.args, 'braking_test', False):
                 controller.run_braking_test(
                     direction=getattr(self.args, 'braking_test_direction', None),
                     repetitions=getattr(self.args, 'braking_test_repetitions', None),
@@ -2392,6 +2421,14 @@ if __name__ == '__main__':
         ),
     )
     ap.add_argument(
+        "--mpc", action="store_true",
+        help=(
+            "collect offline LMPC bootstrap release-to-rest trajectories; "
+            "uses the legacy attitude coast controller and never grants "
+            "LMPC command authority"
+        ),
+    )
+    ap.add_argument(
         "--targeted-braking-calibration", action="store_true",
         help=("during --calibrate, collect a fixed 20-degree +/-Y sweep with "
               "0.32 s acceleration and 0.16/0.20/0.24 s braking pulses; "
@@ -2485,17 +2522,24 @@ if __name__ == '__main__':
         validate_repeat_test_options(args)
     except ValueError as error:
         ap.error(str(error))
-    if args.interaction and args.calibrate:
-        ap.error('--interaction and --calibrate are mutually exclusive')
+    experiment_modes = (
+        args.interaction, args.calibrate, args.braking_test, args.mpc,
+    )
+    if sum(bool(mode) for mode in experiment_modes) > 1:
+        ap.error(
+            '--interaction, --calibrate, --braking-test, and --mpc are '
+            'mutually exclusive'
+        )
     if args.targeted_braking_calibration and (
             not args.calibrate or args.interaction or args.braking_test
-            or args.ground_test):
+            or args.mpc or args.ground_test):
         ap.error(
             '--targeted-braking-calibration requires --calibrate without '
             '--interaction, --braking-test, or --ground-test'
         )
     if args.adaptive_braking_calibration is not None and (
-            not args.calibrate or args.interaction or args.braking_test):
+            not args.calibrate or args.interaction or args.braking_test
+            or args.mpc):
         ap.error(
             '--[no-]adaptive-braking-calibration requires --calibrate '
             'without --interaction or --braking-test'
@@ -2509,6 +2553,36 @@ if __name__ == '__main__':
             '--calibrate requires --smooth-controller-rate 50 or higher so '
             'each 0.32s attitude step has enough fit samples'
         )
+    mpc_conflicts = (
+        ('sense', args.sense),
+        ('illumination', args.illumination),
+        ('intractable-illumination', args.intractable_illumination),
+        ('morphing', args.morphing),
+        ('autotune', args.autotune),
+        ('simple-takeoff', args.simple_takeoff),
+        ('rotation-test', args.rotation_test),
+        ('xy-tune', args.xy_tune),
+        ('z-tune', args.z_tune),
+        ('trajectory', args.trajectory is not None),
+        ('ground-test', args.ground_test),
+        ('droneless', args.droneless),
+        ('skip-takeoff', args.skip_takeoff),
+        ('skip-landing', args.skip_landing),
+    )
+    if args.mpc:
+        for name, enabled in mpc_conflicts:
+            if enabled:
+                ap.error('--mpc cannot be combined with --' + name)
+    if args.mpc and not args.log:
+        ap.error('--mpc requires --log so raw states and actual sends are retained')
+    if args.mpc and not args.orchestrated:
+        ap.error('--mpc must be launched through orchestrator.py --mpc')
+    if args.mpc and args.smooth_controller_rate != 100:
+        ap.error('--mpc requires --smooth-controller-rate 100')
+    if args.mpc and args.cf_log_period != 10:
+        ap.error('--mpc requires --cf-log-period 10 ms')
+    if args.mpc and args.sense_axis != 'y':
+        ap.error('--mpc requires --sense-axis y for world +/-Y collection')
     if args.sense_spring_constant <= 0.0:
         ap.error('--sense-spring-constant must be positive')
     if args.sense_max_extension <= 0.0:
@@ -2517,6 +2591,12 @@ if __name__ == '__main__':
         ap.error('--sense timing values must be positive')
     if args.sense_power_poll_interval <= 0.0:
         ap.error('--sense-power-poll-interval must be positive')
+
+    # ``--mpc`` is intentionally a one-flag entry point.  It uses real
+    # potentiometer releases, so enable the same reader only after rejecting an
+    # ambiguous explicit mode combination above.
+    if args.mpc:
+        args.sense = True
 
     with Controller(args) as c:
         try:

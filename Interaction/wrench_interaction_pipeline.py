@@ -248,7 +248,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # the rate-limited leveling integration below.
         "coast_velocity_unwind_prediction_margin_s": 0.15,
         "coast_velocity_unwind_integrated_leveling_enabled": False,
-        "coast_velocity_unwind_leveling_rate_deg_s": 720.0,
+        # Conservative physical leveling rate measured in flight. This is not
+        # the 720 deg/s command-setpoint slew limit.
+        "coast_velocity_unwind_leveling_rate_deg_s": 100.0,
         "coast_velocity_unwind_integration_step_s": 0.01,
         "coast_velocity_unwind_min_deceleration_m_s2": 0.30,
         "coast_velocity_unwind_filter_time_constant_s": 0.03,
@@ -258,9 +260,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_velocity_unwind_one_step_lookahead_enabled": False,
         "coast_velocity_unwind_one_step_max_dt_s": 0.03,
         "coast_velocity_unwind_low_speed_fallback_m_s": 0.03,
-        # Once level, resume zero-velocity braking if total XY speed is still
-        # above this narrow hysteresis band. This prevents predictive unwind
-        # from tracking a persistent 0.03--0.10 m/s residual forever.
+        # Once level, resume zero-velocity braking only if signed speed along
+        # the locked interaction direction remains above this hysteresis band.
+        # Lateral drift can delay handoff but does not trigger full re-braking.
         "coast_velocity_rebrake_speed_m_s": 0.04,
         "coast_velocity_handoff_min_projected_speed_m_s": -0.03,
         "coast_velocity_handoff_max_rate_deg_s": 5.0,

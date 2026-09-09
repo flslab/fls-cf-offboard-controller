@@ -1,0 +1,61 @@
+{
+  "stl": [
+    {
+      "file": "P01_Base_rear_flange.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "volume_mm3": 7357.3508603075015,
+      "minimum_z_mm": 0.0
+    },
+    {
+      "file": "P02_Front_bridge.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "volume_mm3": 1441.6684947549259,
+      "minimum_z_mm": 0.0
+    },
+    {
+      "file": "P03_Carriage_contact_head.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "volume_mm3": 5417.099552090665,
+      "minimum_z_mm": -2.2177714103704596e-16
+    },
+    {
+      "file": "P04_Contact_pad.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "volume_mm3": 420.3944693503874,
+      "minimum_z_mm": -3.3266570493812404e-16
+    },
+    {
+      "file": "P05_Bumper_L_front.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "volume_mm3": 39.23793407992255,
+      "minimum_z_mm": -3.8845727701448225e-16
+    },
+    {
+      "file": "P05_Bumper_L_rear.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "volume_mm3": 39.23793407992255,
+      "minimum_z_mm": -3.8845727701448225e-16
+    },
+    {
+      "file": "P05_Bumper_R_front.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "volume_mm3": 39.23793407992255,
+      "minimum_z_mm": -3.8845727701448225e-16
+    },
+    {
+      "file": "P05_Bumper_R_rear.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "volume_mm3": 39.23793407992255,
+      "minimum_z_mm": -3.8845727701448225e-16
+    }
+  ],
+  "assembled_all_pair_interferences": []
+}

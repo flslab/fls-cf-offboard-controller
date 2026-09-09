@@ -123,6 +123,18 @@ class ReleaseModeTests(unittest.TestCase):
                 self.assertIsNone(task_direction)
                 self.assertIsNotNone(measured_direction)
 
+    def test_mpc_bootstrap_treats_sensor_as_axis_line_for_opposite_release(self):
+        task_direction, measured_direction = (
+            release_dataset_world_y_directions(
+                [0.0, -1.0],
+                [0.0, 1.0],
+                sensor_axis_is_unsigned=True,
+            )
+        )
+
+        np.testing.assert_allclose(task_direction, [0.0, -1.0])
+        np.testing.assert_allclose(measured_direction, [0.0, -1.0])
+
     def test_calibration_target_override_does_not_move_interaction_target(self):
         mission_target = [0.0, -1.0, 1.0, 0.0]
         config = {'calibration_nominal_position': [0.0, 0.0, 1.0]}
@@ -1783,6 +1795,47 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         self.assertFalse(control.coast_target_clamped_to_actual)
 
+    def test_mpc_terminal_handoff_latches_measured_position(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_attitude_response_delay_s=0.0,
+            coast_attitude_time_constant_s=0.0,
+            coast_level_handoff_delay_s=0.0,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.10, 1.0], [0.0, 0.30, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(
+            [0.0, 0.10, 1.0], [0.0, 0.30, 0.0], timestamp=1.0,
+        )
+        control.send(FakeCommander(), command_timestamp=1.0, yaw_deg=0.0)
+
+        self.assertFalse(control.update_coast_attitude(
+            [0.0, 0.16, 1.0], [0.0, 0.01, 0.0],
+            [0.0, 0.28, 1.0], [0.0, 0.0, 0.0], 1.01,
+            allow_position_handoff=False,
+            latch_current_position_on_handoff=True,
+            command_timestamp=1.01,
+        ))
+        control.send(FakeCommander(), command_timestamp=1.01, yaw_deg=0.0)
+        self.assertTrue(control.update_coast_attitude(
+            [0.0, 0.16, 1.0], [0.0, 0.01, 0.0],
+            [0.0, 0.28, 1.0], [0.0, 0.0, 0.0], 1.02,
+            allow_position_handoff=True,
+            latch_current_position_on_handoff=True,
+            command_timestamp=1.02,
+        ))
+        np.testing.assert_allclose(control.hold_position, [0.0, 0.16, 1.0])
+        self.assertTrue(control.coast_target_clamped_to_actual)
+        self.assertEqual(
+            control.coast_handoff_reason,
+            'terminal_current_position_handoff',
+        )
+
     def test_calibrated_delayed_braking_handoffs_without_reverse(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
@@ -2131,6 +2184,56 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             prediction['final_projected_acceleration_m_s2'], 0.0
         )
 
+    def test_predictive_unwind_adds_live_state_to_decision_latency(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_unwind_integrated_leveling_enabled=True,
+            coast_velocity_unwind_leveling_rate_deg_s=100.0,
+            coast_attitude_response_delay_s=0.07,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 1.0, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        orientation = np.radians([14.4, 0.0, 0.0])
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.01, 1.0], [0.0, 1.0, 0.0], 1.01,
+            current_orientation_rpy=orientation,
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.022,
+        ))
+        expected = integrate_rate_limited_leveling_velocity_delta(
+            orientation,
+            np.zeros(3),
+            [0.0, 1.0],
+            response_delay_s=0.082,
+            leveling_rate_deg_s=100.0,
+            integration_step_s=0.01,
+        )
+        self.assertAlmostEqual(
+            control.coast_velocity_unwind_observed_decision_latency_s,
+            0.012,
+        )
+        self.assertAlmostEqual(
+            control.coast_velocity_unwind_total_response_delay_s,
+            0.082,
+        )
+        self.assertAlmostEqual(
+            control.coast_velocity_unwind_integrated_velocity_delta_m_s,
+            expected['velocity_delta_m_s'],
+        )
+        self.assertAlmostEqual(
+            control.coast_velocity_unwind_response_horizon_s,
+            expected['duration_s'],
+        )
+
     def test_integrated_leveling_delays_overoptimistic_predictive_unwind(self):
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -2443,7 +2546,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             commander.calls[-1][1], [0.0, 0.0, 0.0, 1.0]
         )
 
-    def test_predictive_velocity_coast_rebrakes_lateral_residual_speed(self):
+    def test_predictive_velocity_coast_does_not_rebrake_lateral_speed(self):
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
             yaw_deg=0.0,
@@ -2470,8 +2573,9 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         ))
         self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
 
-        # Longitudinal speed alone is below the re-brake threshold, but the
-        # remaining lateral velocity still exceeds the handoff envelope.
+        # Longitudinal speed is below the re-brake threshold. The larger total
+        # speed comes from lateral drift, which may block handoff but must not
+        # request a full longitudinal re-brake.
         self.assertFalse(control.update_coast_velocity(
             [0.01, 0.12, 1.0], [0.05, 0.01, 0.0], 1.15,
             current_orientation_rpy=np.radians([0.2, 0.0, 0.0]),
@@ -2479,13 +2583,13 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         ))
         self.assertLess(control.brake_projected_speed_m_s, 0.04)
         self.assertGreater(np.linalg.norm([0.05, 0.01]), 0.04)
-        self.assertEqual(control.coast_velocity_phase, 'fast_brake')
-        self.assertTrue(control.consume_velocity_rebrake_request())
-        np.testing.assert_allclose(
-            control.coast_velocity_command_xy_m_s, [0.0, 0.0]
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+        self.assertFalse(control.consume_velocity_rebrake_request())
+        self.assertGreater(
+            np.linalg.norm(control.coast_velocity_command_xy_m_s), 0.0
         )
 
-    def test_velocity_coast_hover_rotates_world_velocity_and_holds_release_z(self):
+    def test_velocity_coast_hover_uses_fixed_nominal_z(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -2498,13 +2602,18 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             [0.0, 0.0, 1.2], [1.0, 0.0, 0.0], 1.0,
             interaction_direction=[1.0, 0.0, 0.0], coast=True,
         ))
+        self.assertEqual(control.hover_z, 1.2)
+        self.assertEqual(control.velocity_coast_fixed_zdistance_m, 1.0)
         control.coast_velocity_command_xy_m_s = np.array([1.0, 0.0])
 
         control.send(commander, command_timestamp=1.0, yaw_deg=90.0)
 
         self.assertEqual(commander.calls[-1][0], 'hover')
         np.testing.assert_allclose(
-            commander.calls[-1][1], [0.0, -1.0, 0.0, 1.2], atol=1e-12
+            commander.calls[-1][1], [0.0, -1.0, 0.0, 1.0], atol=1e-12
+        )
+        self.assertEqual(
+            control.sent_command_snapshot()['zdistance_m'], 1.0
         )
 
     def test_low_speed_direction_reversal_handoffs_after_state_dwell(self):

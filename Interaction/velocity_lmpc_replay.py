@@ -7,9 +7,9 @@ delay.  This validator admits only records that have already been explicitly
 resampled onto the command decision-time grid: every non-terminal state and
 its newly sent action have the same timestamp, the complete delayed-command
 queue obeys its fixed-grid successor, and the raw effective command inferred
-from the lossless send history agrees with every logged value.  The repository
-does not yet provide that state resampler, so unmodified flight-loop records
-fail closed rather than create a phase-blind safe set.
+from the lossless send history agrees with every logged value.  Run
+``Interaction.velocity_lmpc_resample`` first; unmodified flight-loop records
+still fail closed rather than create a phase-blind safe set.
 
 ``actual_command_applied_at_state`` is a modeled effective-input lookup from
 the configured delay and actual send history, not a radio or motor hardware
