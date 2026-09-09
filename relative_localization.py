@@ -4,9 +4,10 @@ from scipy.spatial.transform import Rotation as R
 # ==========================================
 # Static Constants (Calculated once)
 # ==========================================
-# Rotation from drone to camera (R_d_c)
+# Camera-to-drone coordinate rotation (R_d_c): p_d = R_d_c @ p_c.
 # Camera: x=right, y=down, z=forward (Standard OpenCV camera frame)
 # Drone: x=forward, y=left, z=up (FLU drone frame)
+# The downward-facing camera is mounted with image-up aligned to drone-forward.
 R_d_c = np.array([
     [0, -1, 0],
     [-1, 0, 0],
@@ -24,7 +25,8 @@ latest_marker_position_c = None
 def imu_callback_quat(quat_x, quat_y, quat_z, quat_w, latest_marker_position_c, marker_world_pos=None, camera_drone_pos=None):
     """
     Triggered when new Quaternion IMU data is available.
-    Expects quaternion representing rotation from world to drone (R_w_d).
+    Expects the Crazyflie attitude quaternion, mapping drone vectors to world
+    vectors (p_w = R_w_d @ p_d).
     Identical transformations to post_process_imu_pose.py
     """
     if marker_world_pos is None:
@@ -96,4 +98,3 @@ def imu_callback(quat_x, quat_y, quat_z, quat_w, latest_marker_position_c, marke
     p_d_c = np.array(camera_drone_pos)
     p_w_c = p_w_d + rot_w_d.as_matrix() @ p_d_c
     return p_w_c
-
