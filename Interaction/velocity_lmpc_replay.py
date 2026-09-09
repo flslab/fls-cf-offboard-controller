@@ -1,9 +1,20 @@
-"""Strict offline extraction of successful release-to-rest LMPC episodes.
+"""Strict offline validation of decision-grid release-to-rest LMPC episodes.
 
-The flight loop records *measured* state and the attitude command that was
-actually sent.  This module is the only bridge from those immutable flight
-records into :mod:`Interaction.velocity_lmpc_safe_set`; it has no commander,
-radio, or device imports and every public report is explicitly offline-only.
+The flight loop records measured state and the attitude command that was
+actually sent, but those events have a real post-observation computation/send
+phase.  That raw phase is not silently folded into the identified attitude
+delay.  This validator admits only records that have already been explicitly
+resampled onto the command decision-time grid: every non-terminal state and
+its newly sent action have the same timestamp, the complete delayed-command
+queue obeys its fixed-grid successor, and the raw effective command inferred
+from the lossless send history agrees with every logged value.  The repository
+does not yet provide that state resampler, so unmodified flight-loop records
+fail closed rather than create a phase-blind safe set.
+
+``actual_command_applied_at_state`` is a modeled effective-input lookup from
+the configured delay and actual send history, not a radio or motor hardware
+acknowledgement.  This module has no commander, radio, or device imports and
+every public report is explicitly offline-only.
 
 Only complete world ``+/-Y`` episodes beginning at
 ``Potentiometer Release Coasting Started`` are considered.  A dedicated
@@ -40,6 +51,8 @@ from Interaction.velocity_lmpc_safe_set import (
     LMPCContext,
     SafeSetLimits,
     SafeSetValidationError,
+    STATE_ACTION_PHASE_CONTRACT,
+    StageCostSpec,
     TERMINAL_OUTCOME,
     VelocityLMPCEpisode,
     VelocityLMPCSafeSet,
@@ -59,6 +72,7 @@ _HAZARD_EVENT_RE = re.compile(
     r"battery[_ ]?(?:critical|abort|low))",
     re.IGNORECASE,
 )
+_MIN_DIRECTION_ALIGNMENT_DOT = 0.98
 
 
 class ReplayValidationError(ValueError):
@@ -112,11 +126,9 @@ class VelocityLMPCReplayConfig:
     """Model-bound layout and hard gates for offline replay.
 
     ``state_dimension`` is the core state dimension.  It must be
-    ``3 + max(1, ceil(command_delay_s / prediction_step_s))``.  If the physical
-    delay is omitted, the queue length is taken from the state dimension and
-    an integer-step delay is used.  Passing ``command_delay_s`` is preferred,
-    because a four-state model may otherwise mean either zero delay plus the
-    previous command or one full pending-command step.
+    ``3 + max(1, ceil(command_delay_s / prediction_step_s))``.  The exact
+    physical delay is mandatory: queue dimension alone cannot distinguish a
+    fractional delay from a rounded whole-step delay.
     """
 
     model_fingerprint: str
@@ -125,6 +137,7 @@ class VelocityLMPCReplayConfig:
     command_delay_s: float | None = None
     direction_x_tolerance: float = 1e-6
     direction_norm_tolerance: float = 1e-6
+    stage_cost_spec: StageCostSpec = field(default_factory=StageCostSpec)
     limits: SafeSetLimits = field(default_factory=SafeSetLimits)
 
     def __post_init__(self):
@@ -144,15 +157,23 @@ class VelocityLMPCReplayConfig:
             object.__setattr__(self, name, value)
             if value <= 0:
                 raise ReplayValidationError(f"{name} must be positive")
-        if self.command_delay_s is not None:
-            delay = _finite_number(self.command_delay_s, "command_delay_s")
-            if delay < 0:
-                raise ReplayValidationError(
-                    "command_delay_s must be non-negative"
-                )
-            object.__setattr__(self, "command_delay_s", delay)
+        if self.command_delay_s is None:
+            raise ReplayValidationError(
+                "command_delay_s is required for exact delay identity"
+            )
+        delay = _finite_number(self.command_delay_s, "command_delay_s")
+        if delay <= 0:
+            raise ReplayValidationError(
+                "command_delay_s must be positive for strict decision-grid "
+                "replay; zero-delay state-before-send ordering is unsupported"
+            )
+        object.__setattr__(self, "command_delay_s", delay)
         if not isinstance(self.limits, SafeSetLimits):
             raise ReplayValidationError("limits must be SafeSetLimits")
+        if not isinstance(self.stage_cost_spec, StageCostSpec):
+            raise ReplayValidationError(
+                "stage_cost_spec must be StageCostSpec"
+            )
 
         expected = 3+max(1, self.delay_steps)
         if self.state_dimension != expected:
@@ -163,8 +184,6 @@ class VelocityLMPCReplayConfig:
 
     @property
     def delay_steps(self):
-        if self.command_delay_s is None:
-            return self.state_dimension-3
         ratio = self.command_delay_s/self.prediction_step_s
         return int(math.ceil(ratio-1e-12))
 
@@ -174,9 +193,7 @@ class VelocityLMPCReplayConfig:
 
     @property
     def effective_command_delay_s(self):
-        if self.command_delay_s is not None:
-            return self.command_delay_s
-        return self.delay_steps*self.prediction_step_s
+        return self.command_delay_s
 
     @property
     def state_scales(self):
@@ -213,6 +230,10 @@ class VelocityLMPCReplayResult:
     source_record_count: int
     model_fingerprint: str
     state_dimension: int
+    prediction_step_s: float
+    command_delay_s: float
+    stage_cost_spec: StageCostSpec
+    state_action_phase_contract: str = STATE_ACTION_PHASE_CONTRACT
     offline_only: bool = True
     flight_commands_generated: bool = False
 
@@ -227,6 +248,10 @@ class VelocityLMPCReplayResult:
             "rejections": [item.to_dict() for item in self.rejections],
             "model_fingerprint": self.model_fingerprint,
             "state_dimension": self.state_dimension,
+            "prediction_step_s": self.prediction_step_s,
+            "command_delay_s": self.command_delay_s,
+            "state_action_phase_contract": self.state_action_phase_contract,
+            "stage_cost_spec": self.stage_cost_spec.to_dict(),
         }
 
 
@@ -234,6 +259,7 @@ class VelocityLMPCReplayResult:
 class _Segment:
     episode_id: str
     direction: np.ndarray
+    measured_sensor_axis_world_xy: np.ndarray
     start_index: int
     release_state_time: float
     terminal_dwell_index: int
@@ -259,17 +285,29 @@ class _Command:
 def _direction(value, config, name):
     raw = _vector(value, 2, name)
     norm = float(np.linalg.norm(raw))
-    if norm <= 0:
-        raise ReplayValidationError(f"{name} must be nonzero")
-    unit = raw/norm
     if (
-        abs(unit[0]) > config.direction_x_tolerance
-        or abs(abs(unit[1])-1.0) > config.direction_norm_tolerance
+        abs(norm-1.0) > config.direction_norm_tolerance
+        or abs(raw[0]) > config.direction_x_tolerance
+        or abs(abs(raw[1])-1.0) > config.direction_norm_tolerance
     ):
         raise ReplayValidationError(
-            f"{name} is not a supported world +/-Y direction"
+            f"{name} is not a unit world +/-Y direction"
         )
-    return np.asarray([0.0, float(np.sign(unit[1]))], dtype=float)
+    return np.asarray([0.0, float(np.sign(raw[1]))], dtype=float)
+
+
+def _measured_sensor_axis(value, direction, config, name):
+    measured = _vector(value, 2, name)
+    norm = float(np.linalg.norm(measured))
+    if abs(norm-1.0) > config.direction_norm_tolerance:
+        raise ReplayValidationError(f"{name} must be a finite unit direction")
+    signed_alignment = float(measured @ direction)
+    if signed_alignment+1e-12 < _MIN_DIRECTION_ALIGNMENT_DOT:
+        raise ReplayValidationError(
+            f"{name} signed alignment with release_dataset_direction_xy must "
+            f"be at least {_MIN_DIRECTION_ALIGNMENT_DOT:.2f}"
+        )
+    return measured
 
 
 def _is_hazard_event(record):
@@ -336,6 +374,15 @@ def _segments(records, config):
                     data.get("release_dataset_direction_xy"), config,
                     f"record {index} release_dataset_direction_xy",
                 )
+                measured_sensor_axis = _measured_sensor_axis(
+                    data.get(
+                        "release_dataset_measured_sensor_axis_world_xy"
+                    ),
+                    direction,
+                    config,
+                    f"record {index} "
+                    "release_dataset_measured_sensor_axis_world_xy",
+                )
                 _finite_number(data.get("time"), f"record {index} event time")
                 release_state_time = _finite_number(
                     data.get("release_state_time"),
@@ -369,6 +416,7 @@ def _segments(records, config):
             active = {
                 "episode_id": episode_id,
                 "direction": direction,
+                "measured_sensor_axis": measured_sensor_axis,
                 "start_index": index,
                 "release_state_time": release_state_time,
                 "terminal_dwell_index": None,
@@ -442,6 +490,9 @@ def _segments(records, config):
                     segments.append(_Segment(
                         episode_id=episode_id,
                         direction=active["direction"],
+                        measured_sensor_axis_world_xy=(
+                            active["measured_sensor_axis"]
+                        ),
                         start_index=active["start_index"],
                         release_state_time=active["release_state_time"],
                         terminal_dwell_index=index,
@@ -593,6 +644,20 @@ def _project_command(command, direction):
     ))
 
 
+def _orthogonal_command(command, direction):
+    if command.kind != "attitude_zdistance":
+        raise ReplayValidationError(
+            f"record {command.record_index} uses non-attitude command kind "
+            f"{command.kind!r} where an attitude command is required"
+        )
+    return float(projected_tilt_from_attitude_command(
+        command.roll_deg,
+        command.pitch_deg,
+        command.yaw_rad-math.pi/2.0,
+        direction,
+    ))
+
+
 def _same_command(first, second):
     return bool(
         first.sequence == second.sequence
@@ -679,18 +744,34 @@ def _sent_command_history(records, segment, config):
         seen_sequences[command.sequence] = command
         commands.append(command)
 
-    seed_values = (
+    release_effective_command = _logged_command(
         segment.release_effective_command,
-        *segment.release_pending_commands,
+        record_index=segment.start_index,
+        field_name="release_command_effective_at_state",
     )
-    seed_commands = sorted((
+    release_pending_commands = tuple(
         _logged_command(
             value,
             record_index=segment.start_index,
-            field_name=f"release_command_seed[{seed_index}]",
+            field_name=f"release_pending_command_history[{seed_index}]",
         )
-        for seed_index, value in enumerate(seed_values)
-    ), key=lambda command: command.sequence)
+        for seed_index, value in enumerate(segment.release_pending_commands)
+    )
+    for first, second in zip(
+        release_pending_commands, release_pending_commands[1:]
+    ):
+        if (
+            second.sequence != first.sequence+1
+            or second.sent_at <= first.sent_at
+        ):
+            raise ReplayValidationError(
+                "release pending command seed is not strictly ordered and "
+                "sequence-complete"
+            )
+    seed_commands = (
+        release_effective_command,
+        *release_pending_commands,
+    )
     for command in seed_commands:
         append(command)
 
@@ -901,6 +982,8 @@ def _extract_segment(records, segment, config):
     previous_send_time = None
     release_position = None
     terminal_handoff_position = None
+    modeled_queue_commands = None
+    previous_action_command = None
 
     for row_number, index in enumerate(segment.observer_indices):
         final = row_number == len(segment.observer_indices)-1
@@ -997,6 +1080,7 @@ def _extract_segment(records, segment, config):
             )
             sent_after = sent_after_state[0]
             projected_command = projected_applied
+            sample_command = applied
         else:
             if len(sent_after_state) != 1:
                 raise ReplayValidationError(
@@ -1010,6 +1094,26 @@ def _extract_segment(records, segment, config):
                     "attitude_zdistance command after the state"
                 )
             projected_command = _project_command(sent_after, segment.direction)
+            sample_command = sent_after
+
+        orthogonal_command = _orthogonal_command(
+            sample_command, segment.direction
+        )
+
+        if (
+            not final
+            and not math.isclose(
+                sent_after.sent_at,
+                values["state_time"],
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+        ):
+            raise ReplayValidationError(
+                f"observer record {index} is not on the LMPC decision-time "
+                "grid: the new attitude command timestamp must equal the "
+                "sample state timestamp after explicit resampling"
+            )
 
         if applied.sent_at > values["state_time"]+1e-9:
             raise ReplayValidationError(
@@ -1023,6 +1127,23 @@ def _extract_segment(records, segment, config):
         if previous_send_time is not None:
             command_dt = sent_after.sent_at-previous_send_time
             state_dt = values["state_time"]-previous_state_time
+            intervening_commands = tuple(
+                command for command in commands
+                if (
+                    command.sent_at > previous_send_time+1e-12
+                    and command.sent_at < values["state_time"]-1e-12
+                )
+            )
+            if intervening_commands:
+                raise ReplayValidationError(
+                    f"observer record {index} contains multiple flight "
+                    "commands within one fixed prediction step"
+                )
+            if previous_send_time >= values["state_time"]-1e-12:
+                raise ReplayValidationError(
+                    f"observer record {index} previous command was not sent "
+                    "before the next fresh state"
+                )
             if not (
                 config.limits.min_sample_dt_s
                 <= command_dt
@@ -1045,19 +1166,63 @@ def _extract_segment(records, segment, config):
         previous_state_time = values["state_time"]
         if release_position is None:
             release_position = values["position"][:2].copy()
-        queue_commands = _queue_for_sample(
+        raw_queue_commands = _queue_for_sample(
             commands,
             sample_stamp=values["state_time"],
             config=config,
         )
-        if not _same_command(queue_commands[0], applied):
+        if not _same_command(raw_queue_commands[0], applied):
             raise ReplayValidationError(
-                f"observer record {index} applied command disagrees with the "
-                "oldest/effective delay-queue command"
+                f"observer record {index} actual_command_applied_at_state "
+                "disagrees with the independently reconstructed delayed "
+                "send history"
+            )
+
+        # The safe-set state lives on a fixed decision-time grid, so its
+        # delayed-input memory has the exact discrete successor
+        # ``q[k+1] = shift(q[k], u[k])``.  Preserve complete command objects
+        # until after validating the applied input; scalar projections alone
+        # cannot detect a forged sequence/timestamp with the same tilt.
+        if modeled_queue_commands is None:
+            modeled_queue_commands = raw_queue_commands
+            release_effective_command = _logged_command(
+                segment.release_effective_command,
+                record_index=segment.start_index,
+                field_name="release_command_effective_at_state",
+            )
+            if not _same_command(
+                release_effective_command, modeled_queue_commands[0]
+            ):
+                raise ReplayValidationError(
+                    "release command effective at the first state disagrees "
+                    "with the complete delayed send history"
+                )
+        else:
+            modeled_queue_commands = (
+                *modeled_queue_commands[1:], previous_action_command,
+            )
+        if (
+            len(raw_queue_commands) != len(modeled_queue_commands)
+            or any(
+                not _same_command(raw, modeled)
+                for raw, modeled in zip(
+                    raw_queue_commands, modeled_queue_commands
+                )
+            )
+        ):
+            raise ReplayValidationError(
+                f"observer record {index} complete delayed command history "
+                "disagrees with the fixed-grid command-memory successor; "
+                "raw post-observation state/command phase must be resampled "
+                "onto the decision-time grid before admission"
             )
         queue = tuple(
             _project_command(command, segment.direction)
-            for command in queue_commands
+            for command in modeled_queue_commands
+        )
+        orthogonal_queue = tuple(
+            _orthogonal_command(command, segment.direction)
+            for command in modeled_queue_commands
         )
         state = (
             values["aligned_velocity"],
@@ -1074,12 +1239,16 @@ def _extract_segment(records, segment, config):
         )
         rows.append((
             index, values["state_time"], projected_command, state,
-            aligned_position, values
+            aligned_position, orthogonal_command, orthogonal_queue, values
         ))
+        previous_action_command = sample_command
 
     samples = []
     for row_number, row in enumerate(rows):
-        index, send_time, command, state, position, values = row
+        (
+            index, send_time, command, state, position,
+            orthogonal_command, orthogonal_queue, values,
+        ) = row
         dt_s = (
             0.0 if row_number == len(rows)-1
             else rows[row_number+1][1]-send_time
@@ -1090,6 +1259,12 @@ def _extract_segment(records, segment, config):
             dt_s=float(dt_s),
             aligned_velocity_m_s=values["aligned_velocity"],
             cross_velocity_m_s=values["cross_velocity"],
+            projected_tilt_rad=values["projected_tilt"],
+            projected_tilt_rate_rad_s=values["projected_rate"],
+            orthogonal_command_rad=float(orthogonal_command),
+            pending_orthogonal_commands_rad=tuple(
+                float(item) for item in orthogonal_queue
+            ),
             position_m=tuple(float(value) for value in values["position"]),
             aligned_position_m=position,
             roll_rad=float(values["rpy"][0]),
@@ -1102,7 +1277,7 @@ def _extract_segment(records, segment, config):
             safety_violation=False,
         ))
 
-    first = rows[0][5]
+    first = rows[0][7]
     if first["aligned_velocity"] <= 0:
         raise ReplayValidationError(
             f"episode {segment.episode_id} does not start with positive "
@@ -1126,6 +1301,7 @@ def _extract_segment(records, segment, config):
         outcome=TERMINAL_OUTCOME,
         terminal_handoff_position_m=terminal_handoff_position,
         samples=tuple(samples),
+        stage_cost_spec=config.stage_cost_spec,
     )
 
     # A terminal marker only identifies a candidate.  Re-run the complete
@@ -1134,7 +1310,10 @@ def _extract_segment(records, segment, config):
     validator = VelocityLMPCSafeSet(
         state_dimension=config.state_dimension,
         command_dimension=1,
+        prediction_step_s=config.prediction_step_s,
+        command_delay_s=config.effective_command_delay_s,
         state_scales=config.state_scales,
+        stage_cost_spec=config.stage_cost_spec,
         limits=config.limits,
     )
     try:
@@ -1198,6 +1377,9 @@ def extract_velocity_lmpc_episodes(records: Sequence[dict], config):
         source_record_count=len(records),
         model_fingerprint=config.model_fingerprint,
         state_dimension=config.state_dimension,
+        prediction_step_s=config.prediction_step_s,
+        command_delay_s=config.effective_command_delay_s,
+        stage_cost_spec=config.stage_cost_spec,
     )
 
 
@@ -1218,7 +1400,10 @@ def build_safe_set_artifact(result, *, existing=None, state_scales=None,
         artifact = VelocityLMPCSafeSet(
             state_dimension=result.state_dimension,
             command_dimension=1,
+            prediction_step_s=result.prediction_step_s,
+            command_delay_s=result.command_delay_s,
             state_scales=scales,
+            stage_cost_spec=result.stage_cost_spec,
             limits=limits or SafeSetLimits(),
         )
     else:
@@ -1230,6 +1415,19 @@ def build_safe_set_artifact(result, *, existing=None, state_scales=None,
             existing.state_dimension != result.state_dimension
             or existing.command_dimension != 1
             or existing.aligned_velocity_state_index != 0
+            or not math.isclose(
+                existing.prediction_step_s,
+                result.prediction_step_s,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            or not math.isclose(
+                existing.command_delay_s,
+                result.command_delay_s,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            or existing.stage_cost_spec != result.stage_cost_spec
         ):
             raise ReplayValidationError(
                 "existing artifact state/command contract is incompatible"
@@ -1333,17 +1531,37 @@ def _parse_scales(text, dimension):
 
 def _parser():
     parser = argparse.ArgumentParser(
-        description="Extract validated release-to-zero LMPC episodes offline."
+        description=(
+            "Validate decision-time-resampled release-to-zero LMPC episodes "
+            "offline. Raw post-observation flight rows fail closed."
+        )
     )
-    parser.add_argument("--input", required=True, help="complete flight JSON")
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="complete decision-time-resampled flight JSON",
+    )
     parser.add_argument(
         "--output", required=True,
         help="new safe-set JSON; an existing path is never overwritten",
     )
     parser.add_argument("--model-fingerprint", required=True)
     parser.add_argument("--state-dimension", required=True, type=int)
-    parser.add_argument("--prediction-step-s", type=float, default=0.02)
-    parser.add_argument("--command-delay-s", type=float)
+    parser.add_argument(
+        "--prediction-step-s", type=float,
+        help=(
+            "fixed replay step (default 0.02 for a new artifact; an existing "
+            "artifact supplies this value and any explicit value must match)"
+        ),
+    )
+    parser.add_argument(
+        "--command-delay-s", type=float,
+        help=(
+            "strictly positive configured physical command delay (required "
+            "for a new artifact; an existing artifact supplies it and any "
+            "explicit value must match)"
+        ),
+    )
     parser.add_argument(
         "--existing-artifact",
         help="optional existing safe set to copy and extend",
@@ -1363,11 +1581,55 @@ def main(argv=None):
             VelocityLMPCSafeSet.load(args.existing_artifact)
         )
         limits = existing.limits if existing is not None else SafeSetLimits()
+        if existing is None and args.command_delay_s is None:
+            raise ReplayValidationError(
+                "--command-delay-s is required when creating a new artifact"
+            )
+        if (
+            existing is not None
+            and args.prediction_step_s is not None
+            and not math.isclose(
+                args.prediction_step_s,
+                existing.prediction_step_s,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            raise ReplayValidationError(
+                "--prediction-step-s does not match the existing artifact"
+            )
+        prediction_step_s = (
+            existing.prediction_step_s
+            if existing is not None else
+            0.02 if args.prediction_step_s is None else
+            args.prediction_step_s
+        )
+        if (
+            existing is not None
+            and args.command_delay_s is not None
+            and not math.isclose(
+                args.command_delay_s,
+                existing.command_delay_s,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            raise ReplayValidationError(
+                "--command-delay-s does not match the existing artifact"
+            )
+        command_delay_s = (
+            existing.command_delay_s
+            if existing is not None else args.command_delay_s
+        )
         config = VelocityLMPCReplayConfig(
             model_fingerprint=args.model_fingerprint,
             state_dimension=args.state_dimension,
-            prediction_step_s=args.prediction_step_s,
-            command_delay_s=args.command_delay_s,
+            prediction_step_s=prediction_step_s,
+            command_delay_s=command_delay_s,
+            stage_cost_spec=(
+                StageCostSpec()
+                if existing is None else existing.stage_cost_spec
+            ),
             limits=limits,
         )
         records = load_complete_flight_records(args.input)

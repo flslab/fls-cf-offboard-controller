@@ -160,6 +160,7 @@ class PositionCaptureRuntimeTests(unittest.TestCase):
                         'observer_settle_s': 0.0, 'bias_calibration_s': 0.01,
                         'minimum_bias_samples': 1,
                         'motor_model': {'hover_pwm': 30000, 'hover_voltage': 8},
+                        'safety': {'enforce_state_group_skew': True},
                         'calibration_excitation': {'enabled': False},
                         'planar_braking_calibration': {'enabled': False},
                         'position_capture_calibration': {'enabled': True},

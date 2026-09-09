@@ -244,10 +244,12 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # for level attitude before position control takes ownership.
         "coast_velocity_predictive_unwind_enabled": False,
         "coast_velocity_unwind_terminal_speed_m_s": 0.10,
-        # The open-loop attitude fit did not cover the full velocity-estimator
-        # tail seen during the first staged flight.  Keep a conservative tail
-        # margin here and re-brake after leveling if meaningful speed remains.
+        # Legacy constant-tail predictor settings. Missions can instead enable
+        # the rate-limited leveling integration below.
         "coast_velocity_unwind_prediction_margin_s": 0.15,
+        "coast_velocity_unwind_integrated_leveling_enabled": False,
+        "coast_velocity_unwind_leveling_rate_deg_s": 720.0,
+        "coast_velocity_unwind_integration_step_s": 0.01,
         "coast_velocity_unwind_min_deceleration_m_s2": 0.30,
         "coast_velocity_unwind_filter_time_constant_s": 0.03,
         "coast_velocity_unwind_max_target_error_m_s": 0.15,
@@ -327,13 +329,17 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
     },
     "safety": {
         "max_frame_age_s": 0.10,
+        # Host callback arrival times can temporarily separate telemetry
+        # groups that were sampled together onboard.  Keep measuring and
+        # logging the skew, but do not abort a flight solely on that value.
+        "enforce_state_group_skew": False,
         # During shadow calibration only, skip transient stale state packets
         # while retaining position hold. Active interaction keeps the strict
         # max_state_age_s cutoff.
         "calibration_state_dropout_timeout_s": 0.25,
-        # A shared telemetry pause can make one callback group recover a few
-        # milliseconds before the others. During calibration position-control
-        # phases only, wait briefly for those groups to resynchronize.
+        # If skew enforcement is explicitly enabled, a calibration
+        # position-control phase may briefly wait for callback groups to
+        # resynchronize after a shared telemetry pause.
         "calibration_state_group_skew_timeout_s": 0.25,
         # Bound the total time calibration may remain paused across repeated
         # individually recoverable state-stream gaps.

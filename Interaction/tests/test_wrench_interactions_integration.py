@@ -24,9 +24,11 @@ from Interaction.interactions import (
     heavy_inertia_attitude,
     inertia_command_mode,
     inertia_position_target,
+    integrate_rate_limited_leveling_velocity_delta,
     kinetic_energy_velocity,
     potentiometer_release_direction,
     predict_delayed_zero_crossing,
+    release_dataset_world_y_directions,
     release_candidate_sensor_stale_watchdog,
     release_tail_neutralization_attitude,
     release_coast_initial_velocity,
@@ -92,6 +94,35 @@ class InitialContactArmingGateTests(unittest.TestCase):
 
 
 class ReleaseModeTests(unittest.TestCase):
+    def test_release_dataset_snaps_task_axis_but_preserves_real_sensor_bias(self):
+        measured = np.array([0.10, np.sqrt(1.0-0.10**2)])
+
+        task_direction, measured_direction = (
+            release_dataset_world_y_directions(
+                [0.02, np.sqrt(1.0-0.02**2)], measured,
+            )
+        )
+
+        np.testing.assert_allclose(task_direction, [0.0, 1.0])
+        np.testing.assert_allclose(measured_direction, measured)
+
+    def test_release_dataset_rejects_diagonal_task_or_measured_axis(self):
+        diagonal = np.sqrt(0.5)
+        for task_axis, measured_axis in (
+            ([diagonal, diagonal], [0.0, 1.0]),
+            ([0.0, 1.0], [diagonal, diagonal]),
+            ([0.0, 1.0], [0.0, -1.0]),
+        ):
+            with self.subTest(
+                    task_axis=task_axis, measured_axis=measured_axis):
+                task_direction, measured_direction = (
+                    release_dataset_world_y_directions(
+                        task_axis, measured_axis,
+                    )
+                )
+                self.assertIsNone(task_direction)
+                self.assertIsNotNone(measured_direction)
+
     def test_calibration_target_override_does_not_move_interaction_target(self):
         mission_target = [0.0, -1.0, 1.0, 0.0]
         config = {'calibration_nominal_position': [0.0, 0.0, 1.0]}
@@ -2076,6 +2107,75 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         control.send(commander)
         self.assertEqual(commander.calls[-1][0], 'position')
+
+    def test_integrated_leveling_tail_uses_rate_limited_attitude_ramp(self):
+        prediction = integrate_rate_limited_leveling_velocity_delta(
+            np.radians([14.4, 0.0, 0.0]),
+            np.zeros(3),
+            [0.0, 1.0],
+            response_delay_s=0.0,
+            leveling_rate_deg_s=720.0,
+            integration_step_s=0.01,
+        )
+
+        # 14.4 degrees takes exactly two 7.2-degree steps to reach level.
+        self.assertAlmostEqual(prediction['duration_s'], 0.02)
+        expected_delta = 0.005 * (
+            attitude_to_world_acceleration(14.4, 0.0, 0.0)[1]
+            + 2.0 * attitude_to_world_acceleration(7.2, 0.0, 0.0)[1]
+        )
+        self.assertAlmostEqual(
+            prediction['velocity_delta_m_s'], expected_delta
+        )
+        self.assertAlmostEqual(
+            prediction['final_projected_acceleration_m_s2'], 0.0
+        )
+
+    def test_integrated_leveling_delays_overoptimistic_predictive_unwind(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_unwind_terminal_speed_m_s=0.10,
+            coast_velocity_unwind_integrated_leveling_enabled=True,
+            coast_velocity_unwind_leveling_rate_deg_s=720.0,
+            coast_velocity_unwind_integration_step_s=0.01,
+            coast_attitude_response_delay_s=0.07,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 1.0, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0], coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        # This reproduces the latest flight's first re-brake state. The legacy
+        # constant-tail model predicted 0.088 m/s and unwound here. Integrating
+        # the rate-limited attitude return predicts substantial residual speed,
+        # so the zero-velocity brake stays active.
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.10, 1.0],
+            [-0.0835593641, 1.0033947229, 0.0],
+            1.01,
+            current_orientation_rpy=[
+                0.1939156779, -0.0713523773, 0.0072613615,
+            ],
+            current_angular_velocity=[1.538, -0.405, 0.022],
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'fast_brake')
+        self.assertGreater(
+            control.coast_velocity_predicted_unwind_terminal_speed_m_s,
+            control.coast_velocity_unwind_terminal_speed_m_s,
+        )
+        self.assertLess(
+            control.coast_velocity_unwind_integrated_velocity_delta_m_s,
+            0.0,
+        )
+        self.assertGreater(
+            control.coast_velocity_unwind_leveling_duration_s, 0.07
+        )
 
     def test_predictive_velocity_coast_rejects_reverse_speed_handoff(self):
         control = TranslationControlHandoff(

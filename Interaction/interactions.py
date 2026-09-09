@@ -320,6 +320,52 @@ def potentiometer_release_direction(force_world, measured_velocity):
     return direction, source
 
 
+def release_dataset_world_y_directions(
+        task_axis_xy,
+        measured_sensor_axis_world_xy,
+):
+    """Return snapped task direction and unsnapped measured release axis.
+
+    Dataset projection is defined only for a configured/runtime task axis that
+    lies on the world-Y line.  The measured sensor axis is normalized but never
+    snapped, so replay can independently verify the real release alignment.
+    This helper is deliberately fail-closed and has no flight-control effect.
+    """
+    try:
+        task_axis = np.asarray(task_axis_xy, dtype=float)
+        measured_axis = np.asarray(
+            measured_sensor_axis_world_xy, dtype=float
+        )
+    except (TypeError, ValueError):
+        return None, None
+    if (
+        measured_axis.shape != (2,)
+        or not np.all(np.isfinite(measured_axis))
+    ):
+        return None, None
+    measured_norm = float(np.linalg.norm(measured_axis))
+    if measured_norm <= 1e-9:
+        return None, None
+    measured_unit = measured_axis/measured_norm
+    if (
+        task_axis.shape != (2,)
+        or not np.all(np.isfinite(task_axis))
+    ):
+        return None, measured_unit
+    task_norm = float(np.linalg.norm(task_axis))
+    if task_norm <= 1e-9:
+        return None, measured_unit
+    task_unit = task_axis/task_norm
+    if abs(float(task_unit[1]))+1e-12 < 0.98:
+        return None, measured_unit
+    task_direction = np.array([
+        0.0, float(np.sign(task_unit[1])),
+    ])
+    if float(task_direction @ measured_unit)+1e-12 < 0.98:
+        return None, measured_unit
+    return task_direction, measured_unit
+
+
 def resolve_release_mode(
         configured_mode,
         force_sensor_available,
@@ -789,6 +835,107 @@ def attitude_to_world_acceleration(roll_deg, pitch_deg, yaw_deg):
         body[0] * cos_y - body[1] * sin_y,
         body[0] * sin_y + body[1] * cos_y,
     ])
+
+
+def integrate_rate_limited_leveling_velocity_delta(
+        orientation_rpy,
+        angular_velocity,
+        direction_xy,
+        response_delay_s,
+        leveling_rate_deg_s,
+        integration_step_s,
+        acceleration_scale=1.0,
+        attitude_limit_deg=30.0,
+):
+    """Integrate longitudinal acceleration while roll/pitch return to level."""
+    orientation = np.asarray(orientation_rpy, dtype=float).copy()
+    rates = np.asarray(angular_velocity, dtype=float)
+    direction = np.asarray(direction_xy, dtype=float).copy()
+    values = np.asarray([
+        response_delay_s,
+        leveling_rate_deg_s,
+        integration_step_s,
+        acceleration_scale,
+        attitude_limit_deg,
+    ], dtype=float)
+    if (
+        orientation.shape != (3,)
+        or rates.shape != (3,)
+        or direction.shape != (2,)
+        or not np.all(np.isfinite(orientation))
+        or not np.all(np.isfinite(rates))
+        or not np.all(np.isfinite(direction))
+        or not np.all(np.isfinite(values))
+        or response_delay_s < 0.0
+        or leveling_rate_deg_s <= 0.0
+        or integration_step_s <= 0.0
+        or acceleration_scale <= 0.0
+        or attitude_limit_deg <= 0.0
+    ):
+        raise ValueError('rate-limited leveling inputs must be finite and valid')
+    direction_norm = float(np.linalg.norm(direction))
+    if direction_norm <= 1e-9:
+        raise ValueError('leveling projection direction must be nonzero')
+    direction /= direction_norm
+
+    attitude_limit_rad = np.radians(attitude_limit_deg)
+    orientation[:2] = np.clip(
+        orientation[:2], -attitude_limit_rad, attitude_limit_rad
+    )
+    leveling_rate_rad_s = np.radians(leveling_rate_deg_s)
+
+    def projected_acceleration(rpy):
+        acceleration_xy = acceleration_scale * attitude_to_world_acceleration(
+            np.degrees(rpy[0]),
+            np.degrees(rpy[1]),
+            np.degrees(rpy[2]),
+        )
+        return float(acceleration_xy @ direction)
+
+    velocity_delta = 0.0
+    elapsed_s = 0.0
+    current_acceleration = projected_acceleration(orientation)
+
+    remaining_delay_s = float(response_delay_s)
+    while remaining_delay_s > 1e-12:
+        step_s = min(integration_step_s, remaining_delay_s)
+        next_orientation = orientation.copy()
+        rate_xy = rates[:2].copy()
+        rate_norm = float(np.linalg.norm(rate_xy))
+        if rate_norm > leveling_rate_rad_s:
+            rate_xy *= leveling_rate_rad_s / rate_norm
+        next_orientation[:2] += rate_xy * step_s
+        next_orientation[:2] = np.clip(
+            next_orientation[:2], -attitude_limit_rad, attitude_limit_rad
+        )
+        next_acceleration = projected_acceleration(next_orientation)
+        velocity_delta += 0.5 * (
+            current_acceleration + next_acceleration
+        ) * step_s
+        orientation = next_orientation
+        current_acceleration = next_acceleration
+        elapsed_s += step_s
+        remaining_delay_s -= step_s
+
+    while float(np.linalg.norm(orientation[:2])) > 1e-12:
+        tilt_rad = float(np.linalg.norm(orientation[:2]))
+        step_s = min(integration_step_s, tilt_rad / leveling_rate_rad_s)
+        next_tilt_rad = max(0.0, tilt_rad - leveling_rate_rad_s * step_s)
+        next_orientation = orientation.copy()
+        next_orientation[:2] *= next_tilt_rad / tilt_rad
+        next_acceleration = projected_acceleration(next_orientation)
+        velocity_delta += 0.5 * (
+            current_acceleration + next_acceleration
+        ) * step_s
+        orientation = next_orientation
+        current_acceleration = next_acceleration
+        elapsed_s += step_s
+
+    return {
+        'velocity_delta_m_s': float(velocity_delta),
+        'duration_s': float(elapsed_s),
+        'final_projected_acceleration_m_s2': float(current_acceleration),
+    }
 
 
 def predict_delayed_zero_crossing(
@@ -2256,6 +2403,9 @@ class TranslationControlHandoff:
             coast_velocity_predictive_unwind_enabled=False,
             coast_velocity_unwind_terminal_speed_m_s=0.10,
             coast_velocity_unwind_prediction_margin_s=0.15,
+            coast_velocity_unwind_integrated_leveling_enabled=False,
+            coast_velocity_unwind_leveling_rate_deg_s=720.0,
+            coast_velocity_unwind_integration_step_s=0.01,
             coast_velocity_unwind_min_deceleration_m_s2=0.30,
             coast_velocity_unwind_filter_time_constant_s=0.03,
             coast_velocity_unwind_max_target_error_m_s=0.15,
@@ -2364,6 +2514,15 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_prediction_margin_s = float(
             coast_velocity_unwind_prediction_margin_s
         )
+        self.coast_velocity_unwind_integrated_leveling_enabled = bool(
+            coast_velocity_unwind_integrated_leveling_enabled
+        )
+        self.coast_velocity_unwind_leveling_rate_deg_s = float(
+            coast_velocity_unwind_leveling_rate_deg_s
+        )
+        self.coast_velocity_unwind_integration_step_s = float(
+            coast_velocity_unwind_integration_step_s
+        )
         self.coast_velocity_unwind_min_deceleration_m_s2 = float(
             coast_velocity_unwind_min_deceleration_m_s2
         )
@@ -2456,6 +2615,8 @@ class TranslationControlHandoff:
             self.coast_velocity_handoff_speed_m_s,
             self.coast_velocity_unwind_terminal_speed_m_s,
             self.coast_velocity_unwind_prediction_margin_s,
+            self.coast_velocity_unwind_leveling_rate_deg_s,
+            self.coast_velocity_unwind_integration_step_s,
             self.coast_velocity_unwind_min_deceleration_m_s2,
             self.coast_velocity_unwind_filter_time_constant_s,
             self.coast_velocity_unwind_max_target_error_m_s,
@@ -2507,6 +2668,8 @@ class TranslationControlHandoff:
             or self.coast_velocity_handoff_speed_m_s <= 0
             or self.coast_velocity_unwind_terminal_speed_m_s < 0
             or self.coast_velocity_unwind_prediction_margin_s < 0
+            or self.coast_velocity_unwind_leveling_rate_deg_s <= 0
+            or self.coast_velocity_unwind_integration_step_s <= 0
             or self.coast_velocity_unwind_min_deceleration_m_s2 <= 0
             or self.coast_velocity_unwind_filter_time_constant_s <= 0
             or self.coast_velocity_unwind_max_target_error_m_s <= 0
@@ -2633,6 +2796,8 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_decision_reason = None
         self.coast_velocity_projected_acceleration_m_s2 = None
         self.coast_velocity_unwind_response_horizon_s = None
+        self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
         self.coast_velocity_handoff_rate_ready = False
@@ -2775,6 +2940,8 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_decision_reason = None
         self.coast_velocity_projected_acceleration_m_s2 = None
         self.coast_velocity_unwind_response_horizon_s = None
+        self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
         self.coast_velocity_handoff_rate_ready = False
@@ -3294,6 +3461,8 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_decision_reason = None
         self.coast_velocity_projected_acceleration_m_s2 = None
         self.coast_velocity_unwind_response_horizon_s = None
+        self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
         self.coast_velocity_handoff_rate_ready = False
@@ -3647,44 +3816,70 @@ class TranslationControlHandoff:
             handoff_reason = 'velocity_zero_position_handoff'
         else:
             response_delay_s = self.coast_attitude_response_delay_s
-            response_decay_s = (
-                self.coast_attitude_time_constant_s
-                + self.coast_velocity_unwind_prediction_margin_s
-            )
-            response_horizon_s = response_delay_s + response_decay_s
-            self.coast_velocity_unwind_response_horizon_s = response_horizon_s
-
-            # During the identified response delay, extrapolate the measured
-            # roll/pitch with angular rate.  Afterwards use the fitted
-            # first-order tail area.  This estimates the remaining velocity
-            # impulse if the onboard velocity loop requests level now.
-            future_orientation = orientation_rpy.copy()
-            future_orientation[:2] += (
-                angular_velocity[:2] * response_delay_s
-            )
-            attitude_limit_rad = np.radians(self.brake_max_attitude_deg)
-            future_orientation[:2] = np.clip(
-                future_orientation[:2],
-                -attitude_limit_rad,
-                attitude_limit_rad,
-            )
-            future_acceleration_xy = (
-                self.coast_attitude_acceleration_scale
-                * attitude_to_world_acceleration(
-                    np.degrees(future_orientation[0]),
-                    np.degrees(future_orientation[1]),
-                    np.degrees(future_orientation[2]),
+            if self.coast_velocity_unwind_integrated_leveling_enabled:
+                leveling_prediction = (
+                    integrate_rate_limited_leveling_velocity_delta(
+                        orientation_rpy,
+                        angular_velocity,
+                        self.brake_direction[:2],
+                        response_delay_s,
+                        self.coast_velocity_unwind_leveling_rate_deg_s,
+                        self.coast_velocity_unwind_integration_step_s,
+                        acceleration_scale=(
+                            self.coast_attitude_acceleration_scale
+                        ),
+                        attitude_limit_deg=self.brake_max_attitude_deg,
+                    )
                 )
-            )
-            future_projected_acceleration = float(
-                future_acceleration_xy @ self.brake_direction[:2]
-            )
-            tail_velocity_delta = (
-                0.5
-                * (projected_acceleration + future_projected_acceleration)
-                * response_delay_s
-                + future_projected_acceleration * response_decay_s
-            )
+                tail_velocity_delta = leveling_prediction[
+                    'velocity_delta_m_s'
+                ]
+                response_horizon_s = leveling_prediction['duration_s']
+                future_projected_acceleration = leveling_prediction[
+                    'final_projected_acceleration_m_s2'
+                ]
+                self.coast_velocity_unwind_integrated_velocity_delta_m_s = (
+                    tail_velocity_delta
+                )
+                self.coast_velocity_unwind_leveling_duration_s = (
+                    response_horizon_s
+                )
+            else:
+                response_decay_s = (
+                    self.coast_attitude_time_constant_s
+                    + self.coast_velocity_unwind_prediction_margin_s
+                )
+                response_horizon_s = response_delay_s + response_decay_s
+                future_orientation = orientation_rpy.copy()
+                future_orientation[:2] += (
+                    angular_velocity[:2] * response_delay_s
+                )
+                attitude_limit_rad = np.radians(self.brake_max_attitude_deg)
+                future_orientation[:2] = np.clip(
+                    future_orientation[:2],
+                    -attitude_limit_rad,
+                    attitude_limit_rad,
+                )
+                future_acceleration_xy = (
+                    self.coast_attitude_acceleration_scale
+                    * attitude_to_world_acceleration(
+                        np.degrees(future_orientation[0]),
+                        np.degrees(future_orientation[1]),
+                        np.degrees(future_orientation[2]),
+                    )
+                )
+                future_projected_acceleration = float(
+                    future_acceleration_xy @ self.brake_direction[:2]
+                )
+                tail_velocity_delta = (
+                    0.5 * (
+                        projected_acceleration + future_projected_acceleration
+                    ) * response_delay_s
+                    + future_projected_acceleration * response_decay_s
+                )
+                self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+                self.coast_velocity_unwind_leveling_duration_s = None
+            self.coast_velocity_unwind_response_horizon_s = response_horizon_s
             predicted_terminal_speed = float(
                 self.brake_projected_speed_m_s + tail_velocity_delta
             )
@@ -6534,6 +6729,11 @@ class InteractionsControl:
             velocity_mpc_shadow_direction_config = (
                 configured_velocity_direction
             )
+        release_dataset_configured_task_axis_xy = (
+            None
+            if velocity_mpc_shadow_direction_config is None else
+            velocity_mpc_shadow_direction_config.copy()
+        )
         prediction_model_consumer_enabled = bool(
             velocity_mpc_shadow_enabled
             or (
@@ -6691,6 +6891,13 @@ class InteractionsControl:
         max_state_age_s = float(safety.get(
             'max_state_age_s', safety['max_frame_age_s']
         ))
+        enforce_state_group_skew = safety.get(
+            'enforce_state_group_skew', False
+        )
+        if not isinstance(enforce_state_group_skew, bool):
+            raise ValueError(
+                'safety.enforce_state_group_skew must be a boolean'
+            )
         calibration_state_dropout_timeout_s = float(safety.get(
             'calibration_state_dropout_timeout_s', 0.25
         ))
@@ -6751,6 +6958,11 @@ class InteractionsControl:
             logger.warning(
                 'Onboard wrench interaction is in shadow mode: contacts and '
                 'proposed responses are logged, but the reference remains fixed.'
+            )
+        if not enforce_state_group_skew:
+            logger.warning(
+                'Onboard state-group skew enforcement is disabled; skew is '
+                'still logged, but it will not stop interaction or calibration.'
             )
         self.log_manager.add_log_entry(
             'configs',
@@ -6846,6 +7058,24 @@ class InteractionsControl:
                                 config['control_handoff'].get(
                                     'coast_velocity_unwind_prediction_margin_s',
                                     0.15,
+                                )
+                            ),
+                            'velocity_unwind_integrated_leveling_enabled': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_integrated_leveling_enabled',
+                                    False,
+                                )
+                            ),
+                            'velocity_unwind_leveling_rate_deg_s': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_leveling_rate_deg_s',
+                                    720.0,
+                                )
+                            ),
+                            'velocity_unwind_integration_step_s': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_integration_step_s',
+                                    0.01,
                                 )
                             ),
                             'velocity_unwind_one_step_lookahead_enabled': (
@@ -6962,7 +7192,10 @@ class InteractionsControl:
                 )
                 if (
                     -0.5 <= state_age <= max_state_age_s
-                    and state_skew <= max_state_group_skew_s
+                    and (
+                        not enforce_state_group_skew
+                        or state_skew <= max_state_group_skew_s
+                    )
                 ):
                     break
             if now >= startup_deadline:
@@ -7081,6 +7314,7 @@ class InteractionsControl:
         release_dataset_episode_sequence = 0
         release_dataset_episode_id = None
         release_dataset_direction_xy = None
+        release_dataset_measured_sensor_axis_world_xy = None
         release_dataset_last_logged_command_sequence = 0
         release_dataset_terminal_gate = ReleaseLMPCTerminalGate()
         release_dataset_terminal_status = release_dataset_terminal_gate.status
@@ -7424,7 +7658,10 @@ class InteractionsControl:
                     'Onboard state-group skew contains an invalid value'
                 )
             state_group_skew = float(np.max(state_group_skew_values))
-            if state_group_skew > max_state_group_skew_s:
+            if (
+                enforce_state_group_skew
+                and state_group_skew > max_state_group_skew_s
+            ):
                 check_trial_wait(now, invalidate=True)
                 if planar_attitude_active:
                     # Never resume an open-loop tilt after losing synchronized
@@ -7611,8 +7848,11 @@ class InteractionsControl:
                 or motor_age > float(safety['max_motor_age_s'])
             )
             motor_is_unsynchronized = (
-                state['motor_skew_s'] is None
-                or state['motor_skew_s'] > max_motor_state_skew_s
+                enforce_state_group_skew
+                and (
+                    state['motor_skew_s'] is None
+                    or state['motor_skew_s'] > max_motor_state_skew_s
+                )
             )
             if safety['require_motor_data'] and (
                 motor_pwm is None
@@ -8006,6 +8246,7 @@ class InteractionsControl:
                 )
                 release_dataset_episode_id = None
                 release_dataset_direction_xy = None
+                release_dataset_measured_sensor_axis_world_xy = None
                 release_dataset_terminal_status = (
                     release_dataset_terminal_gate.reset()
                 )
@@ -8054,6 +8295,7 @@ class InteractionsControl:
                         )
                         release_dataset_episode_id = None
                         release_dataset_direction_xy = None
+                        release_dataset_measured_sensor_axis_world_xy = None
                         release_dataset_terminal_status = (
                             release_dataset_terminal_gate.reset()
                         )
@@ -8755,19 +8997,24 @@ class InteractionsControl:
                         )
                         release_dataset_episode_id = None
                         release_dataset_direction_xy = None
+                        release_dataset_measured_sensor_axis_world_xy = None
                         release_dataset_terminal_status = (
                             release_dataset_terminal_gate.reset()
                         )
-                    release_dataset_direction_xy = np.asarray(
-                        coast_direction[:2], dtype=float
+                    (
+                        release_dataset_direction_xy,
+                        release_dataset_measured_sensor_axis_world_xy,
+                    ) = release_dataset_world_y_directions(
+                        (
+                            coast_direction[:2]
+                            if release_dataset_configured_task_axis_xy is None
+                            else release_dataset_configured_task_axis_xy
+                        ),
+                        self._force_sensor_axis_world(
+                            output.estimate
+                        )[:2],
                     )
-                    release_dataset_direction_norm = float(np.linalg.norm(
-                        release_dataset_direction_xy
-                    ))
-                    if release_dataset_direction_norm > 1e-9:
-                        release_dataset_direction_xy /= (
-                            release_dataset_direction_norm
-                        )
+                    if release_dataset_direction_xy is not None:
                         release_dataset_episode_sequence += 1
                         release_dataset_episode_id = (
                             f'{self.drone_id}-release-'
@@ -9093,6 +9340,13 @@ class InteractionsControl:
                                 None
                                 if release_dataset_direction_xy is None else
                                 release_dataset_direction_xy.tolist()
+                            ),
+                            'release_dataset_measured_sensor_axis_world_xy': (
+                                None
+                                if release_dataset_measured_sensor_axis_world_xy
+                                is None else
+                                release_dataset_measured_sensor_axis_world_xy
+                                .tolist()
                             ),
                             'release_state_time': state_time,
                             'release_orientation_rpy_rad': (
@@ -9766,6 +10020,22 @@ class InteractionsControl:
                                 'response_horizon_s': (
                                     translation_control
                                     .coast_velocity_unwind_response_horizon_s
+                                ),
+                                'integrated_velocity_delta_m_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_integrated_velocity_delta_m_s
+                                ),
+                                'leveling_duration_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_leveling_duration_s
+                                ),
+                                'leveling_rate_deg_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_leveling_rate_deg_s
+                                ),
+                                'integration_step_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_integration_step_s
                                 ),
                                 'velocity_integrator_reset': True,
                                 'integrator_reset_method': (
@@ -11552,6 +11822,14 @@ class InteractionsControl:
                     translation_control
                     .coast_velocity_unwind_response_horizon_s
                 ),
+                'coast_velocity_unwind_integrated_velocity_delta_m_s': (
+                    translation_control
+                    .coast_velocity_unwind_integrated_velocity_delta_m_s
+                ),
+                'coast_velocity_unwind_leveling_duration_s': (
+                    translation_control
+                    .coast_velocity_unwind_leveling_duration_s
+                ),
                 'coast_velocity_handoff_tilt_ready': (
                     translation_control.coast_velocity_handoff_tilt_ready
                 ),
@@ -11640,6 +11918,7 @@ class InteractionsControl:
                 )
                 release_dataset_episode_id = None
                 release_dataset_direction_xy = None
+                release_dataset_measured_sensor_axis_world_xy = None
                 release_dataset_terminal_status = (
                     release_dataset_terminal_gate.reset()
                 )

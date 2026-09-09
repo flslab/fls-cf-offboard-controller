@@ -6,10 +6,9 @@ nearest-neighbour query for an optimizer.  The initial release speed is a task
 parameter: queries may interpolate between successful speeds, but they may
 never extrapolate beyond their convex hull.
 
-The state and command vectors are deliberately generic so the numerical LMPC
-core can evolve without weakening artifact validation.  Required measured
-velocity/attitude fields remain explicit on every sample so admission does not
-trust an opaque vector or a caller-provided ``passed`` flag.
+The reduced state has the fixed layout ``[v, theta, theta_rate, pending...]``.
+Required measured velocity/attitude fields remain explicit on every sample so
+admission does not trust an opaque vector or a caller-provided ``passed`` flag.
 """
 from __future__ import annotations
 
@@ -25,12 +24,15 @@ import tempfile
 import numpy as np
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 ARTIFACT_KIND = "conditional_velocity_lmpc_safe_set"
 TERMINAL_OUTCOME = "terminal_handoff"
+STAGE_COST_KIND = "aligned_velocity_tilt_rate_pending_sigmoid_v1"
+STATE_ACTION_PHASE_CONTRACT = "coincident_decision_time_v1"
 
 _FINGERPRINT_RE = re.compile(r"[A-Za-z0-9._:+-]{1,128}\Z")
 _EPISODE_ID_RE = re.compile(r"[A-Za-z0-9._:+-]{1,128}\Z")
+_REDUCED_STATE_CONSISTENCY_ATOL = 1e-9
 
 
 class SafeSetValidationError(ValueError):
@@ -83,6 +85,118 @@ def _vector(value, name, *, nonempty=True):
     if nonempty and not result:
         raise SafeSetValidationError(f"{name} must not be empty")
     return result
+
+
+@dataclass(frozen=True)
+class StageCostSpec:
+    """Dimensionless running-cost rate whose integral is stored in seconds."""
+
+    kind: str = STAGE_COST_KIND
+    velocity_scale_m_s: float = 0.05
+    tilt_scale_rad: float = math.radians(3.0)
+    tilt_rate_scale_rad_s: float = math.radians(20.0)
+    pending_command_scale_rad: float = math.radians(3.0)
+    command_scale_rad: float = math.radians(8.0)
+    command_slew_rate_scale_rad_s: float = math.radians(180.0)
+    effort_weight: float = 1e-3
+    slew_weight: float = 2e-3
+
+    _KEYS = (
+        "kind", "velocity_scale_m_s", "tilt_scale_rad",
+        "tilt_rate_scale_rad_s", "pending_command_scale_rad",
+        "command_scale_rad", "command_slew_rate_scale_rad_s",
+        "effort_weight", "slew_weight",
+    )
+
+    def __post_init__(self):
+        if self.kind != STAGE_COST_KIND:
+            raise SafeSetValidationError(
+                "stage_cost_spec.kind must be " + STAGE_COST_KIND
+            )
+        for field in self._KEYS[1:]:
+            object.__setattr__(
+                self,
+                field,
+                _number(getattr(self, field), "stage_cost_spec."+field),
+            )
+        scales = self._KEYS[1:7]
+        if any(getattr(self, field) <= 0.0 for field in scales):
+            raise SafeSetValidationError(
+                "stage_cost_spec scales must be positive"
+            )
+        if self.effort_weight < 0.0 or self.slew_weight < 0.0:
+            raise SafeSetValidationError(
+                "stage_cost_spec weights must be non-negative"
+            )
+
+    def to_dict(self):
+        return {field: getattr(self, field) for field in self._KEYS}
+
+    @classmethod
+    def from_dict(cls, value):
+        _exact_keys(value, cls._KEYS, "stage_cost_spec")
+        return cls(**value)
+
+
+def minimum_time_stage_cost_s(state, command, dt_s, spec):
+    """Return ``dt * running_cost_rate`` for the fixed reduced LMPC state.
+
+    The sigmoid-like progress term is zero only at the target and approaches
+    one far from it.  Effort and command-slew terms use the same normalized
+    units in both horizon optimization and reverse safe-set cost-to-go.
+    """
+    if not isinstance(spec, StageCostSpec):
+        raise SafeSetValidationError("spec must be StageCostSpec")
+    state = _vector(state, "stage_cost.state")
+    command = _vector(command, "stage_cost.command")
+    dt_s = _number(dt_s, "stage_cost.dt_s")
+    if len(state) < 4:
+        raise SafeSetValidationError(
+            "stage_cost.state must use [v, tilt, tilt_rate, pending...]"
+        )
+    if len(command) != 1:
+        raise SafeSetValidationError(
+            "stage_cost.command must contain one aligned command"
+        )
+    if dt_s < 0.0:
+        raise SafeSetValidationError("stage_cost.dt_s must be non-negative")
+    if dt_s == 0.0:
+        return 0.0
+
+    try:
+        normalized_state = (
+            state[0]/spec.velocity_scale_m_s,
+            state[1]/spec.tilt_scale_rad,
+            state[2]/spec.tilt_rate_scale_rad_s,
+            *(value/spec.pending_command_scale_rad for value in state[3:]),
+        )
+        state_squares = tuple(value*value for value in normalized_state)
+        if not all(math.isfinite(value) for value in state_squares):
+            raise SafeSetValidationError("normalized stage state is too large")
+        radius_squared = math.fsum(state_squares)
+        progress_rate = radius_squared/math.hypot(radius_squared, 1.0)
+        normalized_command = command[0]/spec.command_scale_rad
+        command_slew_rate = (command[0]-state[-1])/dt_s
+        normalized_slew_rate = (
+            command_slew_rate/spec.command_slew_rate_scale_rad_s
+        )
+        effort_rate = (
+            spec.effort_weight*normalized_command*normalized_command
+        )
+        slew_rate = spec.slew_weight*normalized_slew_rate*normalized_slew_rate
+        cost_rate = progress_rate+effort_rate+slew_rate
+        result = dt_s*cost_rate
+    except SafeSetValidationError:
+        raise
+    except (OverflowError, ValueError, ZeroDivisionError) as error:
+        raise SafeSetValidationError(
+            "stage cost arithmetic is outside the finite range"
+        ) from error
+    if not all(math.isfinite(value) for value in (
+        progress_rate, effort_rate, slew_rate, result
+    )):
+        raise SafeSetValidationError("stage cost is not finite")
+    return float(result)
 
 
 @dataclass(frozen=True)
@@ -162,6 +276,10 @@ class VelocityLMPCSample:
     dt_s: float
     aligned_velocity_m_s: float
     cross_velocity_m_s: float
+    projected_tilt_rad: float
+    projected_tilt_rate_rad_s: float
+    orthogonal_command_rad: float
+    pending_orthogonal_commands_rad: tuple[float, ...]
     position_m: tuple[float, float, float]
     roll_rad: float
     pitch_rad: float
@@ -175,7 +293,9 @@ class VelocityLMPCSample:
 
     _KEYS = (
         "state", "command", "dt_s", "aligned_velocity_m_s",
-        "cross_velocity_m_s",
+        "cross_velocity_m_s", "projected_tilt_rad",
+        "projected_tilt_rate_rad_s", "orthogonal_command_rad",
+        "pending_orthogonal_commands_rad",
         "position_m", "aligned_position_m", "roll_rad", "pitch_rad",
         "roll_rate_rad_s",
         "pitch_rate_rad_s",
@@ -188,6 +308,14 @@ class VelocityLMPCSample:
         object.__setattr__(
             self, "command", _vector(self.command, "sample.command")
         )
+        object.__setattr__(
+            self,
+            "pending_orthogonal_commands_rad",
+            _vector(
+                self.pending_orthogonal_commands_rad,
+                "sample.pending_orthogonal_commands_rad",
+            ),
+        )
         position = _vector(self.position_m, "sample.position_m")
         if len(position) != 3:
             raise SafeSetValidationError(
@@ -195,7 +323,7 @@ class VelocityLMPCSample:
             )
         object.__setattr__(self, "position_m", position)
         for field in self._KEYS[2:-1]:
-            if field == "position_m":
+            if field in ("pending_orthogonal_commands_rad", "position_m"):
                 continue
             object.__setattr__(
                 self, field, _number(getattr(self, field), "sample."+field)
@@ -219,6 +347,9 @@ class VelocityLMPCSample:
         result = {field: getattr(self, field) for field in self._KEYS}
         result["state"] = list(self.state)
         result["command"] = list(self.command)
+        result["pending_orthogonal_commands_rad"] = list(
+            self.pending_orthogonal_commands_rad
+        )
         result["position_m"] = list(self.position_m)
         return result
 
@@ -228,14 +359,28 @@ class VelocityLMPCSample:
         return cls(**value)
 
 
-def reverse_cost_to_go(samples):
-    """Return minimum-time stage cost from each sample to the final sample."""
+def reverse_cost_to_go(samples, spec):
+    """Return shared running-stage cost from each sample to the terminal."""
+    if not isinstance(spec, StageCostSpec):
+        raise SafeSetValidationError("spec must be StageCostSpec")
     samples = tuple(samples)
     if not samples:
         raise SafeSetValidationError("episode.samples must not be empty")
+    if any(not isinstance(sample, VelocityLMPCSample) for sample in samples):
+        raise SafeSetValidationError(
+            "samples must contain VelocityLMPCSample values"
+        )
     costs = [0.0]*len(samples)
     for index in range(len(samples)-2, -1, -1):
-        costs[index] = float(samples[index].dt_s+costs[index+1])
+        sample = samples[index]
+        costs[index] = float(
+            minimum_time_stage_cost_s(
+                sample.state,
+                sample.command,
+                sample.dt_s,
+                spec,
+            )+costs[index+1]
+        )
     return tuple(costs)
 
 
@@ -291,7 +436,8 @@ class VelocityLMPCEpisode:
 
     @classmethod
     def from_samples(cls, *, episode_id, context, outcome,
-                     terminal_handoff_position_m, samples):
+                     terminal_handoff_position_m, samples,
+                     stage_cost_spec):
         samples = tuple(samples)
         return cls(
             episode_id=episode_id,
@@ -299,7 +445,7 @@ class VelocityLMPCEpisode:
             outcome=outcome,
             terminal_handoff_position_m=terminal_handoff_position_m,
             samples=samples,
-            cost_to_go_s=reverse_cost_to_go(samples),
+            cost_to_go_s=reverse_cost_to_go(samples, stage_cost_spec),
         )
 
     def to_dict(self):
@@ -342,13 +488,16 @@ class VelocityLMPCEpisode:
 class SafeSetLimits:
     min_sample_dt_s: float = 0.001
     max_sample_dt_s: float = 0.05
+    sample_step_tolerance_s: float = 0.001
     initial_speed_consistency_tolerance_m_s: float = 0.01
     initial_cross_speed_consistency_tolerance_m_s: float = 0.01
     aligned_position_consistency_tolerance_m: float = 1e-6
     max_abs_command: float = math.radians(30.0)
+    max_abs_orthogonal_command_rad: float = math.radians(1.0)
     max_path_tilt_rad: float = math.radians(30.0)
     max_path_rate_rad_s: float = math.radians(300.0)
     max_abs_aligned_velocity_m_s: float = 2.0
+    max_abs_cross_velocity_m_s: float = 0.15
     terminal_velocity_tolerance_m_s: float = 0.05
     terminal_tilt_tolerance_rad: float = math.radians(3.0)
     terminal_rate_tolerance_rad_s: float = math.radians(20.0)
@@ -371,12 +520,13 @@ class SafeSetLimits:
     max_context_battery_delta_v: float = 0.50
 
     _KEYS = (
-        "min_sample_dt_s", "max_sample_dt_s",
+        "min_sample_dt_s", "max_sample_dt_s", "sample_step_tolerance_s",
         "initial_speed_consistency_tolerance_m_s",
         "initial_cross_speed_consistency_tolerance_m_s",
         "aligned_position_consistency_tolerance_m", "max_abs_command",
+        "max_abs_orthogonal_command_rad",
         "max_path_tilt_rad", "max_path_rate_rad_s",
-        "max_abs_aligned_velocity_m_s",
+        "max_abs_aligned_velocity_m_s", "max_abs_cross_velocity_m_s",
         "terminal_velocity_tolerance_m_s", "terminal_tilt_tolerance_rad",
         "terminal_rate_tolerance_rad_s", "terminal_command_tolerance",
         "terminal_position_handoff_tolerance_m",
@@ -403,12 +553,17 @@ class SafeSetLimits:
             raise SafeSetValidationError(
                 "limits.max_sample_dt_s must cover min_sample_dt_s"
             )
+        if not 0.0 <= self.sample_step_tolerance_s <= 0.001:
+            raise SafeSetValidationError(
+                "limits.sample_step_tolerance_s must be in [0, 0.001]"
+            )
         positive = (
             "initial_speed_consistency_tolerance_m_s",
             "initial_cross_speed_consistency_tolerance_m_s",
             "aligned_position_consistency_tolerance_m", "max_abs_command",
+            "max_abs_orthogonal_command_rad",
             "max_path_tilt_rad", "max_path_rate_rad_s",
-            "max_abs_aligned_velocity_m_s",
+            "max_abs_aligned_velocity_m_s", "max_abs_cross_velocity_m_s",
             "terminal_velocity_tolerance_m_s", "terminal_tilt_tolerance_rad",
             "terminal_rate_tolerance_rad_s", "terminal_command_tolerance",
             "terminal_position_handoff_tolerance_m",
@@ -442,6 +597,10 @@ class SafeSetLimits:
             raise SafeSetValidationError(
                 "terminal command tolerance exceeds the command limit"
             )
+        if self.max_abs_orthogonal_command_rad > self.max_abs_command:
+            raise SafeSetValidationError(
+                "orthogonal command limit exceeds the aligned command limit"
+            )
 
     def to_dict(self):
         return {field: getattr(self, field) for field in self._KEYS}
@@ -463,10 +622,11 @@ class SafeSetPoint:
     distance: float
     remaining_forward_distance_m: float
     tail_max_abs_aligned_velocity_m_s: float
+    tail_min_aligned_velocity_m_s: float
     tail_max_abs_command: float
     tail_max_abs_tilt_rad: float
     tail_max_abs_rate_rad_s: float
-    tail_max_command_slew_rad_s: float
+    tail_max_command_step_rad: float
 
 
 @dataclass(frozen=True)
@@ -484,25 +644,57 @@ class VelocityLMPCSafeSet:
 
     _KEYS = (
         "schema_version", "kind", "state_dimension", "command_dimension",
-        "aligned_velocity_state_index", "state_scales", "limits", "episodes",
+        "aligned_velocity_state_index", "prediction_step_s",
+        "command_delay_s", "state_action_phase_contract", "state_scales",
+        "stage_cost_spec", "limits", "episodes",
     )
 
     def __init__(self, *, state_dimension, command_dimension, state_scales,
-                 aligned_velocity_state_index=0, limits=None):
+                 command_delay_s, aligned_velocity_state_index=0,
+                 prediction_step_s=0.02, stage_cost_spec=None, limits=None):
         self.state_dimension = _integer(
-            state_dimension, "state_dimension", minimum=1
+            state_dimension, "state_dimension", minimum=4
         )
         self.command_dimension = _integer(
             command_dimension, "command_dimension", minimum=1
         )
+        if self.command_dimension != 1:
+            raise SafeSetValidationError(
+                "command_dimension must be one aligned command"
+            )
         self.aligned_velocity_state_index = _integer(
             aligned_velocity_state_index,
             "aligned_velocity_state_index",
             minimum=0,
         )
-        if self.aligned_velocity_state_index >= self.state_dimension:
+        if self.aligned_velocity_state_index != 0:
             raise SafeSetValidationError(
-                "aligned_velocity_state_index is outside the state vector"
+                "aligned_velocity_state_index must be zero for the fixed state layout"
+            )
+        self.prediction_step_s = _number(
+            prediction_step_s, "prediction_step_s"
+        )
+        if self.prediction_step_s <= 0.0:
+            raise SafeSetValidationError("prediction_step_s must be positive")
+        self.command_delay_s = _number(command_delay_s, "command_delay_s")
+        if self.command_delay_s < 0.0:
+            raise SafeSetValidationError("command_delay_s must be non-negative")
+        try:
+            delay_ratio = self.command_delay_s/self.prediction_step_s
+            if not math.isfinite(delay_ratio):
+                raise SafeSetValidationError(
+                    "command delay ratio must be finite"
+                )
+            self.delay_steps = max(1, math.ceil(delay_ratio-1e-12))
+        except OverflowError as error:
+            raise SafeSetValidationError(
+                "command delay ratio is outside the supported range"
+            ) from error
+        expected_state_dimension = 3+self.delay_steps
+        if self.state_dimension != expected_state_dimension:
+            raise SafeSetValidationError(
+                "state_dimension must equal 3 plus the command delay queue "
+                f"length ({expected_state_dimension} for this timing)"
             )
         self.state_scales = _vector(state_scales, "state_scales")
         if len(self.state_scales) != self.state_dimension:
@@ -514,6 +706,24 @@ class VelocityLMPCSafeSet:
         self.limits = limits or SafeSetLimits()
         if not isinstance(self.limits, SafeSetLimits):
             raise SafeSetValidationError("limits must be SafeSetLimits")
+        if not (
+            self.limits.min_sample_dt_s
+            <= self.prediction_step_s
+            <= self.limits.max_sample_dt_s
+        ):
+            raise SafeSetValidationError(
+                "prediction_step_s must be inside the sample dt limits"
+            )
+        if self.limits.sample_step_tolerance_s >= self.prediction_step_s:
+            raise SafeSetValidationError(
+                "sample_step_tolerance_s must be smaller than prediction_step_s"
+            )
+        self.stage_cost_spec = stage_cost_spec or StageCostSpec()
+        if not isinstance(self.stage_cost_spec, StageCostSpec):
+            raise SafeSetValidationError(
+                "stage_cost_spec must be StageCostSpec"
+            )
+        self.state_action_phase_contract = STATE_ACTION_PHASE_CONTRACT
         self._episodes = []
         self._episode_ids = set()
 
@@ -528,6 +738,10 @@ class VelocityLMPCSafeSet:
                 sample.aligned_velocity_m_s,
                 sample.cross_velocity_m_s,
             ) <= limits.terminal_velocity_tolerance_m_s
+            and abs(sample.projected_tilt_rad)
+            <= limits.terminal_tilt_tolerance_rad
+            and abs(sample.projected_tilt_rate_rad_s)
+            <= limits.terminal_rate_tolerance_rad_s
             and abs(sample.roll_rad) <= limits.terminal_tilt_tolerance_rad
             and abs(sample.pitch_rad) <= limits.terminal_tilt_tolerance_rad
             and abs(sample.roll_rate_rad_s)
@@ -536,11 +750,13 @@ class VelocityLMPCSafeSet:
             <= limits.terminal_rate_tolerance_rad_s
             and max(abs(value) for value in sample.command)
             <= limits.terminal_command_tolerance
-            and (
-                self.state_dimension <= 3
-                or max(abs(value) for value in sample.state[3:])
-                <= limits.terminal_command_tolerance
-            )
+            and abs(sample.orthogonal_command_rad)
+            <= limits.terminal_command_tolerance
+            and max(abs(value) for value in (
+                sample.pending_orthogonal_commands_rad
+            )) <= limits.terminal_command_tolerance
+            and max(abs(value) for value in sample.state[3:])
+            <= limits.terminal_command_tolerance
         )
 
     def validate_episode(self, episode):
@@ -576,7 +792,9 @@ class VelocityLMPCSafeSet:
             raise SafeSetValidationError(
                 "cost_to_go_s length must match episode samples"
             )
-        expected_costs = reverse_cost_to_go(episode.samples)
+        expected_costs = reverse_cost_to_go(
+            episode.samples, self.stage_cost_spec
+        )
         if not np.allclose(
             episode.cost_to_go_s, expected_costs, rtol=0.0, atol=1e-12
         ):
@@ -585,7 +803,6 @@ class VelocityLMPCSafeSet:
             )
         if episode.samples[-1].dt_s != 0.0:
             raise SafeSetValidationError("the final sample dt_s must be zero")
-        zero_dt_entry_change_index = None
         for index, sample in enumerate(episode.samples):
             if len(sample.state) != self.state_dimension:
                 raise SafeSetValidationError(
@@ -595,12 +812,31 @@ class VelocityLMPCSafeSet:
                 raise SafeSetValidationError(
                     f"sample {index} command dimension does not match artifact"
                 )
+            if len(sample.pending_orthogonal_commands_rad) != (
+                len(sample.state)-3
+            ):
+                raise SafeSetValidationError(
+                    f"sample {index} orthogonal command-memory dimension "
+                    "does not match the aligned pending queue"
+                )
             if abs(
                 sample.state[self.aligned_velocity_state_index]
                 - sample.aligned_velocity_m_s
-            ) > self.limits.initial_speed_consistency_tolerance_m_s:
+            ) > _REDUCED_STATE_CONSISTENCY_ATOL:
                 raise SafeSetValidationError(
                     f"sample {index} opaque state disagrees with measured velocity"
+                )
+            if abs(
+                sample.state[1]-sample.projected_tilt_rad
+            ) > _REDUCED_STATE_CONSISTENCY_ATOL:
+                raise SafeSetValidationError(
+                    f"sample {index} opaque state disagrees with projected tilt"
+                )
+            if abs(
+                sample.state[2]-sample.projected_tilt_rate_rad_s
+            ) > _REDUCED_STATE_CONSISTENCY_ATOL:
+                raise SafeSetValidationError(
+                    f"sample {index} opaque state disagrees with projected tilt rate"
                 )
             if index < len(episode.samples)-1 and not (
                 self.limits.min_sample_dt_s
@@ -610,15 +846,52 @@ class VelocityLMPCSafeSet:
                 raise SafeSetValidationError(
                     f"sample {index} dt_s is outside the complete-data interval"
                 )
+            if index < len(episode.samples)-1 and abs(
+                sample.dt_s-self.prediction_step_s
+            ) > self.limits.sample_step_tolerance_s+1e-12:
+                raise SafeSetValidationError(
+                    f"sample {index} dt_s does not match prediction_step_s"
+                )
             if max(abs(value) for value in sample.command) > self.limits.max_abs_command:
                 raise SafeSetValidationError(
                     f"sample {index} command exceeds the path limit"
+                )
+            if abs(sample.orthogonal_command_rad) > (
+                self.limits.max_abs_orthogonal_command_rad+1e-12
+            ):
+                raise SafeSetValidationError(
+                    f"sample {index} orthogonal command exceeds the path limit"
+                )
+            if max(abs(value) for value in (
+                sample.pending_orthogonal_commands_rad
+            )) > self.limits.max_abs_orthogonal_command_rad+1e-12:
+                raise SafeSetValidationError(
+                    f"sample {index} delayed orthogonal command queue exceeds "
+                    "the path limit"
+                )
+            if abs(sample.projected_tilt_rad) > (
+                self.limits.max_path_tilt_rad+1e-12
+            ):
+                raise SafeSetValidationError(
+                    f"sample {index} projected tilt exceeds the path limit"
+                )
+            if abs(sample.projected_tilt_rate_rad_s) > (
+                self.limits.max_path_rate_rad_s+1e-12
+            ):
+                raise SafeSetValidationError(
+                    f"sample {index} projected tilt rate exceeds the path limit"
                 )
             if abs(sample.aligned_velocity_m_s) > (
                 self.limits.max_abs_aligned_velocity_m_s+1e-12
             ):
                 raise SafeSetValidationError(
                     f"sample {index} aligned velocity exceeds the path limit"
+                )
+            if abs(sample.cross_velocity_m_s) > (
+                self.limits.max_abs_cross_velocity_m_s+1e-12
+            ):
+                raise SafeSetValidationError(
+                    f"sample {index} cross velocity exceeds the path limit"
                 )
             if self.state_dimension > 3:
                 delayed_queue = sample.state[3:]
@@ -629,11 +902,6 @@ class VelocityLMPCSafeSet:
                         f"sample {index} delayed command queue exceeds the "
                         "path limit"
                     )
-                entry_change = abs(
-                    sample.command[0]-delayed_queue[-1]
-                )
-                if sample.dt_s <= 0.0 and entry_change > 1e-12:
-                    zero_dt_entry_change_index = index
             if max(abs(sample.roll_rad), abs(sample.pitch_rad)) > self.limits.max_path_tilt_rad:
                 raise SafeSetValidationError(
                     f"sample {index} attitude exceeds the path limit"
@@ -666,6 +934,34 @@ class VelocityLMPCSafeSet:
             if sample.safety_violation:
                 raise SafeSetValidationError(
                     f"sample {index} records a safety violation"
+                )
+        for index, (sample, successor) in enumerate(zip(
+            episode.samples[:-1], episode.samples[1:]
+        )):
+            expected_pending = (*sample.state[4:], sample.command[0])
+            if any(
+                abs(actual-expected) > _REDUCED_STATE_CONSISTENCY_ATOL
+                for actual, expected in zip(
+                    successor.state[3:], expected_pending
+                )
+            ):
+                raise SafeSetValidationError(
+                    f"sample {index+1} violates the fixed command-memory successor"
+                )
+            expected_orthogonal_pending = (
+                *sample.pending_orthogonal_commands_rad[1:],
+                sample.orthogonal_command_rad,
+            )
+            if any(
+                abs(actual-expected) > _REDUCED_STATE_CONSISTENCY_ATOL
+                for actual, expected in zip(
+                    successor.pending_orthogonal_commands_rad,
+                    expected_orthogonal_pending,
+                )
+            ):
+                raise SafeSetValidationError(
+                    f"sample {index+1} violates the fixed orthogonal "
+                    "command-memory successor"
                 )
         release_position = episode.samples[0].position_m
         for index, sample in enumerate(episode.samples):
@@ -738,15 +1034,12 @@ class VelocityLMPCSafeSet:
             raise SafeSetValidationError(
                 "episode terminal-state dwell is too short"
             )
-        if zero_dt_entry_change_index is not None:
-            raise SafeSetValidationError(
-                f"sample {zero_dt_entry_change_index} has a nonzero safe-tail "
-                "entry command change at zero dt_s"
-            )
         return {
             "passed": True,
             "terminal_dwell_s": float(terminal_dwell),
-            "duration_s": float(expected_costs[0]),
+            "duration_s": float(math.fsum(
+                sample.dt_s for sample in episode.samples
+            )),
             "minimum_aligned_velocity_m_s": float(min(
                 sample.aligned_velocity_m_s for sample in episode.samples
             )),
@@ -772,34 +1065,41 @@ class VelocityLMPCSafeSet:
         """Compute certified suffix bounds once for every safe-set state."""
         samples = episode.samples
         count = len(samples)
-        transition_slew = [0.0]*count
-        entry_slew = [0.0]*count
-        for index in range(count-1):
-            transition_slew[index] = max(
-                abs(after-before)/samples[index].dt_s
+        transition_step = [0.0]*count
+        entry_step = [0.0]*count
+        # The final sample.command is the old command observed as applied at
+        # handoff, not a newly issued LMPC action.  Compare only consecutive
+        # non-final actions; final queue-internal steps are covered below.
+        for index in range(count-2):
+            transition_step[index] = max(
+                abs(after-before)
                 for before, after in zip(
                     samples[index].command,
                     samples[index+1].command,
                 )
             )
         for index, sample in enumerate(samples):
-            if len(sample.state) <= 3:
-                continue
-            entry_change = abs(sample.command[0]-sample.state[-1])
-            if sample.dt_s > 0.0:
-                entry_slew[index] = entry_change/sample.dt_s
-            elif entry_change > 1e-12:
-                # Admission rejects this case. Keep the derived envelope
-                # fail-closed if an invalid episode ever reaches this helper.
-                entry_slew[index] = math.inf
+            pending = sample.state[3:]
+            internal_steps = [
+                abs(after-before)
+                for before, after in zip(pending[:-1], pending[1:])
+            ]
+            if index < count-1:
+                internal_steps.append(abs(sample.command[0]-pending[-1]))
+            entry_step[index] = max(internal_steps, default=0.0)
 
         envelopes = [None]*count
-        suffix_max_position = -math.inf
+        release_y = samples[0].position_m[1]
+        suffix_max_position = float(
+            episode.context.direction_sign
+            * (episode.terminal_handoff_position_m[1]-release_y)
+        )
         suffix_max_velocity = 0.0
+        suffix_min_velocity = math.inf
         suffix_max_command = 0.0
         suffix_max_tilt = 0.0
         suffix_max_rate = 0.0
-        suffix_max_slew = 0.0
+        suffix_max_step = 0.0
         for index in range(count-1, -1, -1):
             sample = samples[index]
             suffix_max_position = max(
@@ -808,24 +1108,30 @@ class VelocityLMPCSafeSet:
             suffix_max_velocity = max(
                 suffix_max_velocity, abs(sample.aligned_velocity_m_s)
             )
+            suffix_min_velocity = min(
+                suffix_min_velocity, sample.aligned_velocity_m_s
+            )
             suffix_max_command = max(
                 suffix_max_command,
                 max(abs(value) for value in sample.command),
+                max(abs(value) for value in sample.state[3:]),
             )
             suffix_max_tilt = max(
                 suffix_max_tilt,
                 abs(sample.roll_rad),
                 abs(sample.pitch_rad),
+                abs(sample.projected_tilt_rad),
             )
             suffix_max_rate = max(
                 suffix_max_rate,
                 abs(sample.roll_rate_rad_s),
                 abs(sample.pitch_rate_rad_s),
+                abs(sample.projected_tilt_rate_rad_s),
             )
-            suffix_max_slew = max(
-                suffix_max_slew,
-                transition_slew[index],
-                entry_slew[index],
+            suffix_max_step = max(
+                suffix_max_step,
+                transition_step[index],
+                entry_step[index],
             )
             envelopes[index] = {
                 "remaining_forward_distance_m": float(max(
@@ -835,10 +1141,13 @@ class VelocityLMPCSafeSet:
                 "tail_max_abs_aligned_velocity_m_s": float(
                     suffix_max_velocity
                 ),
+                "tail_min_aligned_velocity_m_s": float(
+                    suffix_min_velocity
+                ),
                 "tail_max_abs_command": float(suffix_max_command),
                 "tail_max_abs_tilt_rad": float(suffix_max_tilt),
                 "tail_max_abs_rate_rad_s": float(suffix_max_rate),
-                "tail_max_command_slew_rad_s": float(suffix_max_slew),
+                "tail_max_command_step_rad": float(suffix_max_step),
             }
         return tuple(envelopes)
 
@@ -975,7 +1284,11 @@ class VelocityLMPCSafeSet:
             "aligned_velocity_state_index": (
                 self.aligned_velocity_state_index
             ),
+            "prediction_step_s": self.prediction_step_s,
+            "command_delay_s": self.command_delay_s,
+            "state_action_phase_contract": self.state_action_phase_contract,
             "state_scales": list(self.state_scales),
+            "stage_cost_spec": self.stage_cost_spec.to_dict(),
             "limits": self.limits.to_dict(),
             "episodes": [episode.to_dict() for episode in self._episodes],
         }
@@ -990,6 +1303,13 @@ class VelocityLMPCSafeSet:
             )
         if value["kind"] != ARTIFACT_KIND:
             raise SafeSetValidationError("unexpected safe-set artifact kind")
+        if (
+            value["state_action_phase_contract"]
+            != STATE_ACTION_PHASE_CONTRACT
+        ):
+            raise SafeSetValidationError(
+                "unsupported safe-set state/action phase contract"
+            )
         if not isinstance(value["episodes"], list):
             raise SafeSetValidationError("episodes must be an array")
         result = cls(
@@ -998,7 +1318,12 @@ class VelocityLMPCSafeSet:
             aligned_velocity_state_index=value[
                 "aligned_velocity_state_index"
             ],
+            prediction_step_s=value["prediction_step_s"],
+            command_delay_s=value["command_delay_s"],
             state_scales=value["state_scales"],
+            stage_cost_spec=StageCostSpec.from_dict(
+                value["stage_cost_spec"]
+            ),
             limits=SafeSetLimits.from_dict(value["limits"]),
         )
         for raw_episode in value["episodes"]:

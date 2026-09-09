@@ -20,10 +20,14 @@ from Interaction.velocity_lmpc_replay import (
     main,
     save_new_safe_set_artifact,
 )
-from Interaction.velocity_lmpc_safe_set import VelocityLMPCSafeSet
+from Interaction.velocity_lmpc_safe_set import (
+    STATE_ACTION_PHASE_CONTRACT,
+    StageCostSpec,
+    VelocityLMPCSafeSet,
+)
 
 
-FINGERPRINT = "reduced-v1:"+("a"*64)
+FINGERPRINT = "reduced-v3:"+("a"*64)
 
 
 def event(name, data):
@@ -104,8 +108,11 @@ def observer(*, stamp, state_time=None, episode_id=None, direction=None,
 
 def complete_records(*, sign=1, episode_id="lb11-release-1",
                      direction_x=0.0, duplicate_before_state_at=None,
-                     duplicate_roll_deg=7.0):
+                     duplicate_roll_deg=7.0, measured_direction=None,
+                     decision_phase_s=0.0, command_delay_s=0.04):
     direction = [direction_x, float(sign)]
+    if measured_direction is None:
+        measured_direction = [0.0, float(sign)]
     records = []
     # START owns the complete delay-window seed. Ordinary pre-release observer
     # rows intentionally do not duplicate this command history.
@@ -118,6 +125,9 @@ def complete_records(*, sign=1, episode_id="lb11-release-1",
         "time": 0.999,
         "release_dataset_episode_id": episode_id,
         "release_dataset_direction_xy": direction,
+        "release_dataset_measured_sensor_axis_world_xy": list(
+            measured_direction
+        ),
         "release_state_time": 1.0,
         "release_command_effective_at_state": attitude_command(
             0.96, sign*2.0, sequence=2
@@ -141,12 +151,12 @@ def complete_records(*, sign=1, episode_id="lb11-release-1",
     for index, (speed, sent_roll, roll) in enumerate(zip(
             velocities, command_roll, measured_roll)):
         state_time = 1.00+0.02*index
-        effective_time = state_time-0.04
+        effective_time = state_time-command_delay_s
         applied_sent_at, applied_roll, applied_sequence = max(
             item for item in history if item[0] <= effective_time+1e-12
         )
         final = index == len(velocities)-1
-        sent_at = state_time+0.005
+        sent_at = state_time+decision_phase_s
         sent_batch = []
         if index == duplicate_before_state_at:
             sequence += 1
@@ -173,7 +183,7 @@ def complete_records(*, sign=1, episode_id="lb11-release-1",
         sent_batch.append(sent_command)
         gate = terminal_gate(complete=final)
         records.append(observer(
-            stamp=state_time+0.001,
+            stamp=state_time+decision_phase_s,
             state_time=state_time,
             episode_id=episode_id,
             direction=direction,
@@ -185,7 +195,7 @@ def complete_records(*, sign=1, episode_id="lb11-release-1",
                 applied_sent_at, applied_roll, sequence=applied_sequence
             ),
             sent_batch=sent_batch,
-            state_age=0.001,
+            state_age=decision_phase_s,
             command_owner=("position_hold" if final else "attitude_coast"),
             gate=gate,
             pending_outcome=("terminal_handoff" if final else None),
@@ -242,6 +252,10 @@ class SuccessfulExtractionTests(unittest.TestCase):
         result = extract_velocity_lmpc_episodes(complete_records(), config())
         self.assertTrue(result.offline_only)
         self.assertFalse(result.flight_commands_generated)
+        self.assertEqual(
+            result.state_action_phase_contract,
+            STATE_ACTION_PHASE_CONTRACT,
+        )
         self.assertEqual(len(result.episodes), 1)
         episode = result.episodes[0]
         first = episode.samples[0]
@@ -269,7 +283,71 @@ class SuccessfulExtractionTests(unittest.TestCase):
         self.assertAlmostEqual(episode.samples[0].command[0], math.radians(-5.0), places=5)
         self.assertAlmostEqual(episode.samples[-1].aligned_position_m, 0.10)
 
-    def test_duplicate_state_sends_are_kept_but_not_used_as_current_u_k(self):
+    def test_fractional_delay_on_aligned_decision_grid_is_preserved(self):
+        result = extract_velocity_lmpc_episodes(
+            complete_records(command_delay_s=0.03),
+            config(command_delay_s=0.03),
+        )
+
+        self.assertEqual(len(result.episodes), 1)
+        self.assertEqual(result.command_delay_s, 0.03)
+        self.assertEqual(len(result.episodes[0].samples[0].state[3:]), 2)
+
+    def test_small_real_sensor_axis_bias_is_preserved_and_accepted(self):
+        measured = [0.10, math.sqrt(1.0-0.10**2)]
+        records = complete_records(measured_direction=measured)
+
+        result = extract_velocity_lmpc_episodes(records, config())
+
+        self.assertEqual(len(result.episodes), 1)
+        start = next(
+            record for record in records if record.get("name") == START_EVENT
+        )
+        self.assertEqual(
+            start["data"][
+                "release_dataset_measured_sensor_axis_world_xy"
+            ],
+            measured,
+        )
+
+    def test_delay_queue_preserves_orthogonal_command_projection(self):
+        records = complete_records()
+        start = records[0]["data"]
+        start["release_command_effective_at_state"]["pitch_deg"] = 0.25
+        start["release_pending_command_history"][0]["pitch_deg"] = 0.25
+        start["release_pending_command_history"][1]["pitch_deg"] = 0.50
+        first_observer = next(
+            record for record in records
+            if record.get("type") == "wrench_observer"
+            and record["data"].get("release_dataset_episode_id")
+        )
+        first_observer["data"]["actual_command_applied_at_state"][
+            "pitch_deg"
+        ] = 0.25
+        active_rows = [
+            record for record in records
+            if record.get("type") == "wrench_observer"
+            and record["data"].get("release_dataset_episode_id")
+        ]
+        active_rows[1]["data"]["actual_command_applied_at_state"][
+            "pitch_deg"
+        ] = 0.50
+
+        result = extract_velocity_lmpc_episodes(records, config())
+
+        samples = result.episodes[0].samples
+        for actual, expected in zip(
+            samples[0].pending_orthogonal_commands_rad,
+            (math.radians(0.25), math.radians(0.50)),
+        ):
+            self.assertAlmostEqual(actual, expected)
+        for actual, expected in zip(
+            samples[1].pending_orthogonal_commands_rad,
+            (math.radians(0.50), samples[0].orthogonal_command_rad),
+        ):
+            self.assertAlmostEqual(actual, expected)
+
+    def test_multiple_sends_inside_one_prediction_step_are_rejected(self):
         result = extract_velocity_lmpc_episodes(
             complete_records(
                 duplicate_before_state_at=2,
@@ -277,12 +355,8 @@ class SuccessfulExtractionTests(unittest.TestCase):
             ),
             config(),
         )
-        self.assertEqual(len(result.episodes), 1)
-        samples = result.episodes[0].samples
-        # The pre-row send is retained in the future delay queue, while u_k is
-        # the unique attitude command sent after this fresh state.
-        self.assertAlmostEqual(samples[2].command[0], math.radians(-4.0))
-        self.assertAlmostEqual(samples[4].state[3], math.radians(-7.0))
+        self.assertEqual(result.episodes, ())
+        self.assertRegex(result.rejections[0].reason, "multiple flight commands")
 
     def test_raw_callback_record_may_interleave_before_terminal_event(self):
         records = complete_records()
@@ -364,6 +438,52 @@ class StrictRejectionTests(unittest.TestCase):
         ][0]["sequence"] += 1
         self.assert_rejected(records, "command sequence.*incomplete")
 
+    def test_rejects_forged_applied_command_on_every_observer_row(self):
+        records = complete_records()
+        forged = self.active_rows(records)[1]["data"][
+            "actual_command_applied_at_state"
+        ]
+        forged.update({
+            "sent_at": 0.90,
+            "sequence": 999,
+            "roll_deg": 29.0,
+        })
+
+        self.assert_rejected(
+            records,
+            "actual_command_applied_at_state disagrees.*delayed send history",
+        )
+
+    def test_raw_post_observation_command_phase_requires_resampling(self):
+        for phase_s in (0.0005, 0.005):
+            with self.subTest(phase_s=phase_s):
+                self.assert_rejected(
+                    complete_records(
+                        decision_phase_s=phase_s,
+                        command_delay_s=0.03,
+                    ),
+                    "not on the LMPC decision-time grid.*explicit resampling",
+                )
+
+    def test_complete_raw_queue_must_match_fixed_grid_successor(self):
+        records = complete_records()
+        rows = self.active_rows(records)
+        shifted = rows[2]["data"]
+        shifted["state_time"] = 1.0395
+        shifted["time"] = 1.0395
+        shifted["state_age_s"] = 0.0
+        shifted["actual_commands_sent_since_previous_state"][0][
+            "sent_at"
+        ] = 1.0395
+        shifted["actual_command_applied_at_state"] = dict(
+            rows[1]["data"]["actual_command_applied_at_state"]
+        )
+
+        self.assert_rejected(
+            records,
+            "complete delayed command history disagrees.*fixed-grid",
+        )
+
     def test_rejects_duplicate_and_incomplete_ids(self):
         duplicate = complete_records()
         duplicate.extend(complete_records())
@@ -378,6 +498,10 @@ class StrictRejectionTests(unittest.TestCase):
         self.assert_rejected(
             complete_records(direction_x=0.1), "world \+/-Y"
         )
+
+        records = complete_records()
+        records[0]["data"]["release_dataset_direction_xy"] = [0.0, 2.0]
+        self.assert_rejected(records, "unit world \+/-Y")
 
         records = complete_records()
         end = next(index for index, record in enumerate(records)
@@ -405,6 +529,28 @@ class StrictRejectionTests(unittest.TestCase):
         }))
         self.assert_rejected(records, "hazard event")
 
+    def test_rejects_diagonal_or_reversed_measured_release_axis(self):
+        diagonal = math.sqrt(0.5)
+        cases = (
+            ([diagonal, diagonal], "signed alignment"),
+            ([0.0, -1.0], "signed alignment"),
+            ([0.0, 0.99], "finite unit direction"),
+        )
+        for measured_direction, pattern in cases:
+            with self.subTest(measured_direction=measured_direction):
+                self.assert_rejected(
+                    complete_records(measured_direction=measured_direction),
+                    pattern,
+                )
+
+    def test_rejects_missing_measured_release_axis(self):
+        records = complete_records()
+        records[0]["data"].pop(
+            "release_dataset_measured_sensor_axis_world_xy"
+        )
+
+        self.assert_rejected(records, "measured_sensor_axis_world_xy")
+
     def test_rejects_stale_boundary_and_rejected_measurement_rows(self):
         for field, value, message in (
             ("state_age_s", 0.11, "stale/future"),
@@ -423,7 +569,7 @@ class StrictRejectionTests(unittest.TestCase):
 
     def test_terminal_marker_cannot_bypass_full_xy_speed_constraint(self):
         records = complete_records()
-        self.active_rows(records)[-1]["data"]["velocity_m_s"] = [0.2, 0.005, 0.0]
+        self.active_rows(records)[-1]["data"]["velocity_m_s"] = [0.1, 0.005, 0.0]
         self.assert_rejected(records, "terminal set")
 
     def test_rejects_velocity_hover_command_and_wrong_terminal_order(self):
@@ -479,9 +625,22 @@ class StrictRejectionTests(unittest.TestCase):
         for sent_at in (1.20, 1.2005):
             records = complete_records()
             rows = self.active_rows(records)
-            rows[-2]["data"][
+            final = rows[-1]["data"]
+            position = final[
                 "actual_commands_sent_since_previous_state"
-            ][0] = attitude_command(sent_at, 10.0, sequence=13)
+            ][0]
+            final["time"] = 1.201
+            final["state_age_s"] = 0.001
+            position["sent_at"] = 1.202
+            position["sequence"] += 1
+            final["actual_commands_sent_since_previous_state"] = [
+                attitude_command(
+                    sent_at,
+                    10.0,
+                    sequence=position["sequence"]-1,
+                ),
+                position,
+            ]
             with self.subTest(sent_at=sent_at):
                 self.assert_rejected(
                     records,
@@ -504,16 +663,24 @@ class StrictRejectionTests(unittest.TestCase):
                 self.assert_rejected(records, message)
 
     def test_terminal_marker_cannot_hide_nonlevel_pending_queue(self):
-        records = complete_records(
-            duplicate_before_state_at=7,
-            duplicate_roll_deg=10.0,
-        )
-        self.assert_rejected(records, "pending delay-queue command level")
+        records = complete_records()
+        self.active_rows(records)[-2]["data"][
+            "actual_commands_sent_since_previous_state"
+        ][0]["roll_deg"] = 10.0
+        self.assert_rejected(records, "full measured terminal set")
 
     def test_rejects_missing_release_queue_seed(self):
         records = complete_records()
         records[0]["data"].pop("release_pending_command_history")
         self.assert_rejected(records, "pending_command_history.*array")
+
+    def test_rejects_reordered_release_queue_seed(self):
+        records = complete_records()
+        records[0]["data"]["release_pending_command_history"].reverse()
+        self.assert_rejected(
+            records,
+            "pending command seed is not strictly ordered",
+        )
 
     def test_nonterminal_episode_is_reported_without_blocking_later_success(self):
         bad = complete_records(episode_id="lb11-release-bad")
@@ -564,6 +731,14 @@ class StrictRejectionTests(unittest.TestCase):
     def test_layout_must_match_delay(self):
         with self.assertRaisesRegex(ReplayValidationError, "state_dimension"):
             config(state_dimension=4)
+        with self.assertRaisesRegex(
+            ReplayValidationError, "exact delay identity"
+        ):
+            config(command_delay_s=None)
+        with self.assertRaisesRegex(
+            ReplayValidationError, "must be positive.*zero-delay"
+        ):
+            config(state_dimension=4, command_delay_s=0.0)
 
 
 class FileAndCLITests(unittest.TestCase):
@@ -619,6 +794,84 @@ class FileAndCLITests(unittest.TestCase):
             rejection = json.loads(stream.getvalue())
             self.assertTrue(rejection["offline_only"])
             self.assertEqual(rejection["status"], "rejected")
+
+    def test_cli_requires_explicit_delay_for_a_new_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            flight = directory/"flight.json"
+            flight.write_text(
+                json.dumps(complete_records()), encoding="utf-8"
+            )
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                self.assertEqual(main([
+                    "--input", str(flight),
+                    "--output", str(directory/"safe-set.json"),
+                    "--model-fingerprint", FINGERPRINT,
+                    "--state-dimension", "5",
+                ]), 2)
+            report = json.loads(stream.getvalue())
+            self.assertRegex(report["reason"], "command-delay-s is required")
+
+    def test_cli_extends_existing_artifact_contract_and_checks_step(self):
+        custom_spec = StageCostSpec(effort_weight=0.0025)
+        existing = VelocityLMPCSafeSet(
+            state_dimension=5,
+            command_dimension=1,
+            prediction_step_s=0.02,
+            command_delay_s=0.04,
+            state_scales=(
+                1.0,
+                math.radians(10.0),
+                math.radians(100.0),
+                math.radians(10.0),
+                math.radians(10.0),
+            ),
+            stage_cost_spec=custom_spec,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            flight = directory/"flight.json"
+            existing_path = directory/"existing.json"
+            output = directory/"extended.json"
+            mismatch_output = directory/"mismatch.json"
+            flight.write_text(
+                json.dumps(complete_records()), encoding="utf-8"
+            )
+            save_new_safe_set_artifact(existing, existing_path)
+            base_argv = [
+                "--input", str(flight),
+                "--model-fingerprint", FINGERPRINT,
+                "--state-dimension", "5",
+                "--existing-artifact", str(existing_path),
+            ]
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                self.assertEqual(
+                    main([*base_argv, "--output", str(output)]), 0
+                )
+            loaded = VelocityLMPCSafeSet.load(output)
+            self.assertEqual(loaded.stage_cost_spec, custom_spec)
+
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                self.assertEqual(main([
+                    *base_argv,
+                    "--output", str(mismatch_output),
+                    "--prediction-step-s", "0.03",
+                ]), 2)
+            report = json.loads(stream.getvalue())
+            self.assertRegex(report["reason"], "does not match")
+
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                self.assertEqual(main([
+                    *base_argv,
+                    "--output", str(mismatch_output),
+                    "--command-delay-s", "0.03",
+                ]), 2)
+            report = json.loads(stream.getvalue())
+            self.assertRegex(report["reason"], "does not match")
 
 
 if __name__ == "__main__":

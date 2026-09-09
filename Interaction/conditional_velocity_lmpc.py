@@ -32,23 +32,32 @@ import numpy as np
 
 from Interaction.model_based_braking import _second_order_transition
 from Interaction.offline_braking_selector import FrozenTiltModel
+from Interaction.velocity_lmpc_safe_set import (
+    SafeSetLimits,
+    STATE_ACTION_PHASE_CONTRACT,
+    StageCostSpec,
+    minimum_time_stage_cost_s,
+)
 
 
 def conditional_velocity_lmpc_fingerprint(
         model: FrozenTiltModel,
         config: "ConditionalVelocityLMPCConfig",
-        safe_set_limits=None) -> str:
+        safe_set_limits=None,
+        stage_cost_spec=None) -> str:
     """Bind a safe-set partition to dynamics, timing, and hard constraints."""
-    from Interaction.velocity_lmpc_safe_set import SafeSetLimits
-
     limits = SafeSetLimits() if safe_set_limits is None else safe_set_limits
     if not isinstance(limits, SafeSetLimits):
         raise TypeError("safe_set_limits must be SafeSetLimits")
+    cost_spec = StageCostSpec() if stage_cost_spec is None else stage_cost_spec
+    if not isinstance(cost_spec, StageCostSpec):
+        raise TypeError("stage_cost_spec must be StageCostSpec")
     payload = {
-        "schema": "conditional_velocity_lmpc_reduced_v2",
+        "schema": "conditional_velocity_lmpc_reduced_v3",
         "model": asdict(model),
         "prediction_step_s": config.prediction_step_s,
         "max_integration_substep_s": config.max_integration_substep_s,
+        "state_action_phase_contract": STATE_ACTION_PHASE_CONTRACT,
         "max_command_tilt_deg": config.max_command_tilt_deg,
         "max_command_slew_deg_s": config.max_command_slew_deg_s,
         "max_tilt_deg": config.max_tilt_deg,
@@ -57,12 +66,13 @@ def conditional_velocity_lmpc_fingerprint(
             config.reverse_velocity_tolerance_m_s
         ),
         "max_abs_velocity_m_s": config.max_abs_velocity_m_s,
+        "stage_cost_spec": cost_spec.to_dict(),
         "safe_set_limits": limits.to_dict(),
     }
     encoded = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")
-    return "reduced-v2:"+hashlib.sha256(encoded).hexdigest()
+    return "reduced-v3:"+hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -78,8 +88,6 @@ class ConditionalVelocityLMPCConfig:
     max_tilt_rate_deg_s: float = 300.0
     reverse_velocity_tolerance_m_s: float = 0.02
     max_abs_velocity_m_s: float = 2.0
-    effort_weight: float = 1e-3
-    slew_weight: float = 2e-3
     solver_max_iterations: int = 150
     solver_ftol: float = 1e-9
     equality_tolerance: float = 2e-5
@@ -118,8 +126,6 @@ class ConditionalVelocityLMPCConfig:
             raise ValueError("reverse velocity tolerance must be in [0, 0.05]")
         if not 0 < self.max_abs_velocity_m_s <= 5.0:
             raise ValueError("max_abs_velocity_m_s must be in (0, 5]")
-        if self.effort_weight < 0 or self.slew_weight < 0:
-            raise ValueError("objective weights cannot be negative")
         if not 10 <= self.solver_max_iterations <= 1000:
             raise ValueError("solver_max_iterations must be in [10, 1000]")
         if not 0 < self.solver_ftol <= 1e-3:
@@ -225,9 +231,7 @@ class OfflineConditionalVelocityLMPC:
 
     def __init__(self, model: FrozenTiltModel,
                  config: ConditionalVelocityLMPCConfig | None = None,
-                 safe_set_limits=None):
-        from Interaction.velocity_lmpc_safe_set import SafeSetLimits
-
+                 safe_set_limits=None, stage_cost_spec=None):
         self.model = model
         self.config = config or ConditionalVelocityLMPCConfig()
         self.config.validate()
@@ -236,8 +240,13 @@ class OfflineConditionalVelocityLMPC:
         )
         if not isinstance(self.safe_set_limits, SafeSetLimits):
             raise TypeError("safe_set_limits must be SafeSetLimits")
+        self.stage_cost_spec = (
+            StageCostSpec() if stage_cost_spec is None else stage_cost_spec
+        )
+        if not isinstance(self.stage_cost_spec, StageCostSpec):
+            raise TypeError("stage_cost_spec must be StageCostSpec")
         self.model_fingerprint = conditional_velocity_lmpc_fingerprint(
-            model, self.config, self.safe_set_limits
+            model, self.config, self.safe_set_limits, self.stage_cost_spec
         )
         model_values = np.asarray([
             model.delay_s,
@@ -261,11 +270,7 @@ class OfflineConditionalVelocityLMPC:
         if self.delay_remainder_s < 1e-12:
             self.delay_remainder_s = 0.0
         self.state_dimension = 3+max(1, self.delay_steps)
-        self._transition = _second_order_transition(
-            model.wn_rad_s,
-            model.zeta,
-            self.config.prediction_step_s,
-        )
+        self._transition_cache = {}
 
     @staticmethod
     def _forward_distance_upper_bound(velocity_before, velocity_after, dt):
@@ -290,9 +295,12 @@ class OfflineConditionalVelocityLMPC:
             1, int(math.ceil(dt/self.config.max_integration_substep_s-1e-12))
         )
         substep_s = float(dt/substep_count)
-        transition = _second_order_transition(
-            self.model.wn_rad_s, self.model.zeta, substep_s
-        )
+        transition = self._transition_cache.get(substep_s)
+        if transition is None:
+            transition = _second_order_transition(
+                self.model.wn_rad_s, self.model.zeta, substep_s
+            )
+            self._transition_cache[substep_s] = transition
         equilibrium = (
             self.model.command_gain*effective_command
             + self.model.projected_bias_rad
@@ -506,6 +514,9 @@ class OfflineConditionalVelocityLMPC:
         started_at = time.perf_counter()
         c = self.config
         command_limit = math.radians(c.max_command_tilt_deg)
+        command_step_limit = (
+            math.radians(c.max_command_slew_deg_s)*c.prediction_step_s
+        )
         try:
             from scipy.optimize import minimize
         except ImportError:
@@ -533,6 +544,16 @@ class OfflineConditionalVelocityLMPC:
                 raise ValueError(
                     "initial state or delayed command violates a hard bound"
                 )
+            if (
+                initial_vector.shape[0] > 4
+                and np.any(
+                    np.abs(np.diff(initial_vector[3:]))
+                    > command_step_limit+1e-12
+                )
+            ):
+                raise ValueError(
+                    "initial delayed command queue violates the slew bound"
+                )
             if (np.any(safe[:, 0] < -c.reverse_velocity_tolerance_m_s)
                     or np.any(np.abs(safe[:, 0]) > c.max_abs_velocity_m_s)
                     or np.any(np.abs(safe[:, 1])
@@ -542,6 +563,16 @@ class OfflineConditionalVelocityLMPC:
                     or np.any(np.abs(safe[:, 3:]) > command_limit)):
                 raise ValueError(
                     "safe terminal state violates the current planner bounds"
+                )
+            if (
+                safe.shape[1] > 4
+                and np.any(
+                    np.abs(np.diff(safe[:, 3:], axis=1))
+                    > command_step_limit+1e-12
+                )
+            ):
+                raise ValueError(
+                    "safe terminal delayed queue violates the slew bound"
                 )
             if safe_tail_forward_distances_m is None:
                 safe_tail_distances = np.zeros(safe.shape[0], dtype=float)
@@ -668,12 +699,17 @@ class OfflineConditionalVelocityLMPC:
         def objective(variables):
             commands, weights = unpack(variables)
             states, _, _ = simulate(commands)
-            del states
-            changes = np.diff(np.r_[previous_command, commands])
             return float(
                 costs@weights
-                + c.effort_weight*c.prediction_step_s*(commands@commands)
-                + c.slew_weight*(changes@changes)
+                + math.fsum(
+                    minimum_time_stage_cost_s(
+                        tuple(float(value) for value in states[index]),
+                        (commands[index],),
+                        c.prediction_step_s,
+                        self.stage_cost_spec,
+                    )
+                    for index in range(horizon)
+                )
             )
 
         def terminal_equalities(variables):
@@ -693,13 +729,12 @@ class OfflineConditionalVelocityLMPC:
             tilts = audit_nodes[:, 1]
             rates = audit_nodes[:, 2]
             changes = np.diff(np.r_[previous_command, commands])
-            slew_limit = math.radians(c.max_command_slew_deg_s)*c.prediction_step_s
             margins = [
                 velocities+c.reverse_velocity_tolerance_m_s,
                 c.max_abs_velocity_m_s-np.abs(velocities),
                 math.radians(c.max_tilt_deg)-np.abs(tilts),
                 math.radians(c.max_tilt_rate_deg_s)-np.abs(rates),
-                slew_limit-np.abs(changes),
+                command_step_limit-np.abs(changes),
             ]
             if math.isfinite(initial_state.available_distance_m):
                 cumulative = np.cumsum(step_distances)
@@ -858,15 +893,20 @@ class OfflineConditionalVelocityLMPC:
         command_limit = math.radians(self.config.max_command_tilt_deg)
         tilt_limit = math.radians(self.config.max_tilt_deg)
         rate_limit = math.radians(self.config.max_tilt_rate_deg_s)
-        slew_limit = math.radians(self.config.max_command_slew_deg_s)
+        slew_step_limit = (
+            math.radians(self.config.max_command_slew_deg_s)
+            * self.config.prediction_step_s
+        )
         if any(
             len(point.command) != 1
             or point.tail_max_abs_aligned_velocity_m_s
             > self.config.max_abs_velocity_m_s+1e-12
+            or point.tail_min_aligned_velocity_m_s
+            < -self.config.reverse_velocity_tolerance_m_s-1e-12
             or point.tail_max_abs_command > command_limit+1e-12
             or point.tail_max_abs_tilt_rad > tilt_limit+1e-12
             or point.tail_max_abs_rate_rad_s > rate_limit+1e-12
-            or point.tail_max_command_slew_rad_s > slew_limit+1e-12
+            or point.tail_max_command_step_rad > slew_step_limit+1e-12
             for point in local_query.points
         ):
             return self._failure(
@@ -921,6 +961,19 @@ class OfflineConditionalVelocityLMPC:
         if (safe_set.state_dimension != self.state_dimension
                 or safe_set.command_dimension != 1
                 or safe_set.aligned_velocity_state_index != 0
+                or not math.isclose(
+                    safe_set.prediction_step_s,
+                    self.config.prediction_step_s,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+                or not math.isclose(
+                    safe_set.command_delay_s,
+                    self.model.delay_s,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+                or safe_set.stage_cost_spec != self.stage_cost_spec
                 or safe_set.limits != self.safe_set_limits):
             return self._failure(
                 "safe_set_state_contract_mismatch", started_at=started_at
