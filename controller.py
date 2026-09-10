@@ -1051,7 +1051,7 @@ class Controller:
             reset_estimator(self.cf)
 
     def arm(self):
-        if self.args.ground_test:
+        if self.args.ground_test or self.args.skip_arm:
             return
 
         logger.info("Arming...")
@@ -2631,6 +2631,7 @@ if __name__ == '__main__':
     ap.add_argument("--rotation-test", action="store_true", help="test rotation rate")
     ap.add_argument("--xy-tune", action="store_true", help="forward/back left/right flight pattern")
     ap.add_argument("--z-tune", action="store_true", help="up/down flight pattern")
+    ap.add_argument("--skip-arm", action="store_true", help="skip arming the drone")
     ap.add_argument("--skip-takeoff", action="store_true", help="run mission without taking off")
     ap.add_argument("--skip-landing", action="store_true", help="run mission without landing")
     ap.add_argument("--radio", type=str, help="specify the CrazyRadio URI (e.g., 'radio://0/6/1M/E7E7E7E704')")
