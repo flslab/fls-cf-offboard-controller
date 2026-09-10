@@ -453,7 +453,7 @@ MOTION = {
 }
 
 ACC = {
-    "log_period_ms": 1,
+    # "log_period_ms": 1,
     "acc.x": {
         "type": "float",
         "unit": "Gs",
@@ -472,7 +472,7 @@ ACC = {
 }
 
 GYRO = {
-    "log_period_ms": 1,
+    # "log_period_ms": 1,
     "gyro.x": {
         "type": "float",
         "unit": "deg/s",
@@ -506,7 +506,7 @@ GYRO = {
 }
 
 QUAT = {
-    "log_period_ms": 1,
+    # "log_period_ms": 1,
     "stateEstimate.qx": {
         "type": "float",
         "unit": "",
