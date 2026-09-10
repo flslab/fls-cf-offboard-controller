@@ -625,7 +625,20 @@ class Controller:
             self.args.localizer_timeout,
         )
         logger.info("Localizer handshake complete; waiting for EKF convergence")
-        wait_for_position_estimator(self.cf, self.args.localizer_timeout)
+        try:
+            wait_for_position_estimator(self.cf, self.args.localizer_timeout)
+        except TimeoutError as error:
+            latest = self.tracker.latest()
+            if latest is None:
+                localizer_status = "localizer_output=none"
+            else:
+                localizer_status = (
+                    f"localizer_state={latest.state.name}, "
+                    f"pose_valid={latest.pose_valid}, "
+                    f"pose_sequence={latest.pose_sequence}, "
+                    f"feature_count={latest.feature_count}"
+                )
+            raise TimeoutError(f"{error}; {localizer_status}") from error
         logger.info("EKF position estimate converged")
         self._set_marker_grid_mode(tracking.mygrid_request)
 

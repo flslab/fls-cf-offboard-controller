@@ -25,20 +25,25 @@ def wait_for_position_estimator(cf, timeout, threshold=0.001,
                                 history_size=10, period_ms=500):
     """Wait for bounded Kalman variance convergence."""
     converged = Event()
+    history_lock = Lock()
     variables = ('kalman.varPX', 'kalman.varPY', 'kalman.varPZ')
     histories = {
         variable: deque(maxlen=history_size) for variable in variables
     }
+    sample_count = 0
 
     def on_data(_timestamp, data, _log_config):
-        for variable in variables:
-            histories[variable].append(float(data[variable]))
-        if all(
-            len(history) == history_size
-            and max(history) - min(history) < threshold
-            for history in histories.values()
-        ):
-            converged.set()
+        nonlocal sample_count
+        with history_lock:
+            sample_count += 1
+            for variable in variables:
+                histories[variable].append(float(data[variable]))
+            if all(
+                len(history) == history_size
+                and max(history) - min(history) < threshold
+                for history in histories.values()
+            ):
+                converged.set()
 
     variance_log = LogConfig(
         name='LocalizerEstimatorVariance', period_in_ms=period_ms
@@ -47,16 +52,28 @@ def wait_for_position_estimator(cf, timeout, threshold=0.001,
         variance_log.add_variable(variable, 'float')
     cf.log.add_config(variance_log)
     variance_log.data_received_cb.add_callback(on_data)
+    timed_out = False
     try:
         variance_log.start()
-        if not converged.wait(timeout):
-            raise TimeoutError(
-                f'position estimator did not converge within {timeout:.1f}s'
-            )
+        timed_out = not converged.wait(timeout)
     finally:
         variance_log.stop()
         variance_log.delete()
         variance_log.data_received_cb.remove_callback(on_data)
+    if timed_out:
+        with history_lock:
+            latest = {
+                variable: history[-1] if history else None
+                for variable, history in histories.items()
+            }
+            ranges = {
+                variable: max(history) - min(history) if history else None
+                for variable, history in histories.items()
+            }
+        raise TimeoutError(
+            f'position estimator did not converge within {timeout:.1f}s; '
+            f'samples={sample_count}, latest={latest}, ranges={ranges}'
+        )
 
 
 class LocalizerState(IntEnum):
@@ -112,7 +129,9 @@ class Tracker:
     def __init__(self, controller, shm_name="/fls_localizer_v2", timeout=5.0):
         self.controller = controller
         self._lock = Lock()
+        self._callback_lock = Lock()
         self._changed = Condition(self._lock)
+        self._closed = False
         self._ack_generation = 0
         self._landing_requested = False
         self._landing_tile = (0, 0)
@@ -164,33 +183,36 @@ class Tracker:
                 time.sleep(0.05)
 
     def _on_attitude(self, _timestamp, data, _log_config):
-        quaternion = tuple(float(data[f"stateEstimate.{name}"])
-                           for name in ("qx", "qy", "qz", "qw"))
-        norm = math.sqrt(sum(value * value for value in quaternion))
-        if not math.isfinite(norm) or norm < 1e-6:
-            return
-        quaternion = tuple(value / norm for value in quaternion)
-        self._write_controller(time.monotonic(), quaternion)
-        output = self._read_localizer()
-        if output is None or not self._is_fresh(output):
-            return
+        with self._callback_lock:
+            if self._closed:
+                return
+            quaternion = tuple(float(data[f"stateEstimate.{name}"])
+                               for name in ("qx", "qy", "qz", "qw"))
+            norm = math.sqrt(sum(value * value for value in quaternion))
+            if not math.isfinite(norm) or norm < 1e-6:
+                return
+            quaternion = tuple(value / norm for value in quaternion)
+            self._write_controller(time.monotonic(), quaternion)
+            output = self._read_localizer()
+            if output is None or not self._is_fresh(output):
+                return
 
-        with self._changed:
-            self._latest = output
-            acknowledged = (
-                output.initial_pose_generation != 0
-                and output.initial_pose_generation == self._ack_generation
-            )
-            send_position = (
-                acknowledged and output.pose_valid
-                and output.pose_sequence != self._sent_pose_sequence
-                and all(math.isfinite(value) for value in output.position)
-            )
+            with self._changed:
+                self._latest = output
+                acknowledged = (
+                    output.initial_pose_generation != 0
+                    and output.initial_pose_generation == self._ack_generation
+                )
+                send_position = (
+                    acknowledged and output.pose_valid
+                    and output.pose_sequence != self._sent_pose_sequence
+                    and all(math.isfinite(value) for value in output.position)
+                )
+                if send_position:
+                    self._sent_pose_sequence = output.pose_sequence
+                self._changed.notify_all()
             if send_position:
-                self._sent_pose_sequence = output.pose_sequence
-            self._changed.notify_all()
-        if send_position:
-            self.controller._send_position_no_log({"tvec": output.position})
+                self.controller._send_position_no_log({"tvec": output.position})
 
     def _write_controller(self, timestamp, quaternion):
         with self._lock:
@@ -272,6 +294,11 @@ class Tracker:
             self._landing_requested = True
 
     def close(self):
+        with self._callback_lock:
+            if self._closed:
+                return
+            self._closed = True
+        self._attitude_log.data_received_cb.remove_callback(self._on_attitude)
         self._attitude_log.stop()
         self._mapping.close()
         self._file.close()
