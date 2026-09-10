@@ -581,7 +581,8 @@ class Controller:
         if self.args.skip_takeoff:
             self.flying = True
             return
-        if self._is_interaction_application():
+        if (self._is_interaction_application()
+                or getattr(self.args, 'hover', False)):
             self.log_manager.start()
 
         takeoff_speed = (self.mission or {}).get("takeoff_speed", 0.5)
@@ -880,7 +881,8 @@ class Controller:
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("events")
 
-        elif self._is_interaction_application():
+        elif (self._is_interaction_application()
+              or getattr(self.args, 'hover', False)):
             from Interaction.log_manager import InteractionLogger
             self.log_manager = InteractionLogger(controller_args=self.args)
             if not self.args.droneless:
@@ -901,7 +903,7 @@ class Controller:
         else:
             raise Exception(
                 "No mode is passed. Passing --illumination, --interaction, "
-                "--calibrate, --braking-test, or --mpc is required."
+                "--calibrate, --braking-test, --mpc, or --hover is required."
             )
 
         logger.debug("logging activated")
@@ -1087,6 +1089,8 @@ class Controller:
             self.z_tune_pattern()
         elif self.args.trajectory:
             self.fly_trajectory(self.args.trajectory)
+        elif getattr(self.args, 'hover', False):
+            self.run_hover_forever()
         elif getattr(self.args, 'baseline', False):
             self.run_baseline()
         elif (getattr(self.args, 'calibrate', False)
@@ -1108,6 +1112,37 @@ class Controller:
             hover_time = self.args.t
         self.hl_commander.go_to(0.0, 0.0, self.args.takeoff_altitude, self.args.init_yaw, hover_time, relative=False)
         self._safe_sleep(hover_time)
+
+    def run_hover_forever(self):
+        """Move to world (0, 0, 1) and hold there until externally stopped."""
+        target = (0.0, 0.0, 1.0)
+        yaw_deg = 0.0
+        travel_duration_s = 2.0
+        logger.info(
+            "Hover mode: moving to (%.2f, %.2f, %.2f)m, then holding until stopped.",
+            *target,
+        )
+        if self.log_manager is not None:
+            self.log_manager.add_log_entry(
+                'events',
+                {
+                    'time': time.time(),
+                    'target_position_m': list(target),
+                    'yaw_deg': yaw_deg,
+                    'travel_duration_s': travel_duration_s,
+                },
+                name='Hover Target Commanded',
+            )
+        self.hl_commander.go_to(
+            *target, yaw_deg, travel_duration_s, relative=False
+        )
+        self._safe_sleep(travel_duration_s)
+        logger.info("Hover mode: holding at (0.00, 0.00, 1.00)m.")
+        while True:
+            # The high-level commander holds the completed trajectory endpoint.
+            # Sleeping through the normal safety wrapper keeps battery and
+            # orchestrator STOP/LAND handling active without changing ownership.
+            self._safe_sleep(1.0)
 
     def run_baseline(self):
         """Compare an HLC outbound leg with an LL position-command return."""
@@ -2494,6 +2529,10 @@ if __name__ == '__main__':
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
     ap.add_argument(
+        "--hover", action="store_true",
+        help="move to world (0, 0, 1) and hold until stopped",
+    )
+    ap.add_argument(
         "--baseline", action="store_true",
         help=("baseline flight: HLC go_to from (0,-1,1) to (0,1,1) "
               "in 2s, hold 5s, then stream position commands back"),
@@ -2667,12 +2706,12 @@ if __name__ == '__main__':
         ap.error(str(error))
     experiment_modes = (
         args.interaction, args.calibrate, args.braking_test, args.mpc,
-        args.baseline,
+        args.baseline, args.hover,
     )
     if sum(bool(mode) for mode in experiment_modes) > 1:
         ap.error(
-            '--interaction, --calibrate, --braking-test, --mpc, and '
-            '--baseline are '
+            '--interaction, --calibrate, --braking-test, --mpc, '
+            '--baseline, and --hover are '
             'mutually exclusive'
         )
     if args.targeted_braking_calibration and (
@@ -2754,6 +2793,26 @@ if __name__ == '__main__':
         ap.error('--baseline requires --smooth-controller-rate 100')
     if args.baseline and args.cf_log_period != 10:
         ap.error('--baseline requires --cf-log-period 10 ms')
+    hover_conflicts = (
+        ('sense', args.sense),
+        ('illumination', args.illumination),
+        ('intractable-illumination', args.intractable_illumination),
+        ('morphing', args.morphing),
+        ('autotune', args.autotune),
+        ('simple-takeoff', args.simple_takeoff),
+        ('rotation-test', args.rotation_test),
+        ('xy-tune', args.xy_tune),
+        ('z-tune', args.z_tune),
+        ('trajectory', args.trajectory is not None),
+        ('ground-test', args.ground_test),
+        ('droneless', args.droneless),
+        ('skip-takeoff', args.skip_takeoff),
+        ('skip-landing', args.skip_landing),
+    )
+    if args.hover:
+        for name, enabled in hover_conflicts:
+            if enabled:
+                ap.error('--hover cannot be combined with --' + name)
     if args.sense_spring_constant <= 0.0:
         ap.error('--sense-spring-constant must be positive')
     if args.sense_max_extension <= 0.0:

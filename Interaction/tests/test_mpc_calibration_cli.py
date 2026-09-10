@@ -6,6 +6,7 @@ from contextlib import redirect_stderr
 from copy import deepcopy
 import datetime
 import io
+import math
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -32,6 +33,7 @@ def parse_controller_args(tokens):
     namespace = {
         "argparse": argparse,
         "datetime": datetime,
+        "math": math,
         "validate_repeat_test_options": validate_repeat_test_options,
     }
     with patch("sys.argv", ["controller.py", *tokens]):
