@@ -13,7 +13,7 @@ DEFAULT_HEIGHT = 1.0
 DEFAULT_DURATION = 10.0
 
 # Localization Settings
-LOCALIZATION_SHM_NAME = "/pos_shared_mem"
+LOCALIZATION_SHM_NAME = "/fls_localizer_v2"
 
 # Battery
 MIN_LIHV_VOLT = 3.5

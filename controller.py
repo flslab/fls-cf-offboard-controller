@@ -1,4 +1,3 @@
-from relative_localization import imu_callback, imu_callback_quat, imu_callback_euler
 from turtle import forward
 
 from cflib import crazyflie
@@ -39,7 +38,7 @@ from Interaction.braking_repeat_test import validate_repeat_test_options
 
 from mocap import Mocap
 from smooth_controller import SmoothController
-from tracker import Tracker
+from tracker import LocalizerState, MyGridRequest, Tracker
 from logger import setup_logging
 from pid_autotuner import PIDAutotuner
 
@@ -158,6 +157,7 @@ class Controller:
         self.smooth_controller = None
         self.blinker_process = None
         self.tracker_process = None
+        self._marker_grid_mode = None
 
         self.flying = False
         self.failsafe = False
@@ -309,14 +309,18 @@ class Controller:
                 logging_shutdown_error = error
                 logger.exception('Log shutdown failed; continuing resource cleanup and disconnect.')
             
-        if self.tracker_process:
-            self.smooth_controller.remove_update_callback(self.fuse_latest_imu_camera_data)
+        if getattr(self, "tracker", None):
+            try:
+                self.tracker.close()
+            except Exception as e:
+                logger.error(f"Failed to close localizer bridge: {e}")
 
+        if self.tracker_process:
             try:
                 self.tracker_process.send_signal(signal.SIGINT)
                 self.tracker_process.wait(timeout=5)
             except Exception as e:
-                logger.error(f"Failed to terminate tracker process: {e}")
+                logger.error(f"Failed to terminate localizer process: {e}")
         
         if self.blinker_process:
             try:
@@ -411,7 +415,7 @@ class Controller:
             exit()
 
     def setup_smooth_controller(self):
-        if self.args.servo or self.args.led or self.args.tracker:
+        if self.args.servo or self.args.led:
             self.smooth_controller = SmoothController(rate=self.args.smooth_controller_rate)
 
     def setup_servo(self):
@@ -487,11 +491,29 @@ class Controller:
 
     def setup_tracker(self):
         if self.args.tracker:
+            with open(self.args.localizer_config) as config_file:
+                localizer_config = json.load(config_file)
+            shm_name = localizer_config.get(
+                "shared_memory_name", self.cfg.LOCALIZATION_SHM_NAME)
+            if self.args.landing_tile is None:
+                drone = (self._get_drone_by_id(self.args.drone_id)
+                         if self.args.orchestrated else None)
+                self.args.landing_tile = (
+                    drone.get("marker_tile") if drone else None
+                ) or localizer_config.get("landing_tile", [0, 0])
             self._start_tracker_process()
-            time.sleep(2)
-            self.tracker = Tracker(self)
-            self.smooth_controller.add_update_callback(self.fuse_latest_imu_camera_data)
-            logger.debug("tracker activated")
+            try:
+                self.tracker = Tracker(
+                    self,
+                    shm_name=shm_name,
+                    timeout=self.args.localizer_timeout,
+                )
+            except Exception:
+                self.tracker_process.terminate()
+                self.tracker_process.wait(timeout=5)
+                raise
+            self._set_marker_grid_mode(MyGridRequest.BLINK)
+            logger.info("high-rate localizer activated")
 
     def setup_blinker(self):
         if self.args.marker_id >= 0:
@@ -556,13 +578,83 @@ class Controller:
         if self._is_interaction_application():
             self.log_manager.start()
 
-        takeoff_speed = self.mission.get("takeoff_speed", 0.5)
+        takeoff_speed = (self.mission or {}).get("takeoff_speed", 0.5)
         logger.info(f"Taking off to {self.args.takeoff_altitude}m at {takeoff_speed}m/s ...")
+        if getattr(self, "tracker", None):
+            self._takeoff_with_localizer(takeoff_speed)
+            return
+
         self.flying = True
 
         t = self.args.takeoff_altitude / takeoff_speed
         self.hl_commander.takeoff(self.args.takeoff_altitude, t)
         self._safe_sleep(t + 1)
+
+    def _takeoff_with_localizer(self, speed):
+        if not math.isfinite(speed) or speed <= 0:
+            raise ValueError("takeoff speed must be positive")
+        initial = self.tracker.wait_for(
+            [LocalizerState.INITIAL_POSE_READY], self.args.localizer_timeout)
+        self._set_marker_grid_mode(initial.mygrid_request)
+        if not initial.pose_valid or initial.initial_pose_generation == 0:
+            raise RuntimeError("localizer did not publish a valid initial pose")
+
+        x, y, z = initial.position
+        yaw = initial.initial_yaw
+        if not all(math.isfinite(value) for value in (x, y, z, yaw)):
+            raise RuntimeError("localizer published a non-finite initial pose")
+        self._set_initial_position(x, y, z, yaw)
+        reset_estimator(self.cf)
+        self.tracker.acknowledge_initial_pose(initial.initial_pose_generation)
+        tracking = self.tracker.wait_for(
+            [LocalizerState.TAKEOFF_TRACKING, LocalizerState.HYPERGRID_ACQUIRE,
+             LocalizerState.HYPERGRID_TRACKING],
+            self.args.localizer_timeout,
+        )
+        self._set_marker_grid_mode(tracking.mygrid_request)
+
+        threshold = tracking.acquisition_height
+        if not math.isfinite(threshold) or threshold <= 0:
+            raise RuntimeError("localizer published an invalid acquisition height")
+        if self.args.takeoff_altitude + 1e-3 < threshold:
+            raise ValueError(
+                f"takeoff altitude {self.args.takeoff_altitude:.3f} m is below "
+                f"the HyperGrid acquisition height {threshold:.3f} m"
+            )
+
+        self.init_coord = [x, y, z]
+        self.args.init_yaw = yaw
+        self.flying = True
+        duration = max(0.5, abs(threshold - z) / speed)
+        logger.info(f"Taking off to HyperGrid acquisition height {threshold:.3f}m")
+        self.hl_commander.takeoff(threshold, duration)
+        self._safe_sleep(duration + 0.5)
+
+        hypergrid = self.tracker.wait_for(
+            [LocalizerState.HYPERGRID_TRACKING], self.args.localizer_timeout)
+        self._set_marker_grid_mode(hypergrid.mygrid_request)
+        if self.args.takeoff_altitude > threshold + 1e-3:
+            duration = max(0.5, (self.args.takeoff_altitude - threshold) / speed)
+            self.hl_commander.go_to(
+                x, y, self.args.takeoff_altitude, yaw, duration, relative=False)
+            self._safe_sleep(duration + 0.5)
+
+    def _set_marker_grid_mode(self, request):
+        mode = {
+            MyGridRequest.BLINK: "blink",
+            MyGridRequest.STATIC: "static",
+            MyGridRequest.OFF: "off",
+        }[MyGridRequest(request)]
+        if mode == self._marker_grid_mode:
+            return
+        if self.args.orchestrated:
+            self.push_socket.send_json({
+                "id": self.args.drone_id,
+                "status": "MARKER_GRID_MODE",
+                "mode": mode,
+            })
+        self._marker_grid_mode = mode
+        logger.info(f"MyGrid mode -> {mode}")
 
     def land(self):
         if self.args.skip_landing:
@@ -594,9 +686,29 @@ class Controller:
             current_x, current_y, current_z = self._get_latest_mocap_frame()["tvec"]
 
         if self.flying:
-            takeoff_speed = self.mission.get("takeoff_speed", 0.5)
+            takeoff_speed = (self.mission or {}).get("takeoff_speed", 0.5)
+            if not math.isfinite(takeoff_speed) or takeoff_speed <= 0:
+                logger.error("Invalid landing speed; using 0.5 m/s")
+                takeoff_speed = 0.5
             dt = self.args.takeoff_altitude / takeoff_speed
             height = 0.1 if self.args.vicon or self.use_flowdeck else 0.02
+            if getattr(self, "tracker", None):
+                try:
+                    self._land_with_localizer(
+                        low_level, commander, handoff_dry_run, height,
+                        takeoff_speed)
+                except (HandoffError, RuntimeError, ValueError):
+                    logger.exception(
+                        "Localizer landing transition failed; using streamed descent")
+                    latest = self.tracker.latest()
+                    position = latest.position if latest and latest.pose_valid else (None,) * 3
+                    self._land_with_low_level(
+                        low_level, *position, height,
+                        max(2.0, self.args.takeoff_altitude / takeoff_speed),
+                    )
+                self.flying = False
+                self._send_landing_confirmation(voltage)
+                return
             try:
                 if (self.init_coord is not None
                         and all(v is not None and math.isfinite(v)
@@ -631,6 +743,49 @@ class Controller:
             self.flying = False
 
         self._send_landing_confirmation(voltage)
+
+    def _land_with_localizer(self, low_level, commander, dry_run, height, speed):
+        latest = self.tracker.latest()
+        if latest is None or not latest.pose_valid or self.init_coord is None:
+            raise RuntimeError("no valid localizer pose is available for landing")
+
+        threshold = latest.acquisition_height
+        initial_x, initial_y, _ = self.init_coord
+        current_x, current_y, current_z = latest.position
+        if (not math.isfinite(threshold) or threshold <= height or speed <= 0
+                or not all(math.isfinite(value) for value in (
+                    initial_x, initial_y, current_x, current_y, current_z))):
+            raise ValueError("invalid localizer landing geometry")
+        yaw = self.args.init_yaw
+        self.tracker.request_landing(self.args.landing_tile)
+        self._set_marker_grid_mode(MyGridRequest.STATIC)
+
+        distance = math.sqrt(
+            (initial_x - current_x) ** 2
+            + (initial_y - current_y) ** 2
+            + (threshold - current_z) ** 2
+        )
+        duration = max(1.0, distance / speed)
+        logger.info(f"Returning to MyGrid acquisition height {threshold:.3f}m")
+        handoff_to_high_level(
+            low_level, commander, "go_to", initial_x, initial_y, threshold,
+            yaw, duration, relative=False, dry_run=dry_run,
+        )
+        time.sleep(duration + 0.5)
+
+        try:
+            landing = self.tracker.wait_for(
+                [LocalizerState.LANDING_TRACKING], self.args.localizer_timeout)
+            self._set_marker_grid_mode(landing.mygrid_request)
+        except TimeoutError:
+            logger.warning("MyGrid was not acquired at the landing threshold")
+
+        duration = max(2.0, (threshold - height) / speed)
+        handoff_to_high_level(
+            low_level, commander, "land", height, duration, dry_run=dry_run)
+        logger.info(f"Landing duration: {duration} seconds")
+        time.sleep(duration + 1)
+        commander.stop()
 
     def _land_with_low_level(self, commander, x, y, z, height, duration):
         """Bounded fallback when the HLC cannot acknowledge a landing plan.
@@ -875,8 +1030,9 @@ class Controller:
 
         self._activate_kalman_estimator()
         self._activate_tumble_check()
-        if self.args.vicon:
+        if self.args.vicon or self.args.tracker:
             self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
+        if self.args.vicon:
             self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
         if self.args.controller_type == "pid":
             self._activate_pid_controller()
@@ -895,7 +1051,7 @@ class Controller:
             reset_estimator(self.cf)
 
     def arm(self):
-        if self.args.ground_test:
+        if self.args.ground_test or self.args.skip_arm:
             return
 
         logger.info("Arming...")
@@ -1695,7 +1851,10 @@ class Controller:
                         anchor_id
                     )
                 elif relative_anchor["source"] == "tracker":
-                    localization_method = self.do_tracker_relative_localization 
+                    raise RuntimeError(
+                        "relative-anchor tracking is not supported by the "
+                        "world-frame high-rate localizer"
+                    )
 
                 if relative_anchor["method"] == "ekf":
                     # self._set_ignore_external_z()
@@ -1810,8 +1969,8 @@ class Controller:
                     logger.warning(f"Lagging behind by {abs(sleep_duration):.3f}s")
     
     def _initialize_ekf_relative_position(self, retry_count=3, retry_delay=1):
-        latest_pose = self.tracker.get_latest_pose()
-        if not latest_pose:
+        latest_pose = self.tracker.latest()
+        if latest_pose is None or not latest_pose.pose_valid:
             if retry_count > 0:
                 logger.warning("Tracker lost frame, cannot initialize EKF relative position.")
                 time.sleep(retry_delay)
@@ -1819,8 +1978,7 @@ class Controller:
             else:
                 raise RuntimeError("Tracker lost frame, cannot initialize EKF relative position after retries.")
 
-        entry = self._get_latest_relative_pos()
-        x, y, z = entry["pos"]
+        x, y, z = latest_pose.position
         self._set_initial_position(x, y, z, self.args.init_yaw)
         reset_estimator(self.cf)
         logger.info(f"Initialized EKF relative position")
@@ -1836,88 +1994,6 @@ class Controller:
         logger.info("unsubscribed mocap logger")
         self.mocap.subscribe_point([xiv, yiv, ziv], self._send_position, name=f"{self.args.drone_id}_midflight") 
         logger.info("subscribed mocap external position and logger")
-
-    def fuse_latest_imu_camera_data(self):
-        latest_pose = self.tracker.get_latest_pose()
-        if not latest_pose:
-            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "marker_not_found"})
-
-            self.log_manager.add_log_entry("drone_pos_imu_quat", {
-                "time": time.time(),
-                "pos": [],
-                "ori": []
-            })
-            return None, None, None
-
-        smaller_res, larger_res = self.log_manager.get_cf_log_data_at_timestamp("QUAT", latest_pose[6])
-        if smaller_res and larger_res:
-            quat_data = smaller_res[1] if abs(smaller_res[0] - latest_pose[6]) < abs(larger_res[0] - latest_pose[6]) else larger_res[1]
-            qx = quat_data["stateEstimate.qx"]
-            qy = quat_data["stateEstimate.qy"]
-            qz = quat_data["stateEstimate.qz"]
-            qw = quat_data["stateEstimate.qw"]
-        
-        else:
-            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "quat_not_found"})
-            self.log_manager.add_log_entry("drone_pos_imu_quat", {
-                "time": latest_pose[6],
-                "pos": [],
-                "ori": []
-            })
-            return None, None, None
-
-        drone_pos, rot_w_d = imu_callback_quat(
-            qx, qy, qz, qw,
-            latest_pose[:3],
-            marker_world_pos=self.args.marker_offset,
-            camera_drone_pos=self.args.camera_offset
-        )
-
-        self.log_manager.add_log_entry("drone_pos_imu_quat", {
-            "time": latest_pose[6],
-            "pos": drone_pos.tolist(),
-            "ori": rot_w_d.as_rotvec().tolist()
-        })
-
-        frame = {"tvec": drone_pos.tolist(), "time": time.time()}
-        # logger.info(frame)
-        self._send_position_no_log(frame)
-
-        return drone_pos, rot_w_d, latest_pose[6]
-
-    def do_tracker_relative_localization(self, gt_relative_position, config):
-        entry = self._get_latest_relative_pos()
-        if len(entry["pos"]) == 0:
-            if config["method"] != "ekf":
-                self.ll_commander.send_hover_setpoint(0.0, 0.0, 0, gt_relative_position[2])
-            return
-        
-        # temp: use vicon z
-        z = self._get_latest_mocap_frame()["tvec"][2]
-        # side camera
-        # right, down, forward, _, _, _ = latest_pose
-        # cx, cy, cz = self.args.camera_offset
-        # mx, my, mz = self.args.marker_offset
-        # act_relative_position = [-right - mx + cx, -forward - my + cy, -down - mz + cz]
-
-        # downward camera aruco
-        x, y, _ = entry["pos"]
-        act_relative_position = [-x, -y, -z]
-
-        # logger.info(f"gt_relative_position: {gt_relative_position}")
-        # logger.info(f"act_relative_position: {[-right, -forward, -down]}")
-        # logger.info(f"act_relative_position offseted: {act_relative_position}")
-
-        if config["method"] == "velocity_control":
-            self.do_localization_veolocity_cmd(gt_relative_position[:3], act_relative_position)
-        elif config["method"] == "position_control":
-            self.do_localization_position_cmd(gt_relative_position[:3], act_relative_position)
-        elif config["method"] == "ekf":
-            # ax, ay, az = gt_relative_position[:3]
-            # x, y, z = act_relative_position
-            frame = {"tvec": [x, y, z], "time": time.time()}
-            # logger.info(frame)
-            self._send_position_no_log(frame)
 
     def do_mocap_relative_localization(self, gt_relative_position, config):
         localizing_latest_pose = np.array(self._get_latest_mocap_frame()["tvec"])
@@ -2273,64 +2349,15 @@ class Controller:
             self.smooth_controller.set_group_values("servos", [180, 360], 0.5)
 
     def _start_tracker_process(self):
-        """Starts the external C++ localization process."""
-        params = [
-            "/home/fls/fls-marker-localization/build/eye",
-            "-t", "0",
-            "--brightness", "0.5",
-            "--contrast", "2.5",
-            "--exposure", "500",
-            "--fps", str(self.args.tracker_camera_rate),
-            "--encoder-fps", str(self.args.tracker_encoder_rate),
-            "--payload-size", str(self.args.payload_size),
-            "--target-id", str(self.args.target_id),
-            "--json-path", f"logs/tracker_{self.args.tag}.json",
-        ]
-        if self.args.tracker_res == 400:
-            params.extend([
-                "--width", "640",
-                "--height", "400",
-                "--config", "/home/fls/fls-marker-localization/src/dfrobot_gs_camera_config.json",
-            ])
-        elif self.args.tracker_res == 800:
-            params.extend([
-                "--width", "1280",
-                "--height", "800",
-                "--config", "/home/fls/fls-marker-localization/src/dfrobot_gs_800p_camera_config.json",
-            ])
-        else:
-            params.extend([
-                "--config", "/home/fls/fls-marker-localization/build/camera_config.json",
-            ])
-        if self.args.save_tracker_video:
-            params.extend([
-                "--save-video",
-                "--video-fps", "30",
-                "--video-path", "logs/video.mp4",
-            ])
-        if self.args.save_tracker_images:
-            params.extend([
-                "--save-frames",
-                "--raw-save-frame",
-                "--save-rate", str(self.args.tracker_camera_rate),
-                "--save-frames-path", "logs"
-            ])
-        if self.args.stream_tracker:
-            params.extend(["--stream", "--stream-rate", "10"])
-        if self.args.enable_tracker_kf:
-            params.append("--kf")
-        if self.args.track_aruco:
-            params.append("--aruco")
-        if self.args.tracker_static_marker:
-            params.append("--static-markers")
-
-        self.tracker_process = subprocess.Popen(params)
-
-        # temp
-        self.log_manager.add_log_group("drone_pos_imu_quat")
-        # self.log_manager.add_log_group("drone_pos_imu_euler")
-        # self.log_manager.register_cf_log_callback("QUAT", self.marker_imu_fusion_quat)
-        # self.log_manager.register_cf_log_callback("ATT_RATE", self.marker_imu_fusion_euler)
+        """Start the production high-rate localizer."""
+        self.tracker_process = subprocess.Popen([
+            self.args.localizer_bin,
+            "--config", self.args.localizer_config,
+        ])
+        time.sleep(0.1)
+        if self.tracker_process.poll() is not None:
+            raise RuntimeError(
+                f"high-rate localizer exited with code {self.tracker_process.returncode}")
 
     def _start_blinker_process(self):
         """Starts the external C++ blinker process for OOK markers."""
@@ -2410,9 +2437,6 @@ class Controller:
 
     def _get_latest_mocap_frame(self, group_name='frames'):
         return self.log_manager.groups[group_name][-1]
-
-    def _get_latest_relative_pos(self):
-        return self.log_manager.groups["drone_pos_imu_quat"][-1]
 
     def _get_latest_angles(self, window_size=5):
 
@@ -2559,19 +2583,34 @@ if __name__ == '__main__':
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--cf-log-period", type=int, default=20, help="log period of cf logger in millisecond")
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
-    ap.add_argument("--tracker", help="Enable onboard marker localization", action="store_true", default=False)
-    ap.add_argument("--track-aruco", help="Track aruco markers", action="store_true", default=False)
-    ap.add_argument("--save-tracker-video", action="store_true",
-                    help="save tracker camera video, works with --tracker")
-    ap.add_argument("--save-tracker-images", action="store_true",
-                    help="save tracker camera images, works with --tracker")
-    ap.add_argument("--stream-tracker", action="store_true",
-                    help="stream tracker camera video, works with --tracker")
+    ap.add_argument("--tracker", help="Enable the high-rate marker localizer",
+                    action="store_true", default=False)
+    ap.add_argument(
+        "--localizer-bin",
+        default="/home/fls/fls-marker-localization/high_rate_localizer/build/fls_localizer",
+        help="path to the production fls_localizer executable",
+    )
+    ap.add_argument(
+        "--localizer-config",
+        default="/home/fls/fls-marker-localization/high_rate_localizer/config/localizer.json",
+        help="path to the production localizer configuration",
+    )
+    ap.add_argument("--localizer-timeout", type=float, default=15.0)
+    ap.add_argument("--landing-tile", type=int, nargs=2)
+    # Accepted while deployment manifests migrate from the deprecated tracker.
+    ap.add_argument("--track-aruco", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--save-tracker-video", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--save-tracker-images", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--stream-tracker", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--tracker-encoder-rate", type=int, default=50, help="id encoder rate")
-    ap.add_argument("--tracker-camera-rate", type=int, default=120, help="camera frame rate, works with --tracker")
-    ap.add_argument("--tracker-res", help="camera resolution", type=int, choices=[400, 800], default=400)
-    ap.add_argument("--tracker-static-marker", action="store_true", default=False, help="use static marker")
-    ap.add_argument("--enable-tracker-kf", action="store_true", default=False, help="enable Kalman filter for tracker")
+    ap.add_argument("--tracker-camera-rate", type=int, default=120, help=argparse.SUPPRESS)
+    ap.add_argument("--tracker-res", type=int, choices=[400, 800], default=400,
+                    help=argparse.SUPPRESS)
+    ap.add_argument("--tracker-static-marker", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--enable-tracker-kf", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--tracker-grid-map", help=argparse.SUPPRESS)
+    ap.add_argument("--tracker-grid-distance", help=argparse.SUPPRESS)
+    ap.add_argument("--tracker-grid-window-size", help=argparse.SUPPRESS)
     ap.add_argument("--marker-id", type=int, default=0, help="ID of the blinking marker")
     ap.add_argument("--target-id", type=int, default=0, help="ID of the anchor to track")
     ap.add_argument("--payload-size", type=int, default=4, help="size of the payload")
@@ -2592,6 +2631,7 @@ if __name__ == '__main__':
     ap.add_argument("--rotation-test", action="store_true", help="test rotation rate")
     ap.add_argument("--xy-tune", action="store_true", help="forward/back left/right flight pattern")
     ap.add_argument("--z-tune", action="store_true", help="up/down flight pattern")
+    ap.add_argument("--skip-arm", action="store_true", help="skip arming the drone")
     ap.add_argument("--skip-takeoff", action="store_true", help="run mission without taking off")
     ap.add_argument("--skip-landing", action="store_true", help="run mission without landing")
     ap.add_argument("--radio", type=str, help="specify the CrazyRadio URI (e.g., 'radio://0/6/1M/E7E7E7E704')")
@@ -2707,6 +2747,8 @@ if __name__ == '__main__':
         ap.error('--sense timing values must be positive')
     if args.sense_power_poll_interval <= 0.0:
         ap.error('--sense-power-poll-interval must be positive')
+    if not math.isfinite(args.localizer_timeout) or args.localizer_timeout <= 0.0:
+        ap.error('--localizer-timeout must be positive and finite')
 
     with Controller(args) as c:
         try:
