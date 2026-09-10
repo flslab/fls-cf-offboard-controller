@@ -303,6 +303,68 @@ def release_coast_initial_velocity(
     return coast_velocity
 
 
+def predict_release_goto_stop(
+        release_position,
+        measured_velocity,
+        interaction_direction,
+        deceleration_m_s2=1.0,
+        command_delay_s=0.30,
+):
+    """Predict an on-axis stop target for a direct high-level ``go_to``."""
+    position = np.asarray(release_position, dtype=float)
+    velocity = np.asarray(measured_velocity, dtype=float)
+    direction = np.asarray(interaction_direction, dtype=float)
+    deceleration_m_s2 = float(deceleration_m_s2)
+    command_delay_s = float(command_delay_s)
+    if (
+        position.shape != (3,)
+        or velocity.shape != (3,)
+        or direction.shape != (3,)
+        or not np.all(np.isfinite(position))
+        or not np.all(np.isfinite(velocity))
+        or not np.all(np.isfinite(direction))
+        or not np.isfinite(deceleration_m_s2)
+        or deceleration_m_s2 <= 0.0
+        or not np.isfinite(command_delay_s)
+        or command_delay_s < 0.0
+    ):
+        raise ValueError(
+            'release go-to prediction needs finite XYZ inputs, positive '
+            'deceleration, and non-negative delay'
+        )
+    direction_xy = direction[:2].copy()
+    direction_norm = float(np.linalg.norm(direction_xy))
+    if direction_norm <= 1e-9:
+        direction_xy = velocity[:2].copy()
+        direction_norm = float(np.linalg.norm(direction_xy))
+    if direction_norm <= 1e-9:
+        direction_xy.fill(0.0)
+    else:
+        direction_xy /= direction_norm
+    projected_speed_m_s = float(velocity[:2] @ direction_xy)
+    delay_distance_m = projected_speed_m_s * command_delay_s
+    braking_distance_m = float(
+        np.sign(projected_speed_m_s)
+        * projected_speed_m_s ** 2
+        / (2.0 * deceleration_m_s2)
+    )
+    target = position.copy()
+    target[:2] += (
+        delay_distance_m + braking_distance_m
+    ) * direction_xy
+    braking_duration_s = abs(projected_speed_m_s) / deceleration_m_s2
+    return {
+        'target_position_m': target,
+        'direction_xy': direction_xy,
+        'projected_speed_m_s': projected_speed_m_s,
+        'delay_distance_m': delay_distance_m,
+        'braking_distance_m': braking_distance_m,
+        'total_distance_m': delay_distance_m + braking_distance_m,
+        'braking_duration_s': braking_duration_s,
+        'trajectory_duration_s': command_delay_s + braking_duration_s,
+    }
+
+
 def potentiometer_release_direction(force_world, measured_velocity):
     """Prefer the spring-force axis over transient velocity at release onset."""
     force = np.asarray(force_world, dtype=float)
@@ -2396,6 +2458,7 @@ class TranslationControlHandoff:
     VELOCITY_COAST = 'velocity_coast'
     POSITION_COAST = 'position_coast'
     ATTITUDE_BRAKING = 'attitude_braking'
+    HIGH_LEVEL_RELEASE_GOTO = 'high_level_release_goto'
 
     def __init__(
             self,
@@ -2444,6 +2507,9 @@ class TranslationControlHandoff:
             coast_velocity_rebrake_speed_m_s=0.04,
             coast_velocity_handoff_min_projected_speed_m_s=-0.03,
             coast_velocity_handoff_max_rate_deg_s=5.0,
+            coast_release_goto_takeover_enabled=False,
+            coast_release_goto_deceleration_m_s2=1.0,
+            coast_release_goto_command_delay_s=0.30,
             coast_state_kinematic_guard_enabled=False,
             coast_state_max_kinematic_residual_m=0.03,
             coast_state_max_implied_acceleration_m_s2=20.0,
@@ -2597,6 +2663,15 @@ class TranslationControlHandoff:
         self.coast_velocity_handoff_max_rate_deg_s = float(
             coast_velocity_handoff_max_rate_deg_s
         )
+        self.coast_release_goto_takeover_enabled = bool(
+            coast_release_goto_takeover_enabled
+        )
+        self.coast_release_goto_deceleration_m_s2 = float(
+            coast_release_goto_deceleration_m_s2
+        )
+        self.coast_release_goto_command_delay_s = float(
+            coast_release_goto_command_delay_s
+        )
         self.coast_state_kinematic_guard_enabled = bool(
             coast_state_kinematic_guard_enabled
         )
@@ -2690,6 +2765,8 @@ class TranslationControlHandoff:
             self.coast_velocity_rebrake_speed_m_s,
             self.coast_velocity_handoff_min_projected_speed_m_s,
             self.coast_velocity_handoff_max_rate_deg_s,
+            self.coast_release_goto_deceleration_m_s2,
+            self.coast_release_goto_command_delay_s,
             self.coast_state_max_kinematic_residual_m,
             self.coast_state_max_implied_acceleration_m_s2,
             self.coast_state_max_sample_gap_s,
@@ -2751,6 +2828,8 @@ class TranslationControlHandoff:
             )
             or self.coast_velocity_handoff_min_projected_speed_m_s > 0
             or self.coast_velocity_handoff_max_rate_deg_s <= 0
+            or self.coast_release_goto_deceleration_m_s2 <= 0
+            or self.coast_release_goto_command_delay_s < 0
             or self.coast_state_max_kinematic_residual_m <= 0
             or self.coast_state_max_implied_acceleration_m_s2 <= 0
             or self.coast_state_max_sample_gap_s <= 0
@@ -2891,6 +2970,8 @@ class TranslationControlHandoff:
         self._coast_velocity_pid_reset_pending = False
         self._coast_velocity_rebrake_pending = False
         self._coast_state_rejection_pending = None
+        self.release_goto_target_m = None
+        self.release_goto_complete_at = None
 
     def _validate_calibrated_braking_direction(self, direction_xy):
         if self.coast_calibrated_direction_xy is None:
@@ -2930,6 +3011,7 @@ class TranslationControlHandoff:
             self.VELOCITY_COAST: 'VELOCITY COAST: BRAKE / UNWIND',
             self.POSITION_COAST: 'COASTING',
             self.ATTITUDE_BRAKING: 'BRAKING',
+            self.HIGH_LEVEL_RELEASE_GOTO: 'HIGH LEVEL RELEASE GOTO',
             self.POSITION_HOLD: 'HOVER',
         }[new_mode]
         if log_details:
@@ -3048,6 +3130,8 @@ class TranslationControlHandoff:
         self._coast_velocity_pid_reset_pending = False
         self._coast_velocity_rebrake_pending = False
         self._coast_state_rejection_pending = None
+        self.release_goto_target_m = None
+        self.release_goto_complete_at = None
         self._transition_mode(
             (
                 self.CONTACT_POSITION
@@ -3732,6 +3816,54 @@ class TranslationControlHandoff:
             # the confirmed release and is anchored by the next actual send.
             self._level_attitude_command_started_at = None
         self._release_candidate_mode = None
+
+    def begin_release_goto_takeover(
+            self, target_position, command_started_at, duration_s):
+        """Latch a high-level release trajectory and suspend LL commands."""
+        if self.shadow_mode or not self.braking_mode:
+            return False
+        target = np.asarray(target_position, dtype=float)
+        command_started_at = float(command_started_at)
+        duration_s = float(duration_s)
+        if (
+            target.shape != (3,)
+            or not np.all(np.isfinite(target))
+            or not np.all(np.isfinite([command_started_at, duration_s]))
+            or duration_s <= 0.0
+        ):
+            raise ValueError(
+                'release go-to target/time must be finite and duration positive'
+            )
+        self.hold_position = target.copy()
+        self.stopping_position_m = target.copy()
+        self.release_goto_target_m = target.copy()
+        self.release_goto_complete_at = command_started_at + duration_s
+        self.coast_handoff_reason = 'direct_release_high_level_goto'
+        self.brake_completion_reason = None
+        self._transition_mode(self.HIGH_LEVEL_RELEASE_GOTO)
+        return True
+
+    def complete_release_goto_takeover(self, timestamp, actual_position):
+        """Return to the retained LL position-hold path after HLC completes."""
+        timestamp = float(timestamp)
+        actual_position = np.asarray(actual_position, dtype=float)
+        if (
+            self.mode != self.HIGH_LEVEL_RELEASE_GOTO
+            or self.release_goto_complete_at is None
+            or timestamp < self.release_goto_complete_at
+        ):
+            return False
+        if (
+            actual_position.shape != (3,)
+            or not np.all(np.isfinite(actual_position))
+        ):
+            raise ValueError('release go-to completion position must be finite XYZ')
+        self.coast_handoff_actual_position_m = actual_position.copy()
+        self.coast_handoff_reason = 'direct_release_high_level_goto_complete'
+        self.brake_completion_reason = self.coast_handoff_reason
+        self._detector_rearm_at = timestamp + self.rearm_delay_s
+        self._transition_mode(self.POSITION_HOLD)
+        return True
 
     def _update_predictive_unwind_position_target(
             self, position, response_delay_s):
@@ -7050,6 +7182,19 @@ class InteractionsControl:
                 'control_handoff.coast_velocity_rebrake_enabled must be '
                 'boolean'
             )
+        release_goto_takeover_configured = config['control_handoff'].get(
+            'coast_release_goto_takeover_enabled', False
+        )
+        if type(release_goto_takeover_configured) is not bool:
+            raise ValueError(
+                'control_handoff.coast_release_goto_takeover_enabled must be '
+                'boolean'
+            )
+        release_goto_takeover_enabled = bool(
+            release_goto_takeover_configured
+            and not calibration_mode
+            and not mpc_calibration_mode
+        )
         velocity_unwind_direct_level_attitude_enabled = (
             config['control_handoff'].get(
                 'coast_velocity_unwind_direct_level_attitude_enabled', False
@@ -7550,6 +7695,8 @@ class InteractionsControl:
                             'configured_mode': configured_release_mode,
                             'coast_control_policy': (
                                 (
+                                    'direct_release_high_level_goto'
+                                    if release_goto_takeover_enabled else
                                     (
                                         (
                                             'direct_level_attitude_unwind_then_position'
@@ -7642,6 +7789,24 @@ class InteractionsControl:
                             ),
                             'velocity_rebrake_enabled': (
                                 velocity_rebrake_enabled
+                            ),
+                            'release_goto_takeover_enabled': (
+                                release_goto_takeover_enabled
+                            ),
+                            'release_goto_takeover_configured': (
+                                release_goto_takeover_configured
+                            ),
+                            'release_goto_deceleration_m_s2': (
+                                config['control_handoff'].get(
+                                    'coast_release_goto_deceleration_m_s2',
+                                    1.0,
+                                )
+                            ),
+                            'release_goto_command_delay_s': (
+                                config['control_handoff'].get(
+                                    'coast_release_goto_command_delay_s',
+                                    0.30,
+                                )
                             ),
                             'ignored_during_calibration': bool(
                                 calibration_mode
@@ -7822,6 +7987,11 @@ class InteractionsControl:
             rearm_delay_s=rearm_delay_s,
             **config['control_handoff'],
         )
+        release_goto_takeover_pending = False
+        release_goto_takeover_active = False
+        release_goto_completion_pending = False
+        release_goto_prediction = None
+        release_goto_handoff = None
         virtual_motion = VirtualObjectPlanarMotion(
             mass=force_virtual_mass,
             max_velocity_m_s=virtual_max_velocity_m_s,
@@ -10095,6 +10265,9 @@ class InteractionsControl:
                         state_time,
                     )
                     release_started = True
+                    release_goto_takeover_pending = bool(
+                        release_goto_takeover_enabled
+                    )
                 else:
                     raise RuntimeError(
                         'confirmed potentiometer release could not transfer '
@@ -11219,6 +11392,133 @@ class InteractionsControl:
             position_integrator_reset_method = None
             position_integrator_reset_elapsed_s = None
             predictive_brake_decision = None
+            if release_goto_takeover_pending:
+                release_goto_prediction = predict_release_goto_stop(
+                    translation_control.release_position_m,
+                    output.estimate.velocity,
+                    translation_control.brake_direction,
+                    deceleration_m_s2=(
+                        translation_control
+                        .coast_release_goto_deceleration_m_s2
+                    ),
+                    command_delay_s=(
+                        translation_control
+                        .coast_release_goto_command_delay_s
+                    ),
+                )
+                raw_release_goto_target = release_goto_prediction[
+                    'target_position_m'
+                ]
+                release_goto_target = self._bounded_wrench_reference(
+                    raw_release_goto_target
+                )
+                release_goto_duration_s = max(
+                    float(release_goto_prediction['trajectory_duration_s']),
+                    translation_control.coast_command_period_s,
+                )
+                reset_started_at = time.time()
+                position_integrator_reset_method = (
+                    reset_pid_integrators_without_ack(
+                        self.cf,
+                        ('posCtlPid.resetI', 'velCtlPid.resetI'),
+                    )
+                )
+                position_integrator_reset_elapsed_s = (
+                    time.time() - reset_started_at
+                )
+                position_integrators_reset = True
+                low, high = self.lo_commander, self.hl_commander
+                release_goto_dry_run = all(
+                    isinstance(commander, CommandWrapper)
+                    and commander.execution is False
+                    for commander in (low, high)
+                )
+                release_goto_started_at = time.time()
+                release_goto_handoff = handoff_to_high_level(
+                    low,
+                    high,
+                    'go_to',
+                    *release_goto_target,
+                    float(output.estimate.orientation_rpy[2]),
+                    release_goto_duration_s,
+                    relative=False,
+                    dry_run=release_goto_dry_run,
+                )
+                if not translation_control.begin_release_goto_takeover(
+                    release_goto_target,
+                    release_goto_started_at,
+                    release_goto_duration_s,
+                ):
+                    raise RuntimeError(
+                        'release go-to acquired HLC but failed to latch '
+                        'controller ownership'
+                    )
+                self._translation_high_level_active = True
+                release_goto_takeover_pending = False
+                release_goto_takeover_active = True
+                predictive_brake_episode = None
+                predictive_brake_decision = None
+                velocity_mpc_shadow_episode = None
+                velocity_mpc_shadow_direction = None
+                self._log_event('Release Goto Takeover Started', {
+                    'release_position_m': (
+                        translation_control.release_position_m.tolist()
+                    ),
+                    'release_velocity_m_s': (
+                        output.estimate.velocity.tolist()
+                    ),
+                    'interaction_direction_xy': (
+                        release_goto_prediction['direction_xy'].tolist()
+                    ),
+                    'projected_speed_m_s': (
+                        release_goto_prediction['projected_speed_m_s']
+                    ),
+                    'command_delay_s': (
+                        translation_control
+                        .coast_release_goto_command_delay_s
+                    ),
+                    'delay_distance_m': (
+                        release_goto_prediction['delay_distance_m']
+                    ),
+                    'deceleration_m_s2': (
+                        translation_control
+                        .coast_release_goto_deceleration_m_s2
+                    ),
+                    'braking_distance_m': (
+                        release_goto_prediction['braking_distance_m']
+                    ),
+                    'predicted_total_distance_m': (
+                        release_goto_prediction['total_distance_m']
+                    ),
+                    'raw_target_position_m': (
+                        raw_release_goto_target.tolist()
+                    ),
+                    'target_position_m': release_goto_target.tolist(),
+                    'target_was_bounded': bool(not np.allclose(
+                        raw_release_goto_target, release_goto_target
+                    )),
+                    'trajectory_duration_s': release_goto_duration_s,
+                    'position_integrators_reset': True,
+                    'integrator_reset_method': (
+                        position_integrator_reset_method
+                    ),
+                    'integrator_reset_elapsed_s': (
+                        position_integrator_reset_elapsed_s
+                    ),
+                    'handoff': release_goto_handoff,
+                    'control_owner': 'high_level_commander',
+                    'legacy_brake_flow_bypassed': True,
+                    'state_source': 'crazyflie_state_estimate',
+                })
+            if (
+                release_goto_takeover_active
+                and translation_control.complete_release_goto_takeover(
+                    time.time(),
+                    self._bounded_wrench_reference(position),
+                )
+            ):
+                coast_handoff_completed = True
+                release_goto_completion_pending = True
             if (
                 velocity_mpc_shadow_episode is not None
                 and potentiometer_release_processed
@@ -13170,6 +13470,14 @@ class InteractionsControl:
                 ):
                     active_planar_braking_command = None
                     active_planar_braking_command_since = None
+            elif (
+                translation_control.mode
+                == translation_control.HIGH_LEVEL_RELEASE_GOTO
+            ):
+                # The acknowledged HLC trajectory owns the vehicle. Any LL
+                # setpoint here would immediately cancel that trajectory.
+                command_position = None
+                command_yaw = translation_control.yaw_deg
             elif not translation_control.uses_position_setpoint:
                 command_position = None
                 command_yaw = translation_control.yaw_deg
@@ -13304,6 +13612,28 @@ class InteractionsControl:
                         'before PID integrator reset'
                     )
                 translation_control.send(self.lo_commander)
+                if release_goto_completion_pending:
+                    self._translation_high_level_active = False
+                    release_goto_takeover_active = False
+                    release_goto_completion_pending = False
+                    self._log_event('Release Goto Takeover Completed', {
+                        'target_position_m': (
+                            translation_control.hold_position.tolist()
+                        ),
+                        'actual_position_m': position.tolist(),
+                        'actual_velocity_m_s': (
+                            output.estimate.velocity.tolist()
+                        ),
+                        'control_owner': 'low_level_position_setpoint',
+                        'position_integrators_reset': True,
+                        'integrator_reset_method': (
+                            position_integrator_reset_method
+                        ),
+                        'integrator_reset_elapsed_s': (
+                            position_integrator_reset_elapsed_s
+                        ),
+                        'state_source': 'crazyflie_state_estimate',
+                    })
                 if (
                     mpc_automatic_finish_after_handoff_send_reason is not None
                 ):
@@ -13612,6 +13942,8 @@ class InteractionsControl:
                 'release_behavior_mode': release_mode,
                 'coast_control_policy': (
                     (
+                        'direct_release_high_level_goto'
+                        if release_goto_takeover_enabled else
                         (
                             (
                                 'direct_level_attitude_unwind_then_position'

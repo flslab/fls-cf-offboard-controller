@@ -944,7 +944,7 @@ class Controller:
         start_position = (0.0, -1.0, 1.0)
         outbound_position = (0.0, 1.0, 1.0)
         yaw_deg = 0.0
-        outbound_duration_s = 3.0
+        outbound_duration_s = 2.0
         destination_hold_s = 5.0
         return_command_duration_s = 3.0
         command_rate_hz = 100.0
@@ -2456,7 +2456,7 @@ if __name__ == '__main__':
     ap.add_argument(
         "--baseline", action="store_true",
         help=("baseline flight: HLC go_to from (0,-1,1) to (0,1,1) "
-              "in 3s, hold 5s, then stream position commands back"),
+              "in 2s, hold 5s, then stream position commands back"),
     )
     ap.add_argument(
         "--sense", action="store_true",
