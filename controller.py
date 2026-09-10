@@ -2368,6 +2368,7 @@ class Controller:
         self.tracker_process = subprocess.Popen([
             self.args.localizer_bin,
             "--config", self.args.localizer_config,
+            "--tag", self.args.tag,
         ])
         time.sleep(0.1)
         if self.tracker_process.poll() is not None:
