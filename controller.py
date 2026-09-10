@@ -38,7 +38,13 @@ from Interaction.braking_repeat_test import validate_repeat_test_options
 
 from mocap import Mocap
 from smooth_controller import SmoothController
-from tracker import LocalizerState, MyGridRequest, Tracker
+from tracker import (
+    LocalizerState,
+    MyGridRequest,
+    Tracker,
+    reset_estimator_and_acknowledge,
+    wait_for_position_estimator,
+)
 from logger import setup_logging
 from pid_autotuner import PIDAutotuner
 
@@ -604,13 +610,36 @@ class Controller:
         if not all(math.isfinite(value) for value in (x, y, z, yaw)):
             raise RuntimeError("localizer published a non-finite initial pose")
         self._set_initial_position(x, y, z, yaw)
-        reset_estimator(self.cf)
-        self.tracker.acknowledge_initial_pose(initial.initial_pose_generation)
+        logger.info(
+            "Resetting EKF before acknowledging localizer generation %d",
+            initial.initial_pose_generation,
+        )
+        reset_estimator_and_acknowledge(
+            self.cf,
+            initial.initial_pose_generation,
+            self.tracker.acknowledge_initial_pose,
+        )
         tracking = self.tracker.wait_for(
             [LocalizerState.TAKEOFF_TRACKING, LocalizerState.HYPERGRID_ACQUIRE,
              LocalizerState.HYPERGRID_TRACKING],
             self.args.localizer_timeout,
         )
+        logger.info("Localizer handshake complete; waiting for EKF convergence")
+        try:
+            wait_for_position_estimator(self.cf, self.args.localizer_timeout)
+        except TimeoutError as error:
+            latest = self.tracker.latest()
+            if latest is None:
+                localizer_status = "localizer_output=none"
+            else:
+                localizer_status = (
+                    f"localizer_state={latest.state.name}, "
+                    f"pose_valid={latest.pose_valid}, "
+                    f"pose_sequence={latest.pose_sequence}, "
+                    f"feature_count={latest.feature_count}"
+                )
+            raise TimeoutError(f"{error}; {localizer_status}") from error
+        logger.info("EKF position estimate converged")
         self._set_marker_grid_mode(tracking.mygrid_request)
 
         threshold = tracking.acquisition_height
@@ -693,19 +722,7 @@ class Controller:
             dt = self.args.takeoff_altitude / takeoff_speed
             height = 0.1 if self.args.vicon or self.use_flowdeck else 0.02
             if getattr(self, "tracker", None):
-                try:
-                    self._land_with_localizer(
-                        low_level, commander, handoff_dry_run, height,
-                        takeoff_speed)
-                except (HandoffError, RuntimeError, ValueError):
-                    logger.exception(
-                        "Localizer landing transition failed; using streamed descent")
-                    latest = self.tracker.latest()
-                    position = latest.position if latest and latest.pose_valid else (None,) * 3
-                    self._land_with_low_level(
-                        low_level, *position, height,
-                        max(2.0, self.args.takeoff_altitude / takeoff_speed),
-                    )
+                self._land_with_localizer(commander, height, takeoff_speed)
                 self.flying = False
                 self._send_landing_confirmation(voltage)
                 return
@@ -744,7 +761,7 @@ class Controller:
 
         self._send_landing_confirmation(voltage)
 
-    def _land_with_localizer(self, low_level, commander, dry_run, height, speed):
+    def _land_with_localizer(self, commander, height, speed):
         latest = self.tracker.latest()
         if latest is None or not latest.pose_valid or self.init_coord is None:
             raise RuntimeError("no valid localizer pose is available for landing")
@@ -767,10 +784,8 @@ class Controller:
         )
         duration = max(1.0, distance / speed)
         logger.info(f"Returning to MyGrid acquisition height {threshold:.3f}m")
-        handoff_to_high_level(
-            low_level, commander, "go_to", initial_x, initial_y, threshold,
-            yaw, duration, relative=False, dry_run=dry_run,
-        )
+        commander.go_to(
+            initial_x, initial_y, threshold, yaw, duration, relative=False)
         time.sleep(duration + 0.5)
 
         try:
@@ -781,8 +796,7 @@ class Controller:
             logger.warning("MyGrid was not acquired at the landing threshold")
 
         duration = max(2.0, (threshold - height) / speed)
-        handoff_to_high_level(
-            low_level, commander, "land", height, duration, dry_run=dry_run)
+        commander.land(height, duration)
         logger.info(f"Landing duration: {duration} seconds")
         time.sleep(duration + 1)
         commander.stop()
@@ -2354,6 +2368,7 @@ class Controller:
         self.tracker_process = subprocess.Popen([
             self.args.localizer_bin,
             "--config", self.args.localizer_config,
+            "--tag", self.args.tag,
         ])
         time.sleep(0.1)
         if self.tracker_process.poll() is not None:
