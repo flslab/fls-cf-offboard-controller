@@ -38,7 +38,13 @@ from Interaction.braking_repeat_test import validate_repeat_test_options
 
 from mocap import Mocap
 from smooth_controller import SmoothController
-from tracker import LocalizerState, MyGridRequest, Tracker
+from tracker import (
+    LocalizerState,
+    MyGridRequest,
+    Tracker,
+    reset_estimator_and_acknowledge,
+    wait_for_position_estimator,
+)
 from logger import setup_logging
 from pid_autotuner import PIDAutotuner
 
@@ -604,13 +610,23 @@ class Controller:
         if not all(math.isfinite(value) for value in (x, y, z, yaw)):
             raise RuntimeError("localizer published a non-finite initial pose")
         self._set_initial_position(x, y, z, yaw)
-        reset_estimator(self.cf)
-        self.tracker.acknowledge_initial_pose(initial.initial_pose_generation)
+        logger.info(
+            "Resetting EKF before acknowledging localizer generation %d",
+            initial.initial_pose_generation,
+        )
+        reset_estimator_and_acknowledge(
+            self.cf,
+            initial.initial_pose_generation,
+            self.tracker.acknowledge_initial_pose,
+        )
         tracking = self.tracker.wait_for(
             [LocalizerState.TAKEOFF_TRACKING, LocalizerState.HYPERGRID_ACQUIRE,
              LocalizerState.HYPERGRID_TRACKING],
             self.args.localizer_timeout,
         )
+        logger.info("Localizer handshake complete; waiting for EKF convergence")
+        wait_for_position_estimator(self.cf, self.args.localizer_timeout)
+        logger.info("EKF position estimate converged")
         self._set_marker_grid_mode(tracking.mygrid_request)
 
         threshold = tracking.acquisition_height

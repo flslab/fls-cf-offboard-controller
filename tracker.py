@@ -1,15 +1,62 @@
 """Bridge between the Crazyflie and the high-rate localizer shared memory."""
 
+from collections import deque
 from dataclasses import dataclass
 from enum import IntEnum
 import math
 import mmap
 import os
 import struct
-from threading import Condition, Lock
+from threading import Condition, Event, Lock
 import time
 
 from cflib.crazyflie.log import LogConfig
+
+
+def reset_estimator_and_acknowledge(cf, generation, acknowledge):
+    """Reset the EKF, then allow localizer positions to reach it."""
+    cf.param.set_value('kalman.resetEstimation', '1')
+    time.sleep(0.1)
+    cf.param.set_value('kalman.resetEstimation', '0')
+    acknowledge(generation)
+
+
+def wait_for_position_estimator(cf, timeout, threshold=0.001,
+                                history_size=10, period_ms=500):
+    """Wait for bounded Kalman variance convergence."""
+    converged = Event()
+    variables = ('kalman.varPX', 'kalman.varPY', 'kalman.varPZ')
+    histories = {
+        variable: deque(maxlen=history_size) for variable in variables
+    }
+
+    def on_data(_timestamp, data, _log_config):
+        for variable in variables:
+            histories[variable].append(float(data[variable]))
+        if all(
+            len(history) == history_size
+            and max(history) - min(history) < threshold
+            for history in histories.values()
+        ):
+            converged.set()
+
+    variance_log = LogConfig(
+        name='LocalizerEstimatorVariance', period_in_ms=period_ms
+    )
+    for variable in variables:
+        variance_log.add_variable(variable, 'float')
+    cf.log.add_config(variance_log)
+    variance_log.data_received_cb.add_callback(on_data)
+    try:
+        variance_log.start()
+        if not converged.wait(timeout):
+            raise TimeoutError(
+                f'position estimator did not converge within {timeout:.1f}s'
+            )
+    finally:
+        variance_log.stop()
+        variance_log.delete()
+        variance_log.data_received_cb.remove_callback(on_data)
 
 
 class LocalizerState(IntEnum):
