@@ -56,8 +56,17 @@ class InteractionLogger(LogManager):
         self.cf_log_data = copy.deepcopy(cf_log_vars)
 
         self.cf_var_logger = []
-        for name, log_group in cf_log_vars.items():
-            var_logger = LogConfig(name=f'{name}', period_in_ms=cf_log_period)
+        for name, log_group in self.cf_log_data.items():
+            # Match the ordinary logger's legacy-period compensation. cflib
+            # divides period_in_ms by 10 before sending CONTROL_START_BLOCK,
+            # while the deployed FLS firmware consumes that byte in 1 ms
+            # units. Multiplying here preserves the configured period on that
+            # firmware (for example 10 -> 100 -> byte 10 -> actual 10 ms).
+            log_period = cf_log_period * 10
+            if "log_period_ms" in log_group:
+                log_period = log_group.pop("log_period_ms") * 10
+
+            var_logger = LogConfig(name=f'{name}', period_in_ms=log_period)
 
             for par, conf in log_group.items():
                 var_logger.add_variable(par, conf["type"])
