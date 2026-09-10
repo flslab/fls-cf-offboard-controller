@@ -5584,7 +5584,7 @@ class InteractionsControl:
             self._run_translation()
 
     def run_calibration(self) -> None:
-        """Run contact-free wrench and planar braking identification."""
+        """Run configured calibration stages (plain mode is wrench/XYZ only)."""
         if self.mission.get('Interaction', {}).get('action') != 'translation':
             raise ValueError('--calibrate requires Interaction.action: translation')
         self._run_translation(calibration_mode=True)
@@ -5848,7 +5848,10 @@ class InteractionsControl:
                     braking_config = wrench_config.setdefault(
                         'planar_braking_calibration', {}
                     )
-                    braking_config['enabled'] = True
+                    braking_config['enabled'] = bool(
+                        braking_test_mode
+                        or braking_config.get('enabled', False)
+                    )
                     braking_plan = PlanarBrakingCalibration(
                         braking_config,
                         start_after_s=excitation_end_s,
@@ -5857,8 +5860,10 @@ class InteractionsControl:
                     # Retired experiment: old mission settings must not
                     # silently re-enable position-capture trials.
                     wrench_config.pop('position_capture_calibration', None)
-                    # Validate readiness timing before entering any maneuver.
-                    CalibrationTrialReadinessGate(braking_config)
+                    # Validate readiness timing only when an explicitly
+                    # selected planar maneuver will actually run.
+                    if braking_plan.enabled:
+                        CalibrationTrialReadinessGate(braking_config)
                     adaptive_options = wrench_config.get('adaptive_braking_calibration', {})
                     adaptive_preflight = AdaptiveBrakingCalibration(
                         adaptive_options, braking_plan, getattr(self, 'ctrl_rate', 0.0), None,
@@ -5868,7 +5873,10 @@ class InteractionsControl:
                             raise ValueError('adaptive braking is only available with --calibrate, not --braking-test')
                         AdaptiveBrakingCalibration.validate_online_worker_config(
                             wrench_config.get('online_prediction_calibration'))
-                    interaction_duration = braking_plan.end_s + 0.5
+                    interaction_duration = (
+                        braking_plan.end_s
+                        if braking_plan.enabled else excitation_end_s
+                    ) + 0.5
                 else:
                     wrench_config, saved_calibration = apply_drone_calibration(
                         wrench_config,
@@ -5991,7 +5999,7 @@ class InteractionsControl:
                         list(bootstrap_config.initial_speed_targets_m_s),
                         bootstrap_config.repetitions_per_cell,
                     )
-                if calibration_mode:
+                if calibration_mode and braking_plan.enabled:
                     if getattr(self, 'bounds', None) is not None:
                         margin = braking_plan.max_displacement_m
                         x, y = float(target[0]), float(target[1])
@@ -6040,6 +6048,13 @@ class InteractionsControl:
                             'POSITION command. Existing safety limits remain active.',
                             adaptive_preflight.target_distance_m,
                         )
+                elif calibration_mode:
+                    logger.warning(
+                        'Calibration runs contact-free wrench/XYZ excitation '
+                        'only for %.1fs; planar attitude/braking trials and '
+                        'online prediction fitting are disabled.',
+                        interaction_duration,
+                    )
                 interaction_function = (
                     self.interaction_onboard_wrench_admittance
                     if detection_method == 'momentum_impulse'

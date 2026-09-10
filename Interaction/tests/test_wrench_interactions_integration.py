@@ -1700,13 +1700,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         controller.run_calibration()
 
         self.assertEqual(len(calls), 1)
-        braking_plan = PlanarBrakingCalibration(
-            calls[0]['config']['planar_braking_calibration'],
-            start_after_s=12.0,
-        )
-        self.assertAlmostEqual(
-            calls[0]['duration'], braking_plan.end_s + 0.5
-        )
+        self.assertAlmostEqual(calls[0]['duration'], 12.5)
         self.assertTrue(calls[0]['calibration_mode'])
         self.assertTrue(
             calls[0]['config']['calibration_excitation']['enabled']
@@ -1715,7 +1709,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             calls[0]['config']['startup_bias_calibration_enabled']
         )
         self.assertTrue(calls[0]['config']['shadow_mode'])
-        self.assertTrue(
+        self.assertFalse(
             calls[0]['config']['planar_braking_calibration']['enabled']
         )
         self.assertNotIn('position_capture_calibration', calls[0]['config'])
