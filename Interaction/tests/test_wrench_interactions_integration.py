@@ -29,6 +29,7 @@ from Interaction.interactions import (
     kinetic_energy_velocity,
     potentiometer_release_direction,
     predict_delayed_zero_crossing,
+    predict_release_goto_stop,
     release_dataset_world_y_directions,
     release_candidate_sensor_stale_watchdog,
     release_tail_neutralization_attitude,
@@ -1699,13 +1700,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         controller.run_calibration()
 
         self.assertEqual(len(calls), 1)
-        braking_plan = PlanarBrakingCalibration(
-            calls[0]['config']['planar_braking_calibration'],
-            start_after_s=12.0,
-        )
-        self.assertAlmostEqual(
-            calls[0]['duration'], braking_plan.end_s + 0.5
-        )
+        self.assertAlmostEqual(calls[0]['duration'], 12.5)
         self.assertTrue(calls[0]['calibration_mode'])
         self.assertTrue(
             calls[0]['config']['calibration_excitation']['enabled']
@@ -1714,7 +1709,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             calls[0]['config']['startup_bias_calibration_enabled']
         )
         self.assertTrue(calls[0]['config']['shadow_mode'])
-        self.assertTrue(
+        self.assertFalse(
             calls[0]['config']['planar_braking_calibration']['enabled']
         )
         self.assertNotIn('position_capture_calibration', calls[0]['config'])
@@ -4579,6 +4574,52 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'max_xy_speed_m_s': 0.03,
             'stationary_dwell_s': 0.5,
         })
+
+class ReleaseGotoTakeoverTests(unittest.TestCase):
+    def test_stop_prediction_uses_delay_then_constant_deceleration_on_axis(self):
+        prediction = predict_release_goto_stop(
+            release_position=[0.10, -0.20, 1.0],
+            measured_velocity=[0.10, 0.50, 0.0],
+            interaction_direction=[0.0, 1.0, 0.0],
+            deceleration_m_s2=1.0,
+            command_delay_s=0.30,
+        )
+        self.assertAlmostEqual(prediction['projected_speed_m_s'], 0.50)
+        self.assertAlmostEqual(prediction['delay_distance_m'], 0.15)
+        self.assertAlmostEqual(prediction['braking_distance_m'], 0.125)
+        np.testing.assert_allclose(
+            prediction['target_position_m'], [0.10, 0.075, 1.0]
+        )
+        self.assertAlmostEqual(prediction['trajectory_duration_s'], 0.80)
+
+    def test_takeover_suspends_low_level_mode_then_resumes_fixed_target(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_release_goto_takeover_enabled=True,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0],
+            [0.0, 0.5, 0.0],
+            1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            coast=True,
+        ))
+        self.assertTrue(control.begin_release_goto_takeover(
+            [0.0, 0.275, 1.0], 2.0, 0.8
+        ))
+        self.assertEqual(control.mode, control.HIGH_LEVEL_RELEASE_GOTO)
+        self.assertFalse(control.uses_position_setpoint)
+        self.assertFalse(control.complete_release_goto_takeover(
+            2.799, [0.0, 0.27, 1.0]
+        ))
+        self.assertTrue(control.complete_release_goto_takeover(
+            2.8, [0.0, 0.275, 1.0]
+        ))
+        self.assertEqual(control.mode, control.POSITION_HOLD)
+        np.testing.assert_allclose(control.hold_position, [0.0, 0.275, 1.0])
 
 
 if __name__ == '__main__':

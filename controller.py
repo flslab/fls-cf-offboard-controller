@@ -1116,7 +1116,7 @@ class Controller:
         start_position = (0.0, -1.0, 1.0)
         outbound_position = (0.0, 1.0, 1.0)
         yaw_deg = 0.0
-        outbound_duration_s = 3.0
+        outbound_duration_s = 2.0
         destination_hold_s = 5.0
         return_command_duration_s = 3.0
         command_rate_hz = 100.0
@@ -1625,7 +1625,7 @@ class Controller:
                 self.args, 'adaptive_braking_calibration', None
             )
             adaptive_braking = (
-                bool(getattr(self.args, 'calibrate', False))
+                False
                 if adaptive_selection is None
                 else bool(adaptive_selection)
             )
@@ -1650,20 +1650,21 @@ class Controller:
                     self.mission
                 )
             elif getattr(self.args, 'calibrate', False):
-                # Calibration defaults to adaptive braking, but the choice is
-                # scoped to an independent mission copy and never leaks into a
-                # later interaction.  Explicit --no-adaptive-braking-calibration
-                # also overrides a stale mission-level true value.
+                # Plain calibration contains only contact-free wrench/XYZ
+                # excitation. Planar braking is an explicit opt-in, and every
+                # override stays scoped to an independent mission copy.
                 calibration_mission = deepcopy(self.mission)
                 wrench_config = calibration_mission.setdefault('Interaction', {}).setdefault(
                     'config', {}).setdefault('wrench_interaction', {})
                 wrench_config.setdefault('adaptive_braking_calibration', {})[
                     'enabled'
                 ] = adaptive_braking
-                if adaptive_braking:
-                    wrench_config.setdefault('online_prediction_calibration', {})[
-                        'enabled'
-                    ] = True
+                wrench_config.setdefault('online_prediction_calibration', {})[
+                    'enabled'
+                ] = adaptive_braking
+                wrench_config.setdefault('planar_braking_calibration', {})[
+                    'enabled'
+                ] = adaptive_braking
                 if targeted_braking:
                     # The targeted protocol is deliberately deterministic: it
                     # collects controlled high-speed +/-Y data at three brake
@@ -2496,7 +2497,7 @@ if __name__ == '__main__':
     ap.add_argument(
         "--baseline", action="store_true",
         help=("baseline flight: HLC go_to from (0,-1,1) to (0,1,1) "
-              "in 3s, hold 5s, then stream position commands back"),
+              "in 2s, hold 5s, then stream position commands back"),
     )
     ap.add_argument(
         "--sense", action="store_true",
@@ -2544,8 +2545,8 @@ if __name__ == '__main__':
     ap.add_argument(
         "--calibrate", action="store_true",
         help=(
-            "run contact-free position excitation plus bounded planar "
-            "attitude/braking trials, then save both calibration models"
+            "run only the contact-free wrench/XYZ excitation and save its "
+            "calibration model"
         ),
     )
     ap.add_argument(
@@ -2566,9 +2567,8 @@ if __name__ == '__main__':
         "--adaptive-braking-calibration",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help=("use online-model-guided attitude braking during --calibrate "
-              "(default: enabled; use --no-adaptive-braking-calibration for "
-              "fixed-duration baseline trials)"),
+        help=("add online-model-guided planar attitude braking to "
+              "--calibrate (default: disabled)"),
     )
     ap.add_argument(
         "--braking-test", action="store_true",
@@ -2693,7 +2693,7 @@ if __name__ == '__main__':
     if args.sense and not args.log:
         ap.error('--sense requires --log so sensor and estimate data are recorded')
     if args.calibrate and not args.log:
-        ap.error('--calibrate requires --log so both fitted responses are recorded')
+        ap.error('--calibrate requires --log so the fitted response is recorded')
     if args.calibrate and args.smooth_controller_rate < 50:
         ap.error(
             '--calibrate requires --smooth-controller-rate 50 or higher so '

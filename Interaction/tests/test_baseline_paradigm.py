@@ -101,10 +101,10 @@ class BaselineParadigmTests(unittest.TestCase):
         namespace['run_baseline'](instance)
 
         go_to = next(item for item in timeline if item[0] == 'hl_go_to')
-        self.assertEqual(go_to[1], (0.0, 1.0, 1.0, 0.0, 3.0))
+        self.assertEqual(go_to[1], (0.0, 1.0, 1.0, 0.0, 2.0))
         self.assertEqual(go_to[2], {'relative': False})
         sleeps = [item[1] for item in timeline if item[0] == 'sleep']
-        self.assertEqual(sleeps[:2], [3.0, 5.0])
+        self.assertEqual(sleeps[:2], [2.0, 5.0])
         self.assertEqual(len(sleeps[2:]), 300)
         self.assertTrue(all(value == 0.01 for value in sleeps[2:]))
 
@@ -125,7 +125,7 @@ class BaselineParadigmTests(unittest.TestCase):
             timeline[reset_index][1],
             ('posCtlPid.resetI', 'velCtlPid.resetI'),
         )
-        self.assertEqual(timeline[reset_index][2], 8.0)
+        self.assertEqual(timeline[reset_index][2], 7.0)
         self.assertLess(reset_index, position_indices[0])
 
         event_names = [

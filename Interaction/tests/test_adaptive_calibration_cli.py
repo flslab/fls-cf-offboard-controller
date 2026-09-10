@@ -5,6 +5,7 @@ from contextlib import redirect_stderr
 from copy import deepcopy
 import datetime
 import io
+import math
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -27,6 +28,7 @@ def parse_controller_args(tokens):
             break  # Never create the hardware-owning Controller.
         statements.append(node)
     namespace = {'argparse': argparse, 'datetime': datetime,
+                 'math': math,
                  'validate_repeat_test_options': validate_repeat_test_options}
     with patch('sys.argv', ['controller.py', *tokens]):
         exec(compile(ast.Module(body=statements, type_ignores=[]), str(SOURCE), 'exec'), namespace)
@@ -111,7 +113,7 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
             with self.subTest(options=options), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parse_controller_args(['--calibrate', '--adaptive-braking-calibration', *options])
 
-    def test_default_calibration_enables_both_in_independent_copy(self):
+    def test_default_calibration_disables_planar_stage_in_independent_copy(self):
         run, factory = calibration_switch()
         mission = {'Interaction': {'config': {'wrench_interaction': {
             'adaptive_braking_calibration': {'enabled': False},
@@ -120,14 +122,16 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
         run(self.controller(self.args(), mission))
         configured = factory.call_args.args[3]
         self.assertIsNot(configured, mission)
-        self.assertTrue(configured['Interaction']['config']['wrench_interaction'][
+        self.assertFalse(configured['Interaction']['config']['wrench_interaction'][
             'adaptive_braking_calibration']['enabled'])
-        self.assertTrue(configured['Interaction']['config']['wrench_interaction'][
+        self.assertFalse(configured['Interaction']['config']['wrench_interaction'][
             'online_prediction_calibration']['enabled'])
+        self.assertFalse(configured['Interaction']['config']['wrench_interaction'][
+            'planar_braking_calibration']['enabled'])
         self.assertEqual(mission, before)
         factory.return_value.run_calibration.assert_called_once()
 
-    def test_explicit_opt_out_overrides_mission_without_disabling_diagnostic_fit(self):
+    def test_explicit_opt_out_disables_entire_planar_stage(self):
         run, factory = calibration_switch()
         mission = {'Interaction': {'config': {'wrench_interaction': {
             'adaptive_braking_calibration': {'enabled': True},
@@ -138,7 +142,8 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
         configured = factory.call_args.args[3]
         wrench = configured['Interaction']['config']['wrench_interaction']
         self.assertFalse(wrench['adaptive_braking_calibration']['enabled'])
-        self.assertTrue(wrench['online_prediction_calibration']['enabled'])
+        self.assertFalse(wrench['online_prediction_calibration']['enabled'])
+        self.assertFalse(wrench['planar_braking_calibration']['enabled'])
         self.assertEqual(mission, before)
 
     def test_selected_mode_enables_both_in_independent_copy_only(self):
@@ -155,7 +160,11 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
         run(self.controller(self.args(adaptive_braking_calibration=True), mission))
         configured = factory.call_args.args[3]
         expected = deepcopy(before)
-        for name in ('adaptive_braking_calibration', 'online_prediction_calibration'):
+        for name in (
+            'adaptive_braking_calibration',
+            'online_prediction_calibration',
+            'planar_braking_calibration',
+        ):
             expected['Interaction']['config']['wrench_interaction'][name]['enabled'] = True
         self.assertEqual(configured, expected)
         self.assertIsNot(configured, mission)
@@ -172,6 +181,7 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
         config = factory.call_args.args[3]['Interaction']['config']['wrench_interaction']
         self.assertTrue(config['adaptive_braking_calibration']['enabled'])
         self.assertTrue(config['online_prediction_calibration']['enabled'])
+        self.assertTrue(config['planar_braking_calibration']['enabled'])
         self.assertNotIn('Interaction', mission)
 
     def test_targeted_protocol_is_exact_and_scoped_to_private_copy(self):
