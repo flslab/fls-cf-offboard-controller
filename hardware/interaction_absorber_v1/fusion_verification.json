@@ -1,0 +1,32 @@
+{
+  "native_joint_count": 26,
+  "slider_joint": "Compression_22mm",
+  "samples": [
+    {
+      "commanded_compression_mm": 0,
+      "measured_carriage_dx_mm": 0.0
+    },
+    {
+      "commanded_compression_mm": 11,
+      "measured_carriage_dx_mm": -10.999999999999996
+    },
+    {
+      "commanded_compression_mm": 22,
+      "measured_carriage_dx_mm": -22.0
+    }
+  ],
+  "part_count": 27,
+  "cloud_save": false,
+  "geometry": "Imported BRep; native Fusion assembly joints",
+  "slider_limits_mm": [
+    -22,
+    0
+  ],
+  "slider_direction": [
+    1,
+    0,
+    0
+  ],
+  "restored_to_extension": true,
+  "final_export": "cad/LightBender_Airpot_22mm_V1.f3d"
+}

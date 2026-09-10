@@ -29,7 +29,10 @@ from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.utils import uri_helper
 from cflib.utils.reset_estimator import reset_estimator
 
-from Interaction.interactions import InteractionsControl
+from Interaction.interactions import (
+    InteractionsControl,
+    reset_pid_integrators_without_ack,
+)
 from Interaction.command_wrapper import CommandWrapper
 from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.braking_repeat_test import validate_repeat_test_options
@@ -174,6 +177,8 @@ class Controller:
             getattr(self.args, 'interaction', False)
             or getattr(self.args, 'calibrate', False)
             or getattr(self.args, 'braking_test', False)
+            or getattr(self.args, 'mpc', False)
+            or getattr(self.args, 'baseline', False)
             or getattr(self.args, 'sense', False)
         )
 
@@ -218,6 +223,7 @@ class Controller:
         self.load_manifest()
         self.setup_sockets()
         self.download_mission_config()
+        self.prepare_mpc_mission()
         self.setup_logging()
         self.setup_force_sensor()
         self.setup_commander()
@@ -247,6 +253,21 @@ class Controller:
             self.arm()
             self.takeoff()
         self.run_mission()
+
+    def prepare_mpc_mission(self):
+        """Validate and freeze the private LMPC bootstrap mission pre-arm."""
+        if not getattr(self.args, 'mpc', False):
+            return
+        from Interaction.mpc_bootstrap_calibration import (
+            prepare_mpc_bootstrap_mission,
+        )
+        self.mission = prepare_mpc_bootstrap_mission(
+            self.mission,
+            drone_id=self.args.drone_id,
+            controller_rate_hz=self.args.smooth_controller_rate,
+        )
+        if self.missions:
+            self.missions[0] = self.mission
 
     def stop(self):
         self.mission_duration = time.time() - self.mission_start_time
@@ -711,13 +732,13 @@ class Controller:
         else:
             raise Exception(
                 "No mode is passed. Passing --illumination, --interaction, "
-                "--calibrate, or --braking-test is required."
+                "--calibrate, --braking-test, or --mpc is required."
             )
 
         logger.debug("logging activated")
 
     def setup_force_sensor(self):
-        """Start the Arduino potentiometer reader for ``--sense`` runs."""
+        """Start the Arduino potentiometer reader for sensor-backed runs."""
         if not getattr(self.args, 'sense', False):
             return
 
@@ -896,8 +917,11 @@ class Controller:
             self.z_tune_pattern()
         elif self.args.trajectory:
             self.fly_trajectory(self.args.trajectory)
+        elif getattr(self.args, 'baseline', False):
+            self.run_baseline()
         elif (getattr(self.args, 'calibrate', False)
-              or getattr(self.args, 'braking_test', False)):
+              or getattr(self.args, 'braking_test', False)
+              or getattr(self.args, 'mpc', False)):
             self.calibration_switch()
         elif self.args.orchestrated:
             if self.args.illumination:
@@ -914,6 +938,83 @@ class Controller:
             hover_time = self.args.t
         self.hl_commander.go_to(0.0, 0.0, self.args.takeoff_altitude, self.args.init_yaw, hover_time, relative=False)
         self._safe_sleep(hover_time)
+
+    def run_baseline(self):
+        """Compare an HLC outbound leg with an LL position-command return."""
+        start_position = (0.0, -1.0, 1.0)
+        outbound_position = (0.0, 1.0, 1.0)
+        yaw_deg = 0.0
+        outbound_duration_s = 3.0
+        destination_hold_s = 5.0
+        return_command_duration_s = 3.0
+        command_rate_hz = 100.0
+
+        def log_event(name, **data):
+            if self.log_manager is not None:
+                self.log_manager.add_log_entry(
+                    'events', {'time': time.time(), **data}, name=name,
+                )
+
+        logger.info(
+            'Baseline outbound: HLC go_to %s -> %s over %.1fs',
+            start_position, outbound_position, outbound_duration_s,
+        )
+        log_event(
+            'Baseline High Level Outbound Started',
+            start_position_m=list(start_position),
+            target_position_m=list(outbound_position),
+            duration_s=outbound_duration_s,
+            command_owner='high_level_commander',
+        )
+        self.hl_commander.go_to(
+            *outbound_position, yaw_deg, outbound_duration_s,
+            relative=False,
+        )
+        self._safe_sleep(outbound_duration_s)
+
+        log_event(
+            'Baseline Destination Hold Started',
+            target_position_m=list(outbound_position),
+            duration_s=destination_hold_s,
+            command_owner='high_level_commander',
+        )
+        self._safe_sleep(destination_hold_s)
+
+        reset_started_at = time.time()
+        reset_method = reset_pid_integrators_without_ack(
+            self.cf, ('posCtlPid.resetI', 'velCtlPid.resetI'),
+        )
+        reset_elapsed_s = time.time() - reset_started_at
+        log_event(
+            'Baseline Position Return Started',
+            start_position_m=list(outbound_position),
+            target_position_m=list(start_position),
+            command_owner='low_level_position_setpoint',
+            command_rate_hz=command_rate_hz,
+            command_duration_s=return_command_duration_s,
+            position_integrators_reset=True,
+            integrator_reset_method=reset_method,
+            integrator_reset_elapsed_s=reset_elapsed_s,
+        )
+        logger.info(
+            'Baseline return: streaming position target %s at %.0fHz for %.1fs',
+            start_position, command_rate_hz, return_command_duration_s,
+        )
+        command_period_s = 1.0 / command_rate_hz
+        command_count = int(round(
+            return_command_duration_s * command_rate_hz
+        ))
+        for _ in range(command_count):
+            self.ll_commander.send_position_setpoint(
+                *start_position, yaw_deg,
+            )
+            self._safe_sleep(command_period_s)
+
+        log_event(
+            'Baseline Complete',
+            final_target_position_m=list(start_position),
+            position_command_count=command_count,
+        )
 
     def xy_tune_pattern(self):
         logger.info("Executing XY Tune Pattern...")
@@ -1333,7 +1434,7 @@ class Controller:
             self.ll_commander.send_notify_setpoint_stop()
 
     def calibration_switch(self):
-        """Run contact-free calibration or the data-only attitude repeat test."""
+        """Run one isolated calibration/data-collection flight mode."""
         try:
             targeted_braking = bool(getattr(
                 self.args, 'targeted_braking_calibration', False
@@ -1342,6 +1443,7 @@ class Controller:
                     not getattr(self.args, 'calibrate', False)
                     or getattr(self.args, 'braking_test', False)
                     or getattr(self.args, 'interaction', False)
+                    or getattr(self.args, 'mpc', False)
                     or getattr(self.args, 'ground_test', False)):
                 raise ValueError(
                     '--targeted-braking-calibration requires --calibrate '
@@ -1358,7 +1460,8 @@ class Controller:
             if adaptive_braking and (
                     not getattr(self.args, 'calibrate', False)
                     or getattr(self.args, 'braking_test', False)
-                    or getattr(self.args, 'interaction', False)):
+                    or getattr(self.args, 'interaction', False)
+                    or getattr(self.args, 'mpc', False)):
                 raise ValueError(
                     '--adaptive-braking-calibration requires --calibrate '
                     'without --interaction or --braking-test'
@@ -1367,7 +1470,14 @@ class Controller:
                 self._safe_sleep(1)
                 return
             calibration_mission = self.mission
-            if getattr(self.args, 'calibrate', False):
+            if getattr(self.args, 'mpc', False):
+                from Interaction.mpc_bootstrap_calibration import (
+                    configure_mpc_bootstrap_mission,
+                )
+                calibration_mission = configure_mpc_bootstrap_mission(
+                    self.mission
+                )
+            elif getattr(self.args, 'calibrate', False):
                 # Calibration defaults to adaptive braking, but the choice is
                 # scoped to an independent mission copy and never leaks into a
                 # later interaction.  Explicit --no-adaptive-braking-calibration
@@ -1416,7 +1526,9 @@ class Controller:
                 sense_sign=self.args.sense_sign,
                 sense_max_age_s=self.args.sense_max_age,
             )
-            if getattr(self.args, 'braking_test', False):
+            if getattr(self.args, 'mpc', False):
+                controller.run_mpc_calibration()
+            elif getattr(self.args, 'braking_test', False):
                 controller.run_braking_test(
                     direction=getattr(self.args, 'braking_test_direction', None),
                     repetitions=getattr(self.args, 'braking_test_repetitions', None),
@@ -2342,6 +2454,11 @@ if __name__ == '__main__':
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
     ap.add_argument(
+        "--baseline", action="store_true",
+        help=("baseline flight: HLC go_to from (0,-1,1) to (0,1,1) "
+              "in 3s, hold 5s, then stream position commands back"),
+    )
+    ap.add_argument(
         "--sense", action="store_true",
         help=(
             "record Arduino potentiometer force and enable configured "
@@ -2389,6 +2506,14 @@ if __name__ == '__main__':
         help=(
             "run contact-free position excitation plus bounded planar "
             "attitude/braking trials, then save both calibration models"
+        ),
+    )
+    ap.add_argument(
+        "--mpc", action="store_true",
+        help=(
+            "automatically collect offline LMPC accelerate-to-rest "
+            "trajectories on world +/-Y; uses the legacy attitude coast "
+            "controller and never grants LMPC command authority"
         ),
     )
     ap.add_argument(
@@ -2485,17 +2610,26 @@ if __name__ == '__main__':
         validate_repeat_test_options(args)
     except ValueError as error:
         ap.error(str(error))
-    if args.interaction and args.calibrate:
-        ap.error('--interaction and --calibrate are mutually exclusive')
+    experiment_modes = (
+        args.interaction, args.calibrate, args.braking_test, args.mpc,
+        args.baseline,
+    )
+    if sum(bool(mode) for mode in experiment_modes) > 1:
+        ap.error(
+            '--interaction, --calibrate, --braking-test, --mpc, and '
+            '--baseline are '
+            'mutually exclusive'
+        )
     if args.targeted_braking_calibration and (
             not args.calibrate or args.interaction or args.braking_test
-            or args.ground_test):
+            or args.mpc or args.ground_test):
         ap.error(
             '--targeted-braking-calibration requires --calibrate without '
             '--interaction, --braking-test, or --ground-test'
         )
     if args.adaptive_braking_calibration is not None and (
-            not args.calibrate or args.interaction or args.braking_test):
+            not args.calibrate or args.interaction or args.braking_test
+            or args.mpc):
         ap.error(
             '--[no-]adaptive-braking-calibration requires --calibrate '
             'without --interaction or --braking-test'
@@ -2509,6 +2643,62 @@ if __name__ == '__main__':
             '--calibrate requires --smooth-controller-rate 50 or higher so '
             'each 0.32s attitude step has enough fit samples'
         )
+    mpc_conflicts = (
+        ('sense', args.sense),
+        ('illumination', args.illumination),
+        ('intractable-illumination', args.intractable_illumination),
+        ('morphing', args.morphing),
+        ('autotune', args.autotune),
+        ('simple-takeoff', args.simple_takeoff),
+        ('rotation-test', args.rotation_test),
+        ('xy-tune', args.xy_tune),
+        ('z-tune', args.z_tune),
+        ('trajectory', args.trajectory is not None),
+        ('ground-test', args.ground_test),
+        ('droneless', args.droneless),
+        ('skip-takeoff', args.skip_takeoff),
+        ('skip-landing', args.skip_landing),
+    )
+    if args.mpc:
+        for name, enabled in mpc_conflicts:
+            if enabled:
+                ap.error('--mpc cannot be combined with --' + name)
+    if args.mpc and not args.log:
+        ap.error('--mpc requires --log so raw states and actual sends are retained')
+    if args.mpc and not args.orchestrated:
+        ap.error('--mpc must be launched through orchestrator.py --mpc')
+    if args.mpc and args.smooth_controller_rate != 100:
+        ap.error('--mpc requires --smooth-controller-rate 100')
+    if args.mpc and args.cf_log_period != 10:
+        ap.error('--mpc requires --cf-log-period 10 ms')
+    baseline_conflicts = (
+        ('sense', args.sense),
+        ('illumination', args.illumination),
+        ('intractable-illumination', args.intractable_illumination),
+        ('morphing', args.morphing),
+        ('autotune', args.autotune),
+        ('simple-takeoff', args.simple_takeoff),
+        ('rotation-test', args.rotation_test),
+        ('xy-tune', args.xy_tune),
+        ('z-tune', args.z_tune),
+        ('trajectory', args.trajectory is not None),
+        ('ground-test', args.ground_test),
+        ('droneless', args.droneless),
+        ('skip-takeoff', args.skip_takeoff),
+        ('skip-landing', args.skip_landing),
+    )
+    if args.baseline:
+        for name, enabled in baseline_conflicts:
+            if enabled:
+                ap.error('--baseline cannot be combined with --' + name)
+    if args.baseline and not args.log:
+        ap.error('--baseline requires --log')
+    if args.baseline and not args.orchestrated:
+        ap.error('--baseline must be launched through orchestrator.py --baseline')
+    if args.baseline and args.smooth_controller_rate != 100:
+        ap.error('--baseline requires --smooth-controller-rate 100')
+    if args.baseline and args.cf_log_period != 10:
+        ap.error('--baseline requires --cf-log-period 10 ms')
     if args.sense_spring_constant <= 0.0:
         ap.error('--sense-spring-constant must be positive')
     if args.sense_max_extension <= 0.0:

@@ -237,6 +237,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # control only after speed, tilt, and angular rate are all settled.
         "coast_velocity_braking_enabled": False,
         "coast_velocity_handoff_speed_m_s": 0.03,
+        # Optional forward position target after a velocity-coast handoff.
+        # Zero preserves the measured handoff pose used by legacy missions.
+        "coast_velocity_handoff_position_offset_m": 0.0,
         # Optional staged variant of velocity braking.  First request zero
         # velocity, then predict when the measured braking attitude has enough
         # residual impulse to reach a small positive terminal speed.  At that
@@ -244,23 +247,30 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # for level attitude before position control takes ownership.
         "coast_velocity_predictive_unwind_enabled": False,
         "coast_velocity_unwind_terminal_speed_m_s": 0.10,
-        # The open-loop attitude fit did not cover the full velocity-estimator
-        # tail seen during the first staged flight.  Keep a conservative tail
-        # margin here and re-brake after leveling if meaningful speed remains.
+        # Legacy constant-tail predictor settings. Missions can instead enable
+        # the rate-limited leveling integration below.
         "coast_velocity_unwind_prediction_margin_s": 0.15,
+        "coast_velocity_unwind_command_switch_delay_s": 0.0,
+        "coast_velocity_unwind_integrated_leveling_enabled": False,
+        "coast_velocity_unwind_tail_calibration_scale": 1.0,
+        "coast_velocity_unwind_direct_level_attitude_enabled": False,
+        "coast_velocity_unwind_position_control_enabled": False,
+        # Conservative physical leveling rate measured in flight. This is not
+        # the 720 deg/s command-setpoint slew limit.
+        "coast_velocity_unwind_leveling_rate_deg_s": 100.0,
+        "coast_velocity_unwind_integration_step_s": 0.01,
         "coast_velocity_unwind_min_deceleration_m_s2": 0.30,
         "coast_velocity_unwind_filter_time_constant_s": 0.03,
         "coast_velocity_unwind_max_target_error_m_s": 0.15,
-        # Optional one-control-step lookahead.  Instead of waiting for the
-        # current tail prediction to cross the fixed terminal-speed target,
-        # also unwind when one more real braking update is predicted to cross
-        # it.  This compensates for the discrete command/update interval while
-        # preserving the legacy fixed-threshold behavior by default.
+        # Optional decision/send-delay compensation. The active guard is the
+        # current projected deceleration times this configured interval.
         "coast_velocity_unwind_one_step_lookahead_enabled": False,
         "coast_velocity_unwind_one_step_max_dt_s": 0.03,
-        # Once level, resume zero-velocity braking if total XY speed is still
-        # above this narrow hysteresis band. This prevents predictive unwind
-        # from tracking a persistent 0.03--0.10 m/s residual forever.
+        "coast_velocity_unwind_low_speed_fallback_m_s": 0.03,
+        "coast_velocity_rebrake_enabled": True,
+        # Once level, resume zero-velocity braking only if signed speed along
+        # the locked interaction direction remains above this hysteresis band.
+        # Lateral drift can delay handoff but does not trigger full re-braking.
         "coast_velocity_rebrake_speed_m_s": 0.04,
         "coast_velocity_handoff_min_projected_speed_m_s": -0.03,
         "coast_velocity_handoff_max_rate_deg_s": 5.0,
@@ -329,13 +339,17 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
     },
     "safety": {
         "max_frame_age_s": 0.10,
+        # Host callback arrival times can temporarily separate telemetry
+        # groups that were sampled together onboard.  Keep measuring and
+        # logging the skew, but do not abort a flight solely on that value.
+        "enforce_state_group_skew": False,
         # During shadow calibration only, skip transient stale state packets
         # while retaining position hold. Active interaction keeps the strict
         # max_state_age_s cutoff.
         "calibration_state_dropout_timeout_s": 0.25,
-        # A shared telemetry pause can make one callback group recover a few
-        # milliseconds before the others. During calibration position-control
-        # phases only, wait briefly for those groups to resynchronize.
+        # If skew enforcement is explicitly enabled, a calibration
+        # position-control phase may briefly wait for callback groups to
+        # resynchronize after a shared telemetry pause.
         "calibration_state_group_skew_timeout_s": 0.25,
         # Bound the total time calibration may remain paused across repeated
         # individually recoverable state-stream gaps.

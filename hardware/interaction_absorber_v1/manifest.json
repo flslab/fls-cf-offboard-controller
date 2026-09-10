@@ -1,0 +1,486 @@
+{
+  "parameters": {
+    "stroke_mm": 22.0,
+    "airpot_stroke_mm": 25.4,
+    "rail_spacing_mm": 32.0,
+    "shaft_d_mm": 2.0,
+    "bearing_id_mm": 2.034,
+    "bearing_od_mm": 3.5,
+    "bearing_len_mm": 3.0,
+    "housing_bore_mm": 3.5,
+    "shaft_axis_z_mm": 12.0,
+    "base_t_mm": 2.5,
+    "carriage_length_mm": 18.0
+  },
+  "datums_mm": {
+    "airpot_mount_x": 0,
+    "rod_shoulder_extended": 70.944,
+    "rod_shoulder_compressed": 48.944,
+    "usable_stroke": 22.0,
+    "nominal_end_margin": 1.6999999999999993,
+    "rail_cut_length": 83.444,
+    "rear_bumper_start": 34.944,
+    "front_bridge_start": 78.944
+  },
+  "parts": [
+    {
+      "name": "P01_Base_rear_flange",
+      "group": "fixed",
+      "kind": "PETG",
+      "color": [
+        0.23,
+        0.29,
+        0.36
+      ],
+      "note": "",
+      "volume_mm3": 7357.199837830095,
+      "bbox_mm": [
+        86.444,
+        46.0,
+        23.0
+      ]
+    },
+    {
+      "name": "P02_Front_bridge",
+      "group": "fixed",
+      "kind": "PETG",
+      "color": [
+        0.23,
+        0.29,
+        0.36
+      ],
+      "note": "",
+      "volume_mm3": 1441.615806523091,
+      "bbox_mm": [
+        5.200000000000145,
+        46.0,
+        14.0
+      ]
+    },
+    {
+      "name": "P03_Carriage_contact_head",
+      "group": "moving",
+      "kind": "PETG",
+      "color": [
+        0.12,
+        0.66,
+        0.55
+      ],
+      "note": "",
+      "volume_mm3": 5417.014563772834,
+      "bbox_mm": [
+        31.0,
+        38.0,
+        19.5
+      ]
+    },
+    {
+      "name": "P04_Contact_pad",
+      "group": "moving",
+      "kind": "TPU",
+      "color": [
+        0.96,
+        0.49,
+        0.16
+      ],
+      "note": "Bond to head; TPU is not a force limiter.",
+      "volume_mm3": 420.41150082346223,
+      "bbox_mm": [
+        1.5,
+        18.0,
+        16.0
+      ]
+    },
+    {
+      "name": "B01_Shaft_L",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.75,
+        0.79,
+        0.83
+      ],
+      "note": "",
+      "volume_mm3": 262.14705738614674,
+      "bbox_mm": [
+        83.444,
+        2.0,
+        2.0
+      ]
+    },
+    {
+      "name": "B02_igus_GSM020303_L1",
+      "group": "moving",
+      "kind": "purchase",
+      "color": [
+        0.18,
+        0.16,
+        0.12
+      ],
+      "note": "2 x 3.5 x 3 mm; housing must be finish-reamed.",
+      "volume_mm3": 19.115438332590035,
+      "bbox_mm": [
+        3.0,
+        3.5,
+        3.5
+      ]
+    },
+    {
+      "name": "B02_igus_GSM020303_L2",
+      "group": "moving",
+      "kind": "purchase",
+      "color": [
+        0.18,
+        0.16,
+        0.12
+      ],
+      "note": "2 x 3.5 x 3 mm; housing must be finish-reamed.",
+      "volume_mm3": 19.115438332590035,
+      "bbox_mm": [
+        3.0,
+        3.5,
+        3.5
+      ]
+    },
+    {
+      "name": "P05_Bumper_L_rear",
+      "group": "fixed",
+      "kind": "TPU",
+      "color": [
+        0.96,
+        0.49,
+        0.16
+      ],
+      "note": "",
+      "volume_mm3": 39.25420020660447,
+      "bbox_mm": [
+        2.0,
+        7.0,
+        7.0
+      ]
+    },
+    {
+      "name": "P05_Bumper_L_front",
+      "group": "fixed",
+      "kind": "TPU",
+      "color": [
+        0.96,
+        0.49,
+        0.16
+      ],
+      "note": "",
+      "volume_mm3": 39.25420020660447,
+      "bbox_mm": [
+        2.0,
+        7.0,
+        7.0
+      ]
+    },
+    {
+      "name": "B01_Shaft_R",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.75,
+        0.79,
+        0.83
+      ],
+      "note": "",
+      "volume_mm3": 262.14705738614674,
+      "bbox_mm": [
+        83.444,
+        2.0,
+        2.0
+      ]
+    },
+    {
+      "name": "B02_igus_GSM020303_R1",
+      "group": "moving",
+      "kind": "purchase",
+      "color": [
+        0.18,
+        0.16,
+        0.12
+      ],
+      "note": "2 x 3.5 x 3 mm; housing must be finish-reamed.",
+      "volume_mm3": 19.11543833259003,
+      "bbox_mm": [
+        3.0,
+        3.5,
+        3.5
+      ]
+    },
+    {
+      "name": "B02_igus_GSM020303_R2",
+      "group": "moving",
+      "kind": "purchase",
+      "color": [
+        0.18,
+        0.16,
+        0.12
+      ],
+      "note": "2 x 3.5 x 3 mm; housing must be finish-reamed.",
+      "volume_mm3": 19.11543833259003,
+      "bbox_mm": [
+        3.0,
+        3.5,
+        3.5
+      ]
+    },
+    {
+      "name": "P05_Bumper_R_rear",
+      "group": "fixed",
+      "kind": "TPU",
+      "color": [
+        0.96,
+        0.49,
+        0.16
+      ],
+      "note": "",
+      "volume_mm3": 39.254200206604494,
+      "bbox_mm": [
+        2.0,
+        7.0,
+        7.0
+      ]
+    },
+    {
+      "name": "P05_Bumper_R_front",
+      "group": "fixed",
+      "kind": "TPU",
+      "color": [
+        0.96,
+        0.49,
+        0.16
+      ],
+      "note": "",
+      "volume_mm3": 39.254200206604494,
+      "bbox_mm": [
+        2.0,
+        7.0,
+        7.0
+      ]
+    },
+    {
+      "name": "B03_Airpot_glass_envelope",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.43,
+        0.75,
+        0.9
+      ],
+      "note": "Borosilicate OD max; internal model simplified.",
+      "volume_mm3": 775.5207066528509,
+      "bbox_mm": [
+        31.673800000000004,
+        7.899399999999999,
+        7.8994
+      ]
+    },
+    {
+      "name": "B04_Airpot_head_thread_envelope",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.17,
+        0.22,
+        0.28
+      ],
+      "note": "",
+      "volume_mm3": 488.2454848700962,
+      "bbox_mm": [
+        6.984999999999999,
+        10.16,
+        10.159999999999998
+      ]
+    },
+    {
+      "name": "B05_Airpot_front_cap",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.17,
+        0.22,
+        0.28
+      ],
+      "note": "",
+      "volume_mm3": 229.9162891275814,
+      "bbox_mm": [
+        3.5559999999999974,
+        10.16,
+        10.159999999999998
+      ]
+    },
+    {
+      "name": "B06_Airpot_adjuster_envelope",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.8,
+        0.59,
+        0.25
+      ],
+      "note": "Keep rear tool access; no servo adapter.",
+      "volume_mm3": 23.938936020354223,
+      "bbox_mm": [
+        1.9050000000000002,
+        4.0,
+        4.0
+      ]
+    },
+    {
+      "name": "B07_Airpot_mount_washer",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "note": "",
+      "volume_mm3": 35.72719696627229,
+      "bbox_mm": [
+        0.5920000000000001,
+        13.0,
+        13.0
+      ]
+    },
+    {
+      "name": "B08_Airpot_mount_nut",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.7,
+        0.72,
+        0.74
+      ],
+      "note": "",
+      "volume_mm3": 160.68295544173253,
+      "bbox_mm": [
+        2.3875999999999995,
+        14.664696837416493,
+        12.700000000000003
+      ]
+    },
+    {
+      "name": "B09_Airpot_piston_NF_rod",
+      "group": "moving",
+      "kind": "purchase",
+      "color": [
+        0.7,
+        0.72,
+        0.75
+      ],
+      "note": "",
+      "volume_mm3": 227.21218451663546,
+      "bbox_mm": [
+        48.08420000000001,
+        5.499261314031185,
+        5.399999999999999
+      ]
+    },
+    {
+      "name": "B10_NF_lockwasher",
+      "group": "moving",
+      "kind": "purchase",
+      "color": [
+        0.75,
+        0.75,
+        0.75
+      ],
+      "note": "",
+      "volume_mm3": 6.47612056513297,
+      "bbox_mm": [
+        0.5079999999999956,
+        4.6,
+        4.600000000000001
+      ]
+    },
+    {
+      "name": "B11_NF_2_64_nut",
+      "group": "moving",
+      "kind": "purchase",
+      "color": [
+        0.76,
+        0.64,
+        0.34
+      ],
+      "note": "",
+      "volume_mm3": 24.837615990128917,
+      "bbox_mm": [
+        1.5748000000000104,
+        5.499261314031185,
+        4.762500000000001
+      ]
+    },
+    {
+      "name": "B12_M2x16_L",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.5,
+        0.54,
+        0.58
+      ],
+      "note": "",
+      "volume_mm3": 70.9586293170377,
+      "bbox_mm": [
+        3.8000000000000114,
+        3.799999999999997,
+        18.0
+      ]
+    },
+    {
+      "name": "B13_M2_nut_L",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.52,
+        0.55,
+        0.58
+      ],
+      "note": "",
+      "volume_mm3": 16.628480895949238,
+      "bbox_mm": [
+        4.618802153517009,
+        4.0,
+        1.6
+      ]
+    },
+    {
+      "name": "B12_M2x16_R",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.5,
+        0.54,
+        0.58
+      ],
+      "note": "",
+      "volume_mm3": 70.9586293170377,
+      "bbox_mm": [
+        3.8000000000000114,
+        3.799999999999997,
+        18.0
+      ]
+    },
+    {
+      "name": "B13_M2_nut_R",
+      "group": "fixed",
+      "kind": "purchase",
+      "color": [
+        0.52,
+        0.55,
+        0.58
+      ],
+      "note": "",
+      "volume_mm3": 16.628480895949238,
+      "bbox_mm": [
+        4.618802153517009,
+        4.0,
+        1.6
+      ]
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "all_solids_valid": true,
+  "part_count": 27,
+  "sweep_positions_mm": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22
+  ],
+  "moving_fixed_interferences": [],
+  "printed_solid_material_mass_g": 18.752792609316405,
+  "limitations": [
+    "Discrete geometric sweep, not continuous collision proof or FEA.",
+    "OEM internal geometry simplified; no wires, tolerance stack or elastic deformation simulated.",
+    "1 N is a test target, not a force cap. TPU stops can transmit much more.",
+    "No electronic regulation, automatic return, or cage-specific interface in V1."
+  ]
+}

@@ -3,6 +3,7 @@ import random
 import threading
 import time
 import traceback
+from collections import deque
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,16 @@ from Interaction.learning_velocity_mpc import (
     VelocityMPCState,
     frozen_velocity_model_from_prediction_model,
 )
+from Interaction.mpc_bootstrap_calibration import (
+    MPCBootstrapAutomaticAttempt,
+    MPCBootstrapCalibrationConfig,
+    MPCBootstrapCoverage,
+    mpc_bootstrap_required_boundary_margin_m,
+    mpc_bootstrap_model_contract_for_direction,
+    mpc_bootstrap_world_y_direction,
+    mpc_decision_state_age_is_fresh,
+    validate_mpc_bootstrap_model_contracts,
+)
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
 from Interaction.potentiometer_force_sensor import (
     PotentiometerContactDetector,
@@ -44,6 +55,12 @@ from Interaction.predictive_brake_handoff import (
     PredictiveBrakeToPosition,
     projected_tilt_from_world_acceleration,
     projected_tilt_history_from_world_acceleration,
+)
+from Interaction.release_lmpc_terminal_gate import (
+    ATTITUDE_ZDISTANCE_COMMAND,
+    ReleaseLMPCTerminalGate,
+    ReleaseLMPCTerminalSample,
+    classify_terminal_post_state_commands,
 )
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
 from Interaction.wrench_model_calibration import (
@@ -313,6 +330,64 @@ def potentiometer_release_direction(force_world, measured_velocity):
     return direction, source
 
 
+def release_dataset_world_y_directions(
+        task_axis_xy,
+        measured_sensor_axis_world_xy,
+        *,
+        sensor_axis_is_unsigned=False,
+):
+    """Return snapped task direction and unsnapped measured release axis.
+
+    Dataset projection is defined only for a configured/runtime task axis that
+    lies on the world-Y line.  The measured sensor axis is normalized but never
+    snapped, so replay can independently verify the real release alignment.
+    This helper is deliberately fail-closed and has no flight-control effect.
+    """
+    try:
+        task_axis = np.asarray(task_axis_xy, dtype=float)
+        measured_axis = np.asarray(
+            measured_sensor_axis_world_xy, dtype=float
+        )
+    except (TypeError, ValueError):
+        return None, None
+    if (
+        measured_axis.shape != (2,)
+        or not np.all(np.isfinite(measured_axis))
+    ):
+        return None, None
+    measured_norm = float(np.linalg.norm(measured_axis))
+    if measured_norm <= 1e-9:
+        return None, None
+    measured_unit = measured_axis/measured_norm
+    if (
+        task_axis.shape != (2,)
+        or not np.all(np.isfinite(task_axis))
+    ):
+        return None, measured_unit
+    task_norm = float(np.linalg.norm(task_axis))
+    if task_norm <= 1e-9:
+        return None, measured_unit
+    task_unit = task_axis/task_norm
+    if abs(float(task_unit[1]))+1e-12 < 0.98:
+        return None, measured_unit
+    task_direction = np.array([
+        0.0, float(np.sign(task_unit[1])),
+    ])
+    signed_alignment = float(task_direction @ measured_unit)
+    if sensor_axis_is_unsigned and abs(signed_alignment)+1e-12 >= 0.98:
+        # A single-axis potentiometer measures compression magnitude.  During
+        # the two-direction LMPC bootstrap, orient that measured axis line by
+        # the actual release-velocity sign while retaining the raw signed axis
+        # separately in the flight log.
+        measured_unit = measured_unit * (
+            1.0 if signed_alignment >= 0.0 else -1.0
+        )
+        signed_alignment = float(task_direction @ measured_unit)
+    if signed_alignment+1e-12 < 0.98:
+        return None, measured_unit
+    return task_direction, measured_unit
+
+
 def resolve_release_mode(
         configured_mode,
         force_sensor_available,
@@ -520,8 +595,12 @@ class InitialContactArmingGate:
             max_xy_speed_m_s=0.03,
             stationary_dwell_s=0.5,
             enabled=True,
+            apply_after_each_interaction=True,
     ):
         self.enabled = bool(enabled)
+        self.apply_after_each_interaction = bool(
+            apply_after_each_interaction
+        )
         self.max_xy_speed_m_s = float(max_xy_speed_m_s)
         self.stationary_dwell_s = float(stationary_dwell_s)
         if (
@@ -544,9 +623,16 @@ class InitialContactArmingGate:
         self.xy_speed_m_s = None
         self._last_timestamp = None
 
-    def reset(self):
-        """Require a new stationary dwell before another interaction."""
-        self.armed = not self.enabled
+    def reset(self, after_interaction=False):
+        """Reset the gate, optionally skipping repeated post-contact dwell."""
+        require_stationary_dwell = bool(
+            self.enabled
+            and (
+                not after_interaction
+                or self.apply_after_each_interaction
+            )
+        )
+        self.armed = not require_stationary_dwell
         self.stationary_since = None
         self.stationary_elapsed_s = 0.0
         self.xy_speed_m_s = None
@@ -771,6 +857,107 @@ def attitude_to_world_acceleration(roll_deg, pitch_deg, yaw_deg):
         body[0] * cos_y - body[1] * sin_y,
         body[0] * sin_y + body[1] * cos_y,
     ])
+
+
+def integrate_rate_limited_leveling_velocity_delta(
+        orientation_rpy,
+        angular_velocity,
+        direction_xy,
+        response_delay_s,
+        leveling_rate_deg_s,
+        integration_step_s,
+        acceleration_scale=1.0,
+        attitude_limit_deg=30.0,
+):
+    """Integrate longitudinal acceleration while roll/pitch return to level."""
+    orientation = np.asarray(orientation_rpy, dtype=float).copy()
+    rates = np.asarray(angular_velocity, dtype=float)
+    direction = np.asarray(direction_xy, dtype=float).copy()
+    values = np.asarray([
+        response_delay_s,
+        leveling_rate_deg_s,
+        integration_step_s,
+        acceleration_scale,
+        attitude_limit_deg,
+    ], dtype=float)
+    if (
+        orientation.shape != (3,)
+        or rates.shape != (3,)
+        or direction.shape != (2,)
+        or not np.all(np.isfinite(orientation))
+        or not np.all(np.isfinite(rates))
+        or not np.all(np.isfinite(direction))
+        or not np.all(np.isfinite(values))
+        or response_delay_s < 0.0
+        or leveling_rate_deg_s <= 0.0
+        or integration_step_s <= 0.0
+        or acceleration_scale <= 0.0
+        or attitude_limit_deg <= 0.0
+    ):
+        raise ValueError('rate-limited leveling inputs must be finite and valid')
+    direction_norm = float(np.linalg.norm(direction))
+    if direction_norm <= 1e-9:
+        raise ValueError('leveling projection direction must be nonzero')
+    direction /= direction_norm
+
+    attitude_limit_rad = np.radians(attitude_limit_deg)
+    orientation[:2] = np.clip(
+        orientation[:2], -attitude_limit_rad, attitude_limit_rad
+    )
+    leveling_rate_rad_s = np.radians(leveling_rate_deg_s)
+
+    def projected_acceleration(rpy):
+        acceleration_xy = acceleration_scale * attitude_to_world_acceleration(
+            np.degrees(rpy[0]),
+            np.degrees(rpy[1]),
+            np.degrees(rpy[2]),
+        )
+        return float(acceleration_xy @ direction)
+
+    velocity_delta = 0.0
+    elapsed_s = 0.0
+    current_acceleration = projected_acceleration(orientation)
+
+    remaining_delay_s = float(response_delay_s)
+    while remaining_delay_s > 1e-12:
+        step_s = min(integration_step_s, remaining_delay_s)
+        next_orientation = orientation.copy()
+        rate_xy = rates[:2].copy()
+        rate_norm = float(np.linalg.norm(rate_xy))
+        if rate_norm > leveling_rate_rad_s:
+            rate_xy *= leveling_rate_rad_s / rate_norm
+        next_orientation[:2] += rate_xy * step_s
+        next_orientation[:2] = np.clip(
+            next_orientation[:2], -attitude_limit_rad, attitude_limit_rad
+        )
+        next_acceleration = projected_acceleration(next_orientation)
+        velocity_delta += 0.5 * (
+            current_acceleration + next_acceleration
+        ) * step_s
+        orientation = next_orientation
+        current_acceleration = next_acceleration
+        elapsed_s += step_s
+        remaining_delay_s -= step_s
+
+    while float(np.linalg.norm(orientation[:2])) > 1e-12:
+        tilt_rad = float(np.linalg.norm(orientation[:2]))
+        step_s = min(integration_step_s, tilt_rad / leveling_rate_rad_s)
+        next_tilt_rad = max(0.0, tilt_rad - leveling_rate_rad_s * step_s)
+        next_orientation = orientation.copy()
+        next_orientation[:2] *= next_tilt_rad / tilt_rad
+        next_acceleration = projected_acceleration(next_orientation)
+        velocity_delta += 0.5 * (
+            current_acceleration + next_acceleration
+        ) * step_s
+        orientation = next_orientation
+        current_acceleration = next_acceleration
+        elapsed_s += step_s
+
+    return {
+        'velocity_delta_m_s': float(velocity_delta),
+        'duration_s': float(elapsed_s),
+        'final_projected_acceleration_m_s2': float(current_acceleration),
+    }
 
 
 def predict_delayed_zero_crossing(
@@ -2204,6 +2391,7 @@ class TranslationControlHandoff:
     POSITION_HOLD = 'position_hold'
     CONTACT_POSITION = 'position_interaction'
     CONTACT_ZDISTANCE = 'attitude_zdistance'
+    MPC_BOOTSTRAP_ACCELERATION = 'mpc_bootstrap_acceleration'
     ATTITUDE_COAST = 'attitude_coast'
     VELOCITY_COAST = 'velocity_coast'
     POSITION_COAST = 'position_coast'
@@ -2235,14 +2423,24 @@ class TranslationControlHandoff:
             coast_level_handoff_delay_s=0.30,
             coast_velocity_braking_enabled=False,
             coast_velocity_handoff_speed_m_s=0.03,
+            coast_velocity_handoff_position_offset_m=0.0,
             coast_velocity_predictive_unwind_enabled=False,
             coast_velocity_unwind_terminal_speed_m_s=0.10,
             coast_velocity_unwind_prediction_margin_s=0.15,
+            coast_velocity_unwind_command_switch_delay_s=0.0,
+            coast_velocity_unwind_integrated_leveling_enabled=False,
+            coast_velocity_unwind_tail_calibration_scale=1.0,
+            coast_velocity_unwind_direct_level_attitude_enabled=False,
+            coast_velocity_unwind_position_control_enabled=False,
+            coast_velocity_unwind_leveling_rate_deg_s=100.0,
+            coast_velocity_unwind_integration_step_s=0.01,
             coast_velocity_unwind_min_deceleration_m_s2=0.30,
             coast_velocity_unwind_filter_time_constant_s=0.03,
             coast_velocity_unwind_max_target_error_m_s=0.15,
             coast_velocity_unwind_one_step_lookahead_enabled=False,
             coast_velocity_unwind_one_step_max_dt_s=0.03,
+            coast_velocity_unwind_low_speed_fallback_m_s=0.03,
+            coast_velocity_rebrake_enabled=True,
             coast_velocity_rebrake_speed_m_s=0.04,
             coast_velocity_handoff_min_projected_speed_m_s=-0.03,
             coast_velocity_handoff_max_rate_deg_s=5.0,
@@ -2336,6 +2534,9 @@ class TranslationControlHandoff:
         self.coast_velocity_handoff_speed_m_s = float(
             coast_velocity_handoff_speed_m_s
         )
+        self.coast_velocity_handoff_position_offset_m = float(
+            coast_velocity_handoff_position_offset_m
+        )
         self.coast_velocity_predictive_unwind_enabled = bool(
             coast_velocity_predictive_unwind_enabled
         )
@@ -2344,6 +2545,27 @@ class TranslationControlHandoff:
         )
         self.coast_velocity_unwind_prediction_margin_s = float(
             coast_velocity_unwind_prediction_margin_s
+        )
+        self.coast_velocity_unwind_command_switch_delay_s = float(
+            coast_velocity_unwind_command_switch_delay_s
+        )
+        self.coast_velocity_unwind_integrated_leveling_enabled = bool(
+            coast_velocity_unwind_integrated_leveling_enabled
+        )
+        self.coast_velocity_unwind_tail_calibration_scale = float(
+            coast_velocity_unwind_tail_calibration_scale
+        )
+        self.coast_velocity_unwind_direct_level_attitude_enabled = bool(
+            coast_velocity_unwind_direct_level_attitude_enabled
+        )
+        self.coast_velocity_unwind_position_control_enabled = bool(
+            coast_velocity_unwind_position_control_enabled
+        )
+        self.coast_velocity_unwind_leveling_rate_deg_s = float(
+            coast_velocity_unwind_leveling_rate_deg_s
+        )
+        self.coast_velocity_unwind_integration_step_s = float(
+            coast_velocity_unwind_integration_step_s
         )
         self.coast_velocity_unwind_min_deceleration_m_s2 = float(
             coast_velocity_unwind_min_deceleration_m_s2
@@ -2359,6 +2581,12 @@ class TranslationControlHandoff:
         )
         self.coast_velocity_unwind_one_step_max_dt_s = float(
             coast_velocity_unwind_one_step_max_dt_s
+        )
+        self.coast_velocity_unwind_low_speed_fallback_m_s = float(
+            coast_velocity_unwind_low_speed_fallback_m_s
+        )
+        self.coast_velocity_rebrake_enabled = bool(
+            coast_velocity_rebrake_enabled
         )
         self.coast_velocity_rebrake_speed_m_s = float(
             coast_velocity_rebrake_speed_m_s
@@ -2413,6 +2641,21 @@ class TranslationControlHandoff:
         self.coast_alignment_dwell_s = float(coast_alignment_dwell_s)
         self.coast_attitude_timeout_s = float(coast_attitude_timeout_s)
         self.rearm_delay_s = float(rearm_delay_s)
+        if (
+            self.coast_velocity_unwind_direct_level_attitude_enabled
+            and not self.coast_velocity_predictive_unwind_enabled
+        ):
+            raise ValueError(
+                'direct level-attitude unwind requires predictive unwind'
+            )
+        if (
+            self.coast_velocity_unwind_direct_level_attitude_enabled
+            and self.coast_velocity_unwind_position_control_enabled
+        ):
+            raise ValueError(
+                'direct level-attitude unwind and position-controlled unwind '
+                'are mutually exclusive'
+            )
         translation_limits = np.asarray([
             self.brake_xy_acceleration_m_s2,
             self.brake_xy_speed_m_s,
@@ -2432,12 +2675,18 @@ class TranslationControlHandoff:
             self.coast_level_handoff_speed_m_s,
             self.coast_level_handoff_delay_s,
             self.coast_velocity_handoff_speed_m_s,
+            self.coast_velocity_handoff_position_offset_m,
             self.coast_velocity_unwind_terminal_speed_m_s,
             self.coast_velocity_unwind_prediction_margin_s,
+            self.coast_velocity_unwind_command_switch_delay_s,
+            self.coast_velocity_unwind_tail_calibration_scale,
+            self.coast_velocity_unwind_leveling_rate_deg_s,
+            self.coast_velocity_unwind_integration_step_s,
             self.coast_velocity_unwind_min_deceleration_m_s2,
             self.coast_velocity_unwind_filter_time_constant_s,
             self.coast_velocity_unwind_max_target_error_m_s,
             self.coast_velocity_unwind_one_step_max_dt_s,
+            self.coast_velocity_unwind_low_speed_fallback_m_s,
             self.coast_velocity_rebrake_speed_m_s,
             self.coast_velocity_handoff_min_projected_speed_m_s,
             self.coast_velocity_handoff_max_rate_deg_s,
@@ -2482,14 +2731,21 @@ class TranslationControlHandoff:
             or self.coast_level_handoff_speed_m_s <= 0
             or self.coast_level_handoff_delay_s < 0
             or self.coast_velocity_handoff_speed_m_s <= 0
+            or self.coast_velocity_handoff_position_offset_m < 0
             or self.coast_velocity_unwind_terminal_speed_m_s < 0
             or self.coast_velocity_unwind_prediction_margin_s < 0
+            or self.coast_velocity_unwind_command_switch_delay_s < 0
+            or self.coast_velocity_unwind_tail_calibration_scale <= 0
+            or self.coast_velocity_unwind_leveling_rate_deg_s <= 0
+            or self.coast_velocity_unwind_integration_step_s <= 0
             or self.coast_velocity_unwind_min_deceleration_m_s2 <= 0
             or self.coast_velocity_unwind_filter_time_constant_s <= 0
             or self.coast_velocity_unwind_max_target_error_m_s <= 0
             or self.coast_velocity_unwind_one_step_max_dt_s <= 0
+            or self.coast_velocity_unwind_low_speed_fallback_m_s <= 0
             or (
                 self.coast_velocity_predictive_unwind_enabled
+                and self.coast_velocity_rebrake_enabled
                 and self.coast_velocity_rebrake_speed_m_s
                 <= self.coast_velocity_handoff_speed_m_s
             )
@@ -2533,6 +2789,10 @@ class TranslationControlHandoff:
         self.stopping_position_m = None
         self.release_mass_kg = None
         self.hover_z = float(self.hold_position[2])
+        # Velocity-coast always uses the task's nominal altitude. Contact and
+        # release updates may refresh hover_z for attitude commands, but must
+        # not turn the zero-velocity brake into a release-height command.
+        self.velocity_coast_fixed_zdistance_m = float(self.hold_position[2])
         self.contact_roll_deg = 0.0
         self.contact_pitch_deg = 0.0
         self.contact_yaw_rate_deg_s = 0.0
@@ -2582,6 +2842,13 @@ class TranslationControlHandoff:
         self._coast_command_history = []
         self._last_attitude_send_timestamp = None
         self._attitude_send_intervals_s = []
+        # Generic send metadata is separate from the attitude-model history.
+        # It lets offline replay distinguish the command already applied at a
+        # measured state from the new command sent after that state, including
+        # duplicate-state resend cycles that do not produce an observer row.
+        self._last_sent_command = None
+        self._sent_command_sequence = 0
+        self._sent_command_history = deque(maxlen=2048)
         self._level_attitude_command_started_at = None
         self._coast_level_handoff_latched = False
         self._tail_neutralization_deadline = None
@@ -2602,6 +2869,14 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_decision_reason = None
         self.coast_velocity_projected_acceleration_m_s2 = None
         self.coast_velocity_unwind_response_horizon_s = None
+        self.coast_velocity_unwind_observed_decision_latency_s = None
+        self.coast_velocity_unwind_total_response_delay_s = None
+        self.coast_velocity_unwind_position_target_m = None
+        self.coast_velocity_unwind_position_progress_m = None
+        self.coast_velocity_unwind_lateral_error_m = None
+        self.coast_velocity_unwind_raw_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
         self.coast_velocity_handoff_rate_ready = False
@@ -2648,8 +2923,11 @@ class TranslationControlHandoff:
         message = {
             self.CONTACT_POSITION: 'HANDLING INTERACTION',
             self.CONTACT_ZDISTANCE: 'HANDLING INTERACTION',
+            self.MPC_BOOTSTRAP_ACCELERATION: (
+                'LMPC BOOTSTRAP: AUTOMATIC ACCELERATION'
+            ),
             self.ATTITUDE_COAST: 'COASTING WITH ATTITUDE',
-            self.VELOCITY_COAST: 'COASTING WITH ZERO VELOCITY COMMAND',
+            self.VELOCITY_COAST: 'VELOCITY COAST: BRAKE / UNWIND',
             self.POSITION_COAST: 'COASTING',
             self.ATTITUDE_BRAKING: 'BRAKING',
             self.POSITION_HOLD: 'HOVER',
@@ -2672,8 +2950,12 @@ class TranslationControlHandoff:
             or (self.mode != self.POSITION_HOLD and not coast_reentry)
         ):
             return False
-        if render_mode not in ('position', 'orientation'):
-            raise ValueError('contact render mode must be position or orientation')
+        if render_mode not in (
+                'position', 'orientation', 'mpc_bootstrap_acceleration'):
+            raise ValueError(
+                'contact render mode must be position, orientation, or '
+                'mpc_bootstrap_acceleration'
+            )
         if current_position is not None:
             position = np.asarray(current_position, dtype=float)
             if position.shape != (3,) or not np.all(np.isfinite(position)):
@@ -2744,6 +3026,14 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_decision_reason = None
         self.coast_velocity_projected_acceleration_m_s2 = None
         self.coast_velocity_unwind_response_horizon_s = None
+        self.coast_velocity_unwind_observed_decision_latency_s = None
+        self.coast_velocity_unwind_total_response_delay_s = None
+        self.coast_velocity_unwind_position_target_m = None
+        self.coast_velocity_unwind_position_progress_m = None
+        self.coast_velocity_unwind_lateral_error_m = None
+        self.coast_velocity_unwind_raw_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
         self.coast_velocity_handoff_rate_ready = False
@@ -2759,8 +3049,13 @@ class TranslationControlHandoff:
         self._coast_velocity_rebrake_pending = False
         self._coast_state_rejection_pending = None
         self._transition_mode(
-            self.CONTACT_POSITION
-            if render_mode == 'position' else self.CONTACT_ZDISTANCE,
+            (
+                self.CONTACT_POSITION
+                if render_mode == 'position' else
+                self.MPC_BOOTSTRAP_ACCELERATION
+                if render_mode == 'mpc_bootstrap_acceleration' else
+                self.CONTACT_ZDISTANCE
+            ),
             log_details=log_details,
         )
         return True
@@ -3123,7 +3418,10 @@ class TranslationControlHandoff:
             coast=False,
     ):
         if self.shadow_mode or self.mode not in (
-                self.CONTACT_POSITION, self.CONTACT_ZDISTANCE):
+                self.CONTACT_POSITION,
+                self.CONTACT_ZDISTANCE,
+                self.MPC_BOOTSTRAP_ACCELERATION,
+        ):
             return False
         coast = bool(coast)
         released_from_position = self.mode == self.CONTACT_POSITION
@@ -3263,6 +3561,14 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_decision_reason = None
         self.coast_velocity_projected_acceleration_m_s2 = None
         self.coast_velocity_unwind_response_horizon_s = None
+        self.coast_velocity_unwind_observed_decision_latency_s = None
+        self.coast_velocity_unwind_total_response_delay_s = None
+        self.coast_velocity_unwind_position_target_m = None
+        self.coast_velocity_unwind_position_progress_m = None
+        self.coast_velocity_unwind_lateral_error_m = None
+        self.coast_velocity_unwind_raw_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
         self.coast_velocity_handoff_rate_ready = False
@@ -3427,6 +3733,67 @@ class TranslationControlHandoff:
             self._level_attitude_command_started_at = None
         self._release_candidate_mode = None
 
+    def _update_predictive_unwind_position_target(
+            self, position, response_delay_s):
+        """Keep a delay-compensated capture point on the release line."""
+        if self.release_position_m is None:
+            raise RuntimeError(
+                'position unwind requires a latched release position'
+            )
+        direction_xy = self.brake_direction[:2].copy()
+        direction_norm = float(np.linalg.norm(direction_xy))
+        if direction_norm <= 1e-9:
+            raise RuntimeError(
+                'position unwind requires a locked interaction direction'
+            )
+        direction_xy /= direction_norm
+        lateral_xy = np.array([-direction_xy[1], direction_xy[0]])
+        release_xy = self.release_position_m[:2]
+        offset_xy = position[:2] - release_xy
+        current_progress_m = float(offset_xy @ direction_xy)
+        current_lateral_error_m = float(offset_xy @ lateral_xy)
+
+        # Place the target where the current state is expected to be when this
+        # command can affect the vehicle. Never move that scalar target back
+        # toward release: if residual attitude starts a reversal, position
+        # control continues pulling toward the furthest capture point instead
+        # of following the reverse motion.
+        candidate_progress_m = float(
+            current_progress_m
+            + max(self.brake_projected_speed_m_s, 0.0) * response_delay_s
+        )
+        previous_progress_m = 0.0
+        if self.coast_velocity_unwind_position_target_m is not None:
+            previous_progress_m = float(
+                (
+                    self.coast_velocity_unwind_position_target_m[:2]
+                    - release_xy
+                ) @ direction_xy
+            )
+        target_progress_m = max(
+            0.0,
+            current_progress_m,
+            candidate_progress_m,
+            previous_progress_m,
+        )
+        target = self.release_position_m.copy()
+        target[:2] = release_xy + target_progress_m * direction_xy
+        target[2] = self.velocity_coast_fixed_zdistance_m
+        self.hold_position = target.copy()
+        self.stopping_position_m = target.copy()
+        self.coast_velocity_unwind_position_target_m = target.copy()
+        self.coast_velocity_unwind_position_progress_m = target_progress_m
+        self.coast_velocity_unwind_lateral_error_m = (
+            current_lateral_error_m
+        )
+        self.coast_tracking_position_error_m = target - position
+        self.coast_tracking_velocity_error_m_s = None
+        self.coast_target_clamped_to_actual = False
+        self.coast_lateral_target_latched_to_actual = False
+        self.coast_tracking_action = (
+            'track_delay_compensated_release_line_position'
+        )
+
     def update_coast_velocity(
             self,
             current_position,
@@ -3435,16 +3802,17 @@ class TranslationControlHandoff:
             current_orientation_rpy=None,
             current_angular_velocity=None,
             allow_position_handoff=True,
+            command_timestamp=None,
     ):
         """Brake in velocity mode and hand off only after a level unwind.
 
         The legacy experimental path remains a zero-velocity command followed
         by a speed-only handoff.  The predictive-unwind variant first uses that
-        same aggressive command, then changes the velocity target to the
-        measured velocity before the zero crossing.  With the velocity-loop
-        integral reset once at that transition, this asks the onboard cascade
-        for level attitude while the already-present tilt consumes the remaining
-        forward speed.
+        same aggressive command, then either changes the velocity target to the
+        measured velocity or transfers to a delay-compensated position target
+        on the release line before the zero crossing. The position variant
+        resets both cascade integrators once at that transition and keeps its
+        longitudinal target from following a later reversal.
         """
         if self.shadow_mode or self.mode != self.VELOCITY_COAST:
             return False
@@ -3461,6 +3829,9 @@ class TranslationControlHandoff:
             dtype=float,
         )
         timestamp = float(timestamp)
+        command_timestamp = float(
+            timestamp if command_timestamp is None else command_timestamp
+        )
         if (
             position.shape != (3,)
             or velocity.shape != (3,)
@@ -3471,6 +3842,7 @@ class TranslationControlHandoff:
             or not np.all(np.isfinite(orientation_rpy))
             or not np.all(np.isfinite(angular_velocity))
             or not np.isfinite(timestamp)
+            or not np.isfinite(command_timestamp)
         ):
             raise ValueError(
                 'velocity coast state must be finite XYZ/RPY/angular-rate'
@@ -3615,45 +3987,102 @@ class TranslationControlHandoff:
                 return False
             handoff_reason = 'velocity_zero_position_handoff'
         else:
-            response_delay_s = self.coast_attitude_response_delay_s
-            response_decay_s = (
-                self.coast_attitude_time_constant_s
-                + self.coast_velocity_unwind_prediction_margin_s
+            # The estimator state is already old when this decision is made.
+            # Add both the observed state-to-decision latency and the measured
+            # brake-to-unwind command-switch delay to the calibrated attitude
+            # response delay before integrating the remaining braking impulse.
+            # All three terms therefore share the state-time reference.
+            decision_latency_s = max(0.0, command_timestamp - timestamp)
+            response_delay_s = (
+                self.coast_attitude_response_delay_s
+                + self.coast_velocity_unwind_command_switch_delay_s
+                + decision_latency_s
             )
-            response_horizon_s = response_delay_s + response_decay_s
-            self.coast_velocity_unwind_response_horizon_s = response_horizon_s
-
-            # During the identified response delay, extrapolate the measured
-            # roll/pitch with angular rate.  Afterwards use the fitted
-            # first-order tail area.  This estimates the remaining velocity
-            # impulse if the onboard velocity loop requests level now.
-            future_orientation = orientation_rpy.copy()
-            future_orientation[:2] += (
-                angular_velocity[:2] * response_delay_s
+            self.coast_velocity_unwind_observed_decision_latency_s = (
+                decision_latency_s
             )
-            attitude_limit_rad = np.radians(self.brake_max_attitude_deg)
-            future_orientation[:2] = np.clip(
-                future_orientation[:2],
-                -attitude_limit_rad,
-                attitude_limit_rad,
+            self.coast_velocity_unwind_total_response_delay_s = (
+                response_delay_s
             )
-            future_acceleration_xy = (
-                self.coast_attitude_acceleration_scale
-                * attitude_to_world_acceleration(
-                    np.degrees(future_orientation[0]),
-                    np.degrees(future_orientation[1]),
-                    np.degrees(future_orientation[2]),
+            if self.coast_velocity_unwind_integrated_leveling_enabled:
+                leveling_prediction = (
+                    integrate_rate_limited_leveling_velocity_delta(
+                        orientation_rpy,
+                        angular_velocity,
+                        self.brake_direction[:2],
+                        response_delay_s,
+                        self.coast_velocity_unwind_leveling_rate_deg_s,
+                        self.coast_velocity_unwind_integration_step_s,
+                        acceleration_scale=(
+                            self.coast_attitude_acceleration_scale
+                        ),
+                        attitude_limit_deg=self.brake_max_attitude_deg,
+                    )
                 )
-            )
-            future_projected_acceleration = float(
-                future_acceleration_xy @ self.brake_direction[:2]
-            )
-            tail_velocity_delta = (
-                0.5
-                * (projected_acceleration + future_projected_acceleration)
-                * response_delay_s
-                + future_projected_acceleration * response_decay_s
-            )
+                raw_tail_velocity_delta = leveling_prediction[
+                    'velocity_delta_m_s'
+                ]
+                # The rate-limited kinematic model under-predicted the
+                # measured post-switch braking tail in real flight. Keep the
+                # physical integration intact, then apply a dedicated,
+                # auditable calibration only to its longitudinal impulse.
+                tail_velocity_delta = raw_tail_velocity_delta
+                if raw_tail_velocity_delta < 0.0:
+                    tail_velocity_delta *= (
+                        self.coast_velocity_unwind_tail_calibration_scale
+                    )
+                response_horizon_s = leveling_prediction['duration_s']
+                future_projected_acceleration = leveling_prediction[
+                    'final_projected_acceleration_m_s2'
+                ]
+                self.coast_velocity_unwind_raw_integrated_velocity_delta_m_s = (
+                    raw_tail_velocity_delta
+                )
+                self.coast_velocity_unwind_integrated_velocity_delta_m_s = (
+                    tail_velocity_delta
+                )
+                self.coast_velocity_unwind_leveling_duration_s = (
+                    response_horizon_s
+                )
+            else:
+                response_decay_s = (
+                    self.coast_attitude_time_constant_s
+                    + self.coast_velocity_unwind_prediction_margin_s
+                )
+                response_horizon_s = response_delay_s + response_decay_s
+                future_orientation = orientation_rpy.copy()
+                future_orientation[:2] += (
+                    angular_velocity[:2] * response_delay_s
+                )
+                attitude_limit_rad = np.radians(self.brake_max_attitude_deg)
+                future_orientation[:2] = np.clip(
+                    future_orientation[:2],
+                    -attitude_limit_rad,
+                    attitude_limit_rad,
+                )
+                future_acceleration_xy = (
+                    self.coast_attitude_acceleration_scale
+                    * attitude_to_world_acceleration(
+                        np.degrees(future_orientation[0]),
+                        np.degrees(future_orientation[1]),
+                        np.degrees(future_orientation[2]),
+                    )
+                )
+                future_projected_acceleration = float(
+                    future_acceleration_xy @ self.brake_direction[:2]
+                )
+                tail_velocity_delta = (
+                    0.5 * (
+                        projected_acceleration + future_projected_acceleration
+                    ) * response_delay_s
+                    + future_projected_acceleration * response_decay_s
+                )
+                self.coast_velocity_unwind_raw_integrated_velocity_delta_m_s = (
+                    None
+                )
+                self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+                self.coast_velocity_unwind_leveling_duration_s = None
+            self.coast_velocity_unwind_response_horizon_s = response_horizon_s
             predicted_terminal_speed = float(
                 self.brake_projected_speed_m_s + tail_velocity_delta
             )
@@ -3661,72 +4090,23 @@ class TranslationControlHandoff:
                 predicted_terminal_speed
             )
 
-            # Counterfactual: keep the zero-velocity brake for one more actual
-            # control update, then request level.  If that next discrete update
-            # would cross the desired terminal speed, unwind now rather than
-            # waiting for a fixed threshold crossing on the following sample.
-            one_step_dt_s = min(
-                max(coast_update_dt_s, self.coast_command_period_s),
-                self.coast_velocity_unwind_one_step_max_dt_s,
+            # Compensate for one fixed decision/send interval using the
+            # current longitudinal deceleration.  Unwind when the predicted
+            # attitude tail is below ``terminal + deceleration * delay``.
+            # This keeps the guard interpretable and prevents angular-rate
+            # extrapolation from producing a very large early-unwind margin.
+            one_step_dt_s = (
+                self.coast_velocity_unwind_one_step_max_dt_s
             )
-            next_orientation = orientation_rpy.copy()
-            next_orientation[:2] += angular_velocity[:2] * one_step_dt_s
-            next_orientation[:2] = np.clip(
-                next_orientation[:2], -attitude_limit_rad, attitude_limit_rad
+            current_deceleration_m_s2 = max(
+                -projected_acceleration,
+                0.0,
             )
-            next_acceleration_xy = (
-                self.coast_attitude_acceleration_scale
-                * attitude_to_world_acceleration(
-                    np.degrees(next_orientation[0]),
-                    np.degrees(next_orientation[1]),
-                    np.degrees(next_orientation[2]),
-                )
-            )
-            next_projected_acceleration = float(
-                next_acceleration_xy @ self.brake_direction[:2]
-            )
-            next_projected_speed = float(
-                self.brake_projected_speed_m_s
-                + 0.5
-                * (projected_acceleration + next_projected_acceleration)
-                * one_step_dt_s
-            )
-            next_future_orientation = next_orientation.copy()
-            next_future_orientation[:2] += (
-                angular_velocity[:2] * response_delay_s
-            )
-            next_future_orientation[:2] = np.clip(
-                next_future_orientation[:2],
-                -attitude_limit_rad,
-                attitude_limit_rad,
-            )
-            next_future_acceleration_xy = (
-                self.coast_attitude_acceleration_scale
-                * attitude_to_world_acceleration(
-                    np.degrees(next_future_orientation[0]),
-                    np.degrees(next_future_orientation[1]),
-                    np.degrees(next_future_orientation[2]),
-                )
-            )
-            next_future_projected_acceleration = float(
-                next_future_acceleration_xy @ self.brake_direction[:2]
-            )
-            next_tail_velocity_delta = (
-                0.5
-                * (
-                    next_projected_acceleration
-                    + next_future_projected_acceleration
-                )
-                * response_delay_s
-                + next_future_projected_acceleration * response_decay_s
+            dynamic_step_guard = (
+                current_deceleration_m_s2 * one_step_dt_s
             )
             predicted_next_step_terminal_speed = float(
-                next_projected_speed + next_tail_velocity_delta
-            )
-            dynamic_step_guard = max(
-                predicted_terminal_speed
-                - predicted_next_step_terminal_speed,
-                0.0,
+                predicted_terminal_speed - dynamic_step_guard
             )
             self.coast_velocity_predicted_next_step_terminal_speed_m_s = (
                 predicted_next_step_terminal_speed
@@ -3747,13 +4127,17 @@ class TranslationControlHandoff:
             ))
 
             # A deliberately conservative early unwind can leave useful
-            # velocity after the vehicle has become level. Re-enter a short
-            # zero-velocity brake only from a settled attitude. Use total XY
-            # speed so lateral residual motion cannot deadlock the handoff.
+            # forward velocity after the vehicle has become level. Re-enter a
+            # short zero-velocity brake only from a settled attitude and only
+            # for residual speed along the locked interaction direction.
+            # Lateral drift may delay handoff, but must not trigger a full
+            # longitudinal re-brake.
             rebrake_started = False
             if (
                 self.coast_velocity_phase == 'predictive_unwind'
-                and xy_speed
+                and self.coast_velocity_rebrake_enabled
+                and not self.coast_velocity_unwind_position_control_enabled
+                and self.brake_projected_speed_m_s
                 >= self.coast_velocity_rebrake_speed_m_s
                 and self.coast_actual_tilt_deg
                 <= self.coast_handoff_max_tilt_deg
@@ -3787,11 +4171,12 @@ class TranslationControlHandoff:
                 one_step_tail_ready = bool(
                     self.coast_velocity_unwind_one_step_lookahead_enabled
                     and deceleration_ready
-                    and predicted_next_step_terminal_speed
-                    <= self.coast_velocity_unwind_terminal_speed_m_s
+                    and predicted_terminal_speed
+                    <= self.coast_velocity_dynamic_unwind_threshold_m_s
                 )
                 low_speed_fallback = bool(
-                    xy_speed <= self.coast_velocity_handoff_speed_m_s
+                    xy_speed
+                    <= self.coast_velocity_unwind_low_speed_fallback_m_s
                 )
                 if (
                     fixed_tail_ready
@@ -3812,59 +4197,78 @@ class TranslationControlHandoff:
                     )
 
             if self.coast_velocity_phase == 'predictive_unwind':
-                update_dt = coast_update_dt_s
-                alpha = 1.0 - np.exp(
-                    -update_dt
-                    / self.coast_velocity_unwind_filter_time_constant_s
-                )
-                filtered_target = (
-                    alpha * velocity[:2]
-                    + (1.0 - alpha) * self.coast_velocity_command_xy_m_s
-                )
-                target_error = filtered_target - velocity[:2]
-                target_error_norm = float(np.linalg.norm(target_error))
-                if (
-                    target_error_norm
-                    > self.coast_velocity_unwind_max_target_error_m_s
-                ):
-                    target_error *= (
-                        self.coast_velocity_unwind_max_target_error_m_s
-                        / target_error_norm
-                    )
-                self.coast_velocity_command_xy_m_s = (
-                    velocity[:2] + target_error
-                )
-                if (
-                    self.brake_projected_speed_m_s
-                    < self.coast_velocity_handoff_min_projected_speed_m_s
-                ):
-                    # Do not let measured-velocity tracking settle on a
-                    # reverse drift.  Request a bounded positive longitudinal
-                    # correction until the signed speed returns to the normal
-                    # handoff region; lateral velocity remains bumpless.
-                    brake_direction_xy = self.brake_direction[:2].copy()
-                    direction_norm = float(np.linalg.norm(brake_direction_xy))
-                    if direction_norm > 1e-9:
-                        brake_direction_xy /= direction_norm
-                        recovery_error_m_s = min(
-                            self.coast_velocity_unwind_max_target_error_m_s,
-                            max(
-                                0.0,
-                                self.coast_velocity_unwind_terminal_speed_m_s
-                                - self.brake_projected_speed_m_s,
-                            ),
-                        )
-                        self.coast_velocity_command_xy_m_s = (
-                            velocity[:2]
-                            + recovery_error_m_s * brake_direction_xy
-                        )
+                if self.coast_velocity_unwind_direct_level_attitude_enabled:
+                    self.coast_velocity_command_xy_m_s.fill(0.0)
+                    self.set_contact_attitude(0.0, 0.0, 0.0)
+                    self.hover_z = self.velocity_coast_fixed_zdistance_m
                     self.coast_tracking_action = (
-                        'recover_reverse_velocity_while_unwinding'
+                        'direct_level_attitude_unwind'
+                    )
+                elif self.coast_velocity_unwind_position_control_enabled:
+                    self.coast_velocity_command_xy_m_s.fill(0.0)
+                    self._update_predictive_unwind_position_target(
+                        position,
+                        response_delay_s,
                     )
                 else:
-                    self.coast_tracking_action = (
-                        'track_measured_velocity_to_unwind_attitude'
+                    update_dt = coast_update_dt_s
+                    alpha = 1.0 - np.exp(
+                        -update_dt
+                        / self.coast_velocity_unwind_filter_time_constant_s
                     )
+                    filtered_target = (
+                        alpha * velocity[:2]
+                        + (1.0 - alpha)
+                        * self.coast_velocity_command_xy_m_s
+                    )
+                    target_error = filtered_target - velocity[:2]
+                    target_error_norm = float(np.linalg.norm(target_error))
+                    if (
+                        target_error_norm
+                        > self.coast_velocity_unwind_max_target_error_m_s
+                    ):
+                        target_error *= (
+                            self.coast_velocity_unwind_max_target_error_m_s
+                            / target_error_norm
+                        )
+                    self.coast_velocity_command_xy_m_s = (
+                        velocity[:2] + target_error
+                    )
+                    if (
+                        self.brake_projected_speed_m_s
+                        < self.coast_velocity_handoff_min_projected_speed_m_s
+                    ):
+                        # Do not let measured-velocity tracking settle below
+                        # the signed handoff boundary. Correct only to that
+                        # boundary; using the unwind terminal-speed target here
+                        # would turn a tiny negative estimate into an
+                        # unnecessary +0.10 m/s forward command. Lateral
+                        # velocity remains bumpless.
+                        brake_direction_xy = self.brake_direction[:2].copy()
+                        direction_norm = float(
+                            np.linalg.norm(brake_direction_xy)
+                        )
+                        if direction_norm > 1e-9:
+                            brake_direction_xy /= direction_norm
+                            recovery_error_m_s = min(
+                                self.coast_velocity_unwind_max_target_error_m_s,
+                                max(
+                                    0.0,
+                                    self.coast_velocity_handoff_min_projected_speed_m_s
+                                    - self.brake_projected_speed_m_s,
+                                ),
+                            )
+                            self.coast_velocity_command_xy_m_s = (
+                                velocity[:2]
+                                + recovery_error_m_s * brake_direction_xy
+                            )
+                        self.coast_tracking_action = (
+                            'recover_reverse_velocity_while_unwinding'
+                        )
+                    else:
+                        self.coast_tracking_action = (
+                            'track_measured_velocity_to_unwind_attitude'
+                        )
             else:
                 self.coast_velocity_command_xy_m_s.fill(0.0)
                 self.coast_tracking_action = (
@@ -3873,9 +4277,16 @@ class TranslationControlHandoff:
                     else 'predictive_zero_world_velocity_brake'
                 )
 
-            self.coast_tracking_velocity_error_m_s = (
-                self.coast_velocity_command_xy_m_s - velocity[:2]
-            )
+            if not (
+                (
+                    self.coast_velocity_unwind_position_control_enabled
+                    or self.coast_velocity_unwind_direct_level_attitude_enabled
+                )
+                and self.coast_velocity_phase == 'predictive_unwind'
+            ):
+                self.coast_tracking_velocity_error_m_s = (
+                    self.coast_velocity_command_xy_m_s - velocity[:2]
+                )
             self.coast_velocity_handoff_speed_ready = bool(
                 xy_speed <= self.coast_velocity_handoff_speed_m_s
                 and self.brake_projected_speed_m_s
@@ -3918,14 +4329,51 @@ class TranslationControlHandoff:
             )
             if not self.coast_handoff_state_ready:
                 return False
-            handoff_reason = 'velocity_predictive_unwind_position_handoff'
+            handoff_reason = (
+                'velocity_predictive_unwind_attitude_handoff'
+                if self.coast_velocity_unwind_direct_level_attitude_enabled
+                else 'velocity_predictive_unwind_position_handoff'
+            )
 
-        self.hold_position = position.copy()
-        self.hover_z = float(position[2])
-        self.stopping_position_m = position.copy()
+        position_unwind_active = bool(
+            self.coast_velocity_unwind_position_control_enabled
+            and self.coast_velocity_phase == 'predictive_unwind'
+            and self.coast_velocity_unwind_position_target_m is not None
+        )
+        interaction_direction_xy = self.brake_direction[:2].copy()
+        interaction_direction_norm = float(np.linalg.norm(
+            interaction_direction_xy
+        ))
+        offset_handoff_target = bool(
+            self.coast_velocity_handoff_position_offset_m > 0.0
+            and interaction_direction_norm > 1e-9
+        )
+        if offset_handoff_target:
+            interaction_direction_xy /= interaction_direction_norm
+            self.hold_position = position.copy()
+            self.hold_position[:2] += (
+                self.coast_velocity_handoff_position_offset_m
+                * interaction_direction_xy
+            )
+            self.hover_z = float(position[2])
+            self.stopping_position_m = self.hold_position.copy()
+            self.coast_target_clamped_to_actual = False
+            self.coast_lateral_target_latched_to_actual = True
+        elif position_unwind_active:
+            self.hold_position = (
+                self.coast_velocity_unwind_position_target_m.copy()
+            )
+            self.hover_z = self.velocity_coast_fixed_zdistance_m
+            self.stopping_position_m = self.hold_position.copy()
+            self.coast_target_clamped_to_actual = False
+            self.coast_lateral_target_latched_to_actual = False
+        else:
+            self.hold_position = position.copy()
+            self.hover_z = float(position[2])
+            self.stopping_position_m = self.hold_position.copy()
+            self.coast_target_clamped_to_actual = True
+            self.coast_lateral_target_latched_to_actual = True
         self.coast_handoff_actual_position_m = position.copy()
-        self.coast_target_clamped_to_actual = True
-        self.coast_lateral_target_latched_to_actual = True
         self.coast_response_queue_settled = True
         self.coast_velocity_phase = 'position_handoff'
         self.coast_handoff_reason = handoff_reason
@@ -3962,6 +4410,7 @@ class TranslationControlHandoff:
             timestamp,
             current_orientation_rpy=None,
             allow_position_handoff=True,
+            latch_current_position_on_handoff=False,
             command_timestamp=None,
     ):
         """Brake with attitude toward a stop target frozen at release.
@@ -4323,7 +4772,11 @@ class TranslationControlHandoff:
                 )
             return False
 
-        self.coast_handoff_reason = 'timed_level_to_position_handoff'
+        self.coast_handoff_reason = (
+            'terminal_current_position_handoff'
+            if latch_current_position_on_handoff else
+            'timed_level_to_position_handoff'
+        )
         # Hold the stop point frozen at release only along the calibrated
         # interaction line. The perpendicular coordinate is always latched to
         # the measured position, allowing native position control to damp small
@@ -4335,8 +4788,11 @@ class TranslationControlHandoff:
             np.linalg.norm(self.brake_direction[:2]) <= 1e-9
             or self.coast_target_remaining_distance_m < 0.0
         )
-        self.coast_target_clamped_to_actual = target_is_behind
-        if target_is_behind:
+        latch_current_position = bool(
+            target_is_behind or latch_current_position_on_handoff
+        )
+        self.coast_target_clamped_to_actual = latch_current_position
+        if latch_current_position:
             self.hold_position = position.copy()
             self.coast_lateral_target_latched_to_actual = True
         else:
@@ -4488,6 +4944,10 @@ class TranslationControlHandoff:
         return self.mode == self.CONTACT_ZDISTANCE
 
     @property
+    def mpc_bootstrap_acceleration_mode(self):
+        return self.mode == self.MPC_BOOTSTRAP_ACCELERATION
+
+    @property
     def position_interaction_mode(self):
         return self.mode == self.CONTACT_POSITION
 
@@ -4502,28 +4962,162 @@ class TranslationControlHandoff:
 
     @property
     def uses_position_setpoint(self):
-        return self.shadow_mode or self.mode in (
-            self.POSITION_HOLD,
-            self.CONTACT_POSITION,
-            self.POSITION_COAST,
+        return bool(
+            self.shadow_mode
+            or self.mode in (
+                self.POSITION_HOLD,
+                self.CONTACT_POSITION,
+                self.POSITION_COAST,
+            )
+            or (
+                self.mode == self.VELOCITY_COAST
+                and self.coast_velocity_phase == 'predictive_unwind'
+                and self.coast_velocity_unwind_position_control_enabled
+                and self.coast_velocity_unwind_position_target_m is not None
+            )
+        )
+
+    @property
+    def direct_level_unwind_active(self):
+        return bool(
+            self.mode == self.VELOCITY_COAST
+            and self.coast_velocity_phase == 'predictive_unwind'
+            and self.coast_velocity_unwind_direct_level_attitude_enabled
         )
 
     @property
     def command_mode(self):
         if self.shadow_mode:
             return 'shadow_position_hold'
+        if (
+            self.mode == self.VELOCITY_COAST
+            and self.coast_velocity_phase == 'predictive_unwind'
+            and self.coast_velocity_unwind_direct_level_attitude_enabled
+        ):
+            return 'predictive_unwind_attitude_zdistance'
+        if (
+            self.mode == self.VELOCITY_COAST
+            and self.coast_velocity_phase == 'predictive_unwind'
+            and self.coast_velocity_unwind_position_control_enabled
+        ):
+            return 'predictive_unwind_position'
         return self.mode
 
+    def _record_sent_command(self, kind, sent_at, **values):
+        sent_at = float(sent_at)
+        if not np.isfinite(sent_at):
+            raise ValueError('actual command timestamp must be finite')
+        self._sent_command_sequence += 1
+        command = {
+            'kind': str(kind),
+            'sent_at': sent_at,
+            'sequence': self._sent_command_sequence,
+        }
+        command.update(values)
+        self._last_sent_command = command
+        self._sent_command_history.append(command)
+
+    def sent_command_snapshot(self):
+        """Return JSON-safe metadata for the most recent actual send."""
+        if self._last_sent_command is None:
+            return None
+        return {
+            key: (list(value) if isinstance(value, list) else value)
+            for key, value in self._last_sent_command.items()
+        }
+
+    def sent_commands_after_sequence(self, sequence):
+        """Return every actual send after ``sequence`` in send order."""
+        if isinstance(sequence, bool) or int(sequence) != sequence:
+            raise ValueError('actual command sequence must be an integer')
+        return [
+            {
+                key: (list(value) if isinstance(value, list) else value)
+                for key, value in command.items()
+            }
+            for command in self._sent_command_history
+            if command['sequence'] > int(sequence)
+        ]
+
+    def sent_command_effective_at(self, state_time, delay_s=0.0):
+        """Return the last command at the delayed input time of a state."""
+        state_time = float(state_time)
+        delay_s = float(delay_s)
+        if not np.all(np.isfinite([state_time, delay_s])) or delay_s < 0.0:
+            raise ValueError('state command lookup needs finite time/delay')
+        effective_time = state_time-delay_s
+        for command in reversed(self._sent_command_history):
+            if command['sent_at'] <= effective_time+1e-12:
+                result = {
+                    key: (list(value) if isinstance(value, list) else value)
+                    for key, value in command.items()
+                }
+                result['effective_query_time'] = effective_time
+                return result
+        return None
+
+    def sent_commands_in_window(self, start_time, end_time):
+        """Return actual sends in the closed host-time interval."""
+        start_time = float(start_time)
+        end_time = float(end_time)
+        if (
+            not np.all(np.isfinite([start_time, end_time]))
+            or end_time < start_time
+        ):
+            raise ValueError('command-history window must be finite/ordered')
+        return [
+            {
+                key: (list(value) if isinstance(value, list) else value)
+                for key, value in command.items()
+            }
+            for command in self._sent_command_history
+            if start_time-1e-12 <= command['sent_at'] <= end_time+1e-12
+        ]
+
     def send(self, commander, command_timestamp=None, yaw_deg=None):
-        if self.shadow_mode or self.mode in (
-                self.POSITION_HOLD,
-                self.CONTACT_POSITION,
-                self.POSITION_COAST):
+        if self.uses_position_setpoint:
             commander.send_position_setpoint(
                 *self.hold_position, self.yaw_deg
             )
+            sent_at = float(
+                time.time()
+                if command_timestamp is None else command_timestamp
+            )
+            self._record_sent_command(
+                'position', sent_at,
+                position_m=self.hold_position.tolist(),
+                yaw_deg=float(self.yaw_deg),
+            )
+            return sent_at
+        elif self.direct_level_unwind_active:
+            commander.send_zdistance_setpoint(
+                0.0,
+                0.0,
+                0.0,
+                self.velocity_coast_fixed_zdistance_m,
+            )
+            sent_at = float(
+                time.time()
+                if command_timestamp is None else command_timestamp
+            )
+            current_yaw_deg = float(
+                self.yaw_deg if yaw_deg is None else yaw_deg
+            )
+            self._record_attitude_command(sent_at, current_yaw_deg)
+            self._record_sent_command(
+                'attitude_zdistance', sent_at,
+                roll_deg=0.0,
+                pitch_deg=0.0,
+                yaw_rate_deg_s=0.0,
+                zdistance_m=float(
+                    self.velocity_coast_fixed_zdistance_m
+                ),
+                yaw_deg=current_yaw_deg,
+            )
+            return sent_at
         elif self.mode in (
             self.CONTACT_ZDISTANCE,
+            self.MPC_BOOTSTRAP_ACCELERATION,
             self.ATTITUDE_COAST,
             self.ATTITUDE_BRAKING,
         ):
@@ -4540,10 +5134,21 @@ class TranslationControlHandoff:
                 time.time()
                 if command_timestamp is None else command_timestamp
             )
+            attitude_yaw_deg = float(
+                self._pending_attitude_yaw_deg
+                if yaw_deg is None else yaw_deg
+            )
             self._record_attitude_command(
                 sent_at,
-                self._pending_attitude_yaw_deg
-                if yaw_deg is None else yaw_deg,
+                attitude_yaw_deg,
+            )
+            self._record_sent_command(
+                'attitude_zdistance', sent_at,
+                roll_deg=float(self.contact_roll_deg),
+                pitch_deg=float(self.contact_pitch_deg),
+                yaw_rate_deg_s=float(self.contact_yaw_rate_deg_s),
+                zdistance_m=float(self.hover_z),
+                yaw_deg=attitude_yaw_deg,
             )
             if self._tail_neutralization_needs_send_anchor:
                 pulse_hold_s = (
@@ -4575,12 +5180,25 @@ class TranslationControlHandoff:
                 float(body_velocity_xy[0]),
                 float(body_velocity_xy[1]),
                 0.0,
-                self.hover_z,
+                self.velocity_coast_fixed_zdistance_m,
             )
-            return float(
+            sent_at = float(
                 time.time()
                 if command_timestamp is None else command_timestamp
             )
+            self._record_sent_command(
+                'velocity_hover', sent_at,
+                world_velocity_xy_m_s=(
+                    self.coast_velocity_command_xy_m_s.tolist()
+                ),
+                body_velocity_xy_m_s=body_velocity_xy.tolist(),
+                yaw_rate_deg_s=0.0,
+                zdistance_m=float(
+                    self.velocity_coast_fixed_zdistance_m
+                ),
+                yaw_deg=current_yaw_deg,
+            )
+            return sent_at
         return None
 
 
@@ -4839,6 +5457,21 @@ class InteractionsControl:
             raise ValueError('--calibrate requires Interaction.action: translation')
         self._run_translation(calibration_mode=True)
 
+    def run_mpc_calibration(self) -> None:
+        """Collect automatic accelerate-to-rest trajectories for LMPC admission.
+
+        This is not the legacy plant fit and it does not run an LMPC policy.
+        A private controller-side mission overlay automatically accelerates on
+        world +/-Y with bounded attitude commands, then selects the existing
+        bounded attitude coast controller. This method only activates that
+        bootstrap coverage/audit path.
+        """
+        if self.mission.get('Interaction', {}).get('action') != 'translation':
+            raise ValueError('--mpc requires Interaction.action: translation')
+        if self.ctrl_rate != 100:
+            raise ValueError('--mpc requires a 100 Hz control rate')
+        self._run_translation(mpc_calibration_mode=True)
+
     def run_braking_test(self, *, direction=None, repetitions=None) -> None:
         """Run selected fixed-duration attitude repeats, without fitting or saving."""
         if self.mission.get('Interaction', {}).get('action') != 'translation':
@@ -4950,12 +5583,15 @@ class InteractionsControl:
             self.lo_commander.send_notify_setpoint_stop()
 
     def _run_translation(self, calibration_mode=False, braking_test_mode=False,
+                         mpc_calibration_mode=False,
                          braking_test_direction=None, braking_test_repetitions=None) -> None:
         """Run model-based interaction, with a legacy velocity-mode fallback."""
         prediction_session = None
         self._translation_exit_target = None
         self._translation_high_level_active = False
         try:
+            if mpc_calibration_mode and (calibration_mode or braking_test_mode):
+                raise ValueError('--mpc is separate from legacy calibration modes')
             if braking_test_mode and not calibration_mode:
                 raise ValueError('braking repeat test requires the calibration control path')
             translation_setting = self.mission['Interaction']['config']
@@ -4982,6 +5618,10 @@ class InteractionsControl:
                 raise ValueError(
                     '--calibrate requires detection_method: momentum_impulse'
                 )
+            if mpc_calibration_mode and detection_method != 'momentum_impulse':
+                raise ValueError(
+                    '--mpc requires detection_method: momentum_impulse'
+                )
             if detection_method in ('momentum_impulse', 'mocap_wrench'):
                 if wrench_config is None:
                     raise ValueError(
@@ -5001,7 +5641,9 @@ class InteractionsControl:
                 target = resolve_wrench_nominal_target(
                     self.mission['drones'][self.drone_id]['target'],
                     wrench_config,
-                    calibration_mode=calibration_mode,
+                    calibration_mode=(
+                        calibration_mode or mpc_calibration_mode
+                    ),
                 )
                 nominal_yaw = (
                     target[3]
@@ -5029,6 +5671,11 @@ class InteractionsControl:
                     calibration_mode=calibration_mode,
                 )
                 runtime_braking_direction_xy = None
+                if mpc_calibration_mode:
+                    # The automatic protocol exercises both signed world-Y
+                    # models in one run.  Resolve the saved calibration against
+                    # that task axis even though no physical sensor selects it.
+                    runtime_braking_direction_xy = np.array([0.0, 1.0])
                 if effective_release_mode == 'potentiometer_coast':
                     sense_axis = getattr(self, 'sense_axis', None)
                     sense_sign = float(getattr(self, 'sense_sign', 1))
@@ -5164,6 +5811,54 @@ class InteractionsControl:
                         )
                     else:
                         logger.info('Loaded wrench calibration: %s', calibration_path)
+                if mpc_calibration_mode:
+                    bootstrap_config = MPCBootstrapCalibrationConfig.from_mapping(
+                        wrench_config.get('mpc_bootstrap_calibration')
+                    )
+                    decision_ratio = (
+                        bootstrap_config.prediction_step_s*self.ctrl_rate
+                    )
+                    if (
+                        decision_ratio < 2.0-1e-12
+                        or not math.isclose(
+                            decision_ratio,
+                            round(decision_ratio),
+                            rel_tol=0.0,
+                            abs_tol=1e-12,
+                        )
+                    ):
+                        raise ValueError(
+                            '--mpc prediction_step_s must be an integral '
+                            'multiple of at least two 100 Hz control periods'
+                        )
+                    if getattr(self, 'bounds', None) is not None:
+                        x, y = float(target[0]), float(target[1])
+                        available_margin = min(
+                            x-self.bounds['x_min'],
+                            self.bounds['x_max']-x,
+                            y-self.bounds['y_min'],
+                            self.bounds['y_max']-y,
+                        )
+                        required_margin = (
+                            mpc_bootstrap_required_boundary_margin_m(
+                                bootstrap_config
+                            )
+                        )
+                        if available_margin < required_margin-1e-12:
+                            raise ValueError(
+                                '--mpc needs at least '
+                                f'{required_margin:.3f} m XY boundary margin '
+                                'around calibration_nominal_position'
+                            )
+                    logger.warning(
+                        'LMPC BOOTSTRAP ONLY: the drone will automatically '
+                        'accelerate to speed targets %s m/s in both world-Y '
+                        'directions (%d successful episodes per cell), then '
+                        'the bounded legacy attitude coast controller will '
+                        'brake to rest. LMPC command authority is disabled.',
+                        list(bootstrap_config.initial_speed_targets_m_s),
+                        bootstrap_config.repetitions_per_cell,
+                    )
                 if calibration_mode:
                     if getattr(self, 'bounds', None) is not None:
                         margin = braking_plan.max_displacement_m
@@ -5281,6 +5976,7 @@ class InteractionsControl:
                     ),
                     rearm_delay_s=translation_setting.get('grace_time', 0),
                     calibration_mode=calibration_mode,
+                    mpc_calibration_mode=mpc_calibration_mode,
                     calibration_path=calibration_path,
                     **({'prediction_calibration': prediction_session}
                        if prediction_session is not None else {}),
@@ -5320,7 +6016,7 @@ class InteractionsControl:
         except Exception as e:
             tb_info = traceback.format_exc()
             logging.error(f"Translation Error: {e}\nTraceback:\n{tb_info}")
-            if calibration_mode:
+            if calibration_mode or mpc_calibration_mode:
                 raise
         finally:
             try:
@@ -5551,6 +6247,7 @@ class InteractionsControl:
             virtual_object_config=None,
             rearm_delay_s=0.0,
             calibration_mode=False,
+            mpc_calibration_mode=False,
             calibration_path=DEFAULT_CALIBRATION_PATH,
     ):
         """Estimate external wrench and generate bounded XYZ/yaw references.
@@ -6080,6 +6777,7 @@ class InteractionsControl:
             virtual_object_config=None,
             rearm_delay_s=0.0,
             calibration_mode=False,
+            mpc_calibration_mode=False,
             calibration_path=DEFAULT_CALIBRATION_PATH,
             braking_test_mode=False,
             braking_test_direction=None,
@@ -6092,6 +6790,10 @@ class InteractionsControl:
         The original full-pose mocap/Kalman observer path remains available by
         selecting ``state_source: mocap``.
         """
+        if mpc_calibration_mode and calibration_mode:
+            raise ValueError('--mpc cannot use the legacy calibration path')
+        if mpc_calibration_mode and braking_test_mode:
+            raise ValueError('--mpc cannot use the braking repeat-test path')
         if prediction_calibration is not None and (not calibration_mode or braking_test_mode):
             raise ValueError('online prediction fitting is only supported by --calibrate')
         if braking_test_mode:
@@ -6103,14 +6805,43 @@ class InteractionsControl:
             )
         pipeline = OnboardMomentumWrenchPipeline(config)
         config = pipeline.config
+        bootstrap_coverage = None
+        bootstrap_model_contracts = None
+        if mpc_calibration_mode:
+            bootstrap_enabled = dict(
+                config.get('mpc_bootstrap_calibration') or {}
+            ).get('enabled', False)
+            if bootstrap_enabled is not True:
+                raise ValueError(
+                    '--mpc requires mpc_bootstrap_calibration.enabled=true '
+                    'in its private mission overlay'
+                )
+            bootstrap_coverage = MPCBootstrapCoverage(
+                MPCBootstrapCalibrationConfig.from_mapping(
+                    config.get('mpc_bootstrap_calibration')
+                )
+            )
+            bootstrap_model_contracts = (
+                validate_mpc_bootstrap_model_contracts(
+                    config.get('mpc_bootstrap_model_contracts'),
+                    expected_prediction_step_s=(
+                        bootstrap_coverage.config.prediction_step_s
+                    ),
+                )
+            )
+            if pipeline.shadow_mode:
+                raise ValueError('--mpc requires shadow_mode=false')
         force_sensor_available = bool(
             getattr(self, 'force_sensor', None) is not None
             and not calibration_mode
         )
         safety = config['safety']
         dt = 1.0 / self.ctrl_rate if self.ctrl_rate > 0 else 0.01
-        config['control_handoff']['coast_command_period_s'] = max(
-            float(config['control_handoff']['coast_command_period_s']), dt
+        config['control_handoff']['coast_command_period_s'] = (
+            bootstrap_coverage.config.prediction_step_s
+            if bootstrap_coverage is not None else max(
+                float(config['control_handoff']['coast_command_period_s']), dt
+            )
         )
         duration = float(duration)
         nominal_position = np.asarray(nominal_position, dtype=float)
@@ -6311,6 +7042,36 @@ class InteractionsControl:
                 'control_handoff.coast_velocity_predictive_unwind_enabled '
                 'must be boolean'
             )
+        velocity_rebrake_enabled = config['control_handoff'].get(
+            'coast_velocity_rebrake_enabled', True
+        )
+        if type(velocity_rebrake_enabled) is not bool:
+            raise ValueError(
+                'control_handoff.coast_velocity_rebrake_enabled must be '
+                'boolean'
+            )
+        velocity_unwind_direct_level_attitude_enabled = (
+            config['control_handoff'].get(
+                'coast_velocity_unwind_direct_level_attitude_enabled', False
+            )
+        )
+        if type(velocity_unwind_direct_level_attitude_enabled) is not bool:
+            raise ValueError(
+                'control_handoff.'
+                'coast_velocity_unwind_direct_level_attitude_enabled must be '
+                'boolean'
+            )
+        velocity_unwind_position_control_enabled = (
+            config['control_handoff'].get(
+                'coast_velocity_unwind_position_control_enabled', False
+            )
+        )
+        if type(velocity_unwind_position_control_enabled) is not bool:
+            raise ValueError(
+                'control_handoff.'
+                'coast_velocity_unwind_position_control_enabled must be '
+                'boolean'
+            )
         if (
             velocity_predictive_unwind_enabled
             and not velocity_coast_braking_enabled
@@ -6318,6 +7079,30 @@ class InteractionsControl:
             raise ValueError(
                 'predictive velocity unwind requires '
                 'coast_velocity_braking_enabled'
+            )
+        if (
+            velocity_unwind_position_control_enabled
+            and not velocity_predictive_unwind_enabled
+        ):
+            raise ValueError(
+                'position-controlled velocity unwind requires '
+                'coast_velocity_predictive_unwind_enabled'
+            )
+        if (
+            velocity_unwind_direct_level_attitude_enabled
+            and not velocity_predictive_unwind_enabled
+        ):
+            raise ValueError(
+                'direct level-attitude velocity unwind requires '
+                'coast_velocity_predictive_unwind_enabled'
+            )
+        if (
+            velocity_unwind_direct_level_attitude_enabled
+            and velocity_unwind_position_control_enabled
+        ):
+            raise ValueError(
+                'direct level-attitude unwind and position-controlled unwind '
+                'cannot both be enabled'
             )
         velocity_coast_handoff_speed_m_s = float(
             config['control_handoff'].get(
@@ -6331,6 +7116,20 @@ class InteractionsControl:
             raise ValueError(
                 'control_handoff.coast_velocity_handoff_speed_m_s must be '
                 'finite and positive'
+            )
+        velocity_coast_handoff_position_offset_m = float(
+            config['control_handoff'].get(
+                'coast_velocity_handoff_position_offset_m', 0.0
+            )
+        )
+        if (
+            not np.isfinite(velocity_coast_handoff_position_offset_m)
+            or velocity_coast_handoff_position_offset_m < 0.0
+        ):
+            raise ValueError(
+                'control_handoff.'
+                'coast_velocity_handoff_position_offset_m must be finite and '
+                'non-negative'
             )
         predictive_braking_config = deepcopy(
             config.get('predictive_braking', {})
@@ -6447,6 +7246,11 @@ class InteractionsControl:
             velocity_mpc_shadow_direction_config = (
                 configured_velocity_direction
             )
+        release_dataset_configured_task_axis_xy = (
+            None
+            if velocity_mpc_shadow_direction_config is None else
+            velocity_mpc_shadow_direction_config.copy()
+        )
         prediction_model_consumer_enabled = bool(
             velocity_mpc_shadow_enabled
             or (
@@ -6604,6 +7408,13 @@ class InteractionsControl:
         max_state_age_s = float(safety.get(
             'max_state_age_s', safety['max_frame_age_s']
         ))
+        enforce_state_group_skew = safety.get(
+            'enforce_state_group_skew', False
+        )
+        if not isinstance(enforce_state_group_skew, bool):
+            raise ValueError(
+                'safety.enforce_state_group_skew must be a boolean'
+            )
         calibration_state_dropout_timeout_s = float(safety.get(
             'calibration_state_dropout_timeout_s', 0.25
         ))
@@ -6664,6 +7475,11 @@ class InteractionsControl:
             logger.warning(
                 'Onboard wrench interaction is in shadow mode: contacts and '
                 'proposed responses are logged, but the reference remains fixed.'
+            )
+        if not enforce_state_group_skew:
+            logger.warning(
+                'Onboard state-group skew enforcement is disabled; skew is '
+                'still logged, but it will not stop interaction or calibration.'
             )
         self.log_manager.add_log_entry(
             'configs',
@@ -6735,7 +7551,13 @@ class InteractionsControl:
                             'coast_control_policy': (
                                 (
                                     (
-                                        'predictive_velocity_unwind_then_position'
+                                        (
+                                            'direct_level_attitude_unwind_then_position'
+                                            if velocity_unwind_direct_level_attitude_enabled
+                                            else 'release_line_position_unwind'
+                                            if velocity_unwind_position_control_enabled
+                                            else 'predictive_velocity_unwind_then_position'
+                                        )
                                         if velocity_predictive_unwind_enabled
                                         else 'zero_world_velocity_then_position'
                                     )
@@ -6752,6 +7574,10 @@ class InteractionsControl:
                                 velocity_coast_handoff_speed_m_s
                                 if velocity_coast_braking_enabled else None
                             ),
+                            'velocity_handoff_position_offset_m': (
+                                velocity_coast_handoff_position_offset_m
+                                if velocity_coast_braking_enabled else None
+                            ),
                             'velocity_predictive_unwind_enabled': (
                                 velocity_predictive_unwind_enabled
                             ),
@@ -6759,6 +7585,42 @@ class InteractionsControl:
                                 config['control_handoff'].get(
                                     'coast_velocity_unwind_prediction_margin_s',
                                     0.15,
+                                )
+                            ),
+                            'velocity_unwind_command_switch_delay_s': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_command_switch_delay_s',
+                                    0.0,
+                                )
+                            ),
+                            'velocity_unwind_integrated_leveling_enabled': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_integrated_leveling_enabled',
+                                    False,
+                                )
+                            ),
+                            'velocity_unwind_tail_calibration_scale': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_tail_calibration_scale',
+                                    1.0,
+                                )
+                            ),
+                            'velocity_unwind_direct_level_attitude_enabled': (
+                                velocity_unwind_direct_level_attitude_enabled
+                            ),
+                            'velocity_unwind_position_control_enabled': (
+                                velocity_unwind_position_control_enabled
+                            ),
+                            'velocity_unwind_leveling_rate_deg_s': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_leveling_rate_deg_s',
+                                    100.0,
+                                )
+                            ),
+                            'velocity_unwind_integration_step_s': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_integration_step_s',
+                                    0.01,
                                 )
                             ),
                             'velocity_unwind_one_step_lookahead_enabled': (
@@ -6777,6 +7639,9 @@ class InteractionsControl:
                                 config['control_handoff'].get(
                                     'coast_velocity_rebrake_speed_m_s', 0.04
                                 )
+                            ),
+                            'velocity_rebrake_enabled': (
+                                velocity_rebrake_enabled
                             ),
                             'ignored_during_calibration': bool(
                                 calibration_mode
@@ -6839,6 +7704,9 @@ class InteractionsControl:
                 'translation_rearm_delay_s': float(rearm_delay_s),
                 'initial_contact_arming': {
                     'enabled': initial_contact_gate.enabled,
+                    'apply_after_each_interaction': (
+                        initial_contact_gate.apply_after_each_interaction
+                    ),
                     'max_xy_speed_m_s': (
                         initial_contact_gate.max_xy_speed_m_s
                     ),
@@ -6850,6 +7718,47 @@ class InteractionsControl:
             },
             name='Onboard Wrench Interaction Config',
         )
+        if bootstrap_coverage is not None:
+            self._log_event('Learning MPC Bootstrap Calibration Started', {
+                **bootstrap_coverage.summary(),
+                'protocol': bootstrap_coverage.config.to_dict(),
+                'instruction': (
+                    'Keep the workspace clear. The drone will automatically '
+                    'accelerate along world +/-Y to each target speed, then '
+                    'the legacy attitude-coast controller will brake to rest.'
+                ),
+                'offline_only': True,
+                'actual_flight_controller': (
+                    'automatic_attitude_acceleration_then_legacy_attitude_coast'
+                ),
+                'lmpc_command_authority': False,
+                'velocity_hover_disabled': True,
+                'prediction_step_s': (
+                    bootstrap_coverage.config.prediction_step_s
+                ),
+                'legacy_coast_command_delay_s': float(
+                    config['control_handoff'][
+                        'coast_attitude_response_delay_s'
+                    ]
+                ),
+                'directional_model_contracts': {
+                    label: {
+                        'direction_xy': contract['direction_xy'],
+                        'command_delay_s': contract['command_delay_s'],
+                        'model_fingerprint': contract['model_fingerprint'],
+                        'state_dimension': contract['state_dimension'],
+                    }
+                    for label, contract in bootstrap_model_contracts.items()
+                },
+                'coverage_is_provisional_until_offline_replay': True,
+                'state_source': 'crazyflie_state_estimate',
+            })
+            logger.warning(
+                'LMPC bootstrap target: %.2f m/s; collect %d successful '
+                '+Y and -Y release(s) before moving to the next speed tier.',
+                bootstrap_coverage.current_target_speed_m_s,
+                bootstrap_coverage.config.repetitions_per_cell,
+            )
 
         self._translation_exit_target = (nominal_position.tolist(), nominal_yaw_deg)
         self._translation_high_level_active = False
@@ -6872,7 +7781,10 @@ class InteractionsControl:
                 )
                 if (
                     -0.5 <= state_age <= max_state_age_s
-                    and state_skew <= max_state_group_skew_s
+                    and (
+                        not enforce_state_group_skew
+                        or state_skew <= max_state_group_skew_s
+                    )
                 ):
                     break
             if now >= startup_deadline:
@@ -6986,6 +7898,158 @@ class InteractionsControl:
         velocity_mpc_shadow_last_logged_signature = None
         velocity_mpc_shadow_last_log_time = None
         velocity_mpc_terminal_since = None
+        # Raw release episodes are logged for post-flight LMPC admission.  The
+        # in-flight loop never mutates or publishes a sampled safe set.
+        release_dataset_episode_sequence = 0
+        release_dataset_episode_id = None
+        release_dataset_direction_xy = None
+        release_dataset_model_contract = None
+        release_dataset_measured_sensor_axis_world_xy = None
+        release_dataset_last_logged_command_sequence = 0
+        release_dataset_terminal_gate = ReleaseLMPCTerminalGate()
+        release_dataset_terminal_status = release_dataset_terminal_gate.status
+        release_dataset_terminal_finalize_pending = None
+        mpc_last_decision_send_monotonic = None
+        mpc_next_decision_deadline_monotonic = None
+        mpc_automatic_attempt = None
+        mpc_automatic_retry_counts = {}
+        mpc_automatic_release_confirmed = False
+        mpc_automatic_abort_after_safe_stop = None
+        mpc_automatic_last_phase = None
+        mpc_automatic_previous_cell = None
+
+        def close_bootstrap_episode(episode_id, *, terminal_success, reason):
+            if bootstrap_coverage is None or episode_id is None:
+                return None
+            result = bootstrap_coverage.close(
+                episode_id,
+                terminal_success=terminal_success,
+                reason=reason,
+            )
+            self._log_event('Learning MPC Bootstrap Attempt Closed', {
+                **result,
+                'coverage': bootstrap_coverage.summary(),
+                'offline_only': True,
+                'lmpc_command_authority': False,
+                'state_source': 'crazyflie_state_estimate',
+            })
+            next_speed = bootstrap_coverage.current_target_speed_m_s
+            if bootstrap_coverage.complete:
+                logger.info(
+                    'LMPC bootstrap raw speed-cell coverage is complete. '
+                    'The raw log still requires offline resampling and replay.'
+                )
+            elif result['counted']:
+                logger.info(
+                    'LMPC bootstrap attempt counted; next target remains '
+                    '%.2f m/s until both directions/repetitions are complete.',
+                    next_speed,
+                )
+            else:
+                rejection_reason = (
+                    result['close_reason']
+                    if not result['terminal_success'] else
+                    (
+                        result['path_failure_reasons'][0]
+                        if result['path_failure_reasons'] else
+                        result['reason']
+                    )
+                )
+                logger.warning(
+                    'LMPC bootstrap attempt did not count (%s); retry the '
+                    'current %.2f m/s cell.',
+                    rejection_reason,
+                    next_speed,
+                )
+            return result
+
+        def finish_mpc_automatic_attempt(*, counted, reason):
+            """Return to nominal only after one automatic attempt is safe."""
+            nonlocal mpc_automatic_attempt
+            nonlocal mpc_automatic_release_confirmed
+            nonlocal mpc_automatic_abort_after_safe_stop
+            nonlocal mpc_automatic_last_phase
+            nonlocal mpc_automatic_previous_cell
+            nonlocal mpc_last_decision_send_monotonic
+            nonlocal mpc_next_decision_deadline_monotonic
+            if mpc_automatic_attempt is None:
+                return
+            cell = mpc_automatic_attempt.target_cell
+            mpc_automatic_previous_cell = cell
+            cell_key = (cell.direction_sign, cell.target_speed_m_s)
+            if counted:
+                mpc_automatic_retry_counts.pop(cell_key, None)
+            else:
+                attempts = mpc_automatic_retry_counts.get(cell_key, 0)+1
+                mpc_automatic_retry_counts[cell_key] = attempts
+                if attempts >= 3:
+                    mpc_automatic_abort_after_safe_stop = (
+                        'automatic_cell_failed_three_times:' + str(reason)
+                    )
+            if mpc_automatic_attempt.phase in (
+                    mpc_automatic_attempt.BRAKING,
+                    mpc_automatic_attempt.ABORTED,
+            ):
+                mpc_automatic_attempt.finish()
+            return_target_m = (
+                translation_control.hold_position.copy()
+                if mpc_automatic_abort_after_safe_stop is not None else
+                nominal_position.copy()
+            )
+            self._log_event(
+                'Learning MPC Bootstrap Automatic Attempt Finished',
+                {
+                    **cell.to_dict(),
+                    'counted': bool(counted),
+                    'reason': str(reason),
+                    'retry_count_for_cell': mpc_automatic_retry_counts.get(
+                        cell_key, 0
+                    ),
+                    'return_target_m': return_target_m.tolist(),
+                    'offline_only': True,
+                    'lmpc_command_authority': False,
+                    'state_source': 'crazyflie_state_estimate',
+                },
+            )
+            mpc_automatic_attempt = None
+            mpc_automatic_release_confirmed = False
+            mpc_automatic_last_phase = None
+            mpc_last_decision_send_monotonic = None
+            mpc_next_decision_deadline_monotonic = None
+            if mpc_automatic_abort_after_safe_stop is None:
+                translation_control.hold_position = nominal_position.copy()
+                translation_control.yaw_deg = nominal_yaw_deg
+
+        def level_mpc_attitude_before_fault(reason, yaw_deg=None):
+            """Synchronously replace a latched automatic/coast tilt."""
+            if translation_control.mode not in (
+                    translation_control.MPC_BOOTSTRAP_ACCELERATION,
+                    translation_control.ATTITUDE_COAST,
+            ):
+                return False
+            translation_control.set_contact_attitude(
+                0.0, 0.0, 0.0, yaw_deg=yaw_deg
+            )
+            sent_at = translation_control.send(
+                self.lo_commander, yaw_deg=yaw_deg
+            )
+            self._log_event(
+                'Learning MPC Bootstrap Fault Level Command Sent',
+                {
+                    'reason': str(reason),
+                    'command_sent_at': sent_at,
+                    'previous_phase': (
+                        None
+                        if mpc_automatic_attempt is None else
+                        mpc_automatic_attempt.phase
+                    ),
+                    'offline_only': True,
+                    'lmpc_command_authority': False,
+                    'state_source': 'crazyflie_state_estimate',
+                },
+            )
+            return True
+
         excitation_config = config['calibration_excitation']
         excitation_end_s = (
             float(excitation_config['start_delay_s'])
@@ -7141,6 +8205,26 @@ class InteractionsControl:
 
         while True:
             now = time.time()
+            if (
+                bootstrap_coverage is not None
+                and release_dataset_episode_id is None
+                and (
+                    bootstrap_coverage.complete
+                    or (
+                        mpc_automatic_abort_after_safe_stop is not None
+                        and mpc_automatic_attempt is None
+                        and translation_control.mode
+                        == translation_control.POSITION_HOLD
+                    )
+                )
+            ):
+                break
+            attitude_sent_at = None
+            release_dataset_close_after_row = None
+            mpc_scheduled_decision_deadline = None
+            mpc_decision_state_age_at_send_s = None
+            mpc_automatic_decision = None
+            mpc_automatic_finish_after_handoff_send_reason = None
             calibration_wait_this_cycle = False
             if calibration_mode and interaction_start is not None:
                 calibration_trial_wait = begin_trial_wait(now)
@@ -7152,6 +8236,13 @@ class InteractionsControl:
                      and active_planar_braking_command.attitude_control)
                     or (active_position_capture_command is not None
                         and active_position_capture_command.attitude_control)
+                )
+            )
+            mpc_attitude_motion_active = bool(
+                mpc_calibration_mode
+                and translation_control.mode in (
+                    translation_control.MPC_BOOTSTRAP_ACCELERATION,
+                    translation_control.ATTITUDE_COAST,
                 )
             )
             if (
@@ -7179,6 +8270,14 @@ class InteractionsControl:
                     else now - interaction_start
                 )
                 if interaction_elapsed_s >= duration:
+                    if mpc_attitude_motion_active:
+                        level_mpc_attitude_before_fault(
+                            'mission_duration_expired_during_automatic_motion'
+                        )
+                        raise RuntimeError(
+                            'automatic LMPC bootstrap duration expired during '
+                            'an active attitude maneuver'
+                        )
                     break
             calibration_clock_lag_s = (
                 now - interaction_start - calibration_elapsed_s
@@ -7203,6 +8302,10 @@ class InteractionsControl:
             state = self._get_synchronized_onboard_wrench_state()
             if state is None:
                 check_trial_wait(now, invalidate=True)
+                if mpc_attitude_motion_active:
+                    level_mpc_attitude_before_fault(
+                        'onboard_state_packet_set_incomplete'
+                    )
                 if planar_attitude_active:
                     self.lo_commander.send_zdistance_setpoint(
                         0.0, 0.0, 0.0, float(nominal_position[2])
@@ -7215,10 +8318,26 @@ class InteractionsControl:
             # snapshot so a fresh packet is never compared with a stale ``now``
             # and misclassified as hundreds of milliseconds into the future.
             now = time.time()
+            state_observed_at = now
             state_time = state['time']
             state_age = now - state_time
+            release_dataset_effective_command_delay_s = (
+                float(release_dataset_model_contract['command_delay_s'])
+                if release_dataset_model_contract is not None else
+                translation_control.coast_attitude_response_delay_s
+            )
+            actual_command_applied_at_state = (
+                translation_control.sent_command_effective_at(
+                    state_time,
+                    release_dataset_effective_command_delay_s,
+                )
+            )
             if state_age < -0.5:
                 check_trial_wait(now, invalidate=True)
+                if mpc_attitude_motion_active:
+                    level_mpc_attitude_before_fault(
+                        'onboard_state_timestamp_in_future'
+                    )
                 if planar_attitude_active:
                     self.lo_commander.send_zdistance_setpoint(
                         0.0, 0.0, 0.0, float(nominal_position[2])
@@ -7229,6 +8348,14 @@ class InteractionsControl:
                 )
             if state_age > max_state_age_s:
                 check_trial_wait(now, invalidate=True)
+                if mpc_attitude_motion_active:
+                    level_mpc_attitude_before_fault(
+                        'onboard_state_stale'
+                    )
+                    raise StaleLocalizationError(
+                        'Onboard state became stale during automatic LMPC '
+                        f'bootstrap motion ({state_age:.3f}s)'
+                    )
                 if planar_attitude_active:
                     # A stale velocity sample makes open-loop attitude
                     # calibration unsafe. Level immediately and abort so a
@@ -7309,6 +8436,10 @@ class InteractionsControl:
                 or np.any(state_group_skew_values < 0.0)
             ):
                 check_trial_wait(now, invalidate=True)
+                if mpc_attitude_motion_active:
+                    level_mpc_attitude_before_fault(
+                        'invalid_onboard_state_group_skew'
+                    )
                 if planar_attitude_active:
                     self.lo_commander.send_zdistance_setpoint(
                         0.0, 0.0, 0.0, float(nominal_position[2])
@@ -7317,8 +8448,25 @@ class InteractionsControl:
                     'Onboard state-group skew contains an invalid value'
                 )
             state_group_skew = float(np.max(state_group_skew_values))
-            if state_group_skew > max_state_group_skew_s:
+            active_state_group_skew_limit_s = (
+                release_dataset_terminal_gate.limits.max_state_group_skew_s
+                if mpc_attitude_motion_active else max_state_group_skew_s
+            )
+            if (
+                (enforce_state_group_skew or mpc_attitude_motion_active)
+                and state_group_skew > active_state_group_skew_limit_s
+            ):
                 check_trial_wait(now, invalidate=True)
+                if mpc_attitude_motion_active:
+                    level_mpc_attitude_before_fault(
+                        'onboard_state_groups_unsynchronized'
+                    )
+                    raise StaleLocalizationError(
+                        'Onboard state groups became unsynchronized during '
+                        'automatic LMPC bootstrap motion '
+                        f'({state_group_skew:.3f}s; limit '
+                        f'{active_state_group_skew_limit_s:.3f}s)'
+                    )
                 if planar_attitude_active:
                     # Never resume an open-loop tilt after losing synchronized
                     # state.  Level immediately and make the operator restart
@@ -7407,7 +8555,12 @@ class InteractionsControl:
                 calibration_group_skew_dropout_max_s = 0.0
             if state_time == last_state_time:
                 check_trial_wait(now, duplicate=True)
-                if predictive_brake_episode is not None:
+                if mpc_calibration_mode:
+                    # A duplicated callback state is not a new LMPC decision
+                    # epoch. Keep the previous LL setpoint latched so the raw
+                    # actual-send timeline stays one command per fresh state.
+                    pass
+                elif predictive_brake_episode is not None:
                     # The predictive episode may only issue a new attitude
                     # decision from a new synchronized state. Do not resend a
                     # stale decision behind its back; the last Crazyflie
@@ -7451,6 +8604,10 @@ class InteractionsControl:
                     or protocol_state_step_s <= 0.0
                 ):
                     check_trial_wait(now, invalidate=True)
+                    if mpc_attitude_motion_active:
+                        level_mpc_attitude_before_fault(
+                            'nonincreasing_onboard_state_time'
+                        )
                     if planar_attitude_active:
                         self.lo_commander.send_zdistance_setpoint(
                             0.0, 0.0, 0.0, float(nominal_position[2])
@@ -7467,6 +8624,15 @@ class InteractionsControl:
                 # Position-held phases instead resume with one nominal control
                 # step rather than skipping a scheduled calibration phase.
                 if protocol_state_step_s > max_state_age_s:
+                    if mpc_attitude_motion_active:
+                        level_mpc_attitude_before_fault(
+                            'onboard_state_sample_gap'
+                        )
+                        raise StaleLocalizationError(
+                            'Onboard state sample gap during automatic LMPC '
+                            f'bootstrap motion was {protocol_state_step_s:.3f}s '
+                            f'(limit {max_state_age_s:.3f}s)'
+                        )
                     if planar_attitude_active:
                         self.lo_commander.send_zdistance_setpoint(
                             0.0, 0.0, 0.0, float(nominal_position[2])
@@ -7480,7 +8646,15 @@ class InteractionsControl:
             last_state_time = state_time
 
             position = state['position']
-            self.check_interaction_boundary(position)
+            try:
+                self.check_interaction_boundary(position)
+            except BoundaryExceededError:
+                if mpc_attitude_motion_active:
+                    level_mpc_attitude_before_fault(
+                        'interaction_boundary_exceeded',
+                        yaw_deg=np.degrees(state['attitude_rpy'][2]),
+                    )
+                raise
             # An interaction can finish far from nominal. Exit into a hold at
             # the latest valid position; do not introduce a new return motion.
             self._translation_exit_target = (position.tolist(), nominal_yaw_deg)
@@ -7504,8 +8678,11 @@ class InteractionsControl:
                 or motor_age > float(safety['max_motor_age_s'])
             )
             motor_is_unsynchronized = (
-                state['motor_skew_s'] is None
-                or state['motor_skew_s'] > max_motor_state_skew_s
+                enforce_state_group_skew
+                and (
+                    state['motor_skew_s'] is None
+                    or state['motor_skew_s'] > max_motor_state_skew_s
+                )
             )
             if safety['require_motor_data'] and (
                 motor_pwm is None
@@ -7513,6 +8690,11 @@ class InteractionsControl:
                 or motor_is_stale
                 or motor_is_unsynchronized
             ):
+                if mpc_attitude_motion_active:
+                    level_mpc_attitude_before_fault(
+                        'motor_or_battery_state_unavailable',
+                        yaw_deg=np.degrees(state['attitude_rpy'][2]),
+                    )
                 if planar_attitude_active:
                     self.lo_commander.send_zdistance_setpoint(
                         0.0, 0.0, 0.0, float(nominal_position[2])
@@ -7533,16 +8715,230 @@ class InteractionsControl:
                 and contact_detection_source == 'wrench_observer'
             )
 
-            output = pipeline.update(
-                position=position,
-                velocity=state['velocity'],
-                attitude_rpy=state['attitude_rpy'],
-                angular_velocity=state['angular_velocity'],
-                motor_pwm=motor_pwm,
-                battery_voltage=battery_voltage,
-                timestamp=state_time,
-                yaw_control_command=state['yaw_control_command'],
-            )
+            try:
+                output = pipeline.update(
+                    position=position,
+                    velocity=state['velocity'],
+                    attitude_rpy=state['attitude_rpy'],
+                    angular_velocity=state['angular_velocity'],
+                    motor_pwm=motor_pwm,
+                    battery_voltage=battery_voltage,
+                    timestamp=state_time,
+                    yaw_control_command=state['yaw_control_command'],
+                )
+            except Exception:
+                if mpc_attitude_motion_active:
+                    level_mpc_attitude_before_fault(
+                        'wrench_pipeline_update_failed',
+                        yaw_deg=np.degrees(state['attitude_rpy'][2]),
+                    )
+                raise
+
+            if release_dataset_terminal_finalize_pending is not None:
+                pending = release_dataset_terminal_finalize_pending
+                if pending['episode_id'] != release_dataset_episode_id:
+                    raise RuntimeError(
+                        'LMPC terminal bracket episode identity changed'
+                    )
+                if state_time < pending['final_position_sent_at']-1e-12:
+                    # The callback is fresh relative to the preceding state,
+                    # but its measurement can still predate the wall-clock
+                    # position send. Keep that command latched and wait for a
+                    # state that actually brackets the send. Preserve this
+                    # command-free measurement as ordinary path evidence; do
+                    # not fabricate an upper bound or add another command.
+                    prebracket_boundary_margin_m = float(min(
+                        position[0]-self.bounds['x_min'],
+                        self.bounds['x_max']-position[0],
+                        position[1]-self.bounds['y_min'],
+                        self.bounds['y_max']-position[1],
+                    ))
+                    bootstrap_coverage.observe(
+                        release_dataset_episode_id,
+                        velocity_xy_m_s=output.estimate.velocity[:2],
+                        attitude_rp_rad=output.estimate.orientation_rpy[:2],
+                        attitude_rate_rp_rad_s=(
+                            output.estimate.angular_velocity[:2]
+                        ),
+                        boundary_margin_m=prebracket_boundary_margin_m,
+                        state_age_s=state_age,
+                        state_group_skew_s=state_group_skew,
+                        measurement_rejected=(
+                            output.estimate.measurement_rejected
+                        ),
+                    )
+                    self.log_manager.add_log_entry('wrench_observer', {
+                        'time': now,
+                        'state_source': 'crazyflie_state_estimate',
+                        'state_time': state_time,
+                        'state_age_s': state_age,
+                        'state_group_skew_s': state_group_skew,
+                        'release_dataset_episode_id': (
+                            release_dataset_episode_id
+                        ),
+                        'release_dataset_direction_xy': (
+                            release_dataset_direction_xy.tolist()
+                        ),
+                        'release_dataset_command_owner': (
+                            translation_control.command_mode
+                        ),
+                        'release_dataset_terminal_gate': (
+                            pending['terminal_gate']
+                        ),
+                        'release_dataset_pending_outcome': (
+                            'awaiting_resample_upper_bracket'
+                        ),
+                        'release_dataset_resample_upper_bracket': False,
+                        'release_dataset_final_position_sent_at': (
+                            pending['final_position_sent_at']
+                        ),
+                        'release_dataset_final_position_sequence': (
+                            pending['final_position_sequence']
+                        ),
+                        'actual_command_applied_at_state': (
+                            actual_command_applied_at_state
+                        ),
+                        'actual_commands_sent_since_previous_state': [],
+                        'xy_boundary_margin_m': (
+                            prebracket_boundary_margin_m
+                        ),
+                        'position_m': position.tolist(),
+                        'velocity_m_s': output.estimate.velocity.tolist(),
+                        'orientation_rpy_rad': (
+                            output.estimate.orientation_rpy.tolist()
+                        ),
+                        'angular_velocity_rad_s': (
+                            output.estimate.angular_velocity.tolist()
+                        ),
+                        'battery_voltage_V': battery_voltage,
+                        'measurement_rejected': bool(
+                            output.estimate.measurement_rejected
+                        ),
+                        'offline_lmpc_dataset_only': True,
+                    })
+                    self._safe_sleep(max(dt - (time.time() - now), 0.0))
+                    continue
+                commands_after_terminal_row = (
+                    translation_control.sent_commands_after_sequence(
+                        pending['final_position_sequence']
+                    )
+                )
+                if commands_after_terminal_row:
+                    raise RuntimeError(
+                        'an unlogged command was sent before the LMPC '
+                        'terminal interpolation bracket'
+                    )
+                upper_boundary_margin_m = float(min(
+                    position[0]-self.bounds['x_min'],
+                    self.bounds['x_max']-position[0],
+                    position[1]-self.bounds['y_min'],
+                    self.bounds['y_max']-position[1],
+                ))
+                bootstrap_coverage.observe(
+                    release_dataset_episode_id,
+                    velocity_xy_m_s=output.estimate.velocity[:2],
+                    attitude_rp_rad=output.estimate.orientation_rpy[:2],
+                    attitude_rate_rp_rad_s=(
+                        output.estimate.angular_velocity[:2]
+                    ),
+                    boundary_margin_m=upper_boundary_margin_m,
+                    state_age_s=state_age,
+                    state_group_skew_s=state_group_skew,
+                    measurement_rejected=(
+                        output.estimate.measurement_rejected
+                    ),
+                )
+                self.log_manager.add_log_entry('wrench_observer', {
+                    'time': now,
+                    'state_source': 'crazyflie_state_estimate',
+                    'state_time': state_time,
+                    'state_age_s': state_age,
+                    'state_group_skew_s': state_group_skew,
+                    'release_dataset_episode_id': (
+                        release_dataset_episode_id
+                    ),
+                    'release_dataset_direction_xy': (
+                        release_dataset_direction_xy.tolist()
+                    ),
+                    'release_dataset_command_owner': (
+                        translation_control.command_mode
+                    ),
+                    'release_dataset_terminal_gate': pending['terminal_gate'],
+                    'release_dataset_pending_outcome': None,
+                    'release_dataset_resample_upper_bracket': True,
+                    'release_dataset_final_position_sent_at': (
+                        pending['final_position_sent_at']
+                    ),
+                    'release_dataset_final_position_sequence': (
+                        pending['final_position_sequence']
+                    ),
+                    'actual_command_applied_at_state': (
+                        actual_command_applied_at_state
+                    ),
+                    'actual_commands_sent_since_previous_state': [],
+                    'xy_boundary_margin_m': upper_boundary_margin_m,
+                    'position_m': position.tolist(),
+                    'velocity_m_s': output.estimate.velocity.tolist(),
+                    'orientation_rpy_rad': (
+                        output.estimate.orientation_rpy.tolist()
+                    ),
+                    'angular_velocity_rad_s': (
+                        output.estimate.angular_velocity.tolist()
+                    ),
+                    'battery_voltage_V': battery_voltage,
+                    'measurement_rejected': bool(
+                        output.estimate.measurement_rejected
+                    ),
+                    'offline_lmpc_dataset_only': True,
+                })
+                automatic_close_result = close_bootstrap_episode(
+                    release_dataset_episode_id,
+                    terminal_success=True,
+                    reason=pending['reason'],
+                )
+                self._log_event(pending['event_name'], {
+                    'release_dataset_episode_id': (
+                        release_dataset_episode_id
+                    ),
+                    'release_dataset_outcome': pending['outcome'],
+                    'reason': pending['reason'],
+                    'terminal_gate': pending['terminal_gate'],
+                    'terminal_state_time': pending['terminal_state_time'],
+                    'final_position_sent_at': (
+                        pending['final_position_sent_at']
+                    ),
+                    'final_position_sequence': (
+                        pending['final_position_sequence']
+                    ),
+                    'resample_upper_bracket_state_time': state_time,
+                    'offline_lmpc_dataset_only': True,
+                    'state_source': 'crazyflie_state_estimate',
+                })
+                if mpc_automatic_attempt is not None:
+                    finish_mpc_automatic_attempt(
+                        counted=bool(automatic_close_result['counted']),
+                        reason=(
+                            automatic_close_result['close_reason']
+                            if automatic_close_result['counted'] else
+                            (
+                                automatic_close_result[
+                                    'path_failure_reasons'
+                                ][0]
+                                if automatic_close_result[
+                                    'path_failure_reasons'
+                                ] else
+                                automatic_close_result['reason']
+                            )
+                        ),
+                    )
+                release_dataset_episode_id = None
+                release_dataset_direction_xy = None
+                release_dataset_model_contract = None
+                release_dataset_measured_sensor_axis_world_xy = None
+                release_dataset_terminal_status = (
+                    release_dataset_terminal_gate.reset()
+                )
+                release_dataset_terminal_finalize_pending = None
 
             # Attribute this measurement to the command that was actually
             # latched before the sample, never to the next scheduled phase.
@@ -7661,6 +9057,13 @@ class InteractionsControl:
                                     potentiometer_release_processed
                                     and translation_control.mode
                                     == translation_control.VELOCITY_COAST
+                                )
+                                or (
+                                    release_dataset_episode_id is not None
+                                    and translation_control.mode in (
+                                        translation_control.ATTITUDE_COAST,
+                                        translation_control.ATTITUDE_BRAKING,
+                                    )
                                 )
                             ),
                         )
@@ -7820,7 +9223,12 @@ class InteractionsControl:
                         'torque_bias_Nm': pipeline.torque_bias.tolist(),
                         'state_source': 'crazyflie_state_estimate',
                     })
-                self._log_event('Waiting For User Interaction', {
+                self._log_event(
+                    (
+                        'Learning MPC Bootstrap Waiting For Automatic Readiness'
+                        if mpc_calibration_mode else
+                        'Waiting For User Interaction'
+                    ), {
                     'contact_detector_armed': initial_contact_gate.armed,
                     'max_xy_speed_m_s': (
                         initial_contact_gate.max_xy_speed_m_s
@@ -7829,7 +9237,8 @@ class InteractionsControl:
                         initial_contact_gate.stationary_dwell_s
                     ),
                     'state_source': 'crazyflie_state_estimate',
-                })
+                    },
+                )
                 if initial_contact_gate.armed:
                     logger.info('Interaction detection is active.')
                 else:
@@ -7865,6 +9274,51 @@ class InteractionsControl:
                 potentiometer_contact_decision is not None
                 and potentiometer_contact_decision.started
                 and bool(sensor_fields.get('force_sensor_fresh'))
+                and release_dataset_episode_id is not None
+                and translation_control.mode in (
+                    translation_control.ATTITUDE_COAST,
+                    translation_control.ATTITUDE_BRAKING,
+                )
+            ):
+                self._log_event(
+                    'Release Dataset Episode Closed',
+                    {
+                        'release_dataset_episode_id': (
+                            release_dataset_episode_id
+                        ),
+                        'release_dataset_outcome': 'rejected',
+                        'reason': 'recontact_before_terminal_dwell',
+                        'compression_force_N': sensor_fields.get(
+                            'force_sensor_compression_force_N'
+                        ),
+                        'terminal_gate': (
+                            release_dataset_terminal_status.to_dict()
+                        ),
+                        'offline_lmpc_dataset_only': True,
+                        'flight_control_mode_unchanged': True,
+                        'state_source': 'crazyflie_state_estimate',
+                    },
+                )
+                close_bootstrap_episode(
+                    release_dataset_episode_id,
+                    terminal_success=False,
+                    reason='recontact_before_terminal_dwell',
+                )
+                release_dataset_episode_id = None
+                release_dataset_direction_xy = None
+                release_dataset_model_contract = None
+                release_dataset_measured_sensor_axis_world_xy = None
+                release_dataset_terminal_status = (
+                    release_dataset_terminal_gate.reset()
+                )
+                # Dataset admission observes the second press but does not
+                # expand the legacy controller's recontact ownership rules.
+                potentiometer_contact_decision = None
+
+            if (
+                potentiometer_contact_decision is not None
+                and potentiometer_contact_decision.started
+                and bool(sensor_fields.get('force_sensor_fresh'))
             ):
                 coast_recontact = bool(
                     potentiometer_release_processed
@@ -7880,6 +9334,38 @@ class InteractionsControl:
                 ):
                     begin_two_afc_interaction()
                 if coast_recontact:
+                    if release_dataset_episode_id is not None:
+                        self._log_event(
+                            'Release Dataset Episode Closed',
+                            {
+                                'release_dataset_episode_id': (
+                                    release_dataset_episode_id
+                                ),
+                                'release_dataset_outcome': 'rejected',
+                                'reason': (
+                                    'recontact_before_terminal_dwell'
+                                ),
+                                'terminal_gate': (
+                                    release_dataset_terminal_status.to_dict()
+                                ),
+                                'offline_lmpc_dataset_only': True,
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                        close_bootstrap_episode(
+                            release_dataset_episode_id,
+                            terminal_success=False,
+                            reason='recontact_before_terminal_dwell',
+                        )
+                        release_dataset_episode_id = None
+                        release_dataset_direction_xy = None
+                        release_dataset_model_contract = None
+                        release_dataset_measured_sensor_axis_world_xy = None
+                        release_dataset_terminal_status = (
+                            release_dataset_terminal_gate.reset()
+                        )
                     predictive_brake_episode = None
                     predictive_brake_decision = None
                     predictive_brake_abort_after_send = False
@@ -8384,6 +9870,33 @@ class InteractionsControl:
                         output.estimate.velocity,
                     )
                 )
+                if bootstrap_coverage is not None:
+                    measured_direction = np.asarray(
+                        output.estimate.velocity, dtype=float
+                    ).copy()
+                    measured_direction[2] = 0.0
+                    measured_norm = float(np.linalg.norm(
+                        measured_direction[:2]
+                    ))
+                    if measured_norm >= 0.05:
+                        locked_direction = mpc_bootstrap_world_y_direction(
+                            measured_direction[:2],
+                            bootstrap_coverage.config.max_cross_speed_m_s,
+                        )
+                        if locked_direction is None:
+                            candidate_direction = (
+                                measured_direction/measured_norm
+                            )
+                            candidate_direction_source = (
+                                'measured_release_velocity_off_axis_fallback'
+                            )
+                        else:
+                            candidate_direction = np.asarray([
+                                locked_direction[0], locked_direction[1], 0.0,
+                            ])
+                            candidate_direction_source = (
+                                'locked_world_y_mpc_bootstrap'
+                            )
                 # Candidate onset is not yet a release, but it is the earliest
                 # moment at which the old force-rendering counter-tilt can be
                 # removed.  The active attitude path remains command owner and
@@ -8442,7 +9955,6 @@ class InteractionsControl:
                         'state_source': 'crazyflie_state_estimate',
                     },
                 )
-
             if (
                 release_mode == 'potentiometer_coast'
                 and potentiometer_release_decision is not None
@@ -8523,6 +10035,15 @@ class InteractionsControl:
                     force_memory_s=release_force_memory_s,
                     max_velocity_m_s=virtual_max_velocity_m_s,
                 )
+                if bootstrap_coverage is not None:
+                    # The potentiometer is a one-axis compression magnitude;
+                    # its configured sign cannot represent both directions in
+                    # one bootstrap run.  Use the measured release velocity
+                    # for the conservative baseline trajectory and retain the
+                    # physical sensor axis separately in the audit log.
+                    coast_initial_velocity = np.asarray(
+                        output.estimate.velocity, dtype=float
+                    ).copy()
                 virtual_motion.reset(
                     position[:2], coast_initial_velocity[:2]
                 )
@@ -8534,6 +10055,28 @@ class InteractionsControl:
                 )
                 if np.linalg.norm(coast_direction[:2]) <= 1e-9:
                     coast_direction = pre_release_force_world.copy()
+                if bootstrap_coverage is not None:
+                    measured_release_direction = np.asarray(
+                        output.estimate.velocity, dtype=float
+                    ).copy()
+                    measured_release_direction[2] = 0.0
+                    measured_release_norm = float(np.linalg.norm(
+                        measured_release_direction[:2]
+                    ))
+                    if measured_release_norm > 1e-9:
+                        locked_direction = mpc_bootstrap_world_y_direction(
+                            measured_release_direction[:2],
+                            bootstrap_coverage.config.max_cross_speed_m_s,
+                        )
+                        if locked_direction is None:
+                            coast_direction = (
+                                measured_release_direction
+                                / measured_release_norm
+                            )
+                        else:
+                            coast_direction = np.asarray([
+                                locked_direction[0], locked_direction[1], 0.0,
+                            ])
                 release_started = False
                 if translation_control.end_contact(
                     self._bounded_wrench_reference(position),
@@ -8558,6 +10101,148 @@ class InteractionsControl:
                         'control from the active interaction'
                     )
                 if release_started:
+                    if release_dataset_episode_id is not None:
+                        self._log_event(
+                            'Release Dataset Episode Closed',
+                            {
+                                'release_dataset_episode_id': (
+                                    release_dataset_episode_id
+                                ),
+                                'release_dataset_outcome': 'rejected',
+                                'reason': 'superseded_by_new_release',
+                                'terminal_gate': (
+                                    release_dataset_terminal_status.to_dict()
+                                ),
+                                'offline_lmpc_dataset_only': True,
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                        close_bootstrap_episode(
+                            release_dataset_episode_id,
+                            terminal_success=False,
+                            reason='superseded_by_new_release',
+                        )
+                        release_dataset_episode_id = None
+                        release_dataset_direction_xy = None
+                        release_dataset_model_contract = None
+                        release_dataset_measured_sensor_axis_world_xy = None
+                        release_dataset_terminal_status = (
+                            release_dataset_terminal_gate.reset()
+                        )
+                    raw_sensor_axis_world_xy = self._force_sensor_axis_world(
+                        output.estimate
+                    )[:2]
+                    (
+                        release_dataset_direction_xy,
+                        release_dataset_measured_sensor_axis_world_xy,
+                    ) = release_dataset_world_y_directions(
+                        (
+                            coast_direction[:2]
+                            if release_dataset_configured_task_axis_xy is None
+                            else release_dataset_configured_task_axis_xy
+                        ),
+                        raw_sensor_axis_world_xy,
+                        sensor_axis_is_unsigned=(
+                            bootstrap_coverage is not None
+                        ),
+                    )
+                    if release_dataset_direction_xy is not None:
+                        if bootstrap_coverage is not None:
+                            release_dataset_model_contract = (
+                                mpc_bootstrap_model_contract_for_direction(
+                                    bootstrap_model_contracts,
+                                    release_dataset_direction_xy,
+                                )
+                            )
+                            release_dataset_effective_command_delay_s = float(
+                                release_dataset_model_contract[
+                                    'command_delay_s'
+                                ]
+                            )
+                            # This is still the release-state sample. Rebind
+                            # its causal command history to the exact learned
+                            # directional delay before emitting START.
+                            actual_command_applied_at_state = (
+                                translation_control.sent_command_effective_at(
+                                    state_time,
+                                    release_dataset_effective_command_delay_s,
+                                )
+                            )
+                        release_dataset_episode_sequence += 1
+                        release_dataset_episode_id = (
+                            f'{self.drone_id}-release-'
+                            f'{int(time.time()*1e6)}-'
+                            f'{release_dataset_episode_sequence}'
+                        )
+                        release_dataset_terminal_status = (
+                            release_dataset_terminal_gate.start()
+                        )
+                        if bootstrap_coverage is not None:
+                            mpc_last_decision_send_monotonic = None
+                            mpc_next_decision_deadline_monotonic = None
+                            bootstrap_assignment = bootstrap_coverage.begin(
+                                release_dataset_episode_id,
+                                release_dataset_direction_xy,
+                                output.estimate.velocity[:2],
+                            )
+                            self._log_event(
+                                'Learning MPC Bootstrap Release Classified',
+                                {
+                                    **bootstrap_assignment.to_dict(),
+                                    'release_dataset_model_label': (
+                                        release_dataset_model_contract[
+                                            'direction_label'
+                                        ]
+                                    ),
+                                    'release_dataset_model_fingerprint': (
+                                        release_dataset_model_contract[
+                                            'model_fingerprint'
+                                        ]
+                                    ),
+                                    'release_dataset_state_dimension': (
+                                        release_dataset_model_contract[
+                                            'state_dimension'
+                                        ]
+                                    ),
+                                    'release_dataset_command_delay_s': (
+                                        release_dataset_model_contract[
+                                            'command_delay_s'
+                                        ]
+                                    ),
+                                    'coverage': bootstrap_coverage.summary(),
+                                    'offline_only': True,
+                                    'lmpc_command_authority': False,
+                                    'state_source': (
+                                        'crazyflie_state_estimate'
+                                    ),
+                                },
+                            )
+                            if bootstrap_assignment.countable:
+                                logger.info(
+                                    'LMPC bootstrap release %.3f m/s matched '
+                                    'the %.2f m/s %sY cell.',
+                                    bootstrap_assignment.initial_speed_m_s,
+                                    bootstrap_assignment.target_speed_m_s,
+                                    '+' if (
+                                        bootstrap_assignment.direction_sign > 0
+                                    ) else '-',
+                                )
+                            else:
+                                logger.warning(
+                                    'LMPC bootstrap release %.3f m/s will not '
+                                    'count: %s.',
+                                    bootstrap_assignment.initial_speed_m_s,
+                                    bootstrap_assignment.reason,
+                                )
+                    else:
+                        release_dataset_episode_id = None
+                        release_dataset_direction_xy = None
+                        release_dataset_model_contract = None
+                        release_dataset_terminal_status = (
+                            release_dataset_terminal_gate.reset()
+                        )
                     if predictive_braking_available:
                         predicted_destination = self._bounded_wrench_reference(
                             np.array([
@@ -8861,6 +10546,81 @@ class InteractionsControl:
                                 else coast_stop_prediction['stopped']
                             ),
                             'release_position_m': position.tolist(),
+                            'release_dataset_episode_id': (
+                                release_dataset_episode_id
+                            ),
+                            'release_dataset_direction_xy': (
+                                None
+                                if release_dataset_direction_xy is None else
+                                release_dataset_direction_xy.tolist()
+                            ),
+                            'release_dataset_measured_sensor_axis_world_xy': (
+                                None
+                                if release_dataset_measured_sensor_axis_world_xy
+                                is None else
+                                release_dataset_measured_sensor_axis_world_xy
+                                .tolist()
+                            ),
+                            'release_dataset_raw_sensor_axis_world_xy': (
+                                raw_sensor_axis_world_xy.tolist()
+                            ),
+                            'release_direction_source': (
+                                'measured_velocity_and_unsigned_sensor_axis'
+                                if bootstrap_coverage is not None else
+                                'signed_sensor_axis'
+                            ),
+                            'release_state_time': state_time,
+                            'release_orientation_rpy_rad': (
+                                output.estimate.orientation_rpy.tolist()
+                            ),
+                            'release_angular_velocity_rad_s': (
+                                state['angular_velocity'].tolist()
+                            ),
+                            'release_state_age_s': state_age,
+                            'release_state_group_skew_s': state_group_skew,
+                            'release_battery_voltage_V': battery_voltage,
+                            'release_dataset_prediction_step_s': (
+                                None
+                                if bootstrap_coverage is None else
+                                bootstrap_coverage.config.prediction_step_s
+                            ),
+                            'release_dataset_model_label': (
+                                None
+                                if release_dataset_model_contract is None else
+                                release_dataset_model_contract[
+                                    'direction_label'
+                                ]
+                            ),
+                            'release_dataset_model_fingerprint': (
+                                None
+                                if release_dataset_model_contract is None else
+                                release_dataset_model_contract[
+                                    'model_fingerprint'
+                                ]
+                            ),
+                            'release_dataset_state_dimension': (
+                                None
+                                if release_dataset_model_contract is None else
+                                release_dataset_model_contract[
+                                    'state_dimension'
+                                ]
+                            ),
+                            'release_dataset_command_delay_s': (
+                                None
+                                if release_dataset_model_contract is None else
+                                release_dataset_effective_command_delay_s
+                            ),
+                            'release_command_effective_at_state': (
+                                actual_command_applied_at_state
+                            ),
+                            'release_pending_command_history': (
+                                translation_control.sent_commands_in_window(
+                                    state_time
+                                    - release_dataset_effective_command_delay_s,
+                                    state_observed_at,
+                                )
+                            ),
+                            'offline_lmpc_dataset_only': True,
                             'force_memory_s': release_force_memory_s,
                             'unloaded_elapsed_s': (
                                 potentiometer_release_decision
@@ -8869,9 +10629,475 @@ class InteractionsControl:
                             'initial_command_mode': (
                                 translation_control.command_mode
                             ),
+                            'velocity_coast_fixed_zdistance_m': (
+                                translation_control
+                                .velocity_coast_fixed_zdistance_m
+                            ),
                             'state_source': 'crazyflie_state_estimate',
                         },
                     )
+
+            if (
+                mpc_calibration_mode
+                and output.calibrated
+                and interaction_start is not None
+                and release_dataset_terminal_finalize_pending is None
+            ):
+                if (
+                    mpc_automatic_attempt is None
+                    and release_dataset_episode_id is None
+                    and translation_control.mode
+                    == translation_control.POSITION_HOLD
+                    and not bootstrap_coverage.complete
+                    and mpc_automatic_abort_after_safe_stop is None
+                    and not output.estimate.measurement_rejected
+                ):
+                    automatic_cell = bootstrap_coverage.next_required_cell(
+                        mpc_automatic_previous_cell
+                    )
+                    automatic_contract = (
+                        mpc_bootstrap_model_contract_for_direction(
+                            bootstrap_model_contracts,
+                            automatic_cell.direction_xy,
+                        )
+                    )
+                    mpc_automatic_attempt = MPCBootstrapAutomaticAttempt(
+                        bootstrap_coverage.config,
+                        automatic_cell,
+                        nominal_position_xy_m=nominal_position[:2],
+                        directional_model_delay_s=(
+                            automatic_contract['command_delay_s']
+                        ),
+                        nominal_yaw_deg=nominal_yaw_deg,
+                    )
+                    self._log_event(
+                        'Learning MPC Bootstrap Automatic Attempt Scheduled',
+                        {
+                            **automatic_cell.to_dict(),
+                            'direction_xy': list(
+                                automatic_cell.direction_xy
+                            ),
+                            'acceleration_tilt_deg': (
+                                bootstrap_coverage.config
+                                .automatic_acceleration_tilt_deg
+                            ),
+                            'release_tolerance_m_s': (
+                                bootstrap_coverage.config
+                                .automatic_release_tolerance_m_s
+                            ),
+                            'directional_model_delay_s': (
+                                automatic_contract['command_delay_s']
+                            ),
+                            'level_warmup_required_s': (
+                                mpc_automatic_attempt
+                                .level_warmup_required_s
+                            ),
+                            'offline_only': True,
+                            'lmpc_command_authority': False,
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+
+                if (
+                    mpc_automatic_attempt is not None
+                    and mpc_automatic_attempt.phase in (
+                        mpc_automatic_attempt.READY_DWELL,
+                        mpc_automatic_attempt.LEVEL_WARMUP,
+                        mpc_automatic_attempt.ACCELERATING,
+                    )
+                ):
+                    automatic_boundary_margin_m = (
+                        float(min(
+                            position[0]-self.bounds['x_min'],
+                            self.bounds['x_max']-position[0],
+                            position[1]-self.bounds['y_min'],
+                            self.bounds['y_max']-position[1],
+                        ))
+                        if self.bounds is not None else float('-inf')
+                    )
+                    mpc_automatic_decision = mpc_automatic_attempt.observe(
+                        time_s=state_time,
+                        position_xy_m=position[:2],
+                        velocity_xy_m_s=output.estimate.velocity[:2],
+                        attitude_rp_rad=(
+                            output.estimate.orientation_rpy[:2]
+                        ),
+                        attitude_rate_rp_rad_s=(
+                            output.estimate.angular_velocity[:2]
+                        ),
+                        boundary_margin_m=automatic_boundary_margin_m,
+                        state_age_s=state_age,
+                        state_group_skew_s=state_group_skew,
+                        z_error_m=float(position[2]-nominal_position[2]),
+                        sample_gap_s=protocol_state_step_s,
+                        measurement_rejected=(
+                            output.estimate.measurement_rejected
+                        ),
+                    )
+                    automatic_phase_changed = bool(
+                        mpc_automatic_last_phase
+                        != mpc_automatic_decision.phase
+                    )
+                    if (
+                        automatic_phase_changed
+                        or mpc_automatic_decision.start_braking
+                        or mpc_automatic_decision.abort_requested
+                    ):
+                        self._log_event(
+                            'Learning MPC Bootstrap Automatic Decision',
+                            {
+                                **mpc_automatic_decision.to_dict(),
+                                'offline_only': True,
+                                'lmpc_command_authority': False,
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                    mpc_automatic_last_phase = (
+                        mpc_automatic_decision.phase
+                    )
+                    automatic_command_kind = (
+                        mpc_automatic_decision.command_kind
+                    )
+
+                    if automatic_command_kind == 'position_hold':
+                        if (
+                            translation_control.mode
+                            != translation_control.POSITION_HOLD
+                        ):
+                            level_mpc_attitude_before_fault(
+                                'automatic_ready_phase_lost_position_owner',
+                                yaw_deg=np.degrees(
+                                    output.estimate.orientation_rpy[2]
+                                ),
+                            )
+                            raise RuntimeError(
+                                'automatic LMPC readiness lost position '
+                                'command ownership'
+                            )
+                        translation_control.hold_position = (
+                            nominal_position.copy()
+                        )
+                        translation_control.yaw_deg = nominal_yaw_deg
+                    elif automatic_command_kind in (
+                        'level_attitude_zdistance',
+                        'automatic_acceleration_attitude_zdistance',
+                    ):
+                        if (
+                            translation_control.mode
+                            == translation_control.POSITION_HOLD
+                        ):
+                            if not translation_control.start_contact(
+                                'mpc_bootstrap_acceleration',
+                                current_position=(
+                                    self._bounded_wrench_reference(position)
+                                ),
+                                log_details=(
+                                    'automatic offline LMPC bootstrap; '
+                                    'target={:.2f}m/s, direction={:+d}Y'.format(
+                                        mpc_automatic_decision.target_speed_m_s,
+                                        mpc_automatic_decision.direction_sign,
+                                    )
+                                ),
+                            ):
+                                raise RuntimeError(
+                                    'automatic LMPC bootstrap could not '
+                                    'acquire attitude command ownership'
+                                )
+                            translation_control.hover_z = float(
+                                nominal_position[2]
+                            )
+                            mpc_last_decision_send_monotonic = None
+                            mpc_next_decision_deadline_monotonic = None
+                        elif (
+                            translation_control.mode
+                            != translation_control
+                            .MPC_BOOTSTRAP_ACCELERATION
+                        ):
+                            level_mpc_attitude_before_fault(
+                                'automatic_acceleration_command_owner_changed',
+                                yaw_deg=np.degrees(
+                                    output.estimate.orientation_rpy[2]
+                                ),
+                            )
+                            raise RuntimeError(
+                                'automatic LMPC acceleration lost attitude '
+                                'command ownership'
+                            )
+                        translation_control.set_contact_attitude(
+                            mpc_automatic_decision.command_roll_deg,
+                            mpc_automatic_decision.command_pitch_deg,
+                            0.0,
+                            yaw_deg=np.degrees(
+                                output.estimate.orientation_rpy[2]
+                            ),
+                        )
+                    elif automatic_command_kind in (
+                        'begin_legacy_attitude_coast',
+                        'abort_to_legacy_attitude_coast',
+                    ):
+                        automatic_release_velocity = np.asarray(
+                            output.estimate.velocity, dtype=float
+                        ).copy()
+                        coast_initial_velocity = (
+                            automatic_release_velocity.copy()
+                        )
+                        virtual_motion.reset(
+                            position[:2], coast_initial_velocity[:2]
+                        )
+                        coast_stop_prediction = virtual_motion.predict_stop()
+                        automatic_coast_direction = np.asarray([
+                            0.0,
+                            float(mpc_automatic_decision.direction_sign),
+                            0.0,
+                        ])
+                        if not translation_control.end_contact(
+                            self._bounded_wrench_reference(position),
+                            automatic_release_velocity,
+                            state_time,
+                            automatic_coast_direction,
+                            output.estimate.orientation_rpy,
+                            current_force=np.zeros(3),
+                            current_mass_kg=force_current_mass,
+                            coast=True,
+                        ):
+                            level_mpc_attitude_before_fault(
+                                'automatic_release_handoff_failed',
+                                yaw_deg=np.degrees(
+                                    output.estimate.orientation_rpy[2]
+                                ),
+                            )
+                            raise RuntimeError(
+                                'automatic LMPC release could not transfer '
+                                'to the legacy attitude-coast controller'
+                            )
+                        translation_control.hover_z = float(
+                            nominal_position[2]
+                        )
+                        translation_control.confirm_release_candidate(
+                            self._bounded_wrench_reference(position),
+                            automatic_release_velocity,
+                            np.zeros(3),
+                            state_time,
+                        )
+                        mpc_automatic_release_confirmed = True
+                        braking_force_world = np.zeros(3)
+                        braking_force_source = 'measured_xy_velocity'
+                        pipeline.admittance.reset()
+
+                        if automatic_command_kind == (
+                            'begin_legacy_attitude_coast'
+                        ):
+                            release_dataset_direction_xy = np.asarray(
+                                mpc_automatic_decision.direction_xy,
+                                dtype=float,
+                            )
+                            release_dataset_measured_sensor_axis_world_xy = (
+                                None
+                            )
+                            release_dataset_model_contract = (
+                                mpc_bootstrap_model_contract_for_direction(
+                                    bootstrap_model_contracts,
+                                    release_dataset_direction_xy,
+                                )
+                            )
+                            release_dataset_effective_command_delay_s = float(
+                                release_dataset_model_contract[
+                                    'command_delay_s'
+                                ]
+                            )
+                            actual_command_applied_at_state = (
+                                translation_control
+                                .sent_command_effective_at(
+                                    state_time,
+                                    release_dataset_effective_command_delay_s,
+                                )
+                            )
+                            if actual_command_applied_at_state is None:
+                                level_mpc_attitude_before_fault(
+                                    'automatic_release_has_no_causal_command',
+                                    yaw_deg=np.degrees(
+                                        output.estimate.orientation_rpy[2]
+                                    ),
+                                )
+                                raise RuntimeError(
+                                    'automatic LMPC release has no causal '
+                                    'attitude command at the learned delay'
+                                )
+                            release_dataset_episode_sequence += 1
+                            release_dataset_episode_id = (
+                                f'{self.drone_id}-automatic-release-'
+                                f'{int(time.time()*1e6)}-'
+                                f'{release_dataset_episode_sequence}'
+                            )
+                            release_dataset_terminal_status = (
+                                release_dataset_terminal_gate.start()
+                            )
+                            bootstrap_assignment = bootstrap_coverage.begin(
+                                release_dataset_episode_id,
+                                release_dataset_direction_xy,
+                                automatic_release_velocity[:2],
+                            )
+                            self._log_event(
+                                'Learning MPC Bootstrap Release Classified',
+                                {
+                                    **bootstrap_assignment.to_dict(),
+                                    'release_dataset_model_label': (
+                                        release_dataset_model_contract[
+                                            'direction_label'
+                                        ]
+                                    ),
+                                    'release_dataset_model_fingerprint': (
+                                        release_dataset_model_contract[
+                                            'model_fingerprint'
+                                        ]
+                                    ),
+                                    'release_dataset_state_dimension': (
+                                        release_dataset_model_contract[
+                                            'state_dimension'
+                                        ]
+                                    ),
+                                    'release_dataset_command_delay_s': (
+                                        release_dataset_effective_command_delay_s
+                                    ),
+                                    'coverage': bootstrap_coverage.summary(),
+                                    'automatic_release': True,
+                                    'offline_only': True,
+                                    'lmpc_command_authority': False,
+                                    'state_source': (
+                                        'crazyflie_state_estimate'
+                                    ),
+                                },
+                            )
+                            self._log_event(
+                                'Learning MPC Bootstrap Braking Started',
+                                {
+                                    'release_dataset_episode_id': (
+                                        release_dataset_episode_id
+                                    ),
+                                    'release_dataset_direction_xy': (
+                                        release_dataset_direction_xy.tolist()
+                                    ),
+                                    'release_dataset_axis_source': (
+                                        'automatic_world_y_profile'
+                                    ),
+                                    'release_dataset_measured_sensor_axis_world_xy': (
+                                        None
+                                    ),
+                                    'measured_velocity_m_s': (
+                                        automatic_release_velocity.tolist()
+                                    ),
+                                    'coast_initial_velocity_m_s': (
+                                        automatic_release_velocity.tolist()
+                                    ),
+                                    'release_position_m': position.tolist(),
+                                    'release_state_time': state_time,
+                                    'release_orientation_rpy_rad': (
+                                        output.estimate.orientation_rpy.tolist()
+                                    ),
+                                    'release_angular_velocity_rad_s': (
+                                        output.estimate.angular_velocity.tolist()
+                                    ),
+                                    'release_state_age_s': state_age,
+                                    'release_state_group_skew_s': (
+                                        state_group_skew
+                                    ),
+                                    'release_battery_voltage_V': (
+                                        battery_voltage
+                                    ),
+                                    'release_dataset_prediction_step_s': (
+                                        bootstrap_coverage.config
+                                        .prediction_step_s
+                                    ),
+                                    'release_dataset_model_label': (
+                                        release_dataset_model_contract[
+                                            'direction_label'
+                                        ]
+                                    ),
+                                    'release_dataset_model_fingerprint': (
+                                        release_dataset_model_contract[
+                                            'model_fingerprint'
+                                        ]
+                                    ),
+                                    'release_dataset_state_dimension': (
+                                        release_dataset_model_contract[
+                                            'state_dimension'
+                                        ]
+                                    ),
+                                    'release_dataset_command_delay_s': (
+                                        release_dataset_effective_command_delay_s
+                                    ),
+                                    'release_command_effective_at_state': (
+                                        actual_command_applied_at_state
+                                    ),
+                                    'release_pending_command_history': (
+                                        translation_control
+                                        .sent_commands_in_window(
+                                            state_time
+                                            - release_dataset_effective_command_delay_s,
+                                            state_observed_at,
+                                        )
+                                    ),
+                                    'initial_command_mode': (
+                                        translation_control.command_mode
+                                    ),
+                                    'offline_lmpc_dataset_only': True,
+                                    'lmpc_command_authority': False,
+                                    'state_source': (
+                                        'crazyflie_state_estimate'
+                                    ),
+                                },
+                            )
+                        else:
+                            self._log_event(
+                                'Learning MPC Bootstrap Automatic Prelude '
+                                'Rejected',
+                                {
+                                    **mpc_automatic_decision.to_dict(),
+                                    'safe_fallback': (
+                                        'legacy_attitude_coast_to_rest'
+                                    ),
+                                    'dataset_started': False,
+                                    'offline_only': True,
+                                    'lmpc_command_authority': False,
+                                    'state_source': (
+                                        'crazyflie_state_estimate'
+                                    ),
+                                },
+                            )
+                    elif automatic_command_kind == 'abort_level_and_land':
+                        level_mpc_attitude_before_fault(
+                            'automatic_prelude_hard_safety_violation',
+                            yaw_deg=np.degrees(
+                                output.estimate.orientation_rpy[2]
+                            ),
+                        )
+                        self._log_event(
+                            'Learning MPC Bootstrap Automatic Safety Abort',
+                            {
+                                **mpc_automatic_decision.to_dict(),
+                                'safe_command': 'level_attitude_then_land',
+                                'dataset_started': False,
+                                'offline_only': True,
+                                'lmpc_command_authority': False,
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                        raise RuntimeError(
+                            'automatic LMPC bootstrap safety abort: '
+                            + ', '.join(
+                                mpc_automatic_decision
+                                .prelude_failure_reasons
+                            )
+                        )
+                    else:
+                        raise RuntimeError(
+                            'unknown automatic LMPC bootstrap command: '
+                            + str(automatic_command_kind)
+                        )
 
             force_target_pitch = 0.0
             force_target_roll = 0.0
@@ -8988,6 +11214,10 @@ class InteractionsControl:
             braking_kwargs = {}
             coast_handoff_completed = False
             velocity_mpc_handoff_completed = False
+            position_handoff_completed_this_cycle = False
+            position_integrators_reset = False
+            position_integrator_reset_method = None
+            position_integrator_reset_elapsed_s = None
             predictive_brake_decision = None
             if (
                 velocity_mpc_shadow_episode is not None
@@ -9126,7 +11356,7 @@ class InteractionsControl:
                             >= velocity_mpc_config_object.terminal_dwell_s
                         ):
                             position_reset_started_at = time.time()
-                            position_reset_method = (
+                            position_integrator_reset_method = (
                                 reset_pid_integrators_without_ack(
                                     self.cf,
                                     (
@@ -9135,6 +11365,11 @@ class InteractionsControl:
                                     ),
                                 )
                             )
+                            position_integrator_reset_elapsed_s = (
+                                time.time() - position_reset_started_at
+                            )
+                            position_integrators_reset = True
+                            position_handoff_completed_this_cycle = True
                             handoff_target = np.array([
                                 position[0], position[1],
                                 translation_control.hover_z,
@@ -9167,10 +11402,10 @@ class InteractionsControl:
                                     ),
                                     'position_integrators_reset': True,
                                     'integrator_reset_method': (
-                                        position_reset_method
+                                        position_integrator_reset_method
                                     ),
                                     'integrator_reset_elapsed_s': (
-                                        time.time()-position_reset_started_at
+                                        position_integrator_reset_elapsed_s
                                     ),
                                     'state_source': (
                                         'crazyflie_state_estimate'
@@ -9347,6 +11582,22 @@ class InteractionsControl:
                         predictive_brake_decision['position_target'],
                         dtype=float,
                     )
+                    if not predictive_position_handoff_logged:
+                        reset_started_at = time.time()
+                        position_integrator_reset_method = (
+                            reset_pid_integrators_without_ack(
+                                self.cf,
+                                (
+                                    'posCtlPid.resetI',
+                                    'velCtlPid.resetI',
+                                ),
+                            )
+                        )
+                        position_integrator_reset_elapsed_s = (
+                            time.time() - reset_started_at
+                        )
+                        position_integrators_reset = True
+                        position_handoff_completed_this_cycle = True
                     translation_control.set_predictive_position_target(
                         self._bounded_wrench_reference(predictive_target),
                         state_time,
@@ -9371,6 +11622,15 @@ class InteractionsControl:
                                         'target_clamped_to_actual'
                                     )
                                 ),
+                                'position_integrators_reset': (
+                                    position_integrators_reset
+                                ),
+                                'integrator_reset_method': (
+                                    position_integrator_reset_method
+                                ),
+                                'integrator_reset_elapsed_s': (
+                                    position_integrator_reset_elapsed_s
+                                ),
                                 'state_source': (
                                     'crazyflie_state_estimate'
                                 ),
@@ -9382,10 +11642,253 @@ class InteractionsControl:
                         'unknown predictive braking action: '
                         + str(predictive_action)
                     )
+            # Revalidate the terminal set with this exact measured state before
+            # allowing the coast controller to transfer command ownership.
+            # The gate deliberately drops out of ``complete`` on any later
+            # velocity/tilt/rate/command violation, so using the prior loop's
+            # status here would create a one-sample early-handoff race.
+            if release_dataset_episode_id is not None:
+                if self.bounds is None:
+                    release_dataset_boundary_margin_m = float('nan')
+                else:
+                    release_dataset_boundary_margin_m = float(min(
+                        position[0]-self.bounds['x_min'],
+                        self.bounds['x_max']-position[0],
+                        position[1]-self.bounds['y_min'],
+                        self.bounds['y_max']-position[1],
+                    ))
+                if bootstrap_coverage is not None:
+                    bootstrap_coverage.observe(
+                        release_dataset_episode_id,
+                        velocity_xy_m_s=output.estimate.velocity[:2],
+                        attitude_rp_rad=(
+                            output.estimate.orientation_rpy[:2]
+                        ),
+                        attitude_rate_rp_rad_s=(
+                            output.estimate.angular_velocity[:2]
+                        ),
+                        boundary_margin_m=(
+                            release_dataset_boundary_margin_m
+                        ),
+                        state_age_s=state_age,
+                        state_group_skew_s=state_group_skew,
+                        measurement_rejected=(
+                            output.estimate.measurement_rejected
+                        ),
+                    )
+                applied_command_kind = ''
+                applied_attitude_rp_rad = (float('nan'), float('nan'))
+                if actual_command_applied_at_state is not None:
+                    applied_command_kind = str(
+                        actual_command_applied_at_state.get('kind', '')
+                    )
+                    if applied_command_kind == ATTITUDE_ZDISTANCE_COMMAND:
+                        try:
+                            applied_attitude_rp_rad = tuple(np.radians([
+                                actual_command_applied_at_state['roll_deg'],
+                                actual_command_applied_at_state['pitch_deg'],
+                            ]))
+                        except (KeyError, TypeError, ValueError):
+                            applied_attitude_rp_rad = (
+                                float('nan'), float('nan')
+                            )
+                pending_dataset_commands = (
+                    translation_control.sent_commands_in_window(
+                        state_time
+                        - release_dataset_effective_command_delay_s,
+                        state_observed_at,
+                    )
+                )
+                pending_dataset_command_kinds = tuple(
+                    str(command.get('kind', ''))
+                    for command in pending_dataset_commands
+                )
+                pending_dataset_attitudes_rp_rad = []
+                for command in pending_dataset_commands:
+                    if command.get('kind') == ATTITUDE_ZDISTANCE_COMMAND:
+                        try:
+                            pending_dataset_attitudes_rp_rad.append(
+                                tuple(np.radians([
+                                    command['roll_deg'],
+                                    command['pitch_deg'],
+                                ]))
+                            )
+                        except (KeyError, TypeError, ValueError):
+                            pending_dataset_attitudes_rp_rad.append((
+                                float('nan'), float('nan')
+                            ))
+                    else:
+                        pending_dataset_attitudes_rp_rad.append((0.0, 0.0))
+                release_dataset_terminal_status = (
+                    release_dataset_terminal_gate.update(
+                        ReleaseLMPCTerminalSample(
+                            state_time_s=state_time,
+                            velocity_xy_m_s=tuple(
+                                output.estimate.velocity[:2]
+                            ),
+                            attitude_rp_rad=tuple(
+                                output.estimate.orientation_rpy[:2]
+                            ),
+                            attitude_rate_rp_rad_s=tuple(
+                                output.estimate.angular_velocity[:2]
+                            ),
+                            applied_command_kind=applied_command_kind,
+                            applied_attitude_rp_rad=(
+                                applied_attitude_rp_rad
+                            ),
+                            pending_command_kinds=(
+                                pending_dataset_command_kinds
+                            ),
+                            pending_attitude_rp_rad=tuple(
+                                pending_dataset_attitudes_rp_rad
+                            ),
+                            state_age_s=state_age,
+                            state_group_skew_s=state_group_skew,
+                            boundary_margin_m=(
+                                release_dataset_boundary_margin_m
+                            ),
+                        )
+                    )
+                )
             if translation_control.mode in (
                     translation_control.ATTITUDE_COAST,
                     translation_control.VELOCITY_COAST,
                     translation_control.POSITION_COAST):
+                if (
+                    mpc_calibration_mode
+                    and mpc_automatic_attempt is not None
+                ):
+                    automatic_maneuver_displacement_m = float(
+                        np.linalg.norm(position[:2]-nominal_position[:2])
+                    )
+                    automatic_maneuver_boundary_margin_m = (
+                        float(min(
+                            position[0]-self.bounds['x_min'],
+                            self.bounds['x_max']-position[0],
+                            position[1]-self.bounds['y_min'],
+                            self.bounds['y_max']-position[1],
+                        ))
+                        if self.bounds is not None else float('-inf')
+                    )
+                    automatic_aligned_speed_m_s = float(
+                        output.estimate.velocity[:2]
+                        @ np.asarray(
+                            mpc_automatic_attempt.direction_xy, dtype=float
+                        )
+                    )
+                    automatic_cross_speed_m_s = float(
+                        output.estimate.velocity[0]
+                        * -mpc_automatic_attempt.target_cell.direction_sign
+                    )
+                    automatic_actual_tilt_rad = float(np.max(np.abs(
+                        output.estimate.orientation_rpy[:2]
+                    )))
+                    automatic_actual_rate_rad_s = float(np.max(np.abs(
+                        output.estimate.angular_velocity[:2]
+                    )))
+                    automatic_safe_set_limits = (
+                        release_dataset_terminal_gate.limits
+                    )
+                    automatic_motion_failures = []
+                    if automatic_maneuver_displacement_m > (
+                        bootstrap_coverage.config
+                        .max_maneuver_displacement_m+1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_displacement_limit_exceeded'
+                        )
+                    if automatic_maneuver_boundary_margin_m < (
+                        bootstrap_coverage.config.boundary_reserve_m-1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_boundary_reserve_exhausted'
+                        )
+                    if abs(float(position[2]-nominal_position[2])) > (
+                        bootstrap_coverage.config.ready_z_tolerance_m+1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_z_error_limit_exceeded'
+                        )
+                    if abs(automatic_aligned_speed_m_s) > (
+                        bootstrap_coverage.config.max_release_speed_m_s+1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_aligned_speed_limit_exceeded'
+                        )
+                    if automatic_aligned_speed_m_s < (
+                        -bootstrap_coverage.config.wrong_way_land_speed_m_s
+                        - 1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_wrong_way_speed_limit_exceeded'
+                        )
+                    if abs(automatic_cross_speed_m_s) > (
+                        automatic_safe_set_limits.max_abs_cross_velocity_m_s
+                        + 1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_cross_speed_limit_exceeded'
+                        )
+                    if automatic_actual_tilt_rad > (
+                        automatic_safe_set_limits.max_path_tilt_rad+1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_attitude_limit_exceeded'
+                        )
+                    if automatic_actual_rate_rad_s > (
+                        automatic_safe_set_limits.max_path_rate_rad_s+1e-12
+                    ):
+                        automatic_motion_failures.append(
+                            'maneuver_attitude_rate_limit_exceeded'
+                        )
+                    if automatic_motion_failures:
+                        if release_dataset_episode_id is not None:
+                            for automatic_failure in automatic_motion_failures:
+                                bootstrap_coverage.mark_path_failure(
+                                    release_dataset_episode_id,
+                                    automatic_failure,
+                                )
+                        level_mpc_attitude_before_fault(
+                            automatic_motion_failures[0],
+                            yaw_deg=np.degrees(
+                                output.estimate.orientation_rpy[2]
+                            ),
+                        )
+                        self._log_event(
+                            'Learning MPC Bootstrap Automatic Safety Abort',
+                            {
+                                'reasons': automatic_motion_failures,
+                                'displacement_from_nominal_m': (
+                                    automatic_maneuver_displacement_m
+                                ),
+                                'boundary_margin_m': (
+                                    automatic_maneuver_boundary_margin_m
+                                ),
+                                'z_error_m': float(
+                                    position[2]-nominal_position[2]
+                                ),
+                                'aligned_speed_m_s': (
+                                    automatic_aligned_speed_m_s
+                                ),
+                                'cross_speed_m_s': automatic_cross_speed_m_s,
+                                'actual_tilt_deg': float(np.degrees(
+                                    automatic_actual_tilt_rad
+                                )),
+                                'actual_attitude_rate_deg_s': float(np.degrees(
+                                    automatic_actual_rate_rad_s
+                                )),
+                                'safe_command': 'level_attitude_then_land',
+                                'offline_only': True,
+                                'lmpc_command_authority': False,
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                        raise RuntimeError(
+                            'automatic LMPC bootstrap maneuver safety abort: '
+                            + ', '.join(automatic_motion_failures)
+                        )
                 virtual_motion_state = virtual_motion.step(np.zeros(2), dt)
                 coast_position = self._bounded_wrench_reference(np.array([
                     virtual_motion_state['position'][0],
@@ -9417,6 +11920,24 @@ class InteractionsControl:
                 )
                 force_virtual_drag_N = virtual_motion_state['drag_force_N']
                 attitude_command_planned_at = time.time()
+                if (
+                    mpc_calibration_mode
+                    and mpc_next_decision_deadline_monotonic is not None
+                    and translation_control.mode
+                    == translation_control.ATTITUDE_COAST
+                ):
+                    # Finish the delayed-response calculation before the send
+                    # deadline, while telling the predictor when its selected
+                    # command will actually begin.  Sleeping before this
+                    # calculation would add its runtime to every 20 ms command
+                    # interval and systematically violate the offline cadence
+                    # contract on the Pi.
+                    mpc_scheduled_decision_deadline = (
+                        mpc_next_decision_deadline_monotonic
+                    )
+                    attitude_command_planned_at += max(
+                        mpc_scheduled_decision_deadline-time.monotonic(), 0.0
+                    )
                 coast_handoff_completed = False
                 if (
                     predictive_brake_episode is None
@@ -9436,7 +11957,9 @@ class InteractionsControl:
                             output.estimate.angular_velocity,
                             allow_position_handoff=(
                                 potentiometer_release_processed
+                                or mpc_automatic_release_confirmed
                             ),
+                            command_timestamp=attitude_command_planned_at,
                         )
                     )
                     coast_state_rejection = (
@@ -9456,10 +11979,23 @@ class InteractionsControl:
                             },
                         )
                     if translation_control.consume_velocity_pid_reset_request():
+                        direct_level_unwind = bool(
+                            translation_control.direct_level_unwind_active
+                        )
+                        position_unwind = bool(
+                            translation_control
+                            .coast_velocity_unwind_position_control_enabled
+                            and translation_control.uses_position_setpoint
+                        )
+                        integrator_names = (
+                            ('posCtlPid.resetI', 'velCtlPid.resetI')
+                            if position_unwind
+                            else ('velCtlPid.resetI',)
+                        )
                         reset_started_at = time.time()
                         velocity_reset_method = (
                             reset_pid_integrators_without_ack(
-                                self.cf, ('velCtlPid.resetI',)
+                                self.cf, integrator_names
                             )
                         )
                         velocity_reset_elapsed_s = (
@@ -9471,11 +12007,38 @@ class InteractionsControl:
                                 'measured_velocity_m_s': (
                                     output.estimate.velocity.tolist()
                                 ),
-                                'velocity_target_m_s': [
-                                    *translation_control
-                                    .coast_velocity_command_xy_m_s.tolist(),
-                                    0.0,
-                                ],
+                                'control_owner': (
+                                    'native_position_pid'
+                                    if position_unwind
+                                    else 'direct_attitude_zdistance'
+                                    if direct_level_unwind
+                                    else 'native_velocity_pid'
+                                ),
+                                'position_target_m': (
+                                    translation_control.hold_position.tolist()
+                                    if position_unwind else None
+                                ),
+                                'attitude_target_rp_deg': (
+                                    [0.0, 0.0]
+                                    if direct_level_unwind else None
+                                ),
+                                'zdistance_target_m': (
+                                    translation_control
+                                    .velocity_coast_fixed_zdistance_m
+                                    if direct_level_unwind else None
+                                ),
+                                'velocity_target_m_s': (
+                                    None
+                                    if (
+                                        position_unwind
+                                        or direct_level_unwind
+                                    )
+                                    else [
+                                        *translation_control
+                                        .coast_velocity_command_xy_m_s.tolist(),
+                                        0.0,
+                                    ]
+                                ),
                                 'projected_speed_m_s': (
                                     translation_control
                                     .brake_projected_speed_m_s
@@ -9512,7 +12075,65 @@ class InteractionsControl:
                                     translation_control
                                     .coast_velocity_unwind_response_horizon_s
                                 ),
+                                'observed_state_to_decision_latency_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_observed_decision_latency_s
+                                ),
+                                'configured_attitude_response_delay_s': (
+                                    translation_control
+                                    .coast_attitude_response_delay_s
+                                ),
+                                'configured_command_switch_delay_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_command_switch_delay_s
+                                ),
+                                'modeled_total_response_delay_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_total_response_delay_s
+                                ),
+                                'release_line_position_target_m': (
+                                    None
+                                    if translation_control
+                                    .coast_velocity_unwind_position_target_m
+                                    is None
+                                    else translation_control
+                                    .coast_velocity_unwind_position_target_m
+                                    .tolist()
+                                ),
+                                'release_line_target_progress_m': (
+                                    translation_control
+                                    .coast_velocity_unwind_position_progress_m
+                                ),
+                                'release_line_lateral_error_m': (
+                                    translation_control
+                                    .coast_velocity_unwind_lateral_error_m
+                                ),
+                                'integrated_velocity_delta_m_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_integrated_velocity_delta_m_s
+                                ),
+                                'raw_integrated_velocity_delta_m_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_raw_integrated_velocity_delta_m_s
+                                ),
+                                'tail_calibration_scale': (
+                                    translation_control
+                                    .coast_velocity_unwind_tail_calibration_scale
+                                ),
+                                'leveling_duration_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_leveling_duration_s
+                                ),
+                                'leveling_rate_deg_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_leveling_rate_deg_s
+                                ),
+                                'integration_step_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_integration_step_s
+                                ),
                                 'velocity_integrator_reset': True,
+                                'position_integrator_reset': position_unwind,
                                 'integrator_reset_method': (
                                     velocity_reset_method
                                 ),
@@ -9544,6 +12165,9 @@ class InteractionsControl:
                                     translation_control
                                     .coast_velocity_rebrake_speed_m_s
                                 ),
+                                'rebrake_speed_source': (
+                                    'projected_interaction_direction'
+                                ),
                                 'actual_tilt_deg': (
                                     translation_control.coast_actual_tilt_deg
                                 ),
@@ -9568,44 +12192,48 @@ class InteractionsControl:
                             state_time,
                             output.estimate.orientation_rpy,
                             allow_position_handoff=(
-                                potentiometer_release_processed
+                                (
+                                    potentiometer_release_processed
+                                    or mpc_automatic_release_confirmed
+                                )
+                                and (
+                                    not mpc_calibration_mode
+                                    or release_dataset_episode_id is None
+                                    or release_dataset_terminal_status.complete
+                                )
+                            ),
+                            latch_current_position_on_handoff=(
+                                mpc_calibration_mode
                             ),
                             command_timestamp=attitude_command_planned_at,
                         )
                     )
                 if coast_handoff_completed:
-                    position_integrators_reset = False
-                    position_integrator_reset_method = None
-                    position_integrator_reset_elapsed_s = None
-                    if (
-                        translation_control.coast_handoff_reason
-                        in (
-                            'direct_current_position_handoff',
-                            'velocity_zero_position_handoff',
-                            'velocity_predictive_unwind_position_handoff',
+                    # Every coast handoff must clear both native position-loop
+                    # integrators before the first position setpoint. Use the
+                    # no-ack path so the reset itself does not recreate the
+                    # observed handoff command/telemetry gap.
+                    reset_started_at = time.time()
+                    position_integrator_reset_method = (
+                        reset_pid_integrators_without_ack(
+                            self.cf,
+                            (
+                                'posCtlPid.resetI',
+                                'velCtlPid.resetI',
+                            ),
                         )
-                    ):
-                        # Clear both controller integrators without adding two
-                        # acknowledged parameter transactions to the handoff
-                        # command path. The first staged flight showed a 0.52 s
-                        # command/telemetry gap at this exact transition.
-                        reset_started_at = time.time()
-                        position_integrator_reset_method = (
-                            reset_pid_integrators_without_ack(
-                                self.cf,
-                                (
-                                    'posCtlPid.resetI',
-                                    'velCtlPid.resetI',
-                                ),
-                            )
-                        )
-                        position_integrator_reset_elapsed_s = (
-                            time.time() - reset_started_at
-                        )
-                        position_integrators_reset = True
+                    )
+                    position_integrator_reset_elapsed_s = (
+                        time.time() - reset_started_at
+                    )
+                    position_integrators_reset = True
+                    position_handoff_completed_this_cycle = True
                     self._log_event(
                         'Coast Position Control Handoff',
                         {
+                            'release_dataset_episode_id': (
+                                release_dataset_episode_id
+                            ),
                             'reason': (
                                 translation_control.coast_handoff_reason
                             ),
@@ -9699,11 +12327,44 @@ class InteractionsControl:
                             'actual_velocity_m_s': (
                                 output.estimate.velocity.tolist()
                             ),
-                            'target_velocity_m_s': [
-                                *translation_control
-                                .coast_velocity_command_xy_m_s.tolist(),
-                                0.0,
-                            ],
+                            'handoff_control_already_position': bool(
+                                translation_control
+                                .coast_velocity_unwind_position_control_enabled
+                                and translation_control
+                                .coast_velocity_unwind_position_target_m
+                                is not None
+                            ),
+                            'target_velocity_m_s': (
+                                None
+                                if (
+                                    translation_control
+                                    .coast_velocity_unwind_position_control_enabled
+                                    or translation_control
+                                    .coast_velocity_unwind_direct_level_attitude_enabled
+                                )
+                                else [
+                                    *translation_control
+                                    .coast_velocity_command_xy_m_s.tolist(),
+                                    0.0,
+                                ]
+                            ),
+                            'release_line_position_target_m': (
+                                None
+                                if translation_control
+                                .coast_velocity_unwind_position_target_m
+                                is None
+                                else translation_control
+                                .coast_velocity_unwind_position_target_m
+                                .tolist()
+                            ),
+                            'release_line_target_progress_m': (
+                                translation_control
+                                .coast_velocity_unwind_position_progress_m
+                            ),
+                            'release_line_lateral_error_m': (
+                                translation_control
+                                .coast_velocity_unwind_lateral_error_m
+                            ),
                             'virtual_target_velocity_m_s': (
                                 braking_kwargs['coast_velocity'].tolist()
                             ),
@@ -9721,7 +12382,13 @@ class InteractionsControl:
                                 else translation_control
                                 .coast_tracking_velocity_error_m_s.tolist()
                             ),
-                            'position_pullback_disabled': True,
+                            'position_pullback_disabled': bool(
+                                not translation_control
+                                .coast_velocity_unwind_position_control_enabled
+                                or translation_control
+                                .coast_velocity_unwind_position_target_m
+                                is not None
+                            ),
                             'tail_neutralization_allowed': True,
                             'response_queue_settled': (
                                 translation_control
@@ -9747,6 +12414,23 @@ class InteractionsControl:
                                 translation_control
                                 .coast_velocity_handoff_speed_m_s
                                 if velocity_coast_braking_enabled else None
+                            ),
+                            'velocity_handoff_position_offset_m': (
+                                translation_control
+                                .coast_velocity_handoff_position_offset_m
+                                if velocity_coast_braking_enabled else None
+                            ),
+                            'velocity_handoff_interaction_direction_xy': (
+                                translation_control.brake_direction[:2]
+                                .tolist()
+                                if velocity_coast_braking_enabled else None
+                            ),
+                            'target_offset_from_actual_m': (
+                                (
+                                    translation_control.hold_position
+                                    - translation_control
+                                    .coast_handoff_actual_position_m
+                                ).tolist()
                             ),
                             'velocity_handoff_max_tilt_deg': (
                                 translation_control.coast_handoff_max_tilt_deg
@@ -9814,7 +12498,50 @@ class InteractionsControl:
                         current_force=braking_force_world,
                         current_mass_kg=force_current_mass,
                         **braking_kwargs)
+                if braking_completed:
+                    reset_started_at = time.time()
+                    position_integrator_reset_method = (
+                        reset_pid_integrators_without_ack(
+                            self.cf,
+                            (
+                                'posCtlPid.resetI',
+                                'velCtlPid.resetI',
+                            ),
+                        )
+                    )
+                    position_integrator_reset_elapsed_s = (
+                        time.time() - reset_started_at
+                    )
+                    position_integrators_reset = True
+                    position_handoff_completed_this_cycle = True
             if braking_completed:
+                if (
+                    release_dataset_episode_id is not None
+                    and release_dataset_close_after_row is None
+                ):
+                    if release_dataset_terminal_status.complete:
+                        # A terminal dwell only authorizes the legacy coast
+                        # controller to hand off.  Its delayed level-command
+                        # queue may still need to settle, so count the sample
+                        # only on the loop where position control actually
+                        # takes ownership and sends the final command.
+                        release_dataset_close_after_row = {
+                            'event_name': (
+                                'Release Dataset Terminal Dwell Complete'
+                            ),
+                            'release_dataset_outcome': 'terminal_handoff',
+                            'reason': (
+                                'full_measured_terminal_dwell_complete'
+                            ),
+                        }
+                    else:
+                        release_dataset_close_after_row = {
+                            'event_name': 'Release Dataset Episode Closed',
+                            'release_dataset_outcome': 'rejected',
+                            'reason': (
+                                'position_handoff_before_measured_terminal_dwell'
+                            ),
+                        }
                 last_command_position = translation_control.hold_position.copy()
                 completed_render_mode = selected_render_mode
                 completed_render_relation = render_relation
@@ -9829,6 +12556,9 @@ class InteractionsControl:
                 self._log_event(
                     'Translation Position Hold Resumed',
                     {
+                        'release_dataset_episode_id': (
+                            release_dataset_episode_id
+                        ),
                         'render_mode': completed_render_mode,
                         'motion_relation': completed_render_relation,
                         'hold_position_m': last_command_position.tolist(),
@@ -9864,12 +12594,34 @@ class InteractionsControl:
                         'brake_completion_reason': (
                             translation_control.brake_completion_reason
                         ),
+                        'position_integrators_reset': (
+                            position_integrators_reset
+                        ),
+                        'integrator_reset_method': (
+                            position_integrator_reset_method
+                        ),
+                        'integrator_reset_elapsed_s': (
+                            position_integrator_reset_elapsed_s
+                        ),
                         'detector_rearm_delay_s': (
                             translation_control.rearm_delay_s
                         ),
                         'state_source': 'crazyflie_state_estimate',
                     },
                 )
+                if (
+                    mpc_automatic_attempt is not None
+                    and mpc_automatic_release_confirmed
+                    and release_dataset_episode_id is None
+                ):
+                    # Do not clear the attempt yet: the handoff's first
+                    # current-position command must be sent below before the
+                    # return-to-nominal target is installed for the next trial.
+                    mpc_automatic_finish_after_handoff_send_reason = (
+                        mpc_automatic_attempt.prelude_failure_reasons[0]
+                        if mpc_automatic_attempt.prelude_failure_reasons else
+                        'automatic_attempt_stopped_without_dataset'
+                    )
 
             if (
                 (
@@ -9879,6 +12631,17 @@ class InteractionsControl:
                 )
                 and translation_control.consume_detector_rearm(state_time)
             ):
+                if (
+                    release_dataset_episode_id is not None
+                    and release_dataset_close_after_row is None
+                ):
+                    release_dataset_close_after_row = {
+                        'event_name': 'Release Dataset Episode Closed',
+                        'release_dataset_outcome': 'rejected',
+                        'reason': (
+                            'detector_rearm_before_measured_terminal_dwell'
+                        ),
+                    }
                 predictive_brake_episode = None
                 predictive_brake_decision = None
                 predictive_brake_abort_after_send = False
@@ -9888,21 +12651,36 @@ class InteractionsControl:
                 velocity_mpc_shadow_last_decision = None
                 velocity_mpc_terminal_since = None
                 pipeline.detector.translation.reset(state_time)
-                initial_contact_gate.reset()
+                initial_contact_gate.reset(after_interaction=True)
                 if potentiometer_contact_detector is not None:
                     potentiometer_contact_detector.reset()
                 if potentiometer_release_detector is not None:
                     potentiometer_release_detector.disarm()
+                post_interaction_dwell_required = bool(
+                    initial_contact_gate.enabled
+                    and initial_contact_gate.apply_after_each_interaction
+                )
                 self._log_event(
-                    'Translation Contact Detector Rearm Started',
+                    (
+                        'Translation Contact Detector Rearm Started'
+                        if post_interaction_dwell_required else
+                        'Translation Contact Detector Rearmed'
+                    ),
                     {
                         'rearm_delay_s': translation_control.rearm_delay_s,
                         'requires_stationary_dwell': (
-                            initial_contact_gate.enabled
+                            post_interaction_dwell_required
                         ),
                         'state_source': 'crazyflie_state_estimate',
                     },
                 )
+                if not post_interaction_dwell_required:
+                    logger.info(
+                        'Translation contact detection active after %.2f s '
+                        'rearm delay; post-interaction stationary dwell is '
+                        'disabled.',
+                        translation_control.rearm_delay_s,
+                    )
 
             if interaction_start is not None:
                 self._emit_guided_touch_prompts(
@@ -10210,6 +12988,83 @@ class InteractionsControl:
                         'state_source': 'crazyflie_state_estimate',
                     })
                     raise RuntimeError(failure)
+            mpc_control_grid_active = bool(
+                mpc_calibration_mode
+                and (
+                    release_dataset_episode_id is not None
+                    or (
+                        mpc_automatic_attempt is not None
+                        and translation_control.mode in (
+                            translation_control.MPC_BOOTSTRAP_ACCELERATION,
+                            translation_control.ATTITUDE_COAST,
+                        )
+                    )
+                )
+            )
+            if (
+                mpc_control_grid_active
+                and mpc_next_decision_deadline_monotonic is not None
+            ):
+                mpc_scheduled_decision_deadline = (
+                    mpc_next_decision_deadline_monotonic
+                )
+                self._safe_sleep(max(
+                    mpc_scheduled_decision_deadline-time.monotonic(), 0.0
+                ))
+            if mpc_control_grid_active:
+                # The state was sampled before the wall-clock pacing wait.
+                # Check every decision, including the first immediate send,
+                # directly before the sole command sender. A host stall must
+                # never turn an otherwise fresh sample into a stale attitude
+                # decision that is merely rejected offline.
+                mpc_decision_send_check_time = time.time()
+                mpc_decision_state_age_at_send_s = (
+                    mpc_decision_send_check_time-state_time
+                )
+                mpc_state_age_limit_s = (
+                    release_dataset_terminal_gate.limits.max_state_age_s
+                )
+                if (
+                    not mpc_decision_state_age_is_fresh(
+                        state_time,
+                        mpc_decision_send_check_time,
+                        mpc_state_age_limit_s,
+                    )
+                ):
+                    if release_dataset_episode_id is not None:
+                        bootstrap_coverage.mark_path_failure(
+                            release_dataset_episode_id,
+                            'decision_state_age_path_violation',
+                        )
+                    level_mpc_attitude_before_fault(
+                        'state_stale_before_scheduled_mpc_send',
+                        yaw_deg=np.degrees(
+                            output.estimate.orientation_rpy[2]
+                        ),
+                    )
+                    self._log_event(
+                        'Learning MPC Bootstrap Decision State Rejected',
+                        {
+                            'release_dataset_episode_id': (
+                                release_dataset_episode_id
+                            ),
+                            'decision_state_age_at_send_s': (
+                                mpc_decision_state_age_at_send_s
+                            ),
+                            'maximum_state_age_s': mpc_state_age_limit_s,
+                            'command_sent': False,
+                            'reason': 'state_stale_before_scheduled_send',
+                            'offline_only': True,
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+                    raise StaleLocalizationError(
+                        'LMPC bootstrap state became stale before its '
+                        'scheduled command send '
+                        f'({mpc_decision_state_age_at_send_s:.3f}s; '
+                        f'limit {mpc_state_age_limit_s:.3f}s)'
+                    )
+
             if calibration_wait_this_cycle:
                 command_position = nominal_position.copy()
                 command_yaw = nominal_yaw_deg
@@ -10440,7 +13295,129 @@ class InteractionsControl:
                 command_yaw = translation_control.yaw_deg
                 last_command_position = command_position.copy()
                 last_command_yaw = float(command_yaw)
+                if (
+                    position_handoff_completed_this_cycle
+                    and not position_integrators_reset
+                ):
+                    raise RuntimeError(
+                        'position handoff attempted its first position command '
+                        'before PID integrator reset'
+                    )
                 translation_control.send(self.lo_commander)
+                if (
+                    mpc_automatic_finish_after_handoff_send_reason is not None
+                ):
+                    safe_handoff_command = (
+                        translation_control.sent_command_snapshot()
+                    )
+                    if (
+                        safe_handoff_command is None
+                        or safe_handoff_command.get('kind') != 'position'
+                    ):
+                        raise RuntimeError(
+                            'automatic LMPC safe-stop handoff produced no '
+                            'position command'
+                        )
+                    finish_mpc_automatic_attempt(
+                        counted=False,
+                        reason=(
+                            mpc_automatic_finish_after_handoff_send_reason
+                        ),
+                    )
+
+            if mpc_control_grid_active:
+                mpc_command = translation_control.sent_command_snapshot()
+                if (
+                    mpc_command is None
+                    or mpc_command['sequence']
+                    <= release_dataset_last_logged_command_sequence
+                ):
+                    raise RuntimeError(
+                        'LMPC decision epoch produced no actual command send'
+                    )
+                mpc_sent_at = float(mpc_command['sent_at'])
+                mpc_sent_monotonic = time.monotonic()
+                mpc_decision_state_age_at_send_s = mpc_sent_at-state_time
+                if (
+                    not mpc_decision_state_age_is_fresh(
+                        state_time,
+                        mpc_sent_at,
+                        release_dataset_terminal_gate.limits.max_state_age_s,
+                    )
+                ):
+                    if release_dataset_episode_id is not None:
+                        bootstrap_coverage.mark_path_failure(
+                            release_dataset_episode_id,
+                            'decision_state_age_path_violation',
+                        )
+                    level_mpc_attitude_before_fault(
+                        'command_send_completed_with_stale_mpc_state',
+                        yaw_deg=np.degrees(
+                            output.estimate.orientation_rpy[2]
+                        ),
+                    )
+                    raise StaleLocalizationError(
+                        'LMPC bootstrap command send completed outside the '
+                        'fresh-state window'
+                    )
+                if mpc_last_decision_send_monotonic is not None:
+                    mpc_send_interval_s = (
+                        mpc_sent_monotonic
+                        - mpc_last_decision_send_monotonic
+                    )
+                    mpc_send_error_s = (
+                        mpc_send_interval_s
+                        - bootstrap_coverage.config.prediction_step_s
+                    )
+                    if abs(mpc_send_error_s) > (
+                        release_dataset_terminal_gate.limits
+                        .sample_step_tolerance_s+1e-12
+                    ):
+                        if release_dataset_episode_id is not None:
+                            bootstrap_coverage.mark_path_failure(
+                                release_dataset_episode_id,
+                                'decision_command_cadence_path_violation',
+                            )
+                        self._log_event(
+                            'Learning MPC Bootstrap Command Cadence Rejected',
+                            {
+                                'release_dataset_episode_id': (
+                                    release_dataset_episode_id
+                                ),
+                                'actual_interval_s': mpc_send_interval_s,
+                                'prediction_step_s': (
+                                    bootstrap_coverage.config
+                                    .prediction_step_s
+                                ),
+                                'interval_error_s': mpc_send_error_s,
+                                'scheduled_deadline_monotonic_s': (
+                                    mpc_scheduled_decision_deadline
+                                ),
+                                'decision_state_age_at_send_s': (
+                                    mpc_decision_state_age_at_send_s
+                                ),
+                                'offline_only': True,
+                                'state_source': (
+                                    'crazyflie_state_estimate'
+                                ),
+                            },
+                        )
+                        if release_dataset_episode_id is None:
+                            level_mpc_attitude_before_fault(
+                                'automatic_prelude_command_cadence_violation',
+                                yaw_deg=np.degrees(
+                                    output.estimate.orientation_rpy[2]
+                                ),
+                            )
+                            raise RuntimeError(
+                                'automatic LMPC prelude command cadence '
+                                'violated its 50 Hz grid'
+                            )
+                mpc_last_decision_send_monotonic = mpc_sent_monotonic
+                mpc_next_decision_deadline_monotonic = (
+                    mpc_sent_monotonic
+                    + bootstrap_coverage.config.prediction_step_s
+                )
 
             if prediction_calibration is not None:
                 # Only a fully ended attitude trial is eligible. Send the
@@ -10471,6 +13448,47 @@ class InteractionsControl:
 
             estimate = output.estimate
             raw = output.raw_estimate
+            actual_commands_sent_since_previous_state = (
+                translation_control.sent_commands_after_sequence(
+                    release_dataset_last_logged_command_sequence
+                )
+            )
+            if (
+                release_dataset_episode_id is not None
+                and release_dataset_close_after_row is not None
+                and release_dataset_close_after_row[
+                    'release_dataset_outcome'
+                ] == 'terminal_handoff'
+            ):
+                commands_sent_after_state = [
+                    command
+                    for command in actual_commands_sent_since_previous_state
+                    if command['sent_at'] >= state_observed_at-1e-12
+                ]
+
+                post_terminal_command_state = (
+                    classify_terminal_post_state_commands(
+                        commands_sent_after_state,
+                        translation_control.mode,
+                        release_dataset_terminal_gate.limits,
+                        terminal_position_m=position.tolist(),
+                    )
+                )
+                if post_terminal_command_state == 'position_handoff':
+                    pass
+                elif post_terminal_command_state == 'level_attitude_hold':
+                    # The measured terminal set is ready, but a successful
+                    # iteration ends only when the terminal position
+                    # controller actually takes ownership.
+                    release_dataset_close_after_row = None
+                else:
+                    release_dataset_close_after_row = {
+                        'event_name': 'Release Dataset Episode Closed',
+                        'release_dataset_outcome': 'rejected',
+                        'reason': (
+                            'unsafe_command_sent_after_terminal_state'
+                        ),
+                    }
             calibration_attitude_command = (
                 position_capture_command
                 if (position_capture_command is not None
@@ -10488,6 +13506,63 @@ class InteractionsControl:
                 'state_time': state_time,
                 'state_age_s': state_age,
                 'state_group_skew_s': state_group_skew,
+                'mpc_automatic_phase': (
+                    None
+                    if mpc_automatic_attempt is None else
+                    mpc_automatic_attempt.phase
+                ),
+                'mpc_automatic_target_cell': (
+                    None
+                    if mpc_automatic_attempt is None else
+                    mpc_automatic_attempt.target_cell.to_dict()
+                ),
+                'mpc_automatic_decision': (
+                    None
+                    if mpc_automatic_decision is None else
+                    mpc_automatic_decision.to_dict()
+                ),
+                'release_dataset_episode_id': release_dataset_episode_id,
+                'release_dataset_direction_xy': (
+                    None
+                    if release_dataset_direction_xy is None else
+                    release_dataset_direction_xy.tolist()
+                ),
+                'release_dataset_command_owner': (
+                    translation_control.command_mode
+                    if release_dataset_episode_id is not None else None
+                ),
+                'release_dataset_terminal_gate': (
+                    release_dataset_terminal_status.to_dict()
+                    if release_dataset_episode_id is not None else None
+                ),
+                'release_dataset_pending_outcome': (
+                    None
+                    if release_dataset_close_after_row is None else
+                    release_dataset_close_after_row[
+                        'release_dataset_outcome'
+                    ]
+                ),
+                'actual_command_applied_at_state': (
+                    actual_command_applied_at_state
+                    if release_dataset_episode_id is not None else None
+                ),
+                'actual_commands_sent_since_previous_state': (
+                    actual_commands_sent_since_previous_state
+                    if release_dataset_episode_id is not None else None
+                ),
+                'release_dataset_decision_state_age_at_send_s': (
+                    mpc_decision_state_age_at_send_s
+                    if release_dataset_episode_id is not None else None
+                ),
+                'xy_boundary_margin_m': (
+                    None
+                    if self.bounds is None else float(min(
+                        position[0]-self.bounds['x_min'],
+                        self.bounds['x_max']-position[0],
+                        position[1]-self.bounds['y_min'],
+                        self.bounds['y_max']-position[1],
+                    ))
+                ),
                 # Backward-compatible analyzer aliases.
                 'frame_time': state_time,
                 'frame_age_s': state_age,
@@ -10538,7 +13613,13 @@ class InteractionsControl:
                 'coast_control_policy': (
                     (
                         (
-                            'predictive_velocity_unwind_then_position'
+                            (
+                                'direct_level_attitude_unwind_then_position'
+                                if velocity_unwind_direct_level_attitude_enabled
+                                else 'release_line_position_unwind'
+                                if velocity_unwind_position_control_enabled
+                                else 'predictive_velocity_unwind_then_position'
+                            )
                             if velocity_predictive_unwind_enabled
                             else 'zero_world_velocity_then_position'
                         )
@@ -10807,8 +13888,12 @@ class InteractionsControl:
                         translation_control.hover_z
                         if (
                             not translation_control.uses_position_setpoint
-                            and translation_control.mode
-                            != translation_control.VELOCITY_COAST
+                            and (
+                                translation_control.mode
+                                != translation_control.VELOCITY_COAST
+                                or translation_control
+                                .direct_level_unwind_active
+                            )
                         )
                         else None
                     )
@@ -10820,8 +13905,12 @@ class InteractionsControl:
                         translation_control.contact_roll_deg
                         if (
                             not translation_control.uses_position_setpoint
-                            and translation_control.mode
-                            != translation_control.VELOCITY_COAST
+                            and (
+                                translation_control.mode
+                                != translation_control.VELOCITY_COAST
+                                or translation_control
+                                .direct_level_unwind_active
+                            )
                         )
                         else None
                     )
@@ -10833,8 +13922,12 @@ class InteractionsControl:
                         translation_control.contact_pitch_deg
                         if (
                             not translation_control.uses_position_setpoint
-                            and translation_control.mode
-                            != translation_control.VELOCITY_COAST
+                            and (
+                                translation_control.mode
+                                != translation_control.VELOCITY_COAST
+                                or translation_control
+                                .direct_level_unwind_active
+                            )
                         )
                         else None
                     )
@@ -10873,15 +13966,23 @@ class InteractionsControl:
                 'command_xy_velocity_m_s': (
                     translation_control
                     .coast_velocity_command_xy_m_s.tolist()
-                    if translation_control.mode
-                    == translation_control.VELOCITY_COAST
+                    if (
+                        translation_control.mode
+                        == translation_control.VELOCITY_COAST
+                        and not translation_control.uses_position_setpoint
+                        and not translation_control.direct_level_unwind_active
+                    )
                     else None
                 ),
                 'command_xy_velocity_world_m_s': (
                     translation_control
                     .coast_velocity_command_xy_m_s.tolist()
-                    if translation_control.mode
-                    == translation_control.VELOCITY_COAST
+                    if (
+                        translation_control.mode
+                        == translation_control.VELOCITY_COAST
+                        and not translation_control.uses_position_setpoint
+                        and not translation_control.direct_level_unwind_active
+                    )
                     else None
                 ),
                 'command_yaw_deg': float(command_yaw),
@@ -10940,6 +14041,10 @@ class InteractionsControl:
                     else translation_control
                     .coast_handoff_actual_position_m.tolist()
                 ),
+                'coast_velocity_handoff_position_offset_m': (
+                    translation_control
+                    .coast_velocity_handoff_position_offset_m
+                ),
                 'coast_target_clamped_to_actual': (
                     translation_control.coast_target_clamped_to_actual
                 ),
@@ -10968,6 +14073,41 @@ class InteractionsControl:
                 ),
                 'coast_attitude_response_delay_s': (
                     translation_control.coast_attitude_response_delay_s
+                ),
+                'coast_velocity_unwind_observed_decision_latency_s': (
+                    translation_control
+                    .coast_velocity_unwind_observed_decision_latency_s
+                ),
+                'coast_velocity_unwind_command_switch_delay_s': (
+                    translation_control
+                    .coast_velocity_unwind_command_switch_delay_s
+                ),
+                'coast_velocity_unwind_total_response_delay_s': (
+                    translation_control
+                    .coast_velocity_unwind_total_response_delay_s
+                ),
+                'coast_velocity_unwind_position_control_enabled': (
+                    translation_control
+                    .coast_velocity_unwind_position_control_enabled
+                ),
+                'coast_velocity_unwind_direct_level_attitude_enabled': (
+                    translation_control
+                    .coast_velocity_unwind_direct_level_attitude_enabled
+                ),
+                'coast_velocity_unwind_position_target_m': (
+                    None
+                    if translation_control
+                    .coast_velocity_unwind_position_target_m is None
+                    else translation_control
+                    .coast_velocity_unwind_position_target_m.tolist()
+                ),
+                'coast_velocity_unwind_position_progress_m': (
+                    translation_control
+                    .coast_velocity_unwind_position_progress_m
+                ),
+                'coast_velocity_unwind_lateral_error_m': (
+                    translation_control
+                    .coast_velocity_unwind_lateral_error_m
                 ),
                 'coast_attitude_time_constant_s': (
                     translation_control.coast_attitude_time_constant_s
@@ -11055,6 +14195,9 @@ class InteractionsControl:
                 'coast_velocity_rebrake_count': (
                     translation_control.coast_velocity_rebrake_count
                 ),
+                'coast_velocity_rebrake_enabled': (
+                    translation_control.coast_velocity_rebrake_enabled
+                ),
                 'coast_velocity_predicted_unwind_terminal_speed_m_s': (
                     translation_control
                     .coast_velocity_predicted_unwind_terminal_speed_m_s
@@ -11081,6 +14224,22 @@ class InteractionsControl:
                 'coast_velocity_unwind_response_horizon_s': (
                     translation_control
                     .coast_velocity_unwind_response_horizon_s
+                ),
+                'coast_velocity_unwind_integrated_velocity_delta_m_s': (
+                    translation_control
+                    .coast_velocity_unwind_integrated_velocity_delta_m_s
+                ),
+                'coast_velocity_unwind_raw_integrated_velocity_delta_m_s': (
+                    translation_control
+                    .coast_velocity_unwind_raw_integrated_velocity_delta_m_s
+                ),
+                'coast_velocity_unwind_tail_calibration_scale': (
+                    translation_control
+                    .coast_velocity_unwind_tail_calibration_scale
+                ),
+                'coast_velocity_unwind_leveling_duration_s': (
+                    translation_control
+                    .coast_velocity_unwind_leveling_duration_s
                 ),
                 'coast_velocity_handoff_tilt_ready': (
                     translation_control.coast_velocity_handoff_tilt_ready
@@ -11139,6 +14298,102 @@ class InteractionsControl:
                 ),
                 'shadow_mode': pipeline.shadow_mode,
             })
+            if actual_commands_sent_since_previous_state:
+                release_dataset_last_logged_command_sequence = max(
+                    command['sequence']
+                    for command in actual_commands_sent_since_previous_state
+                )
+            if (
+                release_dataset_episode_id is not None
+                and release_dataset_close_after_row is not None
+            ):
+                terminal_handoff = bool(
+                    release_dataset_close_after_row[
+                        'release_dataset_outcome'
+                    ] == 'terminal_handoff'
+                )
+                if bootstrap_coverage is not None and terminal_handoff:
+                    # The position handoff is sent after this row's measured
+                    # state. Keep the episode open until one strictly newer
+                    # fresh state provides the no-extrapolation upper bracket
+                    # required by the offline decision-time resampler.
+                    final_position_commands = [
+                        command
+                        for command in actual_commands_sent_since_previous_state
+                        if command.get('kind') == 'position'
+                    ]
+                    if len(final_position_commands) != 1:
+                        raise RuntimeError(
+                            'LMPC terminal row must contain exactly one final '
+                            'position send'
+                        )
+                    final_position_command = final_position_commands[0]
+                    release_dataset_terminal_finalize_pending = {
+                        'episode_id': release_dataset_episode_id,
+                        'event_name': release_dataset_close_after_row[
+                            'event_name'
+                        ],
+                        'outcome': release_dataset_close_after_row[
+                            'release_dataset_outcome'
+                        ],
+                        'reason': release_dataset_close_after_row['reason'],
+                        'terminal_gate': (
+                            release_dataset_terminal_status.to_dict()
+                        ),
+                        'terminal_state_time': state_time,
+                        'final_position_sent_at': float(
+                            final_position_command['sent_at']
+                        ),
+                        'final_position_sequence': int(
+                            final_position_command['sequence']
+                        ),
+                    }
+                else:
+                    automatic_close_result = close_bootstrap_episode(
+                        release_dataset_episode_id,
+                        terminal_success=terminal_handoff,
+                        reason=release_dataset_close_after_row['reason'],
+                    )
+                    self._log_event(
+                        release_dataset_close_after_row['event_name'],
+                        {
+                            'release_dataset_episode_id': (
+                                release_dataset_episode_id
+                            ),
+                            'release_dataset_outcome': (
+                                release_dataset_close_after_row[
+                                    'release_dataset_outcome'
+                                ]
+                            ),
+                            'reason': release_dataset_close_after_row['reason'],
+                            'terminal_gate': (
+                                release_dataset_terminal_status.to_dict()
+                            ),
+                            'terminal_state_time': state_time,
+                            'offline_lmpc_dataset_only': True,
+                            'state_source': 'crazyflie_state_estimate',
+                        },
+                    )
+                    if mpc_automatic_attempt is not None:
+                        finish_mpc_automatic_attempt(
+                            counted=bool(automatic_close_result['counted']),
+                            reason=(
+                                automatic_close_result[
+                                    'path_failure_reasons'
+                                ][0]
+                                if automatic_close_result[
+                                    'path_failure_reasons'
+                                ] else
+                                automatic_close_result['close_reason']
+                            ),
+                        )
+                    release_dataset_episode_id = None
+                    release_dataset_direction_xy = None
+                    release_dataset_model_contract = None
+                    release_dataset_measured_sensor_axis_world_xy = None
+                    release_dataset_terminal_status = (
+                        release_dataset_terminal_gate.reset()
+                    )
             self._safe_sleep(max(dt - (time.time() - now), 0.0))
             if (calibration_mode and interaction_start is not None
                     and not calibration_wait_this_cycle):
@@ -11161,11 +14416,57 @@ class InteractionsControl:
                         next_elapsed_s = min(next_elapsed_s, boundary_s)
                 calibration_elapsed_s = next_elapsed_s
 
+        if bootstrap_coverage is not None:
+            if release_dataset_episode_id is not None:
+                self._log_event('Release Dataset Episode Closed', {
+                    'release_dataset_episode_id': release_dataset_episode_id,
+                    'release_dataset_outcome': 'rejected',
+                    'reason': 'mpc_bootstrap_collection_ended_mid_episode',
+                    'terminal_gate': (
+                        release_dataset_terminal_status.to_dict()
+                    ),
+                    'offline_lmpc_dataset_only': True,
+                    'state_source': 'crazyflie_state_estimate',
+                })
+                close_bootstrap_episode(
+                    release_dataset_episode_id,
+                    terminal_success=False,
+                    reason='mpc_bootstrap_collection_ended_mid_episode',
+                )
+                release_dataset_episode_id = None
+                release_dataset_direction_xy = None
+                release_dataset_model_contract = None
+                release_dataset_measured_sensor_axis_world_xy = None
+            summary = bootstrap_coverage.summary()
+            self._log_event('Learning MPC Bootstrap Calibration Complete', {
+                **summary,
+                'protocol': bootstrap_coverage.config.to_dict(),
+                'raw_log_only': True,
+                'requires_offline_resampling': True,
+                'requires_strict_replay': True,
+                'safe_set_published_in_flight': False,
+                'state_source': 'crazyflie_state_estimate',
+            })
+            if summary['complete']:
+                logger.info(
+                    'LMPC BOOTSTRAP COLLECTION COMPLETE. No safe set was '
+                    'published in flight; run the offline resampler/replay.'
+                )
+            else:
+                logger.warning(
+                    'LMPC BOOTSTRAP COLLECTION INCOMPLETE. Next target is '
+                    '%s m/s; inspect the complete raw log before another run.',
+                    summary['current_target_speed_m_s'],
+                )
+
         # Legacy final identification/save can take seconds. The onboard HLC
         # must own a live hover trajectory BEFORE the LL stream stops, not in
         # an outer finally after those calculations have finished.
         if calibration_mode:
             self._handoff_translation_hold(nominal_position, nominal_yaw_deg)
+        elif mpc_calibration_mode and self._translation_exit_target is not None:
+            exit_position, exit_yaw = self._translation_exit_target
+            self._handoff_translation_hold(exit_position, exit_yaw)
 
         if braking_test_mode:
             result = repeat_test_result(

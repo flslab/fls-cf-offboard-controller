@@ -15,6 +15,10 @@ from Interaction.wrench_interaction_pipeline import (
 class DefaultConfigTests(unittest.TestCase):
     def test_release_braking_handoff_uses_practical_speed_threshold(self):
         handoff = DEFAULT_WRENCH_INTERACTION_CONFIG["control_handoff"]
+        self.assertFalse(
+            DEFAULT_WRENCH_INTERACTION_CONFIG["safety"]
+            ["enforce_state_group_skew"]
+        )
         self.assertEqual(handoff["brake_xy_speed_m_s"], 0.20)
         self.assertEqual(
             handoff["brake_min_attitude_taper_speed_m_s"], 0.25
@@ -34,6 +38,9 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(handoff["coast_level_handoff_delay_s"], 0.30)
         self.assertFalse(handoff["coast_velocity_braking_enabled"])
         self.assertEqual(handoff["coast_velocity_handoff_speed_m_s"], 0.03)
+        self.assertEqual(
+            handoff["coast_velocity_handoff_position_offset_m"], 0.0
+        )
         self.assertFalse(
             handoff["coast_velocity_predictive_unwind_enabled"]
         )
@@ -44,6 +51,29 @@ class DefaultConfigTests(unittest.TestCase):
             handoff["coast_velocity_unwind_prediction_margin_s"], 0.15
         )
         self.assertEqual(
+            handoff["coast_velocity_unwind_command_switch_delay_s"], 0.0
+        )
+        self.assertFalse(
+            handoff["coast_velocity_unwind_integrated_leveling_enabled"]
+        )
+        self.assertEqual(
+            handoff["coast_velocity_unwind_tail_calibration_scale"], 1.0
+        )
+        self.assertFalse(
+            handoff[
+                "coast_velocity_unwind_direct_level_attitude_enabled"
+            ]
+        )
+        self.assertFalse(
+            handoff["coast_velocity_unwind_position_control_enabled"]
+        )
+        self.assertEqual(
+            handoff["coast_velocity_unwind_leveling_rate_deg_s"], 100.0
+        )
+        self.assertEqual(
+            handoff["coast_velocity_unwind_integration_step_s"], 0.01
+        )
+        self.assertEqual(
             handoff["coast_velocity_unwind_max_target_error_m_s"], 0.15
         )
         self.assertFalse(
@@ -52,6 +82,10 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(
             handoff["coast_velocity_unwind_one_step_max_dt_s"], 0.03
         )
+        self.assertEqual(
+            handoff["coast_velocity_unwind_low_speed_fallback_m_s"], 0.03
+        )
+        self.assertTrue(handoff["coast_velocity_rebrake_enabled"])
         self.assertEqual(
             handoff["coast_velocity_rebrake_speed_m_s"], 0.04
         )
