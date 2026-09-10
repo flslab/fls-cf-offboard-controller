@@ -775,7 +775,6 @@ class Controller:
                     initial_x, initial_y, current_x, current_y, current_z))):
             raise ValueError("invalid localizer landing geometry")
         yaw = self.args.init_yaw
-        self.tracker.request_landing(self.args.landing_tile)
         self._set_marker_grid_mode(MyGridRequest.STATIC)
 
         distance = math.sqrt(
@@ -788,6 +787,12 @@ class Controller:
         commander.go_to(
             initial_x, initial_y, threshold, yaw, duration, relative=False)
         time.sleep(duration + 0.5)
+
+        # Keep tracking the HyperGrid until the vehicle has reached the
+        # acquisition height. The MyGrid was enabled before the move, so it is
+        # already static when this request lets the localizer associate the
+        # landing tile.
+        self.tracker.request_landing(self.args.landing_tile)
 
         try:
             landing = self.tracker.wait_for(
