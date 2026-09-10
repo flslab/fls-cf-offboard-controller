@@ -5,6 +5,7 @@ from contextlib import redirect_stderr
 import io
 import math
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -114,6 +115,55 @@ class HoverModeTests(unittest.TestCase):
         self.assertEqual(
             log_manager.add_log_entry.call_args.kwargs['name'],
             'Hover Target Commanded',
+        )
+
+    def test_setup_logging_uses_ordinary_logger(self):
+        ordinary_logger = Mock()
+        ordinary_module = SimpleNamespace(
+            IlluminationLogger=Mock(return_value=ordinary_logger)
+        )
+        interaction_module = SimpleNamespace(InteractionLogger=Mock())
+        method = controller_methods(
+            'setup_logging', '_is_interaction_application'
+        )['setup_logging']
+        args = SimpleNamespace(
+            log=True,
+            illumination=False,
+            hover=True,
+            interaction=False,
+            calibrate=False,
+            braking_test=False,
+            mpc=False,
+            baseline=False,
+            sense=False,
+            droneless=False,
+            verbose=False,
+            cf_log_period=10,
+        )
+        log_vars = {'STATE': {'stateEstimate.x': {'type': 'float'}}}
+        instance = SimpleNamespace(
+            args=args,
+            cfg=SimpleNamespace(LOG_VARS=log_vars),
+            cf=object(),
+            use_flowdeck=False,
+        )
+        instance._is_interaction_application = lambda: False
+        with patch.dict(sys.modules, {
+            'log_manager': ordinary_module,
+            'Interaction.log_manager': interaction_module,
+        }):
+            method(instance)
+
+        ordinary_module.IlluminationLogger.assert_called_once_with(
+            verbose=False
+        )
+        interaction_module.InteractionLogger.assert_not_called()
+        ordinary_logger.init_cf_logger.assert_called_once_with(
+            instance.cf, log_vars, 10
+        )
+        self.assertEqual(
+            [call.args[0] for call in ordinary_logger.add_log_group.call_args_list],
+            ['frames', 'commands', 'events'],
         )
 
     def test_run_mission_dispatches_hover(self):

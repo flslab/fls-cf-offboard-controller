@@ -881,8 +881,19 @@ class Controller:
             self.log_manager.add_log_group("commands")
             self.log_manager.add_log_group("events")
 
-        elif (self._is_interaction_application()
-              or getattr(self.args, 'hover', False)):
+        elif getattr(self.args, 'hover', False):
+            from log_manager import IlluminationLogger
+            self.log_manager = IlluminationLogger(verbose=self.args.verbose)
+            self.log_manager.start()
+            if not self.args.droneless:
+                self.log_manager.init_cf_logger(
+                    self.cf, self.cfg.LOG_VARS, self.args.cf_log_period
+                )
+            self.log_manager.add_log_group("frames")
+            self.log_manager.add_log_group("commands")
+            self.log_manager.add_log_group("events")
+
+        elif self._is_interaction_application():
             from Interaction.log_manager import InteractionLogger
             self.log_manager = InteractionLogger(controller_args=self.args)
             if not self.args.droneless:
