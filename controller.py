@@ -657,7 +657,7 @@ class Controller:
         self.flying = True
         duration = max(0.5, abs(threshold - z) / speed)
         logger.info(f"Taking off to HyperGrid acquisition height {threshold:.3f}m")
-        self.hl_commander.takeoff(threshold, duration)
+        self.hl_commander.takeoff(threshold, duration, yaw)
         self._safe_sleep(duration + 0.5)
 
         hypergrid = self.tracker.wait_for(
