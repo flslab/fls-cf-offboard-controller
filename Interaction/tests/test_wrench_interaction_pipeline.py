@@ -96,13 +96,6 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(
             handoff["coast_velocity_handoff_max_rate_deg_s"], 5.0
         )
-        self.assertFalse(handoff["coast_release_goto_takeover_enabled"])
-        self.assertEqual(
-            handoff["coast_release_goto_deceleration_m_s2"], 1.0
-        )
-        self.assertEqual(
-            handoff["coast_release_goto_command_delay_s"], 0.30
-        )
         self.assertFalse(handoff["coast_state_kinematic_guard_enabled"])
         self.assertEqual(
             handoff["coast_state_max_kinematic_residual_m"], 0.03

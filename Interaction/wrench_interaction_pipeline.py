@@ -274,12 +274,6 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_velocity_rebrake_speed_m_s": 0.04,
         "coast_velocity_handoff_min_projected_speed_m_s": -0.03,
         "coast_velocity_handoff_max_rate_deg_s": 5.0,
-        # Optional direct takeover at confirmed release. The stop target is
-        # release_position + direction * (v * delay + sign(v) * v^2 / 2a).
-        # The legacy coast/brake/unwind path remains the default fallback.
-        "coast_release_goto_takeover_enabled": False,
-        "coast_release_goto_deceleration_m_s2": 1.0,
-        "coast_release_goto_command_delay_s": 0.30,
         # Optional per-sample kinematic sanity gate for coast-mode transition
         # decisions.  Rejected samples keep the already-active command and are
         # rebased, rather than being allowed to trigger unwind/re-brake/handoff.
