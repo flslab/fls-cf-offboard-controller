@@ -94,6 +94,44 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(
             handoff["coast_velocity_unwind_lateral_slew_rate_m_s2"], 0.50
         )
+        self.assertFalse(handoff["coast_jerk_limited_attitude_enabled"])
+        self.assertTrue(
+            handoff["coast_jerk_limited_virtual_friction_enabled"]
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_min_deceleration_m_s2"], 0.40
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_max_deceleration_m_s2"], 1.00
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_max_jerk_m_s3"], 4.00
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_extra_command_delay_s"], 0.0
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_prepare_lead_s"], 0.03
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_activation_guard_s"], 0.01
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_terminal_speed_margin_m_s"],
+            0.005,
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_max_duration_s"], 2.00
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_lateral_fade_s"], 0.25
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_level_hold_s"], 0.30
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_max_attitude_rate_deg_s"], 720.0
+        )
         self.assertFalse(
             handoff["coast_velocity_unwind_one_step_lookahead_enabled"]
         )

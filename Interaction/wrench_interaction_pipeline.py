@@ -289,6 +289,22 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_jerk_limited_max_deceleration_m_s2": 1.00,
         "coast_jerk_limited_max_jerk_m_s3": 4.00,
         "coast_jerk_limited_max_duration_s": 2.00,
+        # The jerk path remains in zdistance attitude ownership, so it does not
+        # inherit the legacy velocity-to-attitude 30 ms mode-switch delay. Set
+        # this only if direct-attitude logs identify an additional delay.
+        "coast_jerk_limited_extra_command_delay_s": 0.0,
+        # The first jerk command is scheduled this far ahead so its full
+        # delayed/ZOH feasibility check finishes before the declared send time.
+        # A missed schedule fails closed instead of shifting the open-loop curve.
+        "coast_jerk_limited_prepare_lead_s": 0.03,
+        # The first send repeats the already-active acceleration. The profile
+        # clock advances only after this extra guard, and the commander call
+        # must return before that activation time.
+        "coast_jerk_limited_activation_guard_s": 0.01,
+        # Reserve a small positive terminal speed under the calibrated
+        # worst-case inherited tail. If calibration uncertainty alone exceeds
+        # the legacy low-speed fallback band, do not run the open-loop profile.
+        "coast_jerk_limited_terminal_speed_margin_m_s": 0.005,
         # Cross-track position/velocity feedback has an independent small
         # acceleration and jerk budget. It fades before the longitudinal
         # profile ends so the terminal roll/pitch command remains exactly zero.
