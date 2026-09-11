@@ -3348,7 +3348,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
 
         self.assertFalse(control.update_coast_velocity(
             [0.0, 0.01, 1.0], [0.12, 0.40, 0.0], 1.01,
-            current_orientation_rpy=np.radians([8.0, 0.0, 0.0]),
+            current_orientation_rpy=np.zeros(3),
             current_angular_velocity=np.zeros(3),
             virtual_target_velocity=[0.0, 0.35, 0.0],
         ))
@@ -3361,6 +3361,65 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(
             control.coast_tracking_action,
             'track_virtual_friction_velocity_and_damp_lateral',
+        )
+
+    def test_virtual_friction_unwind_uses_roll_tail_to_prevent_reversal(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_unwind_virtual_friction_target_enabled=True,
+            coast_velocity_unwind_low_speed_fallback_m_s=1.0,
+            coast_velocity_handoff_speed_m_s=0.09,
+            coast_velocity_handoff_min_projected_speed_m_s=0.0,
+            coast_velocity_rebrake_enabled=False,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.62, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            virtual_release_velocity=[0.0, 0.586, 0.0],
+            virtual_kinetic_friction_coefficient=0.10,
+            coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        # Reproduce the first flight's first zero crossing: measured speed is
+        # almost zero but +roll still produces acceleration opposite +Y. The
+        # old target<=measured clamp sent another near-zero target and allowed
+        # the vehicle to reach about -0.16 m/s. The live roll-tail prediction
+        # must instead request a bounded positive velocity error to unload the
+        # braking attitude before crossing zero.
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.20, 1.0], [0.0, 0.002, 0.0], 1.70,
+            current_orientation_rpy=np.radians([2.13, 0.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+            virtual_target_velocity=[0.0, 0.011, 0.0],
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+        self.assertLess(
+            control.coast_velocity_predicted_unwind_terminal_speed_m_s, 0.0
+        )
+        self.assertEqual(
+            control.coast_velocity_unwind_tail_target_speed_m_s, 0.0
+        )
+        self.assertGreater(
+            control.coast_velocity_unwind_tail_compensation_m_s, 0.0
+        )
+        self.assertGreater(
+            float(control.coast_velocity_command_xy_m_s[1]), 0.002
+        )
+        self.assertLessEqual(
+            float(control.coast_velocity_command_xy_m_s[1]), 0.152
+        )
+        self.assertEqual(
+            control.coast_tracking_action,
+            'track_virtual_friction_velocity_with_attitude_tail_compensation',
+        )
+        self.assertFalse(
+            control.coast_velocity_handoff_predicted_speed_ready
         )
 
     def test_predictive_unwind_can_send_direct_level_attitude_at_fixed_z(self):
