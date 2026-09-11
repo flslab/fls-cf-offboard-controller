@@ -3244,6 +3244,125 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             ),
         )
 
+    def test_virtual_friction_sets_different_unwind_times_from_release_state(self):
+        direction = np.array([-0.0487148353, 0.9988127276, 0.0])
+        virtual_release_velocity = np.array([
+            -0.1709956886, 0.4751973021, 0.0,
+        ])
+        current_position = np.array([
+            -0.2039984614, -0.2242031544, 1.0191417933,
+        ])
+        current_velocity = np.array([
+            -0.2027536631, 0.4741640687, 0.0348397717,
+        ])
+        current_orientation = np.array([
+            -0.0636556545, 0.0458449741, 0.0215193694,
+        ])
+        current_angular_velocity = np.array([1.02, -0.438, -0.098])
+
+        def evaluate(mu):
+            control = TranslationControlHandoff(
+                initial_position=[0.0, 0.0, 1.0],
+                yaw_deg=0.0,
+                shadow_mode=False,
+                brake_max_attitude_deg=30.0,
+                coast_velocity_braking_enabled=True,
+                coast_velocity_predictive_unwind_enabled=True,
+                coast_velocity_unwind_virtual_friction_target_enabled=True,
+                coast_velocity_unwind_terminal_speed_m_s=0.10,
+                coast_velocity_unwind_integrated_leveling_enabled=True,
+                coast_velocity_unwind_tail_calibration_scale=1.60,
+                coast_velocity_unwind_leveling_rate_deg_s=100.0,
+                coast_velocity_unwind_integration_step_s=0.01,
+                coast_velocity_unwind_one_step_lookahead_enabled=True,
+                coast_velocity_unwind_one_step_max_dt_s=0.20,
+                coast_attitude_response_delay_s=0.12,
+                coast_velocity_unwind_command_switch_delay_s=0.03,
+            )
+            self.assertTrue(control.start_contact('orientation'))
+            self.assertTrue(control.end_contact(
+                [-0.1915758252, -0.2718708515, 1.0121239424],
+                [-0.1642066985, 0.3195418417, 0.0728405491],
+                1.0,
+                interaction_direction=direction,
+                virtual_release_velocity=virtual_release_velocity,
+                virtual_kinetic_friction_coefficient=mu,
+                coast=True,
+            ))
+            control.confirm_release_candidate(timestamp=1.0)
+            self.assertFalse(control.update_coast_velocity(
+                current_position,
+                current_velocity,
+                1.0888841,
+                current_orientation_rpy=current_orientation,
+                current_angular_velocity=current_angular_velocity,
+                command_timestamp=1.0920331,
+            ))
+            return control
+
+        low_friction = evaluate(0.01)
+        high_friction = evaluate(0.10)
+
+        self.assertEqual(
+            low_friction.coast_velocity_phase, 'predictive_unwind'
+        )
+        self.assertEqual(high_friction.coast_velocity_phase, 'fast_brake')
+        self.assertEqual(
+            low_friction.coast_velocity_unwind_decision_reason,
+            'virtual_friction_tail_prediction',
+        )
+        self.assertGreater(
+            low_friction.coast_velocity_effective_unwind_terminal_speed_m_s,
+            high_friction.coast_velocity_effective_unwind_terminal_speed_m_s,
+        )
+        self.assertAlmostEqual(
+            low_friction.coast_velocity_virtual_friction_deceleration_m_s2,
+            0.0981,
+        )
+        self.assertAlmostEqual(
+            high_friction.coast_velocity_virtual_friction_deceleration_m_s2,
+            0.981,
+        )
+
+    def test_virtual_friction_unwind_tracks_forward_speed_and_damps_lateral(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_unwind_virtual_friction_target_enabled=True,
+            coast_velocity_unwind_low_speed_fallback_m_s=1.0,
+            coast_velocity_handoff_speed_m_s=0.09,
+            coast_velocity_rebrake_enabled=False,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.12, 0.40, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            virtual_release_velocity=[0.0, 0.40, 0.0],
+            virtual_kinetic_friction_coefficient=0.01,
+            coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.01, 1.0], [0.12, 0.40, 0.0], 1.01,
+            current_orientation_rpy=np.radians([8.0, 0.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+            virtual_target_velocity=[0.0, 0.35, 0.0],
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+        np.testing.assert_allclose(
+            control.coast_velocity_command_xy_m_s,
+            [0.0, 0.35],
+            atol=1e-12,
+        )
+        self.assertEqual(
+            control.coast_tracking_action,
+            'track_virtual_friction_velocity_and_damp_lateral',
+        )
+
     def test_predictive_unwind_can_send_direct_level_attitude_at_fixed_z(self):
         commander = FakeCommander()
         control = TranslationControlHandoff(

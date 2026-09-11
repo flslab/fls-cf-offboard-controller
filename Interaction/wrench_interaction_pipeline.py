@@ -243,9 +243,15 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # Optional staged variant of velocity braking.  First request zero
         # velocity, then predict when the measured braking attitude has enough
         # residual impulse to reach a small positive terminal speed.  At that
-        # point track the measured velocity so the onboard velocity loop asks
-        # for level attitude before position control takes ownership.
+        # point either track the virtual-friction velocity or the measured
+        # velocity so the onboard loop unwinds before position takes ownership.
         "coast_velocity_predictive_unwind_enabled": False,
+        # When release supplies the virtual object's initial velocity and
+        # kinetic friction, compare the real braking-tail prediction with the
+        # virtual speed expected at the same future horizon. This lets 2AFC
+        # friction conditions select different unwind times while retaining
+        # the configured terminal speed as a lower bound.
+        "coast_velocity_unwind_virtual_friction_target_enabled": False,
         "coast_velocity_unwind_terminal_speed_m_s": 0.10,
         # Legacy constant-tail predictor settings. Missions can instead enable
         # the rate-limited leveling integration below.

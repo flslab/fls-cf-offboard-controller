@@ -2425,6 +2425,7 @@ class TranslationControlHandoff:
             coast_velocity_handoff_speed_m_s=0.03,
             coast_velocity_handoff_position_offset_m=0.0,
             coast_velocity_predictive_unwind_enabled=False,
+            coast_velocity_unwind_virtual_friction_target_enabled=False,
             coast_velocity_unwind_terminal_speed_m_s=0.10,
             coast_velocity_unwind_prediction_margin_s=0.15,
             coast_velocity_unwind_command_switch_delay_s=0.0,
@@ -2540,6 +2541,9 @@ class TranslationControlHandoff:
         self.coast_velocity_predictive_unwind_enabled = bool(
             coast_velocity_predictive_unwind_enabled
         )
+        self.coast_velocity_unwind_virtual_friction_target_enabled = bool(
+            coast_velocity_unwind_virtual_friction_target_enabled
+        )
         self.coast_velocity_unwind_terminal_speed_m_s = float(
             coast_velocity_unwind_terminal_speed_m_s
         )
@@ -2647,6 +2651,13 @@ class TranslationControlHandoff:
         ):
             raise ValueError(
                 'direct level-attitude unwind requires predictive unwind'
+            )
+        if (
+            self.coast_velocity_unwind_virtual_friction_target_enabled
+            and not self.coast_velocity_predictive_unwind_enabled
+        ):
+            raise ValueError(
+                'virtual-friction unwind target requires predictive unwind'
             )
         if (
             self.coast_velocity_unwind_direct_level_attitude_enabled
@@ -2864,6 +2875,13 @@ class TranslationControlHandoff:
         self.coast_velocity_command_xy_m_s = np.zeros(2)
         self.coast_velocity_predicted_unwind_terminal_speed_m_s = None
         self.coast_velocity_predicted_next_step_terminal_speed_m_s = None
+        self.coast_velocity_effective_unwind_terminal_speed_m_s = None
+        self.coast_velocity_virtual_unwind_target_speed_m_s = None
+        self.coast_velocity_virtual_unwind_next_step_target_speed_m_s = None
+        self.coast_velocity_virtual_unwind_prediction_elapsed_s = None
+        self.coast_velocity_virtual_release_projected_speed_m_s = None
+        self.coast_velocity_virtual_kinetic_friction_coefficient = None
+        self.coast_velocity_virtual_friction_deceleration_m_s2 = None
         self.coast_velocity_dynamic_unwind_threshold_m_s = None
         self.coast_velocity_dynamic_unwind_step_guard_m_s = None
         self.coast_velocity_unwind_decision_reason = None
@@ -2876,6 +2894,7 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_lateral_error_m = None
         self.coast_velocity_unwind_raw_integrated_velocity_delta_m_s = None
         self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_predicted_tail_deceleration_m_s2 = None
         self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
@@ -3021,6 +3040,13 @@ class TranslationControlHandoff:
         self.coast_velocity_command_xy_m_s.fill(0.0)
         self.coast_velocity_predicted_unwind_terminal_speed_m_s = None
         self.coast_velocity_predicted_next_step_terminal_speed_m_s = None
+        self.coast_velocity_effective_unwind_terminal_speed_m_s = None
+        self.coast_velocity_virtual_unwind_target_speed_m_s = None
+        self.coast_velocity_virtual_unwind_next_step_target_speed_m_s = None
+        self.coast_velocity_virtual_unwind_prediction_elapsed_s = None
+        self.coast_velocity_virtual_release_projected_speed_m_s = None
+        self.coast_velocity_virtual_kinetic_friction_coefficient = None
+        self.coast_velocity_virtual_friction_deceleration_m_s2 = None
         self.coast_velocity_dynamic_unwind_threshold_m_s = None
         self.coast_velocity_dynamic_unwind_step_guard_m_s = None
         self.coast_velocity_unwind_decision_reason = None
@@ -3033,6 +3059,7 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_lateral_error_m = None
         self.coast_velocity_unwind_raw_integrated_velocity_delta_m_s = None
         self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_predicted_tail_deceleration_m_s2 = None
         self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
@@ -3416,6 +3443,8 @@ class TranslationControlHandoff:
             current_force=None,
             current_mass_kg=None,
             coast=False,
+            virtual_release_velocity=None,
+            virtual_kinetic_friction_coefficient=None,
     ):
         if self.shadow_mode or self.mode not in (
                 self.CONTACT_POSITION,
@@ -3462,6 +3491,31 @@ class TranslationControlHandoff:
         mass = None if current_mass_kg is None else float(current_mass_kg)
         if mass is not None and (not np.isfinite(mass) or mass <= 0.0):
             raise ValueError('translation release mass must be positive')
+        virtual_velocity = None
+        if virtual_release_velocity is not None:
+            virtual_velocity = np.asarray(
+                virtual_release_velocity, dtype=float
+            )
+            if (
+                virtual_velocity.shape not in ((2,), (3,))
+                or not np.all(np.isfinite(virtual_velocity))
+            ):
+                raise ValueError(
+                    'virtual release velocity must be finite XY or XYZ'
+                )
+        virtual_kinetic_mu = (
+            None
+            if virtual_kinetic_friction_coefficient is None else
+            float(virtual_kinetic_friction_coefficient)
+        )
+        if virtual_kinetic_mu is not None and (
+            not np.isfinite(virtual_kinetic_mu)
+            or virtual_kinetic_mu < 0.0
+        ):
+            raise ValueError(
+                'virtual kinetic friction coefficient must be finite and '
+                'non-negative'
+            )
         interaction_direction = (
             np.asarray(interaction_direction, dtype=float)
             if interaction_direction is not None else np.zeros(3)
@@ -3504,6 +3558,21 @@ class TranslationControlHandoff:
         self.brake_projected_speed_m_s = float(
             velocity[:2] @ self.brake_direction[:2]
         )
+        if virtual_velocity is not None and virtual_kinetic_mu is not None:
+            self.coast_velocity_virtual_release_projected_speed_m_s = max(
+                float(virtual_velocity[:2] @ self.brake_direction[:2]),
+                0.0,
+            )
+            self.coast_velocity_virtual_kinetic_friction_coefficient = (
+                virtual_kinetic_mu
+            )
+            self.coast_velocity_virtual_friction_deceleration_m_s2 = (
+                virtual_kinetic_mu * 9.81
+            )
+        else:
+            self.coast_velocity_virtual_release_projected_speed_m_s = None
+            self.coast_velocity_virtual_kinetic_friction_coefficient = None
+            self.coast_velocity_virtual_friction_deceleration_m_s2 = None
         self.hover_z = float(position[2])
         self._coast_alignment_since = None
         self._coast_position_settle_since = None
@@ -3556,6 +3625,10 @@ class TranslationControlHandoff:
         self.coast_velocity_command_xy_m_s.fill(0.0)
         self.coast_velocity_predicted_unwind_terminal_speed_m_s = None
         self.coast_velocity_predicted_next_step_terminal_speed_m_s = None
+        self.coast_velocity_effective_unwind_terminal_speed_m_s = None
+        self.coast_velocity_virtual_unwind_target_speed_m_s = None
+        self.coast_velocity_virtual_unwind_next_step_target_speed_m_s = None
+        self.coast_velocity_virtual_unwind_prediction_elapsed_s = None
         self.coast_velocity_dynamic_unwind_threshold_m_s = None
         self.coast_velocity_dynamic_unwind_step_guard_m_s = None
         self.coast_velocity_unwind_decision_reason = None
@@ -3568,6 +3641,7 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_lateral_error_m = None
         self.coast_velocity_unwind_raw_integrated_velocity_delta_m_s = None
         self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
+        self.coast_velocity_unwind_predicted_tail_deceleration_m_s2 = None
         self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
@@ -3676,9 +3750,17 @@ class TranslationControlHandoff:
         self.release_candidate_command_hold_s = None
         self.coast_velocity_predicted_unwind_terminal_speed_m_s = None
         self.coast_velocity_predicted_next_step_terminal_speed_m_s = None
+        self.coast_velocity_effective_unwind_terminal_speed_m_s = None
+        self.coast_velocity_virtual_unwind_target_speed_m_s = None
+        self.coast_velocity_virtual_unwind_next_step_target_speed_m_s = None
+        self.coast_velocity_virtual_unwind_prediction_elapsed_s = None
+        self.coast_velocity_virtual_release_projected_speed_m_s = None
+        self.coast_velocity_virtual_kinetic_friction_coefficient = None
+        self.coast_velocity_virtual_friction_deceleration_m_s2 = None
         self.coast_velocity_dynamic_unwind_threshold_m_s = None
         self.coast_velocity_dynamic_unwind_step_guard_m_s = None
         self.coast_velocity_unwind_decision_reason = None
+        self.coast_velocity_unwind_predicted_tail_deceleration_m_s2 = None
         self.coast_state_sample_valid = True
         self.coast_state_rejection_reason = None
         self.coast_state_kinematic_residual_m = None
@@ -3803,16 +3885,18 @@ class TranslationControlHandoff:
             current_angular_velocity=None,
             allow_position_handoff=True,
             command_timestamp=None,
+            virtual_target_velocity=None,
     ):
         """Brake in velocity mode and hand off only after a level unwind.
 
         The legacy experimental path remains a zero-velocity command followed
         by a speed-only handoff.  The predictive-unwind variant first uses that
-        same aggressive command, then either changes the velocity target to the
-        measured velocity or transfers to a delay-compensated position target
-        on the release line before the zero crossing. The position variant
-        resets both cascade integrators once at that transition and keeps its
-        longitudinal target from following a later reversal.
+        same aggressive command, then either follows the latched virtual-
+        friction trajectory, changes the target to measured velocity, or
+        transfers to a delay-compensated position target on the release line
+        before the zero crossing. The position variant resets both cascade
+        integrators once at that transition and keeps its longitudinal target
+        from following a later reversal.
         """
         if self.shadow_mode or self.mode != self.VELOCITY_COAST:
             return False
@@ -3832,6 +3916,11 @@ class TranslationControlHandoff:
         command_timestamp = float(
             timestamp if command_timestamp is None else command_timestamp
         )
+        virtual_velocity = None
+        if virtual_target_velocity is not None:
+            virtual_velocity = np.asarray(
+                virtual_target_velocity, dtype=float
+            )
         if (
             position.shape != (3,)
             or velocity.shape != (3,)
@@ -3843,6 +3932,13 @@ class TranslationControlHandoff:
             or not np.all(np.isfinite(angular_velocity))
             or not np.isfinite(timestamp)
             or not np.isfinite(command_timestamp)
+            or (
+                virtual_velocity is not None
+                and (
+                    virtual_velocity.shape not in ((2,), (3,))
+                    or not np.all(np.isfinite(virtual_velocity))
+                )
+            )
         ):
             raise ValueError(
                 'velocity coast state must be finite XYZ/RPY/angular-rate'
@@ -4083,11 +4179,61 @@ class TranslationControlHandoff:
                 self.coast_velocity_unwind_integrated_velocity_delta_m_s = None
                 self.coast_velocity_unwind_leveling_duration_s = None
             self.coast_velocity_unwind_response_horizon_s = response_horizon_s
+            predicted_tail_deceleration_m_s2 = max(
+                -tail_velocity_delta / max(response_horizon_s, 1e-9),
+                0.0,
+            )
+            self.coast_velocity_unwind_predicted_tail_deceleration_m_s2 = (
+                predicted_tail_deceleration_m_s2
+            )
             predicted_terminal_speed = float(
                 self.brake_projected_speed_m_s + tail_velocity_delta
             )
             self.coast_velocity_predicted_unwind_terminal_speed_m_s = (
                 predicted_terminal_speed
+            )
+
+            # Match the real braking tail to the zero-force virtual motion
+            # selected for this interaction. The virtual release speed and
+            # kinetic friction are latched at confirmed release, so a low-mu
+            # 2AFC condition retains more forward speed and requests unwind
+            # earlier than a high-mu condition. The configured terminal speed
+            # remains a lower bound for legacy behavior and the final stop.
+            virtual_target_speed = None
+            virtual_next_step_target_speed = None
+            friction_prediction_elapsed_s = None
+            if (
+                self.coast_velocity_unwind_virtual_friction_target_enabled
+                and self._brake_started_at is not None
+                and self.coast_velocity_virtual_release_projected_speed_m_s
+                is not None
+                and self.coast_velocity_virtual_friction_deceleration_m_s2
+                is not None
+            ):
+                friction_prediction_elapsed_s = max(
+                    timestamp - self._brake_started_at,
+                    0.0,
+                ) + response_horizon_s
+                virtual_target_speed = max(
+                    self.coast_velocity_virtual_release_projected_speed_m_s
+                    - (
+                        self.coast_velocity_virtual_friction_deceleration_m_s2
+                        * friction_prediction_elapsed_s
+                    ),
+                    0.0,
+                )
+            effective_terminal_speed = max(
+                self.coast_velocity_unwind_terminal_speed_m_s,
+                0.0 if virtual_target_speed is None else virtual_target_speed,
+            )
+            self.coast_velocity_virtual_unwind_target_speed_m_s = (
+                virtual_target_speed
+            )
+            self.coast_velocity_virtual_unwind_prediction_elapsed_s = (
+                friction_prediction_elapsed_s
+            )
+            self.coast_velocity_effective_unwind_terminal_speed_m_s = (
+                effective_terminal_speed
             )
 
             # Compensate for one fixed decision/send interval using the
@@ -4105,6 +4251,26 @@ class TranslationControlHandoff:
             dynamic_step_guard = (
                 current_deceleration_m_s2 * one_step_dt_s
             )
+            if virtual_target_speed is not None:
+                virtual_next_step_target_speed = max(
+                    self.coast_velocity_virtual_release_projected_speed_m_s
+                    - (
+                        self.coast_velocity_virtual_friction_deceleration_m_s2
+                        * (
+                            friction_prediction_elapsed_s + one_step_dt_s
+                        )
+                    ),
+                    0.0,
+                )
+            effective_next_step_terminal_speed = max(
+                self.coast_velocity_unwind_terminal_speed_m_s,
+                0.0
+                if virtual_next_step_target_speed is None
+                else virtual_next_step_target_speed,
+            )
+            self.coast_velocity_virtual_unwind_next_step_target_speed_m_s = (
+                virtual_next_step_target_speed
+            )
             predicted_next_step_terminal_speed = float(
                 predicted_terminal_speed - dynamic_step_guard
             )
@@ -4115,7 +4281,7 @@ class TranslationControlHandoff:
                 dynamic_step_guard
             )
             self.coast_velocity_dynamic_unwind_threshold_m_s = (
-                self.coast_velocity_unwind_terminal_speed_m_s
+                effective_next_step_terminal_speed
                 + (
                     dynamic_step_guard
                     if self.coast_velocity_unwind_one_step_lookahead_enabled
@@ -4162,11 +4328,16 @@ class TranslationControlHandoff:
                         future_projected_acceleration,
                     )
                     <= -self.coast_velocity_unwind_min_deceleration_m_s2
+                    or (
+                        virtual_target_speed is not None
+                        and predicted_tail_deceleration_m_s2
+                        >= self.coast_velocity_unwind_min_deceleration_m_s2
+                    )
                 )
                 fixed_tail_ready = bool(
                     deceleration_ready
                     and predicted_terminal_speed
-                    <= self.coast_velocity_unwind_terminal_speed_m_s
+                    <= effective_terminal_speed
                 )
                 one_step_tail_ready = bool(
                     self.coast_velocity_unwind_one_step_lookahead_enabled
@@ -4189,8 +4360,22 @@ class TranslationControlHandoff:
                     self._coast_velocity_pid_reset_pending = True
                     self._coast_alignment_since = None
                     self.coast_velocity_unwind_decision_reason = (
-                        'current_tail_prediction'
+                        'virtual_friction_tail_prediction'
+                        if (
+                            fixed_tail_ready
+                            and virtual_target_speed is not None
+                            and virtual_target_speed
+                            > self.coast_velocity_unwind_terminal_speed_m_s
+                        )
+                        else 'current_tail_prediction'
                         if fixed_tail_ready
+                        else 'virtual_friction_one_step_tail_prediction'
+                        if (
+                            one_step_tail_ready
+                            and virtual_next_step_target_speed is not None
+                            and virtual_next_step_target_speed
+                            > self.coast_velocity_unwind_terminal_speed_m_s
+                        )
                         else 'one_step_tail_prediction'
                         if one_step_tail_ready
                         else 'low_speed_fallback'
@@ -4209,6 +4394,48 @@ class TranslationControlHandoff:
                     self._update_predictive_unwind_position_target(
                         position,
                         response_delay_s,
+                    )
+                elif (
+                    self.coast_velocity_unwind_virtual_friction_target_enabled
+                    and virtual_velocity is not None
+                ):
+                    brake_direction_xy = self.brake_direction[:2].copy()
+                    direction_norm = float(np.linalg.norm(
+                        brake_direction_xy
+                    ))
+                    if direction_norm > 1e-9:
+                        brake_direction_xy /= direction_norm
+                    desired_projected_speed_m_s = max(
+                        float(
+                            virtual_velocity[:2] @ brake_direction_xy
+                        ),
+                        0.0,
+                    )
+                    # Preserve the virtual-friction distinction without
+                    # accelerating the vehicle after release if the real
+                    # brake has already slowed below the virtual trajectory.
+                    desired_projected_speed_m_s = min(
+                        desired_projected_speed_m_s,
+                        max(self.brake_projected_speed_m_s, 0.0),
+                    )
+                    desired_velocity_xy = (
+                        desired_projected_speed_m_s * brake_direction_xy
+                    )
+                    target_error = desired_velocity_xy - velocity[:2]
+                    target_error_norm = float(np.linalg.norm(target_error))
+                    if (
+                        target_error_norm
+                        > self.coast_velocity_unwind_max_target_error_m_s
+                    ):
+                        target_error *= (
+                            self.coast_velocity_unwind_max_target_error_m_s
+                            / target_error_norm
+                        )
+                    self.coast_velocity_command_xy_m_s = (
+                        velocity[:2] + target_error
+                    )
+                    self.coast_tracking_action = (
+                        'track_virtual_friction_velocity_and_damp_lateral'
                     )
                 else:
                     update_dt = coast_update_dt_s
@@ -7039,6 +7266,18 @@ class InteractionsControl:
                 'control_handoff.coast_velocity_predictive_unwind_enabled '
                 'must be boolean'
             )
+        velocity_unwind_virtual_friction_target_enabled = (
+            config['control_handoff'].get(
+                'coast_velocity_unwind_virtual_friction_target_enabled',
+                False,
+            )
+        )
+        if type(velocity_unwind_virtual_friction_target_enabled) is not bool:
+            raise ValueError(
+                'control_handoff.'
+                'coast_velocity_unwind_virtual_friction_target_enabled '
+                'must be boolean'
+            )
         velocity_rebrake_enabled = config['control_handoff'].get(
             'coast_velocity_rebrake_enabled', True
         )
@@ -7076,6 +7315,14 @@ class InteractionsControl:
             raise ValueError(
                 'predictive velocity unwind requires '
                 'coast_velocity_braking_enabled'
+            )
+        if (
+            velocity_unwind_virtual_friction_target_enabled
+            and not velocity_predictive_unwind_enabled
+        ):
+            raise ValueError(
+                'virtual-friction velocity unwind target requires '
+                'coast_velocity_predictive_unwind_enabled'
             )
         if (
             velocity_unwind_position_control_enabled
@@ -7553,6 +7800,8 @@ class InteractionsControl:
                                             if velocity_unwind_direct_level_attitude_enabled
                                             else 'release_line_position_unwind'
                                             if velocity_unwind_position_control_enabled
+                                            else 'virtual_friction_velocity_unwind_then_position'
+                                            if velocity_unwind_virtual_friction_target_enabled
                                             else 'predictive_velocity_unwind_then_position'
                                         )
                                         if velocity_predictive_unwind_enabled
@@ -7577,6 +7826,9 @@ class InteractionsControl:
                             ),
                             'velocity_predictive_unwind_enabled': (
                                 velocity_predictive_unwind_enabled
+                            ),
+                            'velocity_unwind_virtual_friction_target_enabled': (
+                                velocity_unwind_virtual_friction_target_enabled
                             ),
                             'velocity_unwind_prediction_margin_s': (
                                 config['control_handoff'].get(
@@ -10083,6 +10335,10 @@ class InteractionsControl:
                     output.estimate.orientation_rpy,
                     current_force=pre_release_force_world,
                     current_mass_kg=force_current_mass,
+                    virtual_release_velocity=coast_initial_velocity,
+                    virtual_kinetic_friction_coefficient=(
+                        force_kinetic_friction_coefficient
+                    ),
                     coast=True,
                 ):
                     translation_control.confirm_release_candidate(
@@ -10526,6 +10782,18 @@ class InteractionsControl:
                             'coast_initial_velocity_m_s': (
                                 coast_initial_velocity.tolist()
                             ),
+                            'virtual_kinetic_friction_coefficient': (
+                                translation_control
+                                .coast_velocity_virtual_kinetic_friction_coefficient
+                            ),
+                            'virtual_friction_deceleration_m_s2': (
+                                translation_control
+                                .coast_velocity_virtual_friction_deceleration_m_s2
+                            ),
+                            'virtual_release_projected_speed_m_s': (
+                                translation_control
+                                .coast_velocity_virtual_release_projected_speed_m_s
+                            ),
                             'predicted_stop_position_m': (
                                 None if coast_stop_prediction is None
                                 else [
@@ -10857,6 +11125,10 @@ class InteractionsControl:
                             output.estimate.orientation_rpy,
                             current_force=np.zeros(3),
                             current_mass_kg=force_current_mass,
+                            virtual_release_velocity=coast_initial_velocity,
+                            virtual_kinetic_friction_coefficient=(
+                                force_kinetic_friction_coefficient
+                            ),
                             coast=True,
                         ):
                             level_mpc_attitude_before_fault(
@@ -11957,6 +12229,9 @@ class InteractionsControl:
                                 or mpc_automatic_release_confirmed
                             ),
                             command_timestamp=attitude_command_planned_at,
+                            virtual_target_velocity=(
+                                braking_kwargs['coast_velocity']
+                            ),
                         )
                     )
                     coast_state_rejection = (
@@ -12050,7 +12325,35 @@ class InteractionsControl:
                                 ),
                                 'terminal_speed_target_m_s': (
                                     translation_control
+                                    .coast_velocity_effective_unwind_terminal_speed_m_s
+                                ),
+                                'configured_terminal_speed_floor_m_s': (
+                                    translation_control
                                     .coast_velocity_unwind_terminal_speed_m_s
+                                ),
+                                'virtual_friction_target_speed_m_s': (
+                                    translation_control
+                                    .coast_velocity_virtual_unwind_target_speed_m_s
+                                ),
+                                'virtual_friction_next_step_target_speed_m_s': (
+                                    translation_control
+                                    .coast_velocity_virtual_unwind_next_step_target_speed_m_s
+                                ),
+                                'virtual_friction_prediction_elapsed_s': (
+                                    translation_control
+                                    .coast_velocity_virtual_unwind_prediction_elapsed_s
+                                ),
+                                'virtual_release_projected_speed_m_s': (
+                                    translation_control
+                                    .coast_velocity_virtual_release_projected_speed_m_s
+                                ),
+                                'virtual_kinetic_friction_coefficient': (
+                                    translation_control
+                                    .coast_velocity_virtual_kinetic_friction_coefficient
+                                ),
+                                'virtual_friction_deceleration_m_s2': (
+                                    translation_control
+                                    .coast_velocity_virtual_friction_deceleration_m_s2
                                 ),
                                 'predicted_next_step_terminal_speed_m_s': (
                                     translation_control
@@ -12108,6 +12411,10 @@ class InteractionsControl:
                                 'integrated_velocity_delta_m_s': (
                                     translation_control
                                     .coast_velocity_unwind_integrated_velocity_delta_m_s
+                                ),
+                                'predicted_tail_deceleration_m_s2': (
+                                    translation_control
+                                    .coast_velocity_unwind_predicted_tail_deceleration_m_s2
                                 ),
                                 'raw_integrated_velocity_delta_m_s': (
                                     translation_control
@@ -13615,6 +13922,8 @@ class InteractionsControl:
                                 if velocity_unwind_direct_level_attitude_enabled
                                 else 'release_line_position_unwind'
                                 if velocity_unwind_position_control_enabled
+                                else 'virtual_friction_velocity_unwind_then_position'
+                                if velocity_unwind_virtual_friction_target_enabled
                                 else 'predictive_velocity_unwind_then_position'
                             )
                             if velocity_predictive_unwind_enabled
@@ -14083,6 +14392,10 @@ class InteractionsControl:
                     translation_control
                     .coast_velocity_unwind_total_response_delay_s
                 ),
+                'coast_velocity_unwind_virtual_friction_target_enabled': (
+                    translation_control
+                    .coast_velocity_unwind_virtual_friction_target_enabled
+                ),
                 'coast_velocity_unwind_position_control_enabled': (
                     translation_control
                     .coast_velocity_unwind_position_control_enabled
@@ -14203,6 +14516,34 @@ class InteractionsControl:
                     translation_control
                     .coast_velocity_predicted_next_step_terminal_speed_m_s
                 ),
+                'coast_velocity_effective_unwind_terminal_speed_m_s': (
+                    translation_control
+                    .coast_velocity_effective_unwind_terminal_speed_m_s
+                ),
+                'coast_velocity_virtual_unwind_target_speed_m_s': (
+                    translation_control
+                    .coast_velocity_virtual_unwind_target_speed_m_s
+                ),
+                'coast_velocity_virtual_unwind_next_step_target_speed_m_s': (
+                    translation_control
+                    .coast_velocity_virtual_unwind_next_step_target_speed_m_s
+                ),
+                'coast_velocity_virtual_unwind_prediction_elapsed_s': (
+                    translation_control
+                    .coast_velocity_virtual_unwind_prediction_elapsed_s
+                ),
+                'coast_velocity_virtual_release_projected_speed_m_s': (
+                    translation_control
+                    .coast_velocity_virtual_release_projected_speed_m_s
+                ),
+                'coast_velocity_virtual_kinetic_friction_coefficient': (
+                    translation_control
+                    .coast_velocity_virtual_kinetic_friction_coefficient
+                ),
+                'coast_velocity_virtual_friction_deceleration_m_s2': (
+                    translation_control
+                    .coast_velocity_virtual_friction_deceleration_m_s2
+                ),
                 'coast_velocity_dynamic_unwind_threshold_m_s': (
                     translation_control
                     .coast_velocity_dynamic_unwind_threshold_m_s
@@ -14225,6 +14566,10 @@ class InteractionsControl:
                 'coast_velocity_unwind_integrated_velocity_delta_m_s': (
                     translation_control
                     .coast_velocity_unwind_integrated_velocity_delta_m_s
+                ),
+                'coast_velocity_unwind_predicted_tail_deceleration_m_s2': (
+                    translation_control
+                    .coast_velocity_unwind_predicted_tail_deceleration_m_s2
                 ),
                 'coast_velocity_unwind_raw_integrated_velocity_delta_m_s': (
                     translation_control

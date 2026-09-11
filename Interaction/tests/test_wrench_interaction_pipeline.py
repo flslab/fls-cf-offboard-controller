@@ -47,6 +47,11 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertEqual(
             handoff["coast_velocity_unwind_terminal_speed_m_s"], 0.10
         )
+        self.assertFalse(
+            handoff[
+                "coast_velocity_unwind_virtual_friction_target_enabled"
+            ]
+        )
         self.assertEqual(
             handoff["coast_velocity_unwind_prediction_margin_s"], 0.15
         )
