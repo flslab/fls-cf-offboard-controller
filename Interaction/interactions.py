@@ -36,6 +36,10 @@ from Interaction.learning_velocity_mpc import (
     VelocityMPCState,
     frozen_velocity_model_from_prediction_model,
 )
+from Interaction.jerk_limited_braking import (
+    JerkLimitedBrakeError,
+    make_jerk_limited_brake_profile,
+)
 from Interaction.mpc_bootstrap_calibration import (
     MPCBootstrapAutomaticAttempt,
     MPCBootstrapCalibrationConfig,
@@ -857,6 +861,52 @@ def attitude_to_world_acceleration(roll_deg, pitch_deg, yaw_deg):
         body[0] * cos_y - body[1] * sin_y,
         body[0] * sin_y + body[1] * cos_y,
     ])
+
+
+def world_acceleration_to_attitude(
+        acceleration_xy, yaw_deg, max_attitude_deg=30.0):
+    """Map a bounded world-XY acceleration to Crazyflie roll/pitch."""
+    acceleration = np.asarray(acceleration_xy, dtype=float)
+    max_attitude_deg = _validated_attitude_limit(
+        max_attitude_deg, 'world acceleration command'
+    )
+    if acceleration.shape != (2,) or not np.all(np.isfinite(acceleration)):
+        raise ValueError('world acceleration command must contain finite XY')
+    if not np.isfinite(float(yaw_deg)):
+        raise ValueError('world acceleration command yaw must be finite')
+    acceleration_norm = float(np.linalg.norm(acceleration))
+    if acceleration_norm <= 1e-12:
+        return {
+            'roll_deg': 0.0,
+            'pitch_deg': 0.0,
+            'tilt_deg': 0.0,
+            'command_acceleration_m_s2': np.zeros(2),
+            'saturated': False,
+        }
+
+    attitude_acceleration_limit = float(
+        9.81 * np.tan(np.radians(max_attitude_deg))
+    )
+    command_acceleration = acceleration.copy()
+    saturated = acceleration_norm > attitude_acceleration_limit
+    if saturated:
+        command_acceleration *= (
+            attitude_acceleration_limit / acceleration_norm
+        )
+        acceleration_norm = attitude_acceleration_limit
+    acceleration_body = world_to_body_xy(command_acceleration, yaw_deg)
+    tilt_deg = float(np.degrees(np.arctan2(acceleration_norm, 9.81)))
+    return {
+        'roll_deg': float(
+            -tilt_deg * acceleration_body[1] / acceleration_norm
+        ),
+        'pitch_deg': float(
+            -tilt_deg * acceleration_body[0] / acceleration_norm
+        ),
+        'tilt_deg': tilt_deg,
+        'command_acceleration_m_s2': command_acceleration,
+        'saturated': bool(saturated),
+    }
 
 
 def integrate_rate_limited_leveling_velocity_delta(
@@ -2442,6 +2492,20 @@ class TranslationControlHandoff:
             coast_velocity_unwind_brake_slew_rate_m_s2=1.0,
             coast_velocity_unwind_lateral_max_target_error_m_s=0.05,
             coast_velocity_unwind_lateral_slew_rate_m_s2=0.50,
+            coast_jerk_limited_attitude_enabled=False,
+            coast_jerk_limited_virtual_friction_enabled=True,
+            coast_jerk_limited_min_deceleration_m_s2=0.40,
+            coast_jerk_limited_max_deceleration_m_s2=1.00,
+            coast_jerk_limited_max_jerk_m_s3=4.00,
+            coast_jerk_limited_max_duration_s=2.00,
+            coast_jerk_limited_lateral_position_gain_s2=1.50,
+            coast_jerk_limited_lateral_velocity_gain_s=1.00,
+            coast_jerk_limited_lateral_max_acceleration_m_s2=0.25,
+            coast_jerk_limited_lateral_max_jerk_m_s3=1.00,
+            coast_jerk_limited_lateral_fade_s=0.25,
+            coast_jerk_limited_level_hold_s=0.30,
+            coast_jerk_limited_settle_timeout_s=0.75,
+            coast_jerk_limited_max_attitude_rate_deg_s=720.0,
             coast_velocity_unwind_one_step_lookahead_enabled=False,
             coast_velocity_unwind_one_step_max_dt_s=0.03,
             coast_velocity_unwind_low_speed_fallback_m_s=0.03,
@@ -2596,6 +2660,48 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_lateral_slew_rate_m_s2 = float(
             coast_velocity_unwind_lateral_slew_rate_m_s2
         )
+        self.coast_jerk_limited_attitude_enabled = bool(
+            coast_jerk_limited_attitude_enabled
+        )
+        self.coast_jerk_limited_virtual_friction_enabled = bool(
+            coast_jerk_limited_virtual_friction_enabled
+        )
+        self.coast_jerk_limited_min_deceleration_m_s2 = float(
+            coast_jerk_limited_min_deceleration_m_s2
+        )
+        self.coast_jerk_limited_max_deceleration_m_s2 = float(
+            coast_jerk_limited_max_deceleration_m_s2
+        )
+        self.coast_jerk_limited_max_jerk_m_s3 = float(
+            coast_jerk_limited_max_jerk_m_s3
+        )
+        self.coast_jerk_limited_max_duration_s = float(
+            coast_jerk_limited_max_duration_s
+        )
+        self.coast_jerk_limited_lateral_position_gain_s2 = float(
+            coast_jerk_limited_lateral_position_gain_s2
+        )
+        self.coast_jerk_limited_lateral_velocity_gain_s = float(
+            coast_jerk_limited_lateral_velocity_gain_s
+        )
+        self.coast_jerk_limited_lateral_max_acceleration_m_s2 = float(
+            coast_jerk_limited_lateral_max_acceleration_m_s2
+        )
+        self.coast_jerk_limited_lateral_max_jerk_m_s3 = float(
+            coast_jerk_limited_lateral_max_jerk_m_s3
+        )
+        self.coast_jerk_limited_lateral_fade_s = float(
+            coast_jerk_limited_lateral_fade_s
+        )
+        self.coast_jerk_limited_level_hold_s = float(
+            coast_jerk_limited_level_hold_s
+        )
+        self.coast_jerk_limited_settle_timeout_s = float(
+            coast_jerk_limited_settle_timeout_s
+        )
+        self.coast_jerk_limited_max_attitude_rate_deg_s = float(
+            coast_jerk_limited_max_attitude_rate_deg_s
+        )
         self.coast_velocity_unwind_one_step_lookahead_enabled = bool(
             coast_velocity_unwind_one_step_lookahead_enabled
         )
@@ -2683,6 +2789,15 @@ class TranslationControlHandoff:
                 'direct level-attitude unwind and position-controlled unwind '
                 'are mutually exclusive'
             )
+        if self.coast_jerk_limited_attitude_enabled and not (
+            self.coast_velocity_braking_enabled
+            and self.coast_velocity_predictive_unwind_enabled
+        ):
+            raise ValueError(
+                'jerk-limited attitude braking requires velocity braking and '
+                'predictive unwind so the established fallback remains '
+                'available'
+            )
         translation_limits = np.asarray([
             self.brake_xy_acceleration_m_s2,
             self.brake_xy_speed_m_s,
@@ -2716,6 +2831,18 @@ class TranslationControlHandoff:
             self.coast_velocity_unwind_brake_slew_rate_m_s2,
             self.coast_velocity_unwind_lateral_max_target_error_m_s,
             self.coast_velocity_unwind_lateral_slew_rate_m_s2,
+            self.coast_jerk_limited_min_deceleration_m_s2,
+            self.coast_jerk_limited_max_deceleration_m_s2,
+            self.coast_jerk_limited_max_jerk_m_s3,
+            self.coast_jerk_limited_max_duration_s,
+            self.coast_jerk_limited_lateral_position_gain_s2,
+            self.coast_jerk_limited_lateral_velocity_gain_s,
+            self.coast_jerk_limited_lateral_max_acceleration_m_s2,
+            self.coast_jerk_limited_lateral_max_jerk_m_s3,
+            self.coast_jerk_limited_lateral_fade_s,
+            self.coast_jerk_limited_level_hold_s,
+            self.coast_jerk_limited_settle_timeout_s,
+            self.coast_jerk_limited_max_attitude_rate_deg_s,
             self.coast_velocity_unwind_one_step_max_dt_s,
             self.coast_velocity_unwind_low_speed_fallback_m_s,
             self.coast_velocity_rebrake_speed_m_s,
@@ -2776,6 +2903,19 @@ class TranslationControlHandoff:
             or self.coast_velocity_unwind_brake_slew_rate_m_s2 <= 0
             or self.coast_velocity_unwind_lateral_max_target_error_m_s <= 0
             or self.coast_velocity_unwind_lateral_slew_rate_m_s2 <= 0
+            or self.coast_jerk_limited_min_deceleration_m_s2 <= 0
+            or self.coast_jerk_limited_max_deceleration_m_s2
+            < self.coast_jerk_limited_min_deceleration_m_s2
+            or self.coast_jerk_limited_max_jerk_m_s3 <= 0
+            or self.coast_jerk_limited_max_duration_s <= 0
+            or self.coast_jerk_limited_lateral_position_gain_s2 < 0
+            or self.coast_jerk_limited_lateral_velocity_gain_s < 0
+            or self.coast_jerk_limited_lateral_max_acceleration_m_s2 < 0
+            or self.coast_jerk_limited_lateral_max_jerk_m_s3 <= 0
+            or self.coast_jerk_limited_lateral_fade_s <= 0
+            or self.coast_jerk_limited_level_hold_s < 0
+            or self.coast_jerk_limited_settle_timeout_s <= 0
+            or self.coast_jerk_limited_max_attitude_rate_deg_s <= 0
             or self.coast_velocity_unwind_one_step_max_dt_s <= 0
             or self.coast_velocity_unwind_low_speed_fallback_m_s <= 0
             or (
@@ -2939,8 +3079,43 @@ class TranslationControlHandoff:
         self.coast_state_sample_gap_s = None
         self.coast_state_rejection_count = 0
         self._coast_velocity_pid_reset_pending = False
+        self.coast_velocity_pid_reset_reason = None
         self._coast_velocity_rebrake_pending = False
         self._coast_state_rejection_pending = None
+        self._reset_jerk_limited_episode_state()
+
+    def _reset_jerk_limited_episode_state(self):
+        self.coast_jerk_limited_profile = None
+        self.coast_jerk_limited_profile_started_at = None
+        self.coast_jerk_limited_first_actual_send_at = None
+        self.coast_jerk_limited_release_projected_speed_m_s = None
+        self.coast_jerk_limited_initial_command_acceleration_m_s2 = None
+        self.coast_jerk_limited_modeled_initial_acceleration_m_s2 = None
+        self.coast_jerk_limited_raw_level_tail_delta_m_s = None
+        self.coast_jerk_limited_calibrated_level_tail_delta_m_s = None
+        self.coast_jerk_limited_velocity_budget_m_s = None
+        self.coast_jerk_limited_selected_deceleration_m_s2 = None
+        self.coast_jerk_limited_profile_duration_s = None
+        self.coast_jerk_limited_elapsed_s = None
+        self.coast_jerk_limited_reference_progress_m = None
+        self.coast_jerk_limited_reference_velocity_m_s = None
+        self.coast_jerk_limited_reference_acceleration_m_s2 = None
+        self.coast_jerk_limited_reference_jerk_m_s3 = None
+        self.coast_jerk_limited_command_acceleration_xy_m_s2 = np.zeros(2)
+        self.coast_jerk_limited_longitudinal_acceleration_m_s2 = 0.0
+        self.coast_jerk_limited_lateral_acceleration_m_s2 = 0.0
+        self.coast_jerk_limited_cross_track_position_m = None
+        self.coast_jerk_limited_cross_track_velocity_m_s = None
+        self.coast_jerk_limited_terminal_command_started_at = None
+        self.coast_jerk_limited_terminal_command_elapsed_s = None
+        self.coast_jerk_limited_terminal_command_ready = False
+        self.coast_jerk_limited_acceleration_ready = False
+        self.coast_jerk_limited_attitude_slew_limited = False
+        self.coast_jerk_limited_reverse_guard_applied = False
+        self.coast_jerk_limited_fallback_reason = None
+        self.coast_jerk_limited_fallback_count = 0
+        self._coast_jerk_limited_level_before_fallback_reason = None
+        self._coast_jerk_limited_event_pending = None
 
     def _validate_calibrated_braking_direction(self, direction_xy):
         if self.coast_calibrated_direction_xy is None:
@@ -3111,8 +3286,10 @@ class TranslationControlHandoff:
         self.coast_state_sample_gap_s = None
         self.coast_state_rejection_count = 0
         self._coast_velocity_pid_reset_pending = False
+        self.coast_velocity_pid_reset_reason = None
         self._coast_velocity_rebrake_pending = False
         self._coast_state_rejection_pending = None
+        self._reset_jerk_limited_episode_state()
         self._transition_mode(
             (
                 self.CONTACT_POSITION
@@ -3652,6 +3829,11 @@ class TranslationControlHandoff:
         self._tail_neutralization_deadline = None
         self._tail_neutralization_needs_send_anchor = False
         self.coast_velocity_phase = (
+            'jerk_profile_pending'
+            if coast
+            and self.coast_velocity_braking_enabled
+            and self.coast_jerk_limited_attitude_enabled
+            else
             'fast_brake'
             if coast
             and self.coast_velocity_braking_enabled
@@ -3700,9 +3882,14 @@ class TranslationControlHandoff:
         self.coast_state_sample_gap_s = None
         self.coast_state_rejection_count = 0
         self._coast_velocity_pid_reset_pending = False
+        self.coast_velocity_pid_reset_reason = None
         self._coast_velocity_rebrake_pending = False
         self._coast_state_rejection_pending = None
+        self._reset_jerk_limited_episode_state()
         if coast:
+            self.coast_jerk_limited_release_projected_speed_m_s = float(
+                self.brake_projected_speed_m_s
+            )
             yaw_deg = float(np.degrees(orientation_rpy[2]))
             if not self._coast_command_history:
                 prior_command = (
@@ -3726,12 +3913,17 @@ class TranslationControlHandoff:
                 self._coast_command_history.append(
                     (history_start, prior_command)
                 )
-            self.set_contact_attitude(
-                0.0,
-                0.0,
-                0.0,
-                yaw_deg=yaw_deg,
-            )
+            if not self.coast_jerk_limited_attitude_enabled:
+                self.set_contact_attitude(
+                    0.0,
+                    0.0,
+                    0.0,
+                    yaw_deg=yaw_deg,
+                )
+            else:
+                # The first S-curve sample starts from the most recently sent
+                # attitude acceleration, avoiding a release-time command step.
+                self._pending_attitude_yaw_deg = yaw_deg
             self.brake_force_feedforward_acceleration_m_s2 = 0.0
         else:
             # Legacy observer release uses measured velocity and force for
@@ -3820,6 +4012,7 @@ class TranslationControlHandoff:
         self.coast_state_sample_gap_s = None
         self.coast_state_rejection_count = 0
         self._coast_state_rejection_pending = None
+        self._reset_jerk_limited_episode_state()
         self.hold_position = position.copy()
         self.hover_z = float(position[2])
         self.set_contact_attitude(0.0, 0.0, 0.0)

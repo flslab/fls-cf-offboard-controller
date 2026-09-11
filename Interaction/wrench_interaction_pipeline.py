@@ -277,6 +277,32 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_velocity_unwind_brake_slew_rate_m_s2": 1.0,
         "coast_velocity_unwind_lateral_max_target_error_m_s": 0.05,
         "coast_velocity_unwind_lateral_slew_rate_m_s2": 0.50,
+        # Optional paper-inspired release controller. It plans one analytic
+        # jerk-limited stop along the latched interaction direction, sends
+        # roll/pitch directly at fixed nominal Z, and retains the continuous
+        # velocity-unwind controller as a fail-safe fallback.
+        "coast_jerk_limited_attitude_enabled": False,
+        # Preserve the 2AFC friction ordering without permitting a very-low-mu
+        # condition to consume the entire flight volume.
+        "coast_jerk_limited_virtual_friction_enabled": True,
+        "coast_jerk_limited_min_deceleration_m_s2": 0.40,
+        "coast_jerk_limited_max_deceleration_m_s2": 1.00,
+        "coast_jerk_limited_max_jerk_m_s3": 4.00,
+        "coast_jerk_limited_max_duration_s": 2.00,
+        # Cross-track position/velocity feedback has an independent small
+        # acceleration and jerk budget. It fades before the longitudinal
+        # profile ends so the terminal roll/pitch command remains exactly zero.
+        "coast_jerk_limited_lateral_position_gain_s2": 1.50,
+        "coast_jerk_limited_lateral_velocity_gain_s": 1.00,
+        "coast_jerk_limited_lateral_max_acceleration_m_s2": 0.25,
+        "coast_jerk_limited_lateral_max_jerk_m_s3": 1.00,
+        "coast_jerk_limited_lateral_fade_s": 0.25,
+        # Keep sending true level attitude while the delayed physical response
+        # settles; measured speed, tilt, rate, acceleration, and dwell still
+        # gate position ownership.
+        "coast_jerk_limited_level_hold_s": 0.30,
+        "coast_jerk_limited_settle_timeout_s": 0.75,
+        "coast_jerk_limited_max_attitude_rate_deg_s": 720.0,
         # Optional decision/send-delay compensation. The active guard is the
         # current projected deceleration times this configured interval.
         "coast_velocity_unwind_one_step_lookahead_enabled": False,
