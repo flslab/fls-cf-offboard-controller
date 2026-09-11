@@ -775,7 +775,7 @@ class Controller:
                 or not all(math.isfinite(value) for value in (
                     initial_x, initial_y, current_x, current_y, current_z))):
             raise ValueError("invalid localizer landing geometry")
-        yaw = self.args.init_yaw
+        yaw = self.args.landing_yaw
         self._set_marker_grid_mode(MyGridRequest.STATIC)
 
         distance = math.sqrt(
@@ -803,7 +803,7 @@ class Controller:
             logger.warning("MyGrid was not acquired at the landing threshold")
 
         duration = max(2.0, (threshold - height) / speed)
-        commander.land(height, duration)
+        commander.land(height, duration, yaw=yaw)
         logger.info(f"Landing duration: {duration} seconds")
         time.sleep(duration + 1)
         commander.stop()
@@ -2695,6 +2695,7 @@ if __name__ == '__main__':
     ap.add_argument("--vicon-mode", default="mixed", choices=["rigidbody", "pointcloud", "mixed"], help="Tracking mode")
     ap.add_argument("--init-pos", type=float, nargs=3, help="Initial point x y z", default=[0.0, 0.0, 0.0])
     ap.add_argument("--init-yaw", type=float, help="Initial yaw (radians)", default=0)
+    ap.add_argument("--landing-yaw", type=float, help="Landing yaw (radians)", default=0)
     ap.add_argument("--save-vicon", action="store_true", help="track with vicon and save the data")
     ap.add_argument("-v", "--verbose", help="Print logs if logging is enabled", action="store_true", default=False)
     ap.add_argument("--trajectory", type=str, help="path to trajectory file to follow")
