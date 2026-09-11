@@ -27,6 +27,12 @@ class InteractionLogger(LogManager):
             lambda: collections.deque(maxlen=1000)
         )
         self.cf_log_packet_lock = threading.Lock()
+        # cflib can deliver a packet that was already queued after a log block
+        # has been stopped.  Serialize callback completion with shutdown so the
+        # LiveLogger is not closed while one of those callbacks is still
+        # writing, and reject callbacks that arrive after shutdown begins.
+        self.cf_log_callback_lock = threading.Lock()
+        self._accepting_cf_log_callbacks = True
         self.args = kwargs.get('controller_args', False)
         self.verbose = self.args.verbose
 
@@ -46,6 +52,9 @@ class InteractionLogger(LogManager):
         self.live_logger.mark_start()
 
     def stop(self, *args, **kwargs):
+        with self.cf_log_callback_lock:
+            self._accepting_cf_log_callbacks = False
+
         if self.cf_var_logger is not None:
             for log_config in self.cf_var_logger:
                 log_config.stop()
@@ -149,30 +158,34 @@ class InteractionLogger(LogManager):
         return data[-1] if data else None
 
     def _cf_log_group_callback(self, timestamp, data, log_conf):
-        cur_time = time.time()
-        group_name = log_conf.name
-        self.cf_log_group_times[group_name] = cur_time
-        data['time'] = cur_time
-        with self.cf_log_packet_lock:
-            self.cf_log_group_packets[group_name].append(data.copy())
-        if group_name in self.cf_log_data.keys():
-            # Append data to each variable in the group
-            for var_name, var_info in self.cf_log_data[group_name].items():
-                if var_name in data:
-                    var_info['data'].append(data[var_name])
+        with self.cf_log_callback_lock:
+            if not self._accepting_cf_log_callbacks:
+                return
 
-        if self.live_logger:
-            # Preserve both clocks for offline delay/jitter analysis.  The
-            # Crazyflie callback timestamp is the raw 24-bit millisecond
-            # counter (it wraps); it is not a Unix time or a measured delay.
-            # Keep these fields out of runtime packet buffers so state age,
-            # nearest-packet selection, and control timing remain unchanged.
-            saved_data = dict(data)
-            saved_data['cf_timestamp_ms'] = timestamp
-            saved_data['host_receive_time_s'] = cur_time
-            self.live_logger.write({
-                "type": 'state', "group": group_name, "data": saved_data,
-            })
+            cur_time = time.time()
+            group_name = log_conf.name
+            self.cf_log_group_times[group_name] = cur_time
+            data['time'] = cur_time
+            with self.cf_log_packet_lock:
+                self.cf_log_group_packets[group_name].append(data.copy())
+            if group_name in self.cf_log_data.keys():
+                # Append data to each variable in the group
+                for var_name, var_info in self.cf_log_data[group_name].items():
+                    if var_name in data:
+                        var_info['data'].append(data[var_name])
+
+            if self.live_logger:
+                # Preserve both clocks for offline delay/jitter analysis.  The
+                # Crazyflie callback timestamp is the raw 24-bit millisecond
+                # counter (it wraps); it is not a Unix time or a measured delay.
+                # Keep these fields out of runtime packet buffers so state age,
+                # nearest-packet selection, and control timing remain unchanged.
+                saved_data = dict(data)
+                saved_data['cf_timestamp_ms'] = timestamp
+                saved_data['host_receive_time_s'] = cur_time
+                self.live_logger.write({
+                    "type": 'state', "group": group_name, "data": saved_data,
+                })
 
     def _update_kf(self, pos, kf):
         return [axis_kf.update(p) for p, axis_kf in zip(pos, kf.values())]

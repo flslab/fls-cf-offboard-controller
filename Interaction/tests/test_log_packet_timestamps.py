@@ -17,9 +17,63 @@ class LogPacketTimestampTests(unittest.TestCase):
             lambda: collections.deque(maxlen=1000)
         )
         logger.cf_log_packet_lock = threading.Lock()
+        logger.cf_log_callback_lock = threading.Lock()
+        logger._accepting_cf_log_callbacks = True
         logger.cf_log_data = {'VEL_ORI': {'stateEstimate.vy': {'data': []}}}
         logger.live_logger = Mock() if enabled else None
         return logger
+
+    def test_callback_arriving_after_shutdown_is_ignored(self):
+        logger = self.make_logger()
+        logger.cf_var_logger = [Mock()]
+
+        logger.stop()
+        logger._cf_log_group_callback(
+            1234, {'stateEstimate.vy': 0.2},
+            SimpleNamespace(name='VEL_ORI'),
+        )
+
+        logger.cf_var_logger[0].stop.assert_called_once_with()
+        logger.live_logger.close.assert_called_once_with()
+        logger.live_logger.write.assert_not_called()
+        self.assertEqual(logger.cf_log_group_times, {})
+        self.assertEqual(logger.cf_log_data['VEL_ORI'][
+            'stateEstimate.vy']['data'], [])
+
+    def test_shutdown_waits_for_in_flight_callback_before_close(self):
+        logger = self.make_logger()
+        logger.cf_var_logger = [Mock()]
+        write_started = threading.Event()
+        release_write = threading.Event()
+        close_called = threading.Event()
+
+        def blocking_write(_record):
+            write_started.set()
+            self.assertTrue(release_write.wait(1.0))
+
+        logger.live_logger.write.side_effect = blocking_write
+        logger.live_logger.close.side_effect = close_called.set
+        callback = threading.Thread(
+            target=logger._cf_log_group_callback,
+            args=(
+                1234,
+                {'stateEstimate.vy': 0.2},
+                SimpleNamespace(name='VEL_ORI'),
+            ),
+        )
+        callback.start()
+        self.assertTrue(write_started.wait(1.0))
+
+        shutdown = threading.Thread(target=logger.stop)
+        shutdown.start()
+        self.assertFalse(close_called.wait(0.03))
+
+        release_write.set()
+        callback.join(1.0)
+        shutdown.join(1.0)
+        self.assertFalse(callback.is_alive())
+        self.assertFalse(shutdown.is_alive())
+        logger.live_logger.close.assert_called_once_with()
 
     def test_saved_metadata_preserves_host_time_and_raw_wrapping_counter(self):
         logger = self.make_logger()
