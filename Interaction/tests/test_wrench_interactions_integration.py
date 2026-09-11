@@ -3355,12 +3355,24 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
         np.testing.assert_allclose(
             control.coast_velocity_command_xy_m_s,
-            [0.0, 0.35],
+            [0.115, 0.39],
             atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            control.coast_velocity_unwind_command_correction_xy_m_s,
+            [-0.005, -0.01],
+            atol=1e-12,
+        )
+        self.assertLess(
+            control.coast_velocity_unwind_terminal_speed_error_m_s, 0.0
+        )
+        self.assertAlmostEqual(
+            control.coast_velocity_virtual_unwind_target_speed_m_s,
+            0.364684,
         )
         self.assertEqual(
             control.coast_tracking_action,
-            'track_virtual_friction_velocity_and_damp_lateral',
+            'track_virtual_friction_terminal_speed_continuously',
         )
 
     def test_virtual_friction_unwind_uses_roll_tail_to_prevent_reversal(self):
@@ -3409,6 +3421,9 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.coast_velocity_unwind_tail_compensation_m_s, 0.0
         )
         self.assertGreater(
+            control.coast_velocity_unwind_terminal_speed_error_m_s, 0.0
+        )
+        self.assertGreater(
             float(control.coast_velocity_command_xy_m_s[1]), 0.002
         )
         self.assertLessEqual(
@@ -3416,10 +3431,228 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
         self.assertEqual(
             control.coast_tracking_action,
-            'track_virtual_friction_velocity_with_attitude_tail_compensation',
+            'track_virtual_friction_terminal_speed_continuously',
         )
         self.assertFalse(
             control.coast_velocity_handoff_predicted_speed_ready
+        )
+
+    def test_virtual_friction_tail_error_is_continuous_across_zero(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_unwind_virtual_friction_target_enabled=True,
+            coast_velocity_unwind_low_speed_fallback_m_s=1.0,
+            coast_velocity_handoff_speed_m_s=0.09,
+            coast_velocity_rebrake_enabled=False,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.20, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        signed_errors = []
+        compensations = []
+        projected_commands = []
+        corrections = []
+        for timestamp, roll_deg in (
+            (1.01, 1.0),
+            (1.02, 0.0),
+            (1.03, -1.0),
+        ):
+            self.assertFalse(control.update_coast_velocity(
+                [0.0, 0.20 * (timestamp - 1.0), 1.0],
+                [0.0, 0.20, 0.0],
+                timestamp,
+                current_orientation_rpy=np.radians([roll_deg, 0.0, 0.0]),
+                current_angular_velocity=np.zeros(3),
+                virtual_target_velocity=[0.0, 0.20, 0.0],
+            ))
+            signed_errors.append(
+                control.coast_velocity_unwind_terminal_speed_error_m_s
+            )
+            compensations.append(
+                control.coast_velocity_unwind_tail_compensation_m_s
+            )
+            projected_commands.append(
+                float(control.coast_velocity_command_xy_m_s[1])
+            )
+            corrections.append(
+                float(
+                    control
+                    .coast_velocity_unwind_command_correction_xy_m_s[1]
+                )
+            )
+
+        self.assertGreater(signed_errors[0], 0.0)
+        self.assertAlmostEqual(signed_errors[1], 0.0)
+        self.assertLess(signed_errors[2], 0.0)
+        self.assertGreater(compensations[0], 0.0)
+        self.assertEqual(compensations[1:], [0.0, 0.0])
+        self.assertLessEqual(corrections[0], 2.0 * 0.01 + 1e-12)
+        for previous, current in zip(corrections, corrections[1:]):
+            self.assertGreaterEqual(
+                current - previous,
+                -1.0 * 0.01 - 1e-12,
+            )
+            self.assertLessEqual(
+                current - previous,
+                2.0 * 0.01 + 1e-12,
+            )
+        self.assertLess(
+            max(abs(current - previous) for previous, current in zip(
+                projected_commands, projected_commands[1:]
+            )),
+            0.011,
+        )
+
+    def test_virtual_friction_longitudinal_saturation_keeps_lateral_damping(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_unwind_virtual_friction_target_enabled=True,
+            coast_velocity_unwind_low_speed_fallback_m_s=1.0,
+            coast_velocity_handoff_speed_m_s=0.09,
+            coast_velocity_rebrake_enabled=False,
+            coast_velocity_unwind_filter_time_constant_s=1e-6,
+            coast_velocity_unwind_brake_slew_rate_m_s2=100.0,
+            coast_velocity_unwind_lateral_slew_rate_m_s2=100.0,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.12, 0.40, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.01, 1.0], [0.12, 0.40, 0.0], 1.01,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            virtual_target_velocity=[0.0, 0.10, 0.0],
+        ))
+        np.testing.assert_allclose(
+            control.coast_velocity_unwind_command_correction_xy_m_s,
+            [-0.05, -0.15],
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            control.coast_velocity_command_xy_m_s,
+            [0.07, 0.25],
+            atol=1e-12,
+        )
+
+    def test_virtual_friction_unwind_floors_reverse_target_after_crossing(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_unwind_virtual_friction_target_enabled=True,
+            coast_velocity_unwind_low_speed_fallback_m_s=1.0,
+            coast_velocity_handoff_speed_m_s=0.09,
+            coast_velocity_rebrake_enabled=False,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.20, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        # Build a negative braking correction first. On the next sample the
+        # measured velocity crosses zero; the non-reverse floor deliberately
+        # takes priority over the normal positive correction slew bound.
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.004, 1.0], [0.0, 0.40, 0.0], 1.01,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            virtual_target_velocity=[0.0, 0.10, 0.0],
+        ))
+        previous_correction = float(
+            control.coast_velocity_unwind_command_correction_xy_m_s[1]
+        )
+        self.assertLess(previous_correction, 0.0)
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0038, 1.0], [0.0, -0.019, 0.0], 1.02,
+            current_orientation_rpy=np.radians([-2.0, 0.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+            virtual_target_velocity=[0.0, 0.0, 0.0],
+        ))
+        self.assertLess(
+            control.coast_velocity_unwind_terminal_speed_error_m_s, 0.0
+        )
+        self.assertGreaterEqual(
+            float(control.coast_velocity_command_xy_m_s[1]), 0.0
+        )
+        self.assertAlmostEqual(
+            float(control.coast_velocity_command_xy_m_s[1]), 0.0
+        )
+        self.assertTrue(
+            control.coast_velocity_unwind_nonreverse_floor_applied
+        )
+        self.assertGreater(
+            float(control.coast_velocity_unwind_command_correction_xy_m_s[1])
+            - previous_correction,
+            control.coast_velocity_unwind_debrake_slew_rate_m_s2 * 0.01,
+        )
+
+    def test_virtual_friction_unwind_does_not_add_brake_near_zero(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_velocity_unwind_virtual_friction_target_enabled=True,
+            coast_velocity_unwind_low_speed_fallback_m_s=1.0,
+            coast_velocity_handoff_speed_m_s=0.09,
+            coast_velocity_rebrake_enabled=False,
+            coast_attitude_response_delay_s=0.0,
+            coast_attitude_time_constant_s=0.0,
+            coast_velocity_unwind_prediction_margin_s=0.0,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.08, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            coast=True,
+        ))
+        control.confirm_release_candidate(timestamp=1.0)
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.001, 1.0], [0.0, 0.08, 0.0], 1.01,
+            current_orientation_rpy=np.radians([2.0, 0.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+            virtual_target_velocity=[0.0, 0.0, 0.0],
+        ))
+        self.assertLess(
+            control.coast_velocity_unwind_terminal_speed_error_m_s, 0.0
+        )
+        self.assertTrue(
+            control.coast_velocity_unwind_near_zero_brake_suppressed
+        )
+        self.assertAlmostEqual(
+            float(
+                control.coast_velocity_unwind_command_correction_xy_m_s[1]
+            ),
+            0.0,
+        )
+        self.assertAlmostEqual(
+            float(control.coast_velocity_command_xy_m_s[1]), 0.08
         )
 
     def test_predictive_unwind_can_send_direct_level_attitude_at_fixed_z(self):

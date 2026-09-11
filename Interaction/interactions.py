@@ -2438,6 +2438,10 @@ class TranslationControlHandoff:
             coast_velocity_unwind_min_deceleration_m_s2=0.30,
             coast_velocity_unwind_filter_time_constant_s=0.03,
             coast_velocity_unwind_max_target_error_m_s=0.15,
+            coast_velocity_unwind_debrake_slew_rate_m_s2=2.0,
+            coast_velocity_unwind_brake_slew_rate_m_s2=1.0,
+            coast_velocity_unwind_lateral_max_target_error_m_s=0.05,
+            coast_velocity_unwind_lateral_slew_rate_m_s2=0.50,
             coast_velocity_unwind_one_step_lookahead_enabled=False,
             coast_velocity_unwind_one_step_max_dt_s=0.03,
             coast_velocity_unwind_low_speed_fallback_m_s=0.03,
@@ -2580,6 +2584,18 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_max_target_error_m_s = float(
             coast_velocity_unwind_max_target_error_m_s
         )
+        self.coast_velocity_unwind_debrake_slew_rate_m_s2 = float(
+            coast_velocity_unwind_debrake_slew_rate_m_s2
+        )
+        self.coast_velocity_unwind_brake_slew_rate_m_s2 = float(
+            coast_velocity_unwind_brake_slew_rate_m_s2
+        )
+        self.coast_velocity_unwind_lateral_max_target_error_m_s = float(
+            coast_velocity_unwind_lateral_max_target_error_m_s
+        )
+        self.coast_velocity_unwind_lateral_slew_rate_m_s2 = float(
+            coast_velocity_unwind_lateral_slew_rate_m_s2
+        )
         self.coast_velocity_unwind_one_step_lookahead_enabled = bool(
             coast_velocity_unwind_one_step_lookahead_enabled
         )
@@ -2696,6 +2712,10 @@ class TranslationControlHandoff:
             self.coast_velocity_unwind_min_deceleration_m_s2,
             self.coast_velocity_unwind_filter_time_constant_s,
             self.coast_velocity_unwind_max_target_error_m_s,
+            self.coast_velocity_unwind_debrake_slew_rate_m_s2,
+            self.coast_velocity_unwind_brake_slew_rate_m_s2,
+            self.coast_velocity_unwind_lateral_max_target_error_m_s,
+            self.coast_velocity_unwind_lateral_slew_rate_m_s2,
             self.coast_velocity_unwind_one_step_max_dt_s,
             self.coast_velocity_unwind_low_speed_fallback_m_s,
             self.coast_velocity_rebrake_speed_m_s,
@@ -2752,6 +2772,10 @@ class TranslationControlHandoff:
             or self.coast_velocity_unwind_min_deceleration_m_s2 <= 0
             or self.coast_velocity_unwind_filter_time_constant_s <= 0
             or self.coast_velocity_unwind_max_target_error_m_s <= 0
+            or self.coast_velocity_unwind_debrake_slew_rate_m_s2 <= 0
+            or self.coast_velocity_unwind_brake_slew_rate_m_s2 <= 0
+            or self.coast_velocity_unwind_lateral_max_target_error_m_s <= 0
+            or self.coast_velocity_unwind_lateral_slew_rate_m_s2 <= 0
             or self.coast_velocity_unwind_one_step_max_dt_s <= 0
             or self.coast_velocity_unwind_low_speed_fallback_m_s <= 0
             or (
@@ -2897,6 +2921,10 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_predicted_tail_deceleration_m_s2 = None
         self.coast_velocity_unwind_tail_target_speed_m_s = None
         self.coast_velocity_unwind_tail_compensation_m_s = None
+        self.coast_velocity_unwind_terminal_speed_error_m_s = None
+        self.coast_velocity_unwind_command_correction_xy_m_s = np.zeros(2)
+        self.coast_velocity_unwind_near_zero_brake_suppressed = False
+        self.coast_velocity_unwind_nonreverse_floor_applied = False
         self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
@@ -3065,6 +3093,10 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_predicted_tail_deceleration_m_s2 = None
         self.coast_velocity_unwind_tail_target_speed_m_s = None
         self.coast_velocity_unwind_tail_compensation_m_s = None
+        self.coast_velocity_unwind_terminal_speed_error_m_s = None
+        self.coast_velocity_unwind_command_correction_xy_m_s.fill(0.0)
+        self.coast_velocity_unwind_near_zero_brake_suppressed = False
+        self.coast_velocity_unwind_nonreverse_floor_applied = False
         self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
@@ -3650,6 +3682,10 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_predicted_tail_deceleration_m_s2 = None
         self.coast_velocity_unwind_tail_target_speed_m_s = None
         self.coast_velocity_unwind_tail_compensation_m_s = None
+        self.coast_velocity_unwind_terminal_speed_error_m_s = None
+        self.coast_velocity_unwind_command_correction_xy_m_s.fill(0.0)
+        self.coast_velocity_unwind_near_zero_brake_suppressed = False
+        self.coast_velocity_unwind_nonreverse_floor_applied = False
         self.coast_velocity_unwind_leveling_duration_s = None
         self.coast_velocity_unwind_started_at = None
         self.coast_velocity_handoff_tilt_ready = False
@@ -3772,6 +3808,10 @@ class TranslationControlHandoff:
         self.coast_velocity_unwind_predicted_tail_deceleration_m_s2 = None
         self.coast_velocity_unwind_tail_target_speed_m_s = None
         self.coast_velocity_unwind_tail_compensation_m_s = None
+        self.coast_velocity_unwind_terminal_speed_error_m_s = None
+        self.coast_velocity_unwind_command_correction_xy_m_s.fill(0.0)
+        self.coast_velocity_unwind_near_zero_brake_suppressed = False
+        self.coast_velocity_unwind_nonreverse_floor_applied = False
         self.coast_velocity_handoff_predicted_speed_ready = False
         self.coast_state_sample_valid = True
         self.coast_state_rejection_reason = None
@@ -3903,9 +3943,10 @@ class TranslationControlHandoff:
 
         The legacy experimental path remains a zero-velocity command followed
         by a speed-only handoff.  The predictive-unwind variant first uses that
-        same aggressive command, then either follows the latched virtual-
-        friction trajectory, changes the target to measured velocity, or
-        transfers to a delay-compensated position target on the release line
+        same aggressive command, then either continuously corrects measured
+        velocity so its predicted post-leveling speed follows the latched
+        virtual-friction trajectory, changes the target to measured velocity,
+        or transfers to a delay-compensated position target on the release line
         before the zero crossing. The position variant resets both cascade
         integrators once at that transition and keeps its longitudinal target
         from following a later reversal.
@@ -4084,6 +4125,9 @@ class TranslationControlHandoff:
         self.coast_tracking_power_w_per_kg = None
         self.coast_velocity_unwind_tail_target_speed_m_s = None
         self.coast_velocity_unwind_tail_compensation_m_s = None
+        self.coast_velocity_unwind_terminal_speed_error_m_s = None
+        self.coast_velocity_unwind_near_zero_brake_suppressed = False
+        self.coast_velocity_unwind_nonreverse_floor_applied = False
         self.coast_velocity_handoff_predicted_speed_ready = False
 
         if not self.coast_velocity_predictive_unwind_enabled:
@@ -4334,6 +4378,7 @@ class TranslationControlHandoff:
             ):
                 self.coast_velocity_phase = 'fast_brake'
                 self.coast_velocity_command_xy_m_s.fill(0.0)
+                self.coast_velocity_unwind_command_correction_xy_m_s.fill(0.0)
                 self.coast_velocity_rebrake_count += 1
                 self._coast_velocity_rebrake_pending = True
                 self._coast_alignment_since = None
@@ -4379,6 +4424,9 @@ class TranslationControlHandoff:
                     self.coast_velocity_phase = 'predictive_unwind'
                     self.coast_velocity_unwind_started_at = timestamp
                     self.coast_velocity_command_xy_m_s = velocity[:2].copy()
+                    self.coast_velocity_unwind_command_correction_xy_m_s.fill(
+                        0.0
+                    )
                     self._coast_velocity_pid_reset_pending = True
                     self._coast_alignment_since = None
                     self.coast_velocity_unwind_decision_reason = (
@@ -4406,6 +4454,9 @@ class TranslationControlHandoff:
             if self.coast_velocity_phase == 'predictive_unwind':
                 if self.coast_velocity_unwind_direct_level_attitude_enabled:
                     self.coast_velocity_command_xy_m_s.fill(0.0)
+                    self.coast_velocity_unwind_command_correction_xy_m_s.fill(
+                        0.0
+                    )
                     self.set_contact_attitude(0.0, 0.0, 0.0)
                     self.hover_z = self.velocity_coast_fixed_zdistance_m
                     self.coast_tracking_action = (
@@ -4413,13 +4464,19 @@ class TranslationControlHandoff:
                     )
                 elif self.coast_velocity_unwind_position_control_enabled:
                     self.coast_velocity_command_xy_m_s.fill(0.0)
+                    self.coast_velocity_unwind_command_correction_xy_m_s.fill(
+                        0.0
+                    )
                     self._update_predictive_unwind_position_target(
                         position,
                         response_delay_s,
                     )
                 elif (
                     self.coast_velocity_unwind_virtual_friction_target_enabled
-                    and virtual_velocity is not None
+                    and (
+                        virtual_target_speed is not None
+                        or virtual_velocity is not None
+                    )
                 ):
                     brake_direction_xy = self.brake_direction[:2].copy()
                     direction_norm = float(np.linalg.norm(
@@ -4427,94 +4484,192 @@ class TranslationControlHandoff:
                     ))
                     if direction_norm > 1e-9:
                         brake_direction_xy /= direction_norm
-                    desired_projected_speed_m_s = max(
-                        float(
-                            virtual_velocity[:2] @ brake_direction_xy
-                        ),
-                        0.0,
-                    )
-                    # Preserve the virtual-friction distinction without
-                    # accelerating the vehicle after release if the real
-                    # brake has already slowed below the virtual trajectory.
-                    desired_projected_speed_m_s = min(
-                        desired_projected_speed_m_s,
-                        max(self.brake_projected_speed_m_s, 0.0),
-                    )
-                    # The phase transition already predicts the velocity that
-                    # remains after the measured roll/pitch and angular-rate
-                    # tail have returned to level. Keep using that prediction
-                    # on every unwind update. If the tail would undershoot the
-                    # zero-force virtual trajectory (or cross zero), a small
-                    # target above the measured speed is intentional: it asks
-                    # the native velocity PID to unload the braking attitude
-                    # before the vehicle reverses. The old target<=measured
-                    # clamp prevented precisely this de-braking command.
+                    # Compare one continuous virtual-friction reference with
+                    # the velocity predicted at the same response horizon.
+                    # The old branch used a positive-only tail compensation,
+                    # then abruptly fell back to the (often zero) live virtual
+                    # velocity as soon as that compensation crossed zero. That
+                    # produced the observed 5--7 Hz, 0.15--0.18 m/s setpoint
+                    # jumps. A signed terminal error has no mode switch at zero.
+                    if virtual_target_speed is not None:
+                        reference_speed_m_s = virtual_target_speed
+                    else:
+                        reference_speed_m_s = max(
+                            float(
+                                virtual_velocity[:2] @ brake_direction_xy
+                            ),
+                            0.0,
+                        )
                     tail_target_speed_m_s = max(
-                        0.0 if virtual_target_speed is None
-                        else virtual_target_speed,
+                        reference_speed_m_s,
                         self.coast_velocity_handoff_min_projected_speed_m_s,
                     )
+                    terminal_speed_error_m_s = (
+                        tail_target_speed_m_s - predicted_terminal_speed
+                    )
                     tail_compensation_m_s = max(
-                        tail_target_speed_m_s - predicted_terminal_speed,
+                        terminal_speed_error_m_s,
                         0.0,
                     )
-                    if tail_compensation_m_s > 0.0:
-                        tail_compensated_target_m_s = (
-                            max(self.brake_projected_speed_m_s, 0.0)
-                            + tail_compensation_m_s
-                        )
-                        desired_projected_speed_m_s = max(
-                            desired_projected_speed_m_s,
-                            tail_compensated_target_m_s,
-                        )
                     self.coast_velocity_unwind_tail_target_speed_m_s = (
                         tail_target_speed_m_s
                     )
                     self.coast_velocity_unwind_tail_compensation_m_s = (
                         tail_compensation_m_s
                     )
+                    self.coast_velocity_unwind_terminal_speed_error_m_s = (
+                        terminal_speed_error_m_s
+                    )
 
-                    # Reserve the bounded target-error budget for the
-                    # longitudinal no-reversal correction first, then spend
-                    # any remaining magnitude damping lateral drift.
+                    # Longitudinal tail correction and lateral damping use
+                    # independent budgets. Saturating the along-interaction
+                    # correction must not silently remove all lateral authority.
                     max_target_error = (
                         self.coast_velocity_unwind_max_target_error_m_s
                     )
-                    longitudinal_error = float(np.clip(
-                        desired_projected_speed_m_s
-                        - self.brake_projected_speed_m_s,
+                    raw_longitudinal_correction = float(np.clip(
+                        terminal_speed_error_m_s,
                         -max_target_error,
                         max_target_error,
                     ))
+                    # Near zero, while the measured attitude is already
+                    # decelerating along the interaction direction, do not ask
+                    # the velocity PID for still more braking. Let the existing
+                    # attitude tail unwind instead of creating a reversal.
+                    if (
+                        raw_longitudinal_correction < 0.0
+                        and self.brake_projected_speed_m_s
+                        <= max(
+                            self.coast_velocity_unwind_terminal_speed_m_s,
+                            self.coast_velocity_handoff_speed_m_s,
+                        )
+                        and projected_acceleration
+                        <= -self.coast_velocity_unwind_min_deceleration_m_s2
+                    ):
+                        raw_longitudinal_correction = 0.0
+                        self.coast_velocity_unwind_near_zero_brake_suppressed = (
+                            True
+                        )
                     lateral_velocity = (
                         velocity[:2]
                         - self.brake_projected_speed_m_s * brake_direction_xy
                     )
-                    lateral_error = -lateral_velocity
-                    lateral_budget = float(np.sqrt(max(
-                        max_target_error ** 2 - longitudinal_error ** 2,
-                        0.0,
-                    )))
-                    lateral_error_norm = float(np.linalg.norm(lateral_error))
+                    raw_lateral_correction = -lateral_velocity
+                    lateral_error_norm = float(np.linalg.norm(
+                        raw_lateral_correction
+                    ))
                     if (
-                        lateral_error_norm > lateral_budget
+                        lateral_error_norm
+                        > self.coast_velocity_unwind_lateral_max_target_error_m_s
                         and lateral_error_norm > 1e-12
                     ):
-                        lateral_error *= lateral_budget / lateral_error_norm
+                        raw_lateral_correction *= (
+                            self.coast_velocity_unwind_lateral_max_target_error_m_s
+                            / lateral_error_norm
+                        )
+
+                    previous_correction = (
+                        self.coast_velocity_unwind_command_correction_xy_m_s
+                    )
+                    previous_longitudinal = float(
+                        previous_correction @ brake_direction_xy
+                    )
+                    previous_lateral = (
+                        previous_correction
+                        - previous_longitudinal * brake_direction_xy
+                    )
+                    update_dt = min(
+                        max(coast_update_dt_s, 0.0),
+                        self.coast_state_max_sample_gap_s,
+                    )
+                    alpha = 1.0 - np.exp(
+                        -update_dt
+                        / self.coast_velocity_unwind_filter_time_constant_s
+                    )
+                    filtered_longitudinal = (
+                        previous_longitudinal
+                        + alpha * (
+                            raw_longitudinal_correction
+                            - previous_longitudinal
+                        )
+                    )
+                    longitudinal_delta = (
+                        filtered_longitudinal - previous_longitudinal
+                    )
+                    longitudinal_slew_rate = (
+                        self.coast_velocity_unwind_debrake_slew_rate_m_s2
+                        if longitudinal_delta >= 0.0
+                        else self.coast_velocity_unwind_brake_slew_rate_m_s2
+                    )
+                    longitudinal_delta = float(np.clip(
+                        longitudinal_delta,
+                        -longitudinal_slew_rate * update_dt,
+                        longitudinal_slew_rate * update_dt,
+                    ))
+                    longitudinal_correction = (
+                        previous_longitudinal + longitudinal_delta
+                    )
+
+                    filtered_lateral = (
+                        previous_lateral
+                        + alpha * (
+                            raw_lateral_correction - previous_lateral
+                        )
+                    )
+                    lateral_delta = filtered_lateral - previous_lateral
+                    lateral_delta_norm = float(np.linalg.norm(lateral_delta))
+                    lateral_delta_limit = (
+                        self.coast_velocity_unwind_lateral_slew_rate_m_s2
+                        * update_dt
+                    )
+                    if (
+                        lateral_delta_norm > lateral_delta_limit
+                        and lateral_delta_norm > 1e-12
+                    ):
+                        lateral_delta *= (
+                            lateral_delta_limit / lateral_delta_norm
+                        )
+                    lateral_correction = previous_lateral + lateral_delta
+
+                    # Avoid requesting additional reverse speed. When measured
+                    # reverse speed is within the configured correction
+                    # authority, this post-slew safety projection floors the
+                    # commanded longitudinal speed at zero. Beyond that bound,
+                    # keep the recovery request capped rather than introduce an
+                    # arbitrarily large velocity error.
+                    command_floor_correction = float(np.clip(
+                        -self.brake_projected_speed_m_s,
+                        -max_target_error,
+                        max_target_error,
+                    ))
+                    unconstrained_longitudinal_correction = (
+                        longitudinal_correction
+                    )
+                    longitudinal_correction = max(
+                        longitudinal_correction,
+                        command_floor_correction,
+                    )
+                    self.coast_velocity_unwind_nonreverse_floor_applied = bool(
+                        longitudinal_correction
+                        > unconstrained_longitudinal_correction + 1e-12
+                    )
                     target_error = (
-                        longitudinal_error * brake_direction_xy
-                        + lateral_error
+                        longitudinal_correction * brake_direction_xy
+                        + lateral_correction
+                    )
+                    self.coast_velocity_unwind_command_correction_xy_m_s = (
+                        target_error
                     )
                     self.coast_velocity_command_xy_m_s = (
                         velocity[:2] + target_error
                     )
                     self.coast_tracking_action = (
-                        'track_virtual_friction_velocity_with_attitude_tail_'
-                        'compensation'
-                        if tail_compensation_m_s > 1e-9 else
-                        'track_virtual_friction_velocity_and_damp_lateral'
+                        'track_virtual_friction_terminal_speed_continuously'
                     )
                 else:
+                    self.coast_velocity_unwind_command_correction_xy_m_s.fill(
+                        0.0
+                    )
                     update_dt = coast_update_dt_s
                     alpha = 1.0 - np.exp(
                         -update_dt
@@ -4575,6 +4730,7 @@ class TranslationControlHandoff:
                         )
             else:
                 self.coast_velocity_command_xy_m_s.fill(0.0)
+                self.coast_velocity_unwind_command_correction_xy_m_s.fill(0.0)
                 self.coast_tracking_action = (
                     'predictive_zero_world_velocity_rebrake'
                     if self.coast_velocity_rebrake_count > 0
@@ -7948,6 +8104,30 @@ class InteractionsControl:
                                 config['control_handoff'].get(
                                     'coast_velocity_unwind_integration_step_s',
                                     0.01,
+                                )
+                            ),
+                            'velocity_unwind_debrake_slew_rate_m_s2': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_debrake_slew_rate_m_s2',
+                                    2.0,
+                                )
+                            ),
+                            'velocity_unwind_brake_slew_rate_m_s2': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_brake_slew_rate_m_s2',
+                                    1.0,
+                                )
+                            ),
+                            'velocity_unwind_lateral_max_target_error_m_s': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_lateral_max_target_error_m_s',
+                                    0.05,
+                                )
+                            ),
+                            'velocity_unwind_lateral_slew_rate_m_s2': (
+                                config['control_handoff'].get(
+                                    'coast_velocity_unwind_lateral_slew_rate_m_s2',
+                                    0.50,
                                 )
                             ),
                             'velocity_unwind_one_step_lookahead_enabled': (
@@ -12502,6 +12682,23 @@ class InteractionsControl:
                                     translation_control
                                     .coast_velocity_unwind_tail_compensation_m_s
                                 ),
+                                'terminal_speed_error_m_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_terminal_speed_error_m_s
+                                ),
+                                'command_correction_xy_m_s': (
+                                    translation_control
+                                    .coast_velocity_unwind_command_correction_xy_m_s
+                                    .tolist()
+                                ),
+                                'near_zero_brake_suppressed': (
+                                    translation_control
+                                    .coast_velocity_unwind_near_zero_brake_suppressed
+                                ),
+                                'nonreverse_floor_applied': (
+                                    translation_control
+                                    .coast_velocity_unwind_nonreverse_floor_applied
+                                ),
                                 'raw_integrated_velocity_delta_m_s': (
                                     translation_control
                                     .coast_velocity_unwind_raw_integrated_velocity_delta_m_s
@@ -14672,6 +14869,22 @@ class InteractionsControl:
                 'coast_velocity_unwind_tail_compensation_m_s': (
                     translation_control
                     .coast_velocity_unwind_tail_compensation_m_s
+                ),
+                'coast_velocity_unwind_terminal_speed_error_m_s': (
+                    translation_control
+                    .coast_velocity_unwind_terminal_speed_error_m_s
+                ),
+                'coast_velocity_unwind_command_correction_xy_m_s': (
+                    translation_control
+                    .coast_velocity_unwind_command_correction_xy_m_s.tolist()
+                ),
+                'coast_velocity_unwind_near_zero_brake_suppressed': (
+                    translation_control
+                    .coast_velocity_unwind_near_zero_brake_suppressed
+                ),
+                'coast_velocity_unwind_nonreverse_floor_applied': (
+                    translation_control
+                    .coast_velocity_unwind_nonreverse_floor_applied
                 ),
                 'coast_velocity_unwind_raw_integrated_velocity_delta_m_s': (
                     translation_control

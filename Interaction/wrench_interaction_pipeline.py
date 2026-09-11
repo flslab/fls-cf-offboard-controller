@@ -243,8 +243,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # Optional staged variant of velocity braking.  First request zero
         # velocity, then predict when the measured braking attitude has enough
         # residual impulse to reach a small positive terminal speed.  At that
-        # point either track the virtual-friction velocity or the measured
-        # velocity so the onboard loop unwinds before position takes ownership.
+        # point continuously correct the measured-velocity target so the
+        # predicted post-leveling speed follows the virtual-friction reference
+        # before position takes ownership.
         "coast_velocity_predictive_unwind_enabled": False,
         # When release supplies the virtual object's initial velocity and
         # kinetic friction, compare the real braking-tail prediction with the
@@ -268,6 +269,14 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_velocity_unwind_min_deceleration_m_s2": 0.30,
         "coast_velocity_unwind_filter_time_constant_s": 0.03,
         "coast_velocity_unwind_max_target_error_m_s": 0.15,
+        # Smooth only the correction relative to measured velocity. Positive
+        # correction unloads the braking attitude faster than negative
+        # correction is allowed to add braking. Lateral damping keeps a small,
+        # independent budget so longitudinal saturation cannot disable it.
+        "coast_velocity_unwind_debrake_slew_rate_m_s2": 2.0,
+        "coast_velocity_unwind_brake_slew_rate_m_s2": 1.0,
+        "coast_velocity_unwind_lateral_max_target_error_m_s": 0.05,
+        "coast_velocity_unwind_lateral_slew_rate_m_s2": 0.50,
         # Optional decision/send-delay compensation. The active guard is the
         # current projected deceleration times this configured interval.
         "coast_velocity_unwind_one_step_lookahead_enabled": False,
