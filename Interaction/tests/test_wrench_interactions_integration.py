@@ -4578,9 +4578,10 @@ class WrenchInteractionLoopTests(unittest.TestCase):
 class ReleaseGotoTakeoverTests(unittest.TestCase):
     def test_stop_prediction_uses_delay_then_constant_deceleration_on_axis(self):
         prediction = predict_release_goto_stop(
-            release_position=[0.10, -0.20, 1.0],
-            measured_velocity=[0.10, 0.50, 0.0],
+            release_position=[0.10, -0.20, 0.86],
+            measured_velocity=[0.10, 0.50, -0.25],
             interaction_direction=[0.0, 1.0, 0.0],
+            fixed_zdistance_m=1.0,
             deceleration_m_s2=1.0,
             command_delay_s=0.30,
         )

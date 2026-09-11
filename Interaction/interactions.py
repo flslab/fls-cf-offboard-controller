@@ -307,6 +307,7 @@ def predict_release_goto_stop(
         release_position,
         measured_velocity,
         interaction_direction,
+        fixed_zdistance_m,
         deceleration_m_s2=1.0,
         command_delay_s=0.30,
 ):
@@ -314,6 +315,7 @@ def predict_release_goto_stop(
     position = np.asarray(release_position, dtype=float)
     velocity = np.asarray(measured_velocity, dtype=float)
     direction = np.asarray(interaction_direction, dtype=float)
+    fixed_zdistance_m = float(fixed_zdistance_m)
     deceleration_m_s2 = float(deceleration_m_s2)
     command_delay_s = float(command_delay_s)
     if (
@@ -323,14 +325,15 @@ def predict_release_goto_stop(
         or not np.all(np.isfinite(position))
         or not np.all(np.isfinite(velocity))
         or not np.all(np.isfinite(direction))
+        or not np.isfinite(fixed_zdistance_m)
         or not np.isfinite(deceleration_m_s2)
         or deceleration_m_s2 <= 0.0
         or not np.isfinite(command_delay_s)
         or command_delay_s < 0.0
     ):
         raise ValueError(
-            'release go-to prediction needs finite XYZ inputs, positive '
-            'deceleration, and non-negative delay'
+            'release go-to prediction needs finite XYZ inputs and fixed Z, '
+            'positive deceleration, and non-negative delay'
         )
     direction_xy = direction[:2].copy()
     direction_norm = float(np.linalg.norm(direction_xy))
@@ -349,6 +352,9 @@ def predict_release_goto_stop(
         / (2.0 * deceleration_m_s2)
     )
     target = position.copy()
+    # This release policy is planar.  Do not turn any altitude sag measured at
+    # release into the high-level trajectory's commanded altitude.
+    target[2] = fixed_zdistance_m
     target[:2] += (
         delay_distance_m + braking_distance_m
     ) * direction_xy
@@ -11433,6 +11439,7 @@ class InteractionsControl:
                     translation_control.release_position_m,
                     output.estimate.velocity,
                     translation_control.brake_direction,
+                    translation_control.velocity_coast_fixed_zdistance_m,
                     deceleration_m_s2=(
                         translation_control
                         .coast_release_goto_deceleration_m_s2
@@ -11503,6 +11510,10 @@ class InteractionsControl:
                     'release_velocity_m_s': (
                         output.estimate.velocity.tolist()
                     ),
+                    'fixed_zdistance_m': (
+                        translation_control.velocity_coast_fixed_zdistance_m
+                    ),
+                    'z_target_source': 'initial_planar_hold_altitude',
                     'interaction_direction_xy': (
                         release_goto_prediction['direction_xy'].tolist()
                     ),
