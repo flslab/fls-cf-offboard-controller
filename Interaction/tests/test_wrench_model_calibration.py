@@ -536,6 +536,37 @@ class WrenchModelCalibrationTests(unittest.TestCase):
                 [0.0, 1.0],
             )
 
+            bypassed, bypassed_entry = apply_drone_calibration(
+                {
+                    'impulse_estimator': {'window_s': 0.08},
+                    'planar_braking_calibration': {
+                        'directions_xy': [[1.0, 0.0], [-1.0, 0.0]],
+                    },
+                    'control_handoff': {
+                        'coast_attitude_response_delay_s': 0.30,
+                        'coast_max_acceleration_m_s2': 5.0,
+                    },
+                },
+                'lb11',
+                path,
+                runtime_interaction_direction_xy=[1.0, 0.0],
+                apply_planar_braking=False,
+            )
+            self.assertEqual(
+                bypassed['impulse_estimator']['model_delay_s'],
+                fit['model_delay_s'],
+            )
+            self.assertEqual(
+                bypassed['control_handoff'],
+                {
+                    'coast_attitude_response_delay_s': 0.30,
+                    'coast_max_acceleration_m_s2': 5.0,
+                },
+            )
+            self.assertEqual(
+                bypassed_entry['planar_braking_fit'], braking
+            )
+
             with self.assertRaisesRegex(ValueError, 'quality gates.*rerun'):
                 apply_drone_calibration(
                     {

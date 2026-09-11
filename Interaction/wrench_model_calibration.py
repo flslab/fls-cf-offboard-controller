@@ -1457,6 +1457,7 @@ def apply_drone_calibration(
         path=DEFAULT_CALIBRATION_PATH,
         runtime_interaction_axis=None,
         runtime_interaction_direction_xy=None,
+        apply_planar_braking=True,
 ):
     resolved = deepcopy(config)
     calibration = load_drone_calibration(drone_id, path)
@@ -1469,7 +1470,7 @@ def apply_drone_calibration(
     ):
         impulse[key] = deepcopy(fitted[key])
     braking = calibration.get("planar_braking_fit")
-    if planar_braking_fit_is_current(braking):
+    if apply_planar_braking and planar_braking_fit_is_current(braking):
         configured_planar_calibration = resolved.get(
             "planar_braking_calibration", {}
         )

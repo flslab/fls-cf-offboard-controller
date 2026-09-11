@@ -5878,12 +5878,24 @@ class InteractionsControl:
                         if braking_plan.enabled else excitation_end_s
                     ) + 0.5
                 else:
+                    release_goto_takeover_configured = (
+                        wrench_config.get('control_handoff', {}).get(
+                            'coast_release_goto_takeover_enabled', False
+                        ) is True
+                    )
+                    uses_planar_braking_calibration = bool(
+                        effective_release_mode == 'potentiometer_coast'
+                        and not release_goto_takeover_configured
+                    )
                     wrench_config, saved_calibration = apply_drone_calibration(
                         wrench_config,
                         self.drone_id,
                         calibration_path,
                         runtime_interaction_direction_xy=(
                             runtime_braking_direction_xy
+                        ),
+                        apply_planar_braking=(
+                            uses_planar_braking_calibration
                         ),
                     )
                     saved_planar_fit = (
@@ -5895,7 +5907,7 @@ class InteractionsControl:
                         saved_planar_fit
                     )
                     if (
-                        effective_release_mode == 'potentiometer_coast'
+                        uses_planar_braking_calibration
                         and not bool(wrench_config.get('shadow_mode', True))
                         and not current_planar_fit
                     ):
@@ -5905,7 +5917,7 @@ class InteractionsControl:
                             '--calibrate before --interaction'
                         )
                     if (
-                        effective_release_mode == 'potentiometer_coast'
+                        uses_planar_braking_calibration
                         and not bool(wrench_config.get('shadow_mode', True))
                         and current_planar_fit
                     ):
@@ -5933,6 +5945,15 @@ class InteractionsControl:
                                 requested_render_tilt_deg,
                                 virtual_object_setting['max_attitude_deg'],
                             )
+                    if (
+                        effective_release_mode == 'potentiometer_coast'
+                        and release_goto_takeover_configured
+                    ):
+                        logger.info(
+                            'Direct release go-to takeover is enabled; '
+                            'planar braking calibration checks and runtime '
+                            'fit application are bypassed.'
+                        )
                     # A normal interaction starts immediately. The dedicated
                     # --calibrate flow retains stationary bias collection.
                     wrench_config['startup_bias_calibration_enabled'] = False
