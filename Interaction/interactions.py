@@ -6788,6 +6788,20 @@ class InteractionsControl:
             )
         pipeline = OnboardMomentumWrenchPipeline(config)
         config = pipeline.config
+        retired_release_goto_keys = (
+            'coast_release_goto_takeover_enabled',
+            'coast_release_goto_deceleration_m_s2',
+            'coast_release_goto_command_delay_s',
+        )
+        ignored_release_goto_keys = [
+            key for key in retired_release_goto_keys
+            if config['control_handoff'].pop(key, None) is not None
+        ]
+        if ignored_release_goto_keys:
+            logger.info(
+                'Ignoring retired direct release go-to settings: %s',
+                ', '.join(ignored_release_goto_keys),
+            )
         bootstrap_coverage = None
         bootstrap_model_contracts = None
         if mpc_calibration_mode:

@@ -4476,6 +4476,11 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                 'bias_calibration_s': 0.01,
                 'minimum_bias_samples': 1,
                 'motor_model': {'hover_pwm': 30000, 'hover_voltage': 8.0},
+                'control_handoff': {
+                    'coast_release_goto_takeover_enabled': True,
+                    'coast_release_goto_deceleration_m_s2': 1.0,
+                    'coast_release_goto_command_delay_s': 0.30,
+                },
                 'safety': {
                     'max_frame_age_s': 10,
                     'max_motor_age_s': 10,
@@ -4521,6 +4526,11 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                 'bias_calibration_s': 0.01,
                 'minimum_bias_samples': 1,
                 'motor_model': {'hover_pwm': 30000, 'hover_voltage': 8.0},
+                'control_handoff': {
+                    'coast_release_goto_takeover_enabled': True,
+                    'coast_release_goto_deceleration_m_s2': 1.0,
+                    'coast_release_goto_command_delay_s': 0.30,
+                },
                 'safety': {
                     'max_frame_age_s': 10,
                     'max_state_age_s': 10,
