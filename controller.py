@@ -594,7 +594,8 @@ class Controller:
         self.flying = True
 
         t = self.args.takeoff_altitude / takeoff_speed
-        self.hl_commander.takeoff(self.args.takeoff_altitude, t)
+        self.hl_commander.takeoff(
+            self.args.takeoff_altitude, t, yaw=self.args.init_yaw)
         self._safe_sleep(t + 1)
 
     def _takeoff_with_localizer(self, speed):
@@ -657,7 +658,7 @@ class Controller:
         self.flying = True
         duration = max(0.5, abs(threshold - z) / speed)
         logger.info(f"Taking off to HyperGrid acquisition height {threshold:.3f}m")
-        self.hl_commander.takeoff(threshold, duration, yaw)
+        self.hl_commander.takeoff(threshold, duration, yaw=yaw)
         self._safe_sleep(duration + 0.5)
 
         hypergrid = self.tracker.wait_for(
@@ -838,7 +839,8 @@ class Controller:
         logger.info(f"[Recap] Taking off to {self.args.takeoff_altitude}m ...")
         self.flying = True
         t = self.args.takeoff_altitude * 2
-        self.cf.high_level_commander.takeoff(self.args.takeoff_altitude, t)
+        self.cf.high_level_commander.takeoff(
+            self.args.takeoff_altitude, t, yaw=self.args.init_yaw)
         self._safe_sleep(t + 1)
         # Refresh init_coord so land() can return to the right spot.
         # if self.mocap:
