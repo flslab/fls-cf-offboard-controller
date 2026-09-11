@@ -744,7 +744,7 @@ PID_VALUES_PROP_2 = {
     'posCtlPid.zKi': '2.0',
     'posCtlPid.zKd': '0.05',
     'posCtlPid.thrustMin': '12000',
-    'posCtlPid.thrustBase': '28000',
+    'posCtlPid.thrustBase': '38000',
     'velCtlPid.vxKp': '30.0',
     'velCtlPid.vxKi': '4.0',
     'velCtlPid.vxKd': '0.005',
