@@ -95,6 +95,24 @@ class DefaultConfigTests(unittest.TestCase):
             handoff["coast_velocity_unwind_lateral_slew_rate_m_s2"], 0.50
         )
         self.assertFalse(handoff["coast_jerk_limited_attitude_enabled"])
+        self.assertFalse(
+            handoff["coast_jerk_limited_history_wait_enabled"]
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_history_wait_max_s"], 0.50
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_history_wait_max_distance_m"], 0.35
+        )
+        self.assertEqual(
+            handoff[
+                "coast_jerk_limited_history_wait_max_lateral_distance_m"
+            ],
+            0.20,
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_history_wait_speed_guard_m_s"], 0.03
+        )
         self.assertTrue(
             handoff["coast_jerk_limited_virtual_friction_enabled"]
         )

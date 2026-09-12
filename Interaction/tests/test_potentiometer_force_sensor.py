@@ -176,6 +176,33 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
             fields['estimated_external_force_along_sensor_N'], 1.0
         )
 
+    def test_yaw_only_release_axis_does_not_read_roll_or_pitch(self):
+        controller = InteractionsControl.__new__(InteractionsControl)
+        controller.sense_axis_index = 1
+        controller.sense_sign = 1
+
+        np.testing.assert_allclose(
+            controller._force_sensor_axis_world_yaw_only(math.pi / 2.0),
+            [-1.0, 0.0, 0.0],
+            atol=1e-12,
+        )
+        # The helper accepts only scalar yaw by design, so no EKF roll/pitch
+        # value can leak into the jerk release direction.
+        controller.sense_sign = -1
+        np.testing.assert_allclose(
+            controller._force_sensor_axis_world_yaw_only(math.pi / 2.0),
+            [1.0, 0.0, 0.0],
+            atol=1e-12,
+        )
+
+        controller.sense_axis_index = 0
+        controller.sense_sign = 1
+        np.testing.assert_allclose(
+            controller._force_sensor_axis_world_yaw_only(math.pi / 2.0),
+            [0.0, 1.0, 0.0],
+            atol=1e-12,
+        )
+
     def test_logs_arduino_and_rpi_supply_health(self):
         sample = parse_potentiometer_line(
             "1234,925,925.25,4.400,7.100,4.880",

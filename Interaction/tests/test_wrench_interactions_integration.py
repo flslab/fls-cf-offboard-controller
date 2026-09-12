@@ -17,6 +17,7 @@ from Interaction.interactions import (
     GuidedTouchProtocol,
     InitialContactArmingGate,
     InteractionsControl,
+    StaleLocalizationError,
     TranslationControlHandoff,
     VirtualObjectPlanarMotion,
     coast_braking_attitude,
@@ -1405,6 +1406,12 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             def send_position_setpoint(self, *args):
                 super().send_position_setpoint(*args)
                 context.timeline.append(('command', 'position', args))
+                position_send_stall_s = float(getattr(
+                    context, 'position_send_stall_s', 0.0
+                ))
+                context.position_send_stall_s = 0.0
+                if position_send_stall_s > 0.0:
+                    context.clock.advance(position_send_stall_s)
 
             def send_zdistance_setpoint(self, *args):
                 super().send_zdistance_setpoint(*args)
@@ -1555,7 +1562,8 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                     virtual_object_config=virtual_object,
                     mpc_calibration_mode=True,
                 )
-        except stop_exception:
+        except stop_exception as error:
+            context.stop_exception = error
             return context
         self.fail('automatic MPC loop did not reach the requested stop point')
 
@@ -2506,6 +2514,269 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         ]
         self.assertEqual(len(scheduled_payloads), 2)
         self.assertEqual(scheduled_payloads[1]['direction_sign'], -1)
+
+    def test_jerk_handoff_rechecks_state_freshness_before_first_position_send(
+            self):
+        scenario = SimpleNamespace(
+            phase='prelude',
+            decision_state_age_s=None,
+            position_count_before_stall=None,
+            handoff_payload=None,
+            post_handoff_freshness_checks=0,
+        )
+
+        def state_mutator(context, group_name, packet):
+            if group_name == 'VEL_ORI':
+                if scenario.phase == 'braking':
+                    packet['stateEstimate.vy'] = 0.0
+                    packet['stateEstimate.roll'] = 0.0
+                else:
+                    attitude_calls = [
+                        call for call in context.commander.calls
+                        if call[0] == 'zdistance'
+                    ]
+                    if (
+                        attitude_calls
+                        and attitude_calls[-1][1][0] <= -7.99
+                    ):
+                        packet['stateEstimate.vy'] = 0.25
+                        packet['stateEstimate.roll'] = -8.0
+            elif group_name == 'POS_ACC' and scenario.phase == 'braking':
+                packet['stateEstimate.y'] = 0.12
+
+        def event_callback(context, name, payload):
+            if name == 'Learning MPC Bootstrap Braking Started':
+                scenario.phase = 'braking'
+            elif name == 'Coast Position Control Handoff':
+                scenario.handoff_payload = payload
+                scenario.position_count_before_stall = sum(
+                    call[0] == 'position'
+                    for call in context.commander.calls
+                )
+                # The state was fresh when the handoff decision returned. A
+                # slow log sink after both PID resets then consumes more than
+                # the normal 100 ms freshness budget before the first send.
+                context.clock.advance(0.20)
+
+        real_update = TranslationControlHandoff.update_coast_attitude
+
+        def update_with_jerk_handoff_timestamp(control, *args, **kwargs):
+            completed = real_update(control, *args, **kwargs)
+            if completed:
+                state_timestamp = float(args[4])
+                scenario.decision_state_age_s = float(
+                    kwargs['command_timestamp'] - state_timestamp
+                )
+                # This test exercises the common main-loop handoff/send
+                # boundary. The legacy coast supplies a natural terminal
+                # transition; relabel only its provenance so the jerk-specific
+                # freshness guard owns the otherwise identical transition.
+                control.coast_handoff_reason = (
+                    'jerk_limited_attitude_position_handoff'
+                )
+                control.brake_completion_reason = control.coast_handoff_reason
+                control.coast_jerk_limited_handoff_state_timestamp = (
+                    state_timestamp
+                )
+            return completed
+
+        def freshness_with_calibration_gate_passthrough(
+                state_timestamp, decision_timestamp, maximum_age_s):
+            age_s = float(decision_timestamp - state_timestamp)
+            if scenario.handoff_payload is not None:
+                scenario.post_handoff_freshness_checks += 1
+                if scenario.post_handoff_freshness_checks == 1:
+                    # The automatic-calibration harness has an additional
+                    # scheduled-command gate before the common position-send
+                    # branch. Let that unrelated gate pass so this regression
+                    # reaches the jerk handoff's second, final freshness check.
+                    return True
+            return bool(0.0 <= age_s <= maximum_age_s)
+
+        with patch(
+            'Interaction.interactions.mpc_decision_state_age_is_fresh',
+            side_effect=freshness_with_calibration_gate_passthrough,
+        ), patch.object(
+            TranslationControlHandoff,
+            'update_coast_attitude',
+            autospec=True,
+            side_effect=update_with_jerk_handoff_timestamp,
+        ):
+            context = self._run_automatic_mpc_loop_harness(
+                stop_exception=StaleLocalizationError,
+                state_mutator=state_mutator,
+                event_callback=event_callback,
+                handoff_overrides={'coast_level_handoff_delay_s': 0.02},
+            )
+
+        self.assertIsNotNone(scenario.handoff_payload)
+        self.assertIsInstance(context.stop_exception, StaleLocalizationError)
+        self.assertIsNotNone(scenario.decision_state_age_s)
+        self.assertGreaterEqual(scenario.decision_state_age_s, 0.0)
+        self.assertLessEqual(scenario.decision_state_age_s, 0.10)
+        self.assertGreaterEqual(scenario.post_handoff_freshness_checks, 2)
+        self.assertEqual(
+            sum(call[0] == 'position' for call in context.commander.calls),
+            scenario.position_count_before_stall,
+        )
+        self.assertEqual(context.commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(
+            context.commander.calls[-1][1], [0.0, 0.0, 0.0, 1.0]
+        )
+
+        event_names = [name for name, _payload in context.events]
+        self.assertIn(
+            'Coast Position Handoff State Rejected Before Send',
+            event_names,
+            msg=(event_names, str(context.stop_exception)),
+        )
+        rejected = next(
+            payload for name, payload in context.events
+            if name == 'Coast Position Handoff State Rejected Before Send'
+        )
+        self.assertFalse(rejected['position_command_sent'])
+        self.assertEqual(rejected['command_sent'], 'level_attitude_fixed_z')
+        self.assertGreater(
+            rejected['handoff_state_age_at_send_s'],
+            rejected['maximum_state_age_s'],
+        )
+
+        handoff_index = next(
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == ('event', 'Coast Position Control Handoff')
+        )
+        guard_index = next(
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == ('command', 'zdistance')
+            and index > handoff_index
+        )
+        rejection_index = next(
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == (
+                'event',
+                'Coast Position Handoff State Rejected Before Send',
+            )
+        )
+        reset_indices = [
+            index for index, item in enumerate(context.timeline)
+            if item[0] == 'integrator_reset' and index < handoff_index
+        ]
+        self.assertGreaterEqual(len(reset_indices), 2)
+        self.assertLess(max(reset_indices), handoff_index)
+        self.assertLess(handoff_index, guard_index)
+        self.assertLess(guard_index, rejection_index)
+
+    def test_jerk_handoff_neutralizes_position_if_send_call_crosses_age_limit(
+            self):
+        scenario = SimpleNamespace(
+            phase='prelude',
+            position_count_before_send=None,
+        )
+
+        def state_mutator(context, group_name, packet):
+            if group_name == 'VEL_ORI':
+                if scenario.phase == 'braking':
+                    packet['stateEstimate.vy'] = 0.0
+                    packet['stateEstimate.roll'] = 0.0
+                else:
+                    attitude_calls = [
+                        call for call in context.commander.calls
+                        if call[0] == 'zdistance'
+                    ]
+                    if (
+                        attitude_calls
+                        and attitude_calls[-1][1][0] <= -7.99
+                    ):
+                        packet['stateEstimate.vy'] = 0.25
+                        packet['stateEstimate.roll'] = -8.0
+            elif group_name == 'POS_ACC' and scenario.phase == 'braking':
+                packet['stateEstimate.y'] = 0.12
+
+        def event_callback(context, name, payload):
+            if name == 'Learning MPC Bootstrap Braking Started':
+                scenario.phase = 'braking'
+            elif name == 'Coast Position Control Handoff':
+                scenario.position_count_before_send = sum(
+                    call[0] == 'position'
+                    for call in context.commander.calls
+                )
+                # The immediate pre-send check is still fresh. Simulate the
+                # synchronous commander call blocking for 200 ms after the
+                # position packet is issued but before send() records its time.
+                context.position_send_stall_s = 0.20
+
+        real_update = TranslationControlHandoff.update_coast_attitude
+
+        def update_with_jerk_handoff_timestamp(control, *args, **kwargs):
+            completed = real_update(control, *args, **kwargs)
+            if completed:
+                state_timestamp = float(args[4])
+                control.coast_handoff_reason = (
+                    'jerk_limited_attitude_position_handoff'
+                )
+                control.brake_completion_reason = control.coast_handoff_reason
+                control.coast_jerk_limited_handoff_state_timestamp = (
+                    state_timestamp
+                )
+            return completed
+
+        with patch.object(
+            TranslationControlHandoff,
+            'update_coast_attitude',
+            autospec=True,
+            side_effect=update_with_jerk_handoff_timestamp,
+        ):
+            context = self._run_automatic_mpc_loop_harness(
+                stop_exception=StaleLocalizationError,
+                state_mutator=state_mutator,
+                event_callback=event_callback,
+                handoff_overrides={'coast_level_handoff_delay_s': 0.02},
+            )
+
+        self.assertIsInstance(context.stop_exception, StaleLocalizationError)
+        self.assertIsNotNone(scenario.position_count_before_send)
+        self.assertEqual(
+            sum(call[0] == 'position' for call in context.commander.calls),
+            scenario.position_count_before_send + 1,
+        )
+        self.assertEqual(context.commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(
+            context.commander.calls[-1][1], [0.0, 0.0, 0.0, 1.0]
+        )
+        stale_event = next(
+            payload for name, payload in context.events
+            if name == 'Coast Position Handoff State Stale During Send'
+        )
+        self.assertTrue(stale_event['position_command_sent'])
+        self.assertEqual(
+            stale_event['mitigation_command_sent'],
+            'level_attitude_fixed_z',
+        )
+        self.assertGreater(
+            stale_event['handoff_state_age_at_send_s'],
+            stale_event['maximum_state_age_s'],
+        )
+        handoff_index = next(
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == ('event', 'Coast Position Control Handoff')
+        )
+        position_index = next(
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == ('command', 'position') and index > handoff_index
+        )
+        guard_index = next(
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == ('command', 'zdistance') and index > position_index
+        )
+        stale_event_index = next(
+            index for index, item in enumerate(context.timeline)
+            if item[:2] == (
+                'event', 'Coast Position Handoff State Stale During Send',
+            )
+        )
+        self.assertLess(handoff_index, position_index)
+        self.assertLess(position_index, guard_index)
+        self.assertLess(guard_index, stale_event_index)
 
     def test_active_translation_aims_release_tilt_along_braking_direction_then_holds(self):
         commander = FakeCommander()
@@ -4544,6 +4815,11 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             coast_handoff_max_acceleration_m_s2=0.35,
             coast_alignment_dwell_s=0.02,
         )
+        terminal_quality = {
+            'current_state_group_skew_s': 0.0,
+            'max_terminal_state_age_s': 0.10,
+            'max_terminal_state_group_skew_s': 0.03,
+        }
         self.assertTrue(control.start_contact('orientation'))
         self.assertTrue(control.end_contact(
             [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
@@ -4556,6 +4832,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             current_orientation_rpy=np.zeros(3),
             current_angular_velocity=np.zeros(3),
             command_timestamp=1.0,
+            **terminal_quality,
         ))
         control.send(commander, command_timestamp=1.0, yaw_deg=0.0)
         terminal_time = 1.0 + control.coast_jerk_limited_profile.duration_s
@@ -4566,12 +4843,15 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.coast_jerk_limited_profile.duration_s + 0.20
         )
 
-        # A completed mathematical profile cannot bypass measured tilt/rate.
+        # A completed mathematical profile cannot bypass the actual-send
+        # response window or gyro-rate gate. The EKF tilt is deliberately bad:
+        # jerk handoff must log it without giving it control authority.
         self.assertFalse(control.update_coast_velocity(
             [0.0, 0.30, 1.0], [0.0, 0.02, 0.0], terminal_time,
-            current_orientation_rpy=np.radians([2.0, 0.0, 0.0]),
+            current_orientation_rpy=np.radians([20.0, -10.0, 0.0]),
             current_angular_velocity=np.radians([6.0, 0.0, 0.0]),
             command_timestamp=terminal_time,
+            **terminal_quality,
         ))
         self.assertFalse(control.coast_velocity_handoff_tilt_ready)
         self.assertFalse(control.coast_velocity_handoff_rate_ready)
@@ -4585,24 +4865,96 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.coast_jerk_limited_terminal_command_started_at,
             terminal_time,
         )
+        response_required_s = (
+            control.coast_jerk_limited_terminal_response_required_s
+        )
+        self.assertAlmostEqual(response_required_s, 0.76)
         self.assertFalse(control.update_coast_velocity(
             [0.0, 0.301, 1.0], [0.0, 0.02, 0.0], terminal_time + 0.06,
-            current_orientation_rpy=np.zeros(3),
+            current_orientation_rpy=np.radians([20.0, -10.0, 0.0]),
             current_angular_velocity=np.zeros(3),
             command_timestamp=terminal_time + 0.06,
+            **terminal_quality,
+        ))
+        self.assertFalse(control.coast_jerk_limited_terminal_command_ready)
+        response_settled_at = terminal_time + response_required_s
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.302, 1.0], [0.0, 0.02, 0.0], response_settled_at,
+            current_orientation_rpy=np.radians([20.0, -10.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=response_settled_at,
+            **terminal_quality,
         ))
         self.assertTrue(control.coast_jerk_limited_terminal_command_ready)
+        self.assertTrue(
+            control.coast_jerk_limited_terminal_level_response_ready
+        )
+        self.assertFalse(control.coast_velocity_handoff_tilt_ready)
+        self.assertFalse(control.coast_jerk_limited_estimated_tilt_gate_used)
+        self.assertGreater(control.coast_actual_tilt_deg, 20.0)
+        self.assertFalse(
+            control.coast_jerk_limited_terminal_acceleration_sample_fresh
+        )
         self.assertFalse(control.update_coast_velocity(
-            [0.0, 0.302, 1.0], [0.0, 0.02, 0.0], terminal_time + 0.07,
-            current_orientation_rpy=np.zeros(3),
-            current_angular_velocity=np.zeros(3),
-            command_timestamp=terminal_time + 0.07,
+            [0.0, 0.303, 1.0], [0.0, 0.02, 0.0],
+            response_settled_at + 0.01,
+            current_orientation_rpy=np.radians([20.0, -10.0, 0.0]),
+            current_angular_velocity=np.radians([6.0, 0.0, 0.0]),
+            command_timestamp=response_settled_at + 0.01,
+            **terminal_quality,
         ))
-        self.assertTrue(control.update_coast_velocity(
-            [0.0, 0.303, 1.0], [0.0, 0.02, 0.0], terminal_time + 0.08,
-            current_orientation_rpy=np.zeros(3),
+        self.assertTrue(
+            control.coast_jerk_limited_terminal_acceleration_sample_fresh
+        )
+        self.assertTrue(control.coast_jerk_limited_acceleration_ready)
+        self.assertFalse(control.coast_velocity_handoff_rate_ready)
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.3035, 1.0], [0.0, 0.02, 0.0],
+            response_settled_at + 0.02,
+            current_orientation_rpy=np.radians([20.0, -10.0, 0.0]),
             current_angular_velocity=np.zeros(3),
-            command_timestamp=terminal_time + 0.08,
+            command_timestamp=response_settled_at + 0.02,
+            **terminal_quality,
+        ))
+        self.assertTrue(control.coast_velocity_handoff_rate_ready)
+        # A bad callback-group skew must reset the terminal dwell even when all
+        # physical motion gates are ready. Global skew enforcement can remain
+        # disabled; the jerk-to-position transfer still fails closed locally.
+        bad_terminal_quality = dict(terminal_quality)
+        bad_terminal_quality['current_state_group_skew_s'] = 0.031
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.3036, 1.0], [0.0, 0.02, 0.0],
+            response_settled_at + 0.03,
+            current_orientation_rpy=np.radians([20.0, -10.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=response_settled_at + 0.03,
+            **bad_terminal_quality,
+        ))
+        self.assertFalse(
+            control.coast_jerk_limited_terminal_measurements_fresh
+        )
+        self.assertIsNone(control.coast_response_queue_settle_elapsed_s)
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.3038, 1.0], [0.0, 0.02, 0.0],
+            response_settled_at + 0.04,
+            current_orientation_rpy=np.radians([20.0, -10.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=response_settled_at + 0.04,
+            **terminal_quality,
+        ))
+        self.assertTrue(
+            control.coast_jerk_limited_terminal_measurements_fresh
+        )
+        self.assertAlmostEqual(
+            control.coast_response_queue_settle_elapsed_s, 0.0
+        )
+        self.assertTrue(control.update_coast_velocity(
+            [0.0, 0.304, 1.0], [0.0, 0.02, 0.0],
+            response_settled_at + 0.07,
+            current_orientation_rpy=np.radians([20.0, -10.0, 0.0]),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=response_settled_at + 0.07,
+            **terminal_quality,
         ))
         self.assertEqual(
             control.coast_handoff_reason,
@@ -4619,7 +4971,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         np.testing.assert_allclose(
             control.coast_handoff_attitude_target_rp_deg, [0.0, 0.0]
         )
-        np.testing.assert_allclose(control.hold_position, [0.0, 0.303, 1.0])
+        np.testing.assert_allclose(control.hold_position, [0.0, 0.304, 1.0])
 
     def test_jerk_limited_virtual_friction_changes_profile_duration(self):
         def plan(mu):
@@ -4778,7 +5130,8 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             command_timestamp=0.90,
         )
         self.assertEqual(
-            tracking['action'], 'level_without_actual_attitude_history'
+            tracking['action'],
+            'level_without_reconstructable_command_history',
         )
         self.assertEqual(tracking['raw_tilt_deg'], 0.0)
         self.assertEqual(control._coast_command_history, [])
@@ -4802,6 +5155,955 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.coast_jerk_limited_fallback_reason,
         )
 
+    def test_jerk_release_candidate_ignores_ekf_roll_pitch(self):
+        def run_candidate(roll_pitch_rad):
+            control = TranslationControlHandoff(
+                initial_position=[0.0, 0.0, 1.0],
+                yaw_deg=0.0,
+                shadow_mode=False,
+                coast_velocity_braking_enabled=True,
+                coast_velocity_predictive_unwind_enabled=True,
+                coast_jerk_limited_attitude_enabled=True,
+                coast_jerk_limited_extra_command_delay_s=0.03,
+                coast_jerk_limited_virtual_friction_enabled=False,
+            )
+            self.assertTrue(control.start_contact('orientation'))
+            control._coast_command_history = [
+                (-1.0, np.array([0.0, -1.0])),
+                (-0.05, np.array([0.0, -0.2])),
+            ]
+            before = [
+                (sent_at, command.copy())
+                for sent_at, command in control._coast_command_history
+            ]
+            tracking = control.update_release_candidate_attitude(
+                current_velocity=[0.0, 0.20, 0.0],
+                current_orientation_rpy=[
+                    roll_pitch_rad[0], roll_pitch_rad[1], 0.0,
+                ],
+                interaction_direction=[0.0, 1.0, 0.0],
+                timestamp=0.0,
+                command_timestamp=0.0,
+            )
+            for expected, actual in zip(
+                    before, control._coast_command_history):
+                self.assertEqual(expected[0], actual[0])
+                np.testing.assert_allclose(expected[1], actual[1])
+            return control, tracking
+
+        finite_control, finite = run_candidate(np.radians([35.0, -28.0]))
+        nan_control, nan_rp = run_candidate([float('nan'), float('nan')])
+
+        for key in (
+            'roll_deg',
+            'pitch_deg',
+            'predicted_level_terminal_speed_m_s',
+            'tail_cancellation_signed_acceleration_m_s2',
+            'predicted_terminal_after_pulse_m_s',
+        ):
+            self.assertAlmostEqual(finite[key], nan_rp[key])
+        self.assertEqual(
+            finite['acceleration_source'],
+            'actual_command_history_delayed_first_order_model',
+        )
+        self.assertEqual(finite['acceleration_source'], nan_rp['acceleration_source'])
+        self.assertTrue(finite['command_history_ready'])
+        self.assertAlmostEqual(finite['required_command_history_span_s'], 0.79)
+        np.testing.assert_allclose(
+            finite['modeled_current_acceleration_xy_m_s2'], [0.0, -1.0]
+        )
+        np.testing.assert_allclose(
+            finite['modeled_current_acceleration_xy_m_s2'],
+            nan_rp['modeled_current_acceleration_xy_m_s2'],
+        )
+        self.assertEqual(
+            finite_control.release_candidate_acceleration_source,
+            'actual_command_history_delayed_first_order_model',
+        )
+        self.assertEqual(
+            finite_control.release_candidate_action,
+            nan_control.release_candidate_action,
+        )
+
+    def test_jerk_release_candidate_short_history_levels_without_pulse(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        control._coast_command_history = [
+            (-0.05, np.array([0.0, -5.0])),
+        ]
+        tracking = control.update_release_candidate_attitude(
+            current_velocity=[0.0, 0.20, 0.0],
+            current_orientation_rpy=np.radians([-45.0, 35.0, 0.0]),
+            interaction_direction=[0.0, 1.0, 0.0],
+            timestamp=0.0,
+            command_timestamp=0.0,
+        )
+
+        self.assertEqual(
+            tracking['action'],
+            'level_without_reconstructable_command_history',
+        )
+        self.assertEqual(tracking['acceleration_source'], 'none_level_fail_safe')
+        self.assertFalse(tracking['command_history_ready'])
+        self.assertAlmostEqual(tracking['command_history_span_s'], 0.05)
+        np.testing.assert_allclose(
+            [tracking['roll_deg'], tracking['pitch_deg']], [0.0, 0.0]
+        )
+        self.assertEqual(tracking['tail_cancellation_acceleration_m_s2'], 0.0)
+        self.assertIsNone(control._tail_neutralization_deadline)
+        self.assertEqual(len(control._coast_command_history), 1)
+
+    def test_jerk_path_uses_yaw_and_command_history_when_ekf_rp_is_invalid(self):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        control._coast_command_history = [(0.0, np.zeros(2))]
+        invalid_rp_with_valid_yaw = [float('nan'), float('inf'), 0.0]
+
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=invalid_rp_with_valid_yaw,
+            coast=True,
+        ))
+        control.confirm_release_candidate(
+            timestamp=1.0,
+            current_velocity=[0.0, 0.60, 0.0],
+        )
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            current_orientation_rpy=invalid_rp_with_valid_yaw,
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.0,
+            current_state_group_skew_s=0.03,
+            max_terminal_state_age_s=0.10,
+            max_terminal_state_group_skew_s=0.03,
+        ))
+
+        self.assertTrue(control.coast_jerk_limited_attitude_active)
+        self.assertFalse(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertFalse(control.coast_estimated_attitude_telemetry_valid)
+        self.assertIsNone(control.coast_actual_tilt_deg)
+        self.assertTrue(
+            control.coast_jerk_limited_terminal_measurements_fresh
+        )
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.006, 1.0], [0.0, 0.59, 0.0], 1.01,
+            current_orientation_rpy=invalid_rp_with_valid_yaw,
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.111,
+            current_state_group_skew_s=0.03,
+            max_terminal_state_age_s=0.10,
+            max_terminal_state_group_skew_s=0.03,
+        ))
+        self.assertFalse(
+            control.coast_jerk_limited_terminal_state_age_ready
+        )
+        self.assertFalse(
+            control.coast_jerk_limited_terminal_measurements_fresh
+        )
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.012, 1.0], [0.0, 0.58, 0.0], 1.12,
+            current_orientation_rpy=invalid_rp_with_valid_yaw,
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.12,
+            current_state_group_skew_s=0.031,
+            max_terminal_state_age_s=0.10,
+            max_terminal_state_group_skew_s=0.03,
+        ))
+        self.assertTrue(control.coast_jerk_limited_terminal_state_age_ready)
+        self.assertFalse(
+            control.coast_jerk_limited_terminal_state_group_skew_ready
+        )
+        self.assertFalse(
+            control.coast_jerk_limited_terminal_measurements_fresh
+        )
+
+    def test_jerk_history_wait_holds_level_then_plans_from_latest_state(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_state_kinematic_guard_enabled=True,
+            coast_command_period_s=0.02,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        for index in range(15):
+            control.send(
+                commander,
+                command_timestamp=0.02 * index,
+                yaw_deg=0.0,
+            )
+        control.set_contact_attitude(5.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.30, yaw_deg=0.0)
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.zeros(3),
+            coast=True,
+        ))
+        control.confirm_release_candidate(
+            timestamp=0.32,
+            current_velocity=[0.0, 0.60, 0.0],
+        )
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.32,
+        ))
+        self.assertTrue(control.coast_jerk_limited_history_wait_active)
+        self.assertFalse(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertEqual(
+            control.command_mode,
+            'jerk_history_level_hold_attitude_zdistance',
+        )
+        self.assertIsNone(control.coast_jerk_limited_first_actual_send_at)
+        wait_event = control.consume_jerk_limited_event()
+        self.assertEqual(
+            wait_event['event'],
+            'Jerk-Limited Attitude History Wait Started',
+        )
+        self.assertAlmostEqual(wait_event['command_history_span_s'], 0.32)
+        self.assertAlmostEqual(wait_event['remaining_history_s'], 0.44)
+        np.testing.assert_allclose(
+            wait_event['level_command_activation_time_corners'],
+            [0.32, 0.36],
+        )
+
+        control.send(commander, command_timestamp=0.32, yaw_deg=0.0)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(commander.calls[-1][1][:2], [0.0, 0.0])
+        self.assertEqual(commander.calls[-1][1][3], 1.0)
+        self.assertAlmostEqual(
+            control.coast_jerk_limited_history_wait_first_actual_send_at,
+            0.32,
+        )
+        self.assertIsNone(control.coast_jerk_limited_first_actual_send_at)
+
+        for index in range(17, 38):
+            now = 0.02 * index
+            progress = 0.60 * (now - 0.32)
+            self.assertFalse(control.update_coast_velocity(
+                [0.0, progress, 1.0], [0.0, 0.60, 0.0], now,
+                current_orientation_rpy=np.zeros(3),
+                current_angular_velocity=np.zeros(3),
+                command_timestamp=now,
+            ))
+            self.assertTrue(control.coast_jerk_limited_history_wait_active)
+            control.send(commander, command_timestamp=now, yaw_deg=0.0)
+            self.assertEqual(commander.calls[-1][0], 'zdistance')
+            np.testing.assert_allclose(
+                commander.calls[-1][1][:2], [0.0, 0.0]
+            )
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.264, 1.0], [0.0, 0.60, 0.0], 0.76,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.76,
+        ))
+        self.assertFalse(control.coast_jerk_limited_history_wait_active)
+        self.assertEqual(control.coast_velocity_phase, 'jerk_attitude_brake')
+        self.assertFalse(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertAlmostEqual(
+            control.coast_jerk_limited_history_wait_elapsed_s, 0.44
+        )
+        control.send(commander, command_timestamp=0.76, yaw_deg=0.0)
+        self.assertAlmostEqual(
+            control.coast_jerk_limited_first_actual_send_at, 0.76
+        )
+        start_event = control.consume_jerk_limited_event()
+        self.assertEqual(
+            start_event['event'], 'Jerk-Limited Attitude Brake Started'
+        )
+        self.assertAlmostEqual(start_event['planning_projected_speed_m_s'], 0.60)
+        self.assertAlmostEqual(start_event['history_wait_elapsed_s'], 0.44)
+
+    def test_jerk_history_wait_completion_uses_geometry_and_recorded_bound(
+            self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_max_acceleration_m_s2=0.10,
+            brake_max_attitude_deg=30.0,
+            coast_attitude_acceleration_scale=1.0,
+            coast_command_period_s=0.02,
+        )
+        geometry_bound = 9.81 * np.tan(np.radians(30.0))
+        self.assertAlmostEqual(
+            control._jerk_history_wait_acceleration_bound_m_s2(),
+            geometry_bound,
+        )
+
+        self.assertTrue(control.start_contact('orientation'))
+        control.set_contact_attitude(40.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.0, yaw_deg=0.0)
+        control.set_contact_attitude(0.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.10, yaw_deg=0.0)
+        recorded_bound = float(np.linalg.norm(
+            attitude_to_world_acceleration(40.0, 0.0, 0.0)
+        ))
+        self.assertGreater(recorded_bound, geometry_bound)
+        self.assertAlmostEqual(
+            control._jerk_history_wait_acceleration_bound_m_s2(),
+            recorded_bound,
+        )
+
+        control.release_position_m = np.array([0.0, 0.0, 1.0])
+        control.brake_direction = np.array([0.0, 1.0, 0.0])
+        control.coast_velocity_phase = 'jerk_history_level_hold'
+        control.coast_jerk_limited_history_wait_started_at = 0.50
+        control.brake_projected_speed_m_s = 0.20
+        horizon_s = 0.10 + max(0.02, 0.03 + 0.01)
+        with patch.object(
+                control, '_initialize_jerk_limited_profile',
+                return_value=False):
+            self.assertFalse(control._update_jerk_limited_attitude(
+                np.array([0.0, 0.0, 1.0]),
+                np.array([0.0, 0.20, 0.0]),
+                np.zeros(3),
+                np.zeros(3),
+                0.80,
+                0.90,
+                0.02,
+                False,
+            ))
+        self.assertAlmostEqual(
+            control.coast_jerk_limited_history_wait_predicted_distance_m,
+            0.20 * horizon_s + 0.5 * recorded_bound * horizon_s ** 2,
+        )
+
+    def test_jerk_history_wait_uncertainty_uses_recorded_bound(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_history_wait_max_s=0.60,
+            coast_jerk_limited_history_wait_max_distance_m=5.0,
+            coast_jerk_limited_history_wait_max_lateral_distance_m=5.0,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_max_acceleration_m_s2=0.10,
+            brake_max_attitude_deg=30.0,
+            coast_attitude_acceleration_scale=1.0,
+            coast_command_period_s=0.02,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        control.set_contact_attitude(40.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.0, yaw_deg=0.0)
+        control.set_contact_attitude(0.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.10, yaw_deg=0.0)
+        recorded_bound = float(np.linalg.norm(
+            attitude_to_world_acceleration(40.0, 0.0, 0.0)
+        ))
+        control.release_position_m = np.array([0.0, 0.0, 1.0])
+        control.brake_direction = np.array([0.0, 1.0, 0.0])
+
+        timestamp = 0.30
+        history_status = control._jerk_command_history_status(timestamp)
+        self.assertFalse(control._continue_jerk_history_level_hold(
+            np.array([0.0, 0.0, 1.0]),
+            np.array([0.0, 5.0, 0.0]),
+            timestamp,
+            timestamp,
+            history_status,
+            0.0,
+        ))
+        known_response_s = (
+            history_status['span_s'] - history_status['response_delay_s']
+        )
+        expected_uncertainty = float(
+            2.0 * recorded_bound * np.exp(
+                -known_response_s / control.coast_attitude_time_constant_s
+            )
+        )
+        self.assertAlmostEqual(
+            control
+            .coast_jerk_limited_history_wait_acceleration_uncertainty_m_s2,
+            expected_uncertainty,
+        )
+        self.assertGreater(
+            expected_uncertainty,
+            2.0 * control.coast_max_acceleration_m_s2 * np.exp(
+                -known_response_s / control.coast_attitude_time_constant_s
+            ),
+        )
+        self.assertEqual(
+            control.coast_velocity_phase,
+            'jerk_history_level_hold',
+        )
+        self.assertFalse(
+            control.coast_jerk_limited_velocity_fallback_active,
+            control.coast_jerk_limited_fallback_reason,
+        )
+
+    def test_jerk_history_wait_nonfinite_bound_falls_back(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_history_wait_max_s=0.60,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_attitude_time_constant_s=0.0,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        control.send(commander, command_timestamp=0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.10, yaw_deg=0.0)
+        control.release_position_m = np.array([0.0, 0.0, 1.0])
+        control.brake_direction = np.array([0.0, 1.0, 0.0])
+        timestamp = 0.30
+        history_status = control._jerk_command_history_status(timestamp)
+
+        with patch.object(
+                control, '_jerk_history_wait_acceleration_bound_m_s2',
+                return_value=float('inf')):
+            self.assertFalse(control._continue_jerk_history_level_hold(
+                np.array([0.0, 0.0, 1.0]),
+                np.array([0.0, 1.0, 0.0]),
+                timestamp,
+                timestamp,
+                history_status,
+                0.0,
+            ))
+        self.assertTrue(
+            control.coast_jerk_limited_velocity_fallback_active
+        )
+        self.assertEqual(
+            control.coast_jerk_limited_fallback_reason,
+            'jerk history-wait acceleration bound is not finite',
+        )
+        self.assertTrue(np.isinf(
+            control
+            .coast_jerk_limited_history_wait_acceleration_uncertainty_m_s2
+        ))
+
+    def test_jerk_history_wait_send_projection_uses_recorded_bound(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_max_acceleration_m_s2=0.10,
+            brake_max_attitude_deg=30.0,
+            coast_attitude_acceleration_scale=1.0,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        control.set_contact_attitude(40.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.0, yaw_deg=0.0)
+        control.set_contact_attitude(0.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.10, yaw_deg=0.0)
+        recorded_bound = float(np.linalg.norm(
+            attitude_to_world_acceleration(40.0, 0.0, 0.0)
+        ))
+
+        control.release_position_m = np.array([0.0, 0.0, 1.0])
+        control.brake_direction = np.array([0.0, 1.0, 0.0])
+        control.coast_jerk_limited_history_wait_completed_at = 0.80
+        control._coast_jerk_limited_plan_position_m = np.array([
+            0.0, 0.0, 1.0,
+        ])
+        control._coast_jerk_limited_plan_velocity_m_s = np.array([
+            0.0, 0.20, 0.0,
+        ])
+        control._coast_jerk_limited_plan_state_timestamp = 0.80
+        with patch.object(
+                control, '_initialize_jerk_limited_profile',
+                return_value=False):
+            prepared, scheduled_at = control._prepare_jerk_limited_first_send(
+                0.94
+            )
+        self.assertFalse(prepared)
+        self.assertAlmostEqual(scheduled_at, 0.94)
+        horizon_s = 0.14
+        self.assertAlmostEqual(
+            control.coast_jerk_limited_history_wait_predicted_distance_m,
+            0.20 * horizon_s + 0.5 * recorded_bound * horizon_s ** 2,
+        )
+
+    def test_jerk_history_wait_ready_frame_rechecks_lateral_velocity_projection(
+            self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            # Deliberately isolate the history-completion admission gate. The
+            # final frame is kinematically abrupt so its lateral velocity is
+            # the only evidence that predicts departure from the envelope.
+            coast_state_kinematic_guard_enabled=False,
+            coast_command_period_s=0.02,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        for index in range(15):
+            control.send(
+                commander,
+                command_timestamp=0.02 * index,
+                yaw_deg=0.0,
+            )
+        control.set_contact_attitude(5.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.30, yaw_deg=0.0)
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.zeros(3),
+            coast=True,
+        ))
+        control.confirm_release_candidate(
+            timestamp=0.32,
+            current_velocity=[0.0, 0.60, 0.0],
+        )
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.32,
+        ))
+        control.send(commander, command_timestamp=0.32, yaw_deg=0.0)
+
+        for index in range(17, 38):
+            now = 0.02 * index
+            progress = 0.60 * (now - 0.32)
+            self.assertFalse(control.update_coast_velocity(
+                [0.0, progress, 1.0], [0.0, 0.60, 0.0], now,
+                current_orientation_rpy=np.zeros(3),
+                current_angular_velocity=np.zeros(3),
+                command_timestamp=now,
+            ))
+            control.send(commander, command_timestamp=now, yaw_deg=0.0)
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.264, 1.0], [5.0, 0.60, 0.0], 0.76,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.76,
+        ))
+
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertFalse(control.coast_jerk_limited_history_wait_active)
+        self.assertIsNone(control.coast_jerk_limited_profile)
+        self.assertNotEqual(control.coast_velocity_phase, 'jerk_attitude_brake')
+        self.assertGreater(
+            control.coast_jerk_limited_history_wait_predicted_lateral_distance_m,
+            control.coast_jerk_limited_history_wait_max_lateral_distance_m,
+        )
+        self.assertIn(
+            'lateral travel limit',
+            control.coast_jerk_limited_fallback_reason,
+        )
+
+    def test_jerk_history_wait_rechecks_travel_at_delayed_first_send(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_command_period_s=0.02,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        for index in range(15):
+            control.send(
+                commander,
+                command_timestamp=0.02 * index,
+                yaw_deg=0.0,
+            )
+        control.set_contact_attitude(5.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.30, yaw_deg=0.0)
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.zeros(3),
+            coast=True,
+        ))
+        control.confirm_release_candidate(
+            timestamp=0.32,
+            current_velocity=[0.0, 0.60, 0.0],
+        )
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.32,
+        ))
+        control.send(commander, command_timestamp=0.32, yaw_deg=0.0)
+        for index in range(17, 38):
+            now = 0.02 * index
+            progress = 0.60 * (now - 0.32)
+            self.assertFalse(control.update_coast_velocity(
+                [0.0, progress, 1.0], [0.0, 0.60, 0.0], now,
+                current_orientation_rpy=np.zeros(3),
+                current_angular_velocity=np.zeros(3),
+                command_timestamp=now,
+            ))
+            control.send(commander, command_timestamp=now, yaw_deg=0.0)
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.264, 1.0], [0.0, 0.60, 0.0], 0.76,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.76,
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'jerk_attitude_brake')
+
+        # The state was admissible at 0.76 s, but an artificial 240 ms
+        # decision-to-send delay consumes the remaining bounded travel budget.
+        # The send path must re-project that horizon and dispatch level, not the
+        # provisional jerk command.
+        control.send(commander, command_timestamp=1.00, yaw_deg=0.0)
+
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertFalse(control.coast_jerk_limited_attitude_active)
+        self.assertIsNone(control.coast_jerk_limited_first_actual_send_at)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(commander.calls[-1][1][:2], [0.0, 0.0])
+        self.assertGreater(
+            control.coast_jerk_limited_history_wait_predicted_distance_m,
+            control.coast_jerk_limited_history_wait_max_distance_m,
+        )
+        self.assertIn(
+            'send delay exceeded the history-wait forward travel limit',
+            control.coast_jerk_limited_fallback_reason,
+        )
+
+    def test_jerk_history_wait_rejects_a_tail_that_can_reach_speed_guard(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_command_period_s=0.02,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        for index in range(16):
+            control.send(
+                commander,
+                command_timestamp=0.02 * index,
+                yaw_deg=0.0,
+            )
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.05, 0.0], 0.32,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.zeros(3),
+            coast=True,
+        ))
+        control.confirm_release_candidate(
+            timestamp=0.32,
+            current_velocity=[0.0, 0.05, 0.0],
+        )
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.05, 0.0], 0.32,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.32,
+        ))
+
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertFalse(control.coast_jerk_limited_history_wait_active)
+        self.assertIn(
+            'positive speed margin',
+            control.coast_jerk_limited_fallback_reason,
+        )
+        event = control.consume_jerk_limited_event()
+        self.assertEqual(event['event'], 'Jerk-Limited Brake Fallback')
+        self.assertTrue(control.consume_velocity_pid_reset_request())
+
+    def test_jerk_history_wait_bridges_nonlevel_actual_before_fallback(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_command_period_s=0.02,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        control.send(commander, command_timestamp=0.0, yaw_deg=0.0)
+        control.set_contact_attitude(5.0, 0.0, yaw_deg=0.0)
+        control.send(commander, command_timestamp=0.30, yaw_deg=0.0)
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.05, 0.0], 0.32,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.zeros(3),
+            coast=True,
+        ))
+        control.confirm_release_candidate(
+            timestamp=0.32,
+            current_velocity=[0.0, 0.05, 0.0],
+        )
+        history_count = len(control.sent_attitude_acceleration_history())
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.05, 0.0], 0.32,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.32,
+        ))
+
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertTrue(control.coast_jerk_limited_fallback_bridge_pending)
+        self.assertEqual(
+            control.command_mode,
+            'jerk_fallback_bridge_attitude_zdistance',
+        )
+        self.assertFalse(control.consume_velocity_pid_reset_request())
+        self.assertEqual(
+            len(control.sent_attitude_acceleration_history()), history_count
+        )
+
+        control.send(commander, command_timestamp=0.32, yaw_deg=0.0)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(commander.calls[-1][1][:2], [0.0, 0.0])
+        self.assertFalse(control.coast_jerk_limited_fallback_bridge_pending)
+        self.assertEqual(
+            len(control.sent_attitude_acceleration_history()),
+            history_count + 1,
+        )
+
+        # A duplicate-state retry may call send before the main-loop reset
+        # consumer. It must repeat level attitude, never issue velocity first.
+        control.send(commander, command_timestamp=0.34, yaw_deg=0.0)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(commander.calls[-1][1][:2], [0.0, 0.0])
+        self.assertTrue(control.consume_velocity_pid_reset_request())
+        control.send(commander, command_timestamp=0.36, yaw_deg=0.0)
+        self.assertEqual(commander.calls[-1][0], 'hover')
+
+    def test_jerk_history_wait_send_timeout_holds_level_then_falls_back(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_command_period_s=0.02,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        for index in range(16):
+            control.send(
+                commander,
+                command_timestamp=0.02 * index,
+                yaw_deg=0.0,
+            )
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.zeros(3),
+            coast=True,
+        ))
+        control.confirm_release_candidate(
+            timestamp=0.32,
+            current_velocity=[0.0, 0.60, 0.0],
+        )
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.32,
+        ))
+        control.send(commander, command_timestamp=0.32, yaw_deg=0.0)
+
+        # No fresh state arrives for longer than the hard wait bound. send()
+        # must keep fixed-Z level attitude for this cycle and defer velocity
+        # ownership until its PID reset is consumed on a later fresh cycle.
+        control.send(commander, command_timestamp=0.83, yaw_deg=0.0)
+
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(commander.calls[-1][1][:2], [0.0, 0.0])
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertFalse(control.coast_jerk_limited_history_wait_active)
+        self.assertIsNone(control.coast_jerk_limited_profile)
+        self.assertTrue(control.consume_velocity_pid_reset_request())
+        event = control.consume_jerk_limited_event()
+        self.assertEqual(event['event'], 'Jerk-Limited Brake Fallback')
+        self.assertIn('expired before a fresh state', event['reason'])
+
+    def test_jerk_history_wait_late_first_send_falls_back_after_level(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_command_period_s=0.02,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        for index in range(16):
+            control.send(
+                commander,
+                command_timestamp=0.02 * index,
+                yaw_deg=0.0,
+            )
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.zeros(3),
+            coast=True,
+        ))
+        control.confirm_release_candidate(
+            timestamp=0.32,
+            current_velocity=[0.0, 0.60, 0.0],
+        )
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.32,
+        ))
+        self.assertAlmostEqual(
+            control.coast_jerk_limited_history_wait_validated_level_at,
+            0.36,
+        )
+
+        # Runtime uses the real wall clock. A commander return at 0.37 misses
+        # the conservatively validated 0.36 activation deadline; that level
+        # command is retained as the bridge and jerk authority is denied.
+        with patch('Interaction.interactions.time.time', return_value=0.37):
+            sent_at = control.send(commander, yaw_deg=0.0)
+
+        self.assertAlmostEqual(sent_at, 0.37)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(commander.calls[-1][1][:2], [0.0, 0.0])
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertTrue(control.coast_jerk_limited_fallback_bridge_level_sent)
+        self.assertAlmostEqual(
+            control.coast_jerk_limited_history_wait_first_send_deadline_miss_s,
+            0.01,
+        )
+        self.assertTrue(control.consume_velocity_pid_reset_request())
+        event = control.consume_jerk_limited_event()
+        self.assertEqual(event['event'], 'Jerk-Limited Brake Fallback')
+        self.assertIn('activation deadline', event['reason'])
+
+    def test_jerk_history_wait_rejects_large_lateral_drift(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_history_wait_enabled=True,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_command_period_s=0.02,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        for index in range(16):
+            control.send(
+                commander,
+                command_timestamp=0.02 * index,
+                yaw_deg=0.0,
+            )
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [2.0, 0.60, 0.0], 0.32,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.zeros(3),
+            coast=True,
+        ))
+        control.confirm_release_candidate(
+            timestamp=0.32,
+            current_velocity=[2.0, 0.60, 0.0],
+        )
+
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [2.0, 0.60, 0.0], 0.32,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=0.32,
+        ))
+
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertIn(
+            'lateral travel limit',
+            control.coast_jerk_limited_fallback_reason,
+        )
+
     def test_disabled_jerk_path_does_not_validate_unused_jerk_tuning(self):
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -4818,6 +6120,17 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
 
         self.assertFalse(control.coast_jerk_limited_attitude_enabled)
+
+    def test_jerk_history_wait_requires_jerk_attitude_owner(self):
+        with self.assertRaisesRegex(
+                ValueError, 'history wait requires jerk-limited attitude'):
+            TranslationControlHandoff(
+                initial_position=[0.0, 0.0, 1.0],
+                yaw_deg=0.0,
+                shadow_mode=False,
+                coast_jerk_limited_attitude_enabled=False,
+                coast_jerk_limited_history_wait_enabled=True,
+            )
 
     def test_jerk_limited_velocity_fallback_overrides_legacy_unwind_owner(self):
         for legacy_owner in ('direct_attitude', 'position'):
@@ -4836,6 +6149,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                     coast_velocity_unwind_position_control_enabled=(
                         legacy_owner == 'position'
                     ),
+                    coast_velocity_rebrake_enabled=False,
                     coast_alignment_dwell_s=0.0,
                 )
                 self.assertTrue(control.start_contact('orientation'))
@@ -4864,6 +6178,11 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                 )
                 self.assertFalse(control.direct_level_unwind_active)
                 self.assertFalse(control.uses_position_setpoint)
+                self.assertEqual(
+                    control.command_mode,
+                    'jerk_fallback_bridge_attitude_zdistance',
+                )
+                self.assertTrue(control.consume_velocity_pid_reset_request())
                 self.assertEqual(control.command_mode, 'velocity_coast')
                 control.confirm_release_candidate(
                     timestamp=1.005,
@@ -4879,12 +6198,71 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                     commander, command_timestamp=1.01, yaw_deg=0.0
                 )
                 self.assertEqual(commander.calls[-1][0], 'hover')
-                self.assertTrue(control.update_coast_velocity(
+                invalid_rp_with_valid_yaw = [
+                    float('nan'), float('inf'), 0.0,
+                ]
+                self.assertFalse(control.update_coast_velocity(
                     [0.0, 0.01, 1.0], [0.0, 0.02, 0.0], 1.02,
-                    current_orientation_rpy=np.zeros(3),
+                    current_orientation_rpy=invalid_rp_with_valid_yaw,
                     current_angular_velocity=np.zeros(3),
                     command_timestamp=1.02,
+                    current_state_group_skew_s=0.0,
+                    max_terminal_state_age_s=0.10,
+                    max_terminal_state_group_skew_s=0.03,
                 ))
+                self.assertFalse(
+                    control.coast_jerk_limited_fallback_response_ready
+                )
+                self.assertFalse(
+                    control.coast_jerk_limited_estimated_tilt_gate_used
+                )
+                self.assertIn(
+                    control.coast_velocity_unwind_acceleration_source,
+                    (
+                        'measured_velocity_derivative_jerk_fallback',
+                        'unavailable_fail_closed_jerk_fallback',
+                    ),
+                )
+                response_settled_at = (
+                    control.coast_jerk_limited_fallback_response_settled_at
+                )
+                self.assertAlmostEqual(response_settled_at, 1.77)
+                # A long jump reaches the response deadline but cannot supply a
+                # wholly post-response acceleration interval.
+                self.assertFalse(control.update_coast_velocity(
+                    [0.0, 0.02, 1.0], [0.0, 0.02, 0.0],
+                    response_settled_at,
+                    current_orientation_rpy=invalid_rp_with_valid_yaw,
+                    current_angular_velocity=np.zeros(3),
+                    command_timestamp=response_settled_at,
+                    current_state_group_skew_s=0.0,
+                    max_terminal_state_age_s=0.10,
+                    max_terminal_state_group_skew_s=0.03,
+                ))
+                self.assertTrue(
+                    control.coast_jerk_limited_fallback_response_ready
+                )
+                self.assertFalse(
+                    control
+                    .coast_jerk_limited_fallback_acceleration_sample_fresh
+                )
+                self.assertTrue(control.update_coast_velocity(
+                    [0.0, 0.0202, 1.0], [0.0, 0.02, 0.0],
+                    response_settled_at + 0.01,
+                    current_orientation_rpy=invalid_rp_with_valid_yaw,
+                    current_angular_velocity=np.zeros(3),
+                    command_timestamp=response_settled_at + 0.01,
+                    current_state_group_skew_s=0.0,
+                    max_terminal_state_age_s=0.10,
+                    max_terminal_state_group_skew_s=0.03,
+                ))
+                self.assertTrue(
+                    control.coast_jerk_limited_fallback_acceleration_ready
+                )
+                self.assertEqual(
+                    control.coast_velocity_unwind_acceleration_source,
+                    'measured_velocity_derivative_jerk_fallback',
+                )
                 self.assertEqual(
                     control.coast_handoff_reason,
                     'jerk_limited_velocity_fallback_position_handoff',
@@ -4894,7 +6272,62 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                     'native_velocity_pid',
                 )
 
-    def test_jerk_velocity_fallback_can_rebrake_with_position_unwind_configured(
+    def test_jerk_fallback_response_anchor_tracks_velocity_command_changes(self):
+        commander = FakeCommander()
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.30, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.zeros(3),
+            coast=True,
+        ))
+        control._activate_jerk_limited_fallback(
+            'test fallback command anchor',
+            [0.0, 0.02],
+            prefer_unwind=True,
+        )
+        self.assertTrue(control.consume_velocity_pid_reset_request())
+
+        control.coast_velocity_command_xy_m_s = np.array([0.0, 0.020])
+        control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
+        self.assertAlmostEqual(
+            control
+            .coast_jerk_limited_fallback_terminal_velocity_command_started_at,
+            1.01,
+        )
+        # A sub-margin change is treated as the same terminal command, avoiding
+        # a noise-driven response timer that can never finish.
+        control.coast_velocity_command_xy_m_s = np.array([0.0, 0.024])
+        control.send(commander, command_timestamp=1.10, yaw_deg=0.0)
+        self.assertAlmostEqual(
+            control
+            .coast_jerk_limited_fallback_terminal_velocity_command_started_at,
+            1.01,
+        )
+        # Cumulative movement beyond the 0.005 m/s terminal margin is material
+        # and must restart the complete plant-response window.
+        control.coast_velocity_command_xy_m_s = np.array([0.0, 0.026])
+        control.send(commander, command_timestamp=1.20, yaw_deg=0.0)
+        self.assertAlmostEqual(
+            control
+            .coast_jerk_limited_fallback_terminal_velocity_command_started_at,
+            1.20,
+        )
+        np.testing.assert_allclose(
+            control
+            .coast_jerk_limited_fallback_terminal_velocity_command_xy_m_s,
+            [0.0, 0.026],
+        )
+
+    def test_jerk_velocity_fallback_does_not_rebrake_from_ekf_tilt(
             self):
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -4917,21 +6350,19 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             [0.0, 0.02],
             prefer_unwind=True,
         )
+        self.assertTrue(control.consume_velocity_pid_reset_request())
 
         self.assertFalse(control.uses_position_setpoint)
         self.assertFalse(control.update_coast_velocity(
             [0.0, 0.01, 1.0], [0.0, 0.06, 0.0], 1.02,
-            current_orientation_rpy=np.zeros(3),
+            current_orientation_rpy=[float('nan'), float('inf'), 0.0],
             current_angular_velocity=np.zeros(3),
             command_timestamp=1.02,
         ))
-        self.assertEqual(control.coast_velocity_phase, 'fast_brake')
-        self.assertEqual(control.coast_velocity_rebrake_count, 1)
+        self.assertEqual(control.coast_velocity_phase, 'predictive_unwind')
+        self.assertEqual(control.coast_velocity_rebrake_count, 0)
         self.assertFalse(control.uses_position_setpoint)
-        np.testing.assert_allclose(
-            control.coast_velocity_command_xy_m_s, [0.0, 0.0]
-        )
-        self.assertTrue(control.consume_velocity_rebrake_request())
+        self.assertFalse(control.consume_velocity_rebrake_request())
 
     def test_direct_level_and_position_unwind_are_mutually_exclusive(self):
         with self.assertRaisesRegex(ValueError, 'mutually exclusive'):

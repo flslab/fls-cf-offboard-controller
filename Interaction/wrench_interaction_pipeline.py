@@ -282,6 +282,15 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # roll/pitch directly at fixed nominal Z, and retains the continuous
         # velocity-unwind controller as a fail-safe fallback.
         "coast_jerk_limited_attitude_enabled": False,
+        # A partially observed actual-command history may be completed after
+        # release while direct attitude ownership slews to and holds level.
+        # The wait is deliberately bounded by both time and predicted travel;
+        # missing/unsafe histories still fail closed to velocity control.
+        "coast_jerk_limited_history_wait_enabled": False,
+        "coast_jerk_limited_history_wait_max_s": 0.50,
+        "coast_jerk_limited_history_wait_max_distance_m": 0.35,
+        "coast_jerk_limited_history_wait_max_lateral_distance_m": 0.20,
+        "coast_jerk_limited_history_wait_speed_guard_m_s": 0.03,
         # Preserve the 2AFC friction ordering without permitting a very-low-mu
         # condition to consume the entire flight volume.
         "coast_jerk_limited_virtual_friction_enabled": True,
