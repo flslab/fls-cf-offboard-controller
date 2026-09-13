@@ -282,6 +282,15 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # roll/pitch directly at fixed nominal Z, and retains the continuous
         # velocity-unwind controller as a fail-safe fallback.
         "coast_jerk_limited_attitude_enabled": False,
+        # Smooth each acceleration ramp with a quintic smootherstep. Its
+        # analytic double integral is a seventh-order position trajectory with
+        # zero jerk at every phase boundary. The legacy profile remains the
+        # default for exact rollback compatibility.
+        "coast_jerk_limited_septic_smoothing_enabled": False,
+        # The smooth profile has its own single-threaded command clock. State
+        # updates may be slower; duplicate-state loop ticks still advance this
+        # clock, while the conservative ZOH validator bounds late ticks.
+        "coast_jerk_limited_playback_period_s": 0.01,
         # A partially observed actual-command history may be completed after
         # release while direct attitude ownership slews to and holds level.
         # The wait is deliberately bounded by both time and predicted travel;
@@ -302,9 +311,10 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # inherit the legacy velocity-to-attitude 30 ms mode-switch delay. Set
         # this only if direct-attitude logs identify an additional delay.
         "coast_jerk_limited_extra_command_delay_s": 0.0,
-        # The first jerk command is scheduled this far ahead so its full
-        # delayed/ZOH feasibility check finishes before the declared send time.
-        # A missed schedule fails closed instead of shifting the open-loop curve.
+        # Reserve at least this much time between final planning and profile
+        # activation. Septic mode expands it from the measured provisional
+        # solve time; sample(0) may be sent earlier because it repeats the
+        # already-active acceleration. A missed activation fails closed.
         "coast_jerk_limited_prepare_lead_s": 0.03,
         # The first send repeats the already-active acceleration. The profile
         # clock advances only after this extra guard, and the commander call

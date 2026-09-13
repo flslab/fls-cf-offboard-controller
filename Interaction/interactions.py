@@ -39,6 +39,7 @@ from Interaction.learning_velocity_mpc import (
 from Interaction.jerk_limited_braking import (
     JerkLimitedBrakeError,
     make_jerk_limited_brake_profile,
+    make_septic_brake_profile,
 )
 from Interaction.mpc_bootstrap_calibration import (
     MPCBootstrapAutomaticAttempt,
@@ -1122,6 +1123,7 @@ def rollout_delayed_zoh_jerk_profile(
         inherited_negative_scale=None,
         inherited_positive_scale=None,
         profile_command_times_s=None,
+        profile_command_accelerations_m_s2=None,
         step_s=0.001,
 ):
     """Roll out the profile as timestamped zero-order-held commands.
@@ -1211,7 +1213,12 @@ def rollout_delayed_zoh_jerk_profile(
         raise ValueError('jerk rollout needs command history')
 
     if profile_command_times_s is None:
+        if profile_command_accelerations_m_s2 is not None:
+            raise ValueError(
+                'explicit jerk accelerations require explicit command times'
+            )
         profile_command_times = None
+        profile_command_accelerations = None
         profile_end_elapsed_s = float(
             np.ceil(profile.duration_s / command_period_s)
             * command_period_s
@@ -1232,6 +1239,23 @@ def rollout_delayed_zoh_jerk_profile(
                 'jerk rollout profile command times must start at zero, be '
                 'strictly increasing, and include a terminal zero command'
             )
+        if profile_command_accelerations_m_s2 is None:
+            profile_command_accelerations = None
+        else:
+            profile_command_accelerations = np.asarray(
+                profile_command_accelerations_m_s2, dtype=float
+            )
+            if (
+                profile_command_accelerations.ndim != 1
+                or profile_command_accelerations.shape
+                != profile_command_times.shape
+                or not np.all(np.isfinite(profile_command_accelerations))
+                or abs(profile_command_accelerations[-1]) > 1e-12
+            ):
+                raise ValueError(
+                    'explicit jerk accelerations must be finite, match the '
+                    'command times, and end at zero'
+                )
         profile_end_elapsed_s = float(profile_command_times[-1])
     profile_end_send_at = profile_started_at + profile_end_elapsed_s
     horizon_end = (
@@ -1315,6 +1339,8 @@ def rollout_delayed_zoh_jerk_profile(
                 )
             future_target_acceleration = float(
                 profile.sample(held_elapsed).acceleration_m_s2
+                if profile_command_accelerations is None
+                else profile_command_accelerations[profile_index]
             )
             nominal_target_acceleration = future_target_acceleration
             if (
@@ -2998,6 +3024,8 @@ class TranslationControlHandoff:
             coast_alignment_dwell_s=0.08,
             coast_attitude_timeout_s=1.5,
             rearm_delay_s=0.0,
+            coast_jerk_limited_septic_smoothing_enabled=False,
+            coast_jerk_limited_playback_period_s=0.01,
     ):
         self.hold_position = np.asarray(initial_position, dtype=float).copy()
         if (
@@ -3130,6 +3158,27 @@ class TranslationControlHandoff:
         self.coast_jerk_limited_attitude_enabled = bool(
             coast_jerk_limited_attitude_enabled
         )
+        if type(coast_jerk_limited_septic_smoothing_enabled) is not bool:
+            raise ValueError(
+                'coast_jerk_limited_septic_smoothing_enabled must be boolean'
+            )
+        self.coast_jerk_limited_septic_smoothing_enabled = (
+            coast_jerk_limited_septic_smoothing_enabled
+        )
+        self.coast_jerk_limited_playback_period_s = float(
+            coast_jerk_limited_playback_period_s
+        )
+        if (
+            self.coast_jerk_limited_septic_smoothing_enabled
+            and (
+                not np.isfinite(self.coast_jerk_limited_playback_period_s)
+                or self.coast_jerk_limited_playback_period_s <= 0.0
+            )
+        ):
+            raise ValueError(
+                'coast_jerk_limited_playback_period_s must be finite and '
+                'positive'
+            )
         self.coast_jerk_limited_history_wait_enabled = bool(
             coast_jerk_limited_history_wait_enabled
         )
@@ -3299,6 +3348,13 @@ class TranslationControlHandoff:
             raise ValueError(
                 'jerk history wait requires jerk-limited attitude braking'
             )
+        if (
+            self.coast_jerk_limited_septic_smoothing_enabled
+            and not self.coast_jerk_limited_attitude_enabled
+        ):
+            raise ValueError(
+                'septic smoothing requires jerk-limited attitude braking'
+            )
         translation_limits = np.asarray([
             self.brake_xy_acceleration_m_s2,
             self.brake_xy_speed_m_s,
@@ -3441,7 +3497,12 @@ class TranslationControlHandoff:
                     or self.coast_jerk_limited_activation_guard_s < 0
                     or self.coast_jerk_limited_terminal_speed_margin_m_s < 0
                     or self.coast_jerk_limited_terminal_speed_margin_m_s >= min(
-                        self.coast_velocity_unwind_low_speed_fallback_m_s,
+                        (
+                            self.coast_velocity_unwind_terminal_speed_m_s
+                            if self.coast_jerk_limited_septic_smoothing_enabled
+                            else self
+                            .coast_velocity_unwind_low_speed_fallback_m_s
+                        ),
                         self.coast_velocity_handoff_speed_m_s,
                     )
                     or self.coast_jerk_limited_lateral_position_gain_s2 < 0
@@ -3452,6 +3513,20 @@ class TranslationControlHandoff:
                     or self.coast_jerk_limited_level_hold_s < 0
                     or self.coast_jerk_limited_settle_timeout_s <= 0
                     or self.coast_jerk_limited_max_attitude_rate_deg_s <= 0
+                    or (
+                        self.coast_jerk_limited_septic_smoothing_enabled
+                        and (
+                            not np.isfinite(
+                                self.coast_jerk_limited_playback_period_s
+                            )
+                            or self.coast_jerk_limited_playback_period_s <= 0
+                            or self.coast_jerk_limited_playback_period_s
+                            > (
+                                self.coast_command_period_s
+                                + self.coast_jerk_limited_activation_guard_s
+                            )
+                        )
+                    )
                 )
             )
             or self.coast_velocity_unwind_one_step_max_dt_s <= 0
@@ -3643,11 +3718,20 @@ class TranslationControlHandoff:
         self.coast_jerk_limited_scheduled_first_send_at = None
         self.coast_jerk_limited_plan_to_send_delay_s = None
         self.coast_jerk_limited_prepare_elapsed_s = None
+        self.coast_jerk_limited_provisional_prepare_elapsed_s = None
+        self.coast_jerk_limited_effective_prepare_lead_s = None
         self.coast_jerk_limited_send_deadline_miss_s = None
         self.coast_jerk_limited_commander_send_elapsed_s = None
         self.coast_jerk_limited_commander_send_completed_at = None
+        self.coast_jerk_limited_actual_sample_age_s = None
+        self.coast_jerk_limited_sample_age_deadline_miss_s = None
         self.coast_jerk_limited_cadence_hold_s = None
         self.coast_jerk_limited_cadence_deadline_miss_s = None
+        self.coast_jerk_limited_last_playback_at = None
+        self.coast_jerk_limited_pending_playback_at = None
+        self.coast_jerk_limited_playback_hold_s = None
+        self.coast_jerk_limited_playback_deadline_miss_s = None
+        self.coast_jerk_limited_lateral_feedback_target_m_s2 = 0.0
         self._coast_jerk_limited_plan_position_m = None
         self._coast_jerk_limited_plan_velocity_m_s = None
         self._coast_jerk_limited_plan_state_timestamp = None
@@ -3681,6 +3765,8 @@ class TranslationControlHandoff:
         self.coast_jerk_limited_validation_robust_min_speed_m_s = None
         self.coast_jerk_limited_validation_nominal_terminal_speed_m_s = None
         self.coast_jerk_limited_validation_robust_terminal_speed_m_s = None
+        self.coast_jerk_limited_validation_sampled_attitude_rate_deg_s = None
+        self.coast_jerk_limited_validation_analytic_attitude_rate_deg_s = None
         self.coast_jerk_limited_validation_max_attitude_rate_deg_s = None
         self.coast_jerk_limited_selected_deceleration_m_s2 = None
         self.coast_jerk_limited_profile_duration_s = None
@@ -4116,6 +4202,237 @@ class TranslationControlHandoff:
             else 0.0,
         )
         return observed_hold_s + self.coast_jerk_limited_activation_guard_s
+
+    @staticmethod
+    def _jerk_phase_asymmetric_command_times(
+            profile, minimum_command_period_s, validation_command_period_s):
+        """Build the conservative ZOH schedule used by the safety rollout."""
+        minimum_command_period_s = float(minimum_command_period_s)
+        validation_command_period_s = float(validation_command_period_s)
+        if (
+            not np.isfinite(minimum_command_period_s)
+            or not np.isfinite(validation_command_period_s)
+            or minimum_command_period_s <= 0.0
+            or validation_command_period_s <= 0.0
+        ):
+            raise ValueError('jerk command periods must be finite and positive')
+        if len(profile.phase_durations_s) != 3:
+            raise ValueError('jerk braking profile must contain three phases')
+
+        ramp_down_end_s = float(profile.phase_durations_s[0])
+        ramp_up_start_s = float(sum(profile.phase_durations_s[:2]))
+        command_times_s = [0.0]
+        next_send_s = minimum_command_period_s
+        while next_send_s < ramp_down_end_s - 1e-12:
+            command_times_s.append(next_send_s)
+            next_send_s += minimum_command_period_s
+        for boundary_s in (ramp_down_end_s, ramp_up_start_s):
+            if boundary_s > command_times_s[-1] + 1e-12:
+                command_times_s.append(boundary_s)
+        next_send_s = ramp_up_start_s + validation_command_period_s
+        while next_send_s < profile.duration_s - 1e-12:
+            command_times_s.append(next_send_s)
+            next_send_s += validation_command_period_s
+        if next_send_s > command_times_s[-1] + 1e-12:
+            # This is the first terminal zero command. Until it is sent, the
+            # previous braking sample is conservatively held for a full worst
+            # observed interval.
+            command_times_s.append(next_send_s)
+        return tuple(command_times_s)
+
+    @staticmethod
+    def _jerk_braking_envelope_commands(
+            profile, validation_command_period_s, *, max_step_s=0.001):
+        """Bound every legal delayed-ZOH sample of a septic profile.
+
+        At profile time ``t`` the last successfully advanced sample can be at
+        any ``s`` in ``[max(0, t - H), t]``, where ``H`` is the validated
+        maximum hold. Septic acceleration has one valley, so its maximum over
+        that window is at an endpoint and its minimum is at an endpoint or the
+        profile's deceleration peak. After completion, zero is also possible.
+
+        Both envelopes are max-jerk Lipschitz. Each returned ZOH value adds or
+        subtracts half a step of jerk headroom to cover an unsampled interior
+        extremum. The result is a proof-oriented bound, not a nominal trace.
+        """
+        validation_command_period_s = float(validation_command_period_s)
+        max_step_s = float(max_step_s)
+        duration_s = float(profile.duration_s)
+        max_jerk_m_s3 = float(profile.max_jerk_m_s3)
+        if (
+            not np.all(np.isfinite([
+                validation_command_period_s,
+                max_step_s,
+                duration_s,
+                max_jerk_m_s3,
+            ]))
+            or validation_command_period_s <= 0.0
+            or max_step_s <= 0.0
+            or duration_s < 0.0
+            or max_jerk_m_s3 <= 0.0
+            or len(profile.phase_durations_s) != 3
+        ):
+            raise ValueError(
+                'jerk braking-envelope inputs must be finite and valid'
+            )
+
+        envelope_horizon_s = duration_s + validation_command_period_s
+        if envelope_horizon_s <= 1e-12:
+            return (0.0, max_step_s), (0.0, 0.0), (0.0, 0.0)
+        interval_count = max(
+            int(np.ceil(envelope_horizon_s / max_step_s)), 1
+        )
+        command_times_s = np.linspace(
+            0.0, envelope_horizon_s, interval_count + 1
+        )
+        ramp_down_end_s = float(profile.phase_durations_s[0])
+        ramp_up_start_s = float(sum(profile.phase_durations_s[:2]))
+        ramp_up_duration_s = float(profile.phase_durations_s[2])
+        peak_acceleration_m_s2 = -float(profile.peak_deceleration_m_s2)
+        initial_acceleration_m_s2 = float(
+            profile.initial_acceleration_m_s2
+        )
+
+        def sampled_accelerations(elapsed_s):
+            """Vectorized equivalent of SepticBrakeProfile.sample()."""
+            elapsed_s = np.asarray(elapsed_s, dtype=float)
+            accelerations = np.zeros_like(elapsed_s)
+            active = elapsed_s < duration_s
+            down = active & (elapsed_s <= ramp_down_end_s)
+            if ramp_down_end_s > 0.0:
+                down_u = np.clip(
+                    elapsed_s[down] / ramp_down_end_s, 0.0, 1.0
+                )
+                smootherstep = (
+                    10.0 * down_u ** 3
+                    - 15.0 * down_u ** 4
+                    + 6.0 * down_u ** 5
+                )
+                accelerations[down] = (
+                    initial_acceleration_m_s2
+                    + (peak_acceleration_m_s2
+                       - initial_acceleration_m_s2)
+                    * smootherstep
+                )
+            else:
+                down.fill(False)
+            hold = (
+                active
+                & ~down
+                & (elapsed_s <= ramp_up_start_s)
+            )
+            accelerations[hold] = peak_acceleration_m_s2
+            up = active & ~down & ~hold
+            if ramp_up_duration_s > 0.0:
+                up_u = np.clip(
+                    (elapsed_s[up] - ramp_up_start_s)
+                    / ramp_up_duration_s,
+                    0.0,
+                    1.0,
+                )
+                smootherstep = (
+                    10.0 * up_u ** 3
+                    - 15.0 * up_u ** 4
+                    + 6.0 * up_u ** 5
+                )
+                accelerations[up] = (
+                    peak_acceleration_m_s2 * (1.0 - smootherstep)
+                )
+            return accelerations
+
+        left_times_s = np.maximum(
+            0.0, command_times_s - validation_command_period_s
+        )
+        right_times_s = np.minimum(command_times_s, duration_s)
+        left_accelerations = sampled_accelerations(left_times_s)
+        right_accelerations = sampled_accelerations(right_times_s)
+        lower_endpoint_envelope = np.minimum(
+            left_accelerations, right_accelerations
+        )
+        upper_endpoint_envelope = np.maximum(
+            left_accelerations, right_accelerations
+        )
+        spans_peak = (
+            (left_times_s <= ramp_up_start_s + 1e-12)
+            & (right_times_s >= ramp_down_end_s - 1e-12)
+        )
+        lower_endpoint_envelope[spans_peak] = np.minimum(
+            lower_endpoint_envelope[spans_peak],
+            peak_acceleration_m_s2,
+        )
+        profile_complete = command_times_s >= duration_s
+        lower_endpoint_envelope[profile_complete] = np.minimum(
+            lower_endpoint_envelope[profile_complete], 0.0
+        )
+        upper_endpoint_envelope[profile_complete] = np.maximum(
+            upper_endpoint_envelope[profile_complete], 0.0
+        )
+        interval_widths_s = np.diff(command_times_s)
+        lower_command_accelerations_m_s2 = np.zeros_like(command_times_s)
+        upper_command_accelerations_m_s2 = np.zeros_like(command_times_s)
+        lower_command_accelerations_m_s2[:-1] = (
+            np.minimum(
+                lower_endpoint_envelope[:-1],
+                lower_endpoint_envelope[1:],
+            )
+            - 0.5 * max_jerk_m_s3 * interval_widths_s
+        )
+        upper_command_accelerations_m_s2[:-1] = (
+            np.maximum(
+                upper_endpoint_envelope[:-1],
+                upper_endpoint_envelope[1:],
+            )
+            + 0.5 * max_jerk_m_s3 * interval_widths_s
+        )
+        # At D + H every admissible stale sample has expired, so the next
+        # successful command is necessarily the profile's terminal zero.
+        lower_command_accelerations_m_s2[-1] = 0.0
+        upper_command_accelerations_m_s2[-1] = 0.0
+        return (
+            tuple(float(value) for value in command_times_s),
+            tuple(
+                float(value) for value
+                in lower_command_accelerations_m_s2
+            ),
+            tuple(
+                float(value) for value
+                in upper_command_accelerations_m_s2
+            ),
+        )
+
+    @staticmethod
+    def _jerk_explicit_command_impulse(
+            command_times_s, command_accelerations_m_s2):
+        """Integrate a validated explicit left-held acceleration schedule."""
+        command_times_s = np.asarray(command_times_s, dtype=float)
+        command_accelerations_m_s2 = np.asarray(
+            command_accelerations_m_s2, dtype=float
+        )
+        if (
+            command_times_s.ndim != 1
+            or command_times_s.size < 2
+            or command_accelerations_m_s2.shape != command_times_s.shape
+            or not np.all(np.isfinite(command_times_s))
+            or not np.all(np.isfinite(command_accelerations_m_s2))
+            or np.any(np.diff(command_times_s) <= 0.0)
+        ):
+            raise ValueError('explicit jerk command schedule is invalid')
+        return float(np.sum(
+            command_accelerations_m_s2[:-1] * np.diff(command_times_s)
+        ))
+
+    @staticmethod
+    def _jerk_zoh_profile_impulse(profile, command_times_s):
+        """Integrate left-held profile samples over an explicit send schedule."""
+        command_times_s = tuple(float(value) for value in command_times_s)
+        if len(command_times_s) < 2:
+            raise ValueError('jerk ZOH impulse needs at least two commands')
+        return float(sum(
+            profile.sample(start_s).acceleration_m_s2 * (end_s - start_s)
+            for start_s, end_s in zip(
+                command_times_s[:-1], command_times_s[1:]
+            )
+        ))
 
     def expire_tail_neutralization(self, timestamp):
         """End a finite cancellation pulse even when state telemetry stalls."""
@@ -5469,6 +5786,7 @@ class TranslationControlHandoff:
         self.coast_jerk_limited_fallback_count += 1
         self.coast_jerk_limited_fallback_used = True
         self.coast_jerk_limited_velocity_fallback_active = True
+        self.coast_jerk_limited_pending_playback_at = None
         self.coast_jerk_limited_terminal_command_ready = False
         self.coast_jerk_limited_fallback_first_velocity_send_at = None
         self.coast_jerk_limited_fallback_terminal_velocity_command_xy_m_s = None
@@ -5550,6 +5868,12 @@ class TranslationControlHandoff:
             'cadence_impulse_reserve_m_s': (
                 self.coast_jerk_limited_cadence_impulse_reserve_m_s
             ),
+            'playback_period_s': self.coast_jerk_limited_playback_period_s,
+            'last_playback_at': self.coast_jerk_limited_last_playback_at,
+            'playback_hold_s': self.coast_jerk_limited_playback_hold_s,
+            'playback_deadline_miss_s': (
+                self.coast_jerk_limited_playback_deadline_miss_s
+            ),
             'command_history_span_s': (
                 self.coast_jerk_limited_command_history_span_s
             ),
@@ -5603,6 +5927,14 @@ class TranslationControlHandoff:
                 self
                 .coast_jerk_limited_validation_robust_terminal_speed_m_s
             ),
+            'validation_sampled_attitude_rate_deg_s': (
+                self
+                .coast_jerk_limited_validation_sampled_attitude_rate_deg_s
+            ),
+            'validation_analytic_attitude_rate_deg_s': (
+                self
+                .coast_jerk_limited_validation_analytic_attitude_rate_deg_s
+            ),
             'scheduled_first_send_at': (
                 self.coast_jerk_limited_scheduled_first_send_at
             ),
@@ -5610,8 +5942,20 @@ class TranslationControlHandoff:
                 self.coast_jerk_limited_plan_to_send_delay_s
             ),
             'prepare_elapsed_s': self.coast_jerk_limited_prepare_elapsed_s,
+            'provisional_prepare_elapsed_s': (
+                self.coast_jerk_limited_provisional_prepare_elapsed_s
+            ),
+            'effective_prepare_lead_s': (
+                self.coast_jerk_limited_effective_prepare_lead_s
+            ),
             'send_deadline_miss_s': (
                 self.coast_jerk_limited_send_deadline_miss_s
+            ),
+            'actual_sample_age_s': (
+                self.coast_jerk_limited_actual_sample_age_s
+            ),
+            'sample_age_deadline_miss_s': (
+                self.coast_jerk_limited_sample_age_deadline_miss_s
             ),
             'cadence_hold_s': self.coast_jerk_limited_cadence_hold_s,
             'cadence_deadline_miss_s': (
@@ -5763,8 +6107,17 @@ class TranslationControlHandoff:
             raw_level_tail_delta - calibrated_level_tail_delta
             + terminal_speed_margin
         )
+        # A positive residual is not a reversal: the terminal measured-state
+        # gate may safely hand it to position control up to the configured
+        # unwind/handoff limit. Keep the legacy profile's stricter low-speed
+        # band exactly unchanged, while the septic path separately enforces
+        # its hard negative-speed floor below.
         terminal_uncertainty_limit = float(min(
-            self.coast_velocity_unwind_low_speed_fallback_m_s,
+            (
+                self.coast_velocity_unwind_terminal_speed_m_s
+                if self.coast_jerk_limited_septic_smoothing_enabled
+                else self.coast_velocity_unwind_low_speed_fallback_m_s
+            ),
             self.coast_velocity_handoff_speed_m_s,
         ))
         self.coast_jerk_limited_release_projected_speed_m_s = float(
@@ -5853,22 +6206,80 @@ class TranslationControlHandoff:
         validation_command_period_s = float(
             self._jerk_validation_command_hold_s()
         )
+        minimum_profile_command_period_s = float(
+            self.coast_jerk_limited_playback_period_s
+            if self.coast_jerk_limited_septic_smoothing_enabled
+            else self.coast_command_period_s
+        )
+        profile_factory = (
+            make_septic_brake_profile
+            if self.coast_jerk_limited_septic_smoothing_enabled
+            else make_jerk_limited_brake_profile
+        )
+        cadence_reserve_method = 'legacy_half_rectangle'
         try:
-            uncompensated_profile = make_jerk_limited_brake_profile(
+            uncompensated_profile = profile_factory(
                 velocity_budget,
                 initial_command_longitudinal_acceleration,
                 selected_deceleration,
                 self.coast_jerk_limited_max_jerk_m_s3,
             )
-            # A left-held sample adds braking area on the ramp back to level.
-            # Reserve the full triangular rectangle error at the maximum
-            # validated hold; the phase-asymmetric rollout below verifies the
-            # remaining, less conservative shape details.
-            cadence_impulse_reserve = float(
-                0.5
-                * uncompensated_profile.peak_deceleration_m_s2
-                * validation_command_period_s
-            )
+            if self.coast_jerk_limited_septic_smoothing_enabled:
+                # The smooth ramp can be shorter than one observed hold, so a
+                # half-rectangle is not a strict bound. Reserve against the
+                # pointwise most-braking age envelope and rebuild monotonically
+                # because the reserve changes the profile itself.
+                cadence_reserve_method = 'age_window_lower_envelope'
+                uncompensated_velocity_budget = float(velocity_budget)
+                cadence_impulse_reserve = 0.0
+                profile = uncompensated_profile
+                for _ in range(16):
+                    candidate_velocity_budget = (
+                        uncompensated_velocity_budget
+                        - cadence_impulse_reserve
+                    )
+                    profile = profile_factory(
+                        candidate_velocity_budget,
+                        initial_command_longitudinal_acceleration,
+                        selected_deceleration,
+                        self.coast_jerk_limited_max_jerk_m_s3,
+                    )
+                    (
+                        candidate_command_times_s,
+                        candidate_command_accelerations_m_s2,
+                        _,
+                    ) = self._jerk_braking_envelope_commands(
+                        profile,
+                        validation_command_period_s,
+                    )
+                    zoh_impulse = self._jerk_explicit_command_impulse(
+                        candidate_command_times_s,
+                        candidate_command_accelerations_m_s2,
+                    )
+                    continuous_impulse = -float(
+                        profile.initial_velocity_m_s
+                    )
+                    required_reserve = max(
+                        continuous_impulse - zoh_impulse, 0.0
+                    )
+                    if (
+                        required_reserve
+                        <= cadence_impulse_reserve + 1e-9
+                    ):
+                        break
+                    cadence_impulse_reserve = required_reserve
+                else:
+                    raise JerkLimitedBrakeError(
+                        'septic cadence reserve did not converge'
+                    )
+            else:
+                # Preserve the legacy profile and reserve calculation exactly
+                # so disabling septic smoothing is a numerical rollback.
+                cadence_impulse_reserve = float(
+                    0.5
+                    * uncompensated_profile.peak_deceleration_m_s2
+                    * validation_command_period_s
+                )
             velocity_budget -= cadence_impulse_reserve
             self.coast_jerk_limited_cadence_impulse_reserve_m_s = (
                 cadence_impulse_reserve
@@ -5882,12 +6293,13 @@ class TranslationControlHandoff:
             self.coast_jerk_limited_calibrated_terminal_speed_m_s = (
                 calibrated_terminal_speed
             )
-            profile = make_jerk_limited_brake_profile(
-                velocity_budget,
-                initial_command_longitudinal_acceleration,
-                selected_deceleration,
-                self.coast_jerk_limited_max_jerk_m_s3,
-            )
+            if not self.coast_jerk_limited_septic_smoothing_enabled:
+                profile = profile_factory(
+                    velocity_budget,
+                    initial_command_longitudinal_acceleration,
+                    selected_deceleration,
+                    self.coast_jerk_limited_max_jerk_m_s3,
+                )
         except (JerkLimitedBrakeError, TypeError, ValueError) as error:
             self._activate_jerk_limited_fallback(
                 f'jerk profile is infeasible: {error}', velocity[:2]
@@ -5909,40 +6321,36 @@ class TranslationControlHandoff:
             )
             return False
 
-        minimum_command_period_s = float(self.coast_command_period_s)
-        ramp_down_end_s = float(profile.phase_durations_s[0])
-        ramp_up_start_s = float(sum(profile.phase_durations_s[:2]))
-        worst_braking_command_times_s = [0.0]
-        next_send_s = minimum_command_period_s
-        while next_send_s < ramp_down_end_s - 1e-12:
-            worst_braking_command_times_s.append(next_send_s)
-            next_send_s += minimum_command_period_s
-        for boundary_s in (ramp_down_end_s, ramp_up_start_s):
-            if (
-                boundary_s > worst_braking_command_times_s[-1] + 1e-12
-            ):
-                worst_braking_command_times_s.append(boundary_s)
-        next_send_s = ramp_up_start_s + validation_command_period_s
-        while next_send_s < profile.duration_s - 1e-12:
-            worst_braking_command_times_s.append(next_send_s)
-            next_send_s += validation_command_period_s
-        if next_send_s > worst_braking_command_times_s[-1] + 1e-12:
-            # The first sample at or after profile completion is the terminal
-            # zero command.  Keeping the prior braking sample for the entire
-            # maximum interval is the phase-asymmetric worst case.
-            worst_braking_command_times_s.append(next_send_s)
-        validation_sample_times = np.arange(
-            0.0,
-            profile.duration_s + validation_command_period_s,
-            validation_command_period_s,
-        )
-        if (
-            validation_sample_times.size == 0
-            or validation_sample_times[-1] < profile.duration_s
-        ):
-            validation_sample_times = np.append(
-                validation_sample_times, profile.duration_s
+        rate_validation_command_times_s = (
+            self._jerk_phase_asymmetric_command_times(
+                profile,
+                minimum_profile_command_period_s,
+                validation_command_period_s,
             )
+        )
+        if self.coast_jerk_limited_septic_smoothing_enabled:
+            # Validate the actual mixed-cadence setpoint jumps.  The down-ramp
+            # can advance at the 100 Hz playback floor while the up-ramp may be
+            # held for the longest proven ZOH interval; a uniformly sampled
+            # precheck can miss the largest attitude step at a phase boundary.
+            validation_sample_times = np.asarray(
+                rate_validation_command_times_s, dtype=float
+            )
+        else:
+            # Preserve the legacy sampling and numerical result exactly when
+            # septic smoothing is disabled.
+            validation_sample_times = np.arange(
+                0.0,
+                profile.duration_s + validation_command_period_s,
+                validation_command_period_s,
+            )
+            if (
+                validation_sample_times.size == 0
+                or validation_sample_times[-1] < profile.duration_s
+            ):
+                validation_sample_times = np.append(
+                    validation_sample_times, profile.duration_s
+                )
         signed_tilts_deg = np.asarray([
             np.degrees(np.arctan2(
                 profile.sample(sample_time).acceleration_m_s2
@@ -5951,17 +6359,42 @@ class TranslationControlHandoff:
             ))
             for sample_time in validation_sample_times
         ])
-        validation_max_attitude_rate_deg_s = float(
-            0.0
-            if signed_tilts_deg.size < 2
-            else np.max(np.abs(np.diff(signed_tilts_deg)))
-            / validation_command_period_s
+        if signed_tilts_deg.size < 2:
+            sampled_attitude_rate_deg_s = 0.0
+        elif self.coast_jerk_limited_septic_smoothing_enabled:
+            sampled_attitude_rate_deg_s = float(np.max(
+                np.abs(np.diff(signed_tilts_deg))
+                / np.diff(validation_sample_times)
+            ))
+        else:
+            sampled_attitude_rate_deg_s = float(
+                np.max(np.abs(np.diff(signed_tilts_deg)))
+                / validation_command_period_s
+            )
+        analytic_attitude_rate_deg_s = (
+            float(np.degrees(
+                self.coast_jerk_limited_max_jerk_m_s3
+                / (self.coast_attitude_acceleration_scale * 9.81)
+            ))
+            if self.coast_jerk_limited_septic_smoothing_enabled else None
         )
+        validation_max_attitude_rate_deg_s = float(max(
+            sampled_attitude_rate_deg_s,
+            0.0
+            if analytic_attitude_rate_deg_s is None else
+            analytic_attitude_rate_deg_s,
+        ))
         self.coast_jerk_limited_validation_command_period_s = (
             validation_command_period_s
         )
         self.coast_jerk_limited_validation_max_attitude_rate_deg_s = (
             validation_max_attitude_rate_deg_s
+        )
+        self.coast_jerk_limited_validation_sampled_attitude_rate_deg_s = (
+            sampled_attitude_rate_deg_s
+        )
+        self.coast_jerk_limited_validation_analytic_attitude_rate_deg_s = (
+            analytic_attitude_rate_deg_s
         )
         if (
             validation_max_attitude_rate_deg_s
@@ -5973,7 +6406,23 @@ class TranslationControlHandoff:
             )
             return False
 
+        braking_envelope_command_times_s = None
+        most_braking_command_accelerations_m_s2 = None
+        least_braking_command_accelerations_m_s2 = None
+        least_braking_validation_method = 'uniform_zoh'
         try:
+            if self.coast_jerk_limited_septic_smoothing_enabled:
+                (
+                    braking_envelope_command_times_s,
+                    most_braking_command_accelerations_m_s2,
+                    least_braking_command_accelerations_m_s2,
+                ) = self._jerk_braking_envelope_commands(
+                    profile,
+                    validation_command_period_s,
+                )
+                least_braking_validation_method = (
+                    'age_window_acceleration_envelope'
+                )
             nominal_validation = rollout_delayed_zoh_jerk_profile(
                 current_projected_speed,
                 modeled_initial_longitudinal_acceleration,
@@ -5985,8 +6434,17 @@ class TranslationControlHandoff:
                 response_delay_s,
                 self.coast_attitude_time_constant_s,
                 self.coast_attitude_acceleration_scale,
-                validation_command_period_s,
+                (
+                    minimum_profile_command_period_s
+                    if self.coast_jerk_limited_septic_smoothing_enabled
+                    else validation_command_period_s
+                ),
                 inherited_response_scale=1.0,
+                step_s=(
+                    min(minimum_profile_command_period_s, 0.005)
+                    if self.coast_jerk_limited_septic_smoothing_enabled
+                    else 0.001
+                ),
             )
             robust_lower_validation = rollout_delayed_zoh_jerk_profile(
                 current_projected_speed,
@@ -6002,7 +6460,12 @@ class TranslationControlHandoff:
                 validation_command_period_s,
                 inherited_negative_scale=inherited_response_scale,
                 inherited_positive_scale=1.0,
-                profile_command_times_s=worst_braking_command_times_s,
+                profile_command_times_s=(
+                    braking_envelope_command_times_s
+                ),
+                profile_command_accelerations_m_s2=(
+                    most_braking_command_accelerations_m_s2
+                ),
             )
             robust_upper_validation = rollout_delayed_zoh_jerk_profile(
                 current_projected_speed,
@@ -6018,6 +6481,12 @@ class TranslationControlHandoff:
                 validation_command_period_s,
                 inherited_negative_scale=1.0,
                 inherited_positive_scale=inherited_response_scale,
+                profile_command_times_s=(
+                    braking_envelope_command_times_s
+                ),
+                profile_command_accelerations_m_s2=(
+                    least_braking_command_accelerations_m_s2
+                ),
             )
         except (TypeError, ValueError) as error:
             self._activate_jerk_limited_fallback(
@@ -6139,6 +6608,14 @@ class TranslationControlHandoff:
             'cadence_impulse_reserve_m_s': (
                 self.coast_jerk_limited_cadence_impulse_reserve_m_s
             ),
+            'cadence_reserve_method': cadence_reserve_method,
+            'septic_smoothing_enabled': (
+                self.coast_jerk_limited_septic_smoothing_enabled
+            ),
+            'phase_durations_s': list(profile.phase_durations_s),
+            'playback_period_s': (
+                self.coast_jerk_limited_playback_period_s
+            ),
             'command_history_span_s': command_history_span_s,
             'required_command_history_span_s': required_history_span_s,
             'history_wait_enabled': (
@@ -6174,6 +6651,9 @@ class TranslationControlHandoff:
                 self.coast_jerk_limited_history_wait_robust_min_speed_m_s
             ),
             'validation_command_period_s': validation_command_period_s,
+            'least_braking_validation_method': (
+                least_braking_validation_method
+            ),
             'validation_nominal_min_speed_m_s': nominal_min_speed,
             'validation_robust_min_speed_m_s': robust_min_speed,
             'validation_nominal_terminal_speed_m_s': (
@@ -6182,8 +6662,20 @@ class TranslationControlHandoff:
             'validation_robust_terminal_speed_m_s': (
                 robust_validation_terminal_speed
             ),
+            'validation_robust_lower_terminal_speed_m_s': (
+                robust_lower_terminal_speed
+            ),
+            'validation_robust_upper_terminal_speed_m_s': (
+                robust_upper_terminal_speed
+            ),
             'validation_max_attitude_rate_deg_s': (
                 validation_max_attitude_rate_deg_s
+            ),
+            'validation_sampled_attitude_rate_deg_s': (
+                sampled_attitude_rate_deg_s
+            ),
+            'validation_analytic_attitude_rate_deg_s': (
+                analytic_attitude_rate_deg_s
             ),
             'selected_deceleration_m_s2': selected_deceleration,
             'max_jerk_m_s3': self.coast_jerk_limited_max_jerk_m_s3,
@@ -6198,11 +6690,352 @@ class TranslationControlHandoff:
                 self.coast_jerk_limited_plan_to_send_delay_s
             ),
             'prepare_elapsed_s': self.coast_jerk_limited_prepare_elapsed_s,
+            'provisional_prepare_elapsed_s': (
+                self.coast_jerk_limited_provisional_prepare_elapsed_s
+            ),
+            'effective_prepare_lead_s': (
+                self.coast_jerk_limited_effective_prepare_lead_s
+            ),
         }
         self._coast_jerk_limited_start_event = start_event
         self._coast_jerk_limited_event_pending = (
             dict(start_event) if publish_start_event else None
         )
+        return True
+
+    def _initialize_jerk_limited_provisional_profile(
+            self, position, velocity, timestamp, command_timestamp):
+        """Time the release-time plan so runtime can budget its final replan."""
+        prepare_started_at = time.perf_counter()
+        try:
+            return self._initialize_jerk_limited_profile(
+                position,
+                velocity,
+                timestamp,
+                command_timestamp,
+                publish_start_event=False,
+            )
+        finally:
+            elapsed_s = max(time.perf_counter() - prepare_started_at, 0.0)
+            if np.isfinite(elapsed_s):
+                previous_elapsed_s = (
+                    self.coast_jerk_limited_provisional_prepare_elapsed_s
+                )
+                self.coast_jerk_limited_provisional_prepare_elapsed_s = float(
+                    elapsed_s
+                    if previous_elapsed_s is None
+                    else max(previous_elapsed_s, elapsed_s)
+                )
+
+    def _effective_jerk_limited_prepare_lead_s(self):
+        """Reserve measured CPU time without changing the legacy path."""
+        configured_lead_s = float(self.coast_jerk_limited_prepare_lead_s)
+        if not self.coast_jerk_limited_septic_smoothing_enabled:
+            return configured_lead_s
+        provisional_elapsed_s = (
+            self.coast_jerk_limited_provisional_prepare_elapsed_s
+        )
+        if (
+            provisional_elapsed_s is None
+            or not np.isfinite(provisional_elapsed_s)
+            or provisional_elapsed_s < 0.0
+        ):
+            return configured_lead_s
+        # The authoritative plan repeats the same bounded-envelope work. Give
+        # it measured headroom plus one complete 100 Hz playback opportunity.
+        measured_budget_s = (
+            1.5 * float(provisional_elapsed_s)
+            + self.coast_jerk_limited_playback_period_s
+        )
+        return max(configured_lead_s, measured_budget_s)
+
+    def _apply_jerk_limited_profile_command(
+            self, command_timestamp, yaw_deg, command_dt_s,
+            velocity_xy=None):
+        """Sample one profile command without evaluating measured-state gates."""
+        profile = self.coast_jerk_limited_profile
+        if profile is None or self.coast_jerk_limited_profile_started_at is None:
+            self._activate_jerk_limited_fallback(
+                'jerk profile disappeared during command playback',
+                velocity_xy,
+                prefer_unwind=True,
+            )
+            return False
+        command_timestamp = float(command_timestamp)
+        yaw_deg = float(yaw_deg)
+        command_dt_s = float(command_dt_s)
+        if (
+            not np.all(np.isfinite([
+                command_timestamp, yaw_deg, command_dt_s,
+            ]))
+            or command_dt_s < 0.0
+        ):
+            self._activate_jerk_limited_fallback(
+                'jerk profile playback clock is invalid',
+                velocity_xy,
+                prefer_unwind=True,
+            )
+            return False
+
+        direction = self.brake_direction[:2].copy()
+        direction_norm = float(np.linalg.norm(direction))
+        if direction_norm <= 1e-9:
+            self._activate_jerk_limited_fallback(
+                'jerk profile playback lost its interaction direction',
+                velocity_xy,
+                prefer_unwind=True,
+            )
+            return False
+        direction /= direction_norm
+        lateral_direction = np.array([-direction[1], direction[0]])
+        elapsed_s = max(
+            command_timestamp - self.coast_jerk_limited_profile_started_at,
+            0.0,
+        )
+        sample = profile.sample(elapsed_s)
+        longitudinal_acceleration = float(sample.acceleration_m_s2)
+        remaining_profile_s = max(profile.duration_s - elapsed_s, 0.0)
+        lateral_fade = min(
+            remaining_profile_s / self.coast_jerk_limited_lateral_fade_s,
+            1.0,
+        )
+        lateral_target = float(
+            lateral_fade
+            * self.coast_jerk_limited_lateral_feedback_target_m_s2
+        )
+        lateral_delta_limit = (
+            self.coast_jerk_limited_lateral_max_jerk_m_s3
+            * command_dt_s
+        )
+        lateral_acceleration = float(
+            self.coast_jerk_limited_lateral_acceleration_m_s2
+            + np.clip(
+                lateral_target
+                - self.coast_jerk_limited_lateral_acceleration_m_s2,
+                -lateral_delta_limit,
+                lateral_delta_limit,
+            )
+        )
+        if sample.complete and abs(lateral_acceleration) <= max(
+                self.coast_command_acceleration_deadband_m_s2, 1e-6):
+            lateral_acceleration = 0.0
+
+        max_total_acceleration = min(
+            self.coast_max_acceleration_m_s2,
+            self.coast_attitude_acceleration_scale
+            * 9.81 * np.tan(np.radians(self.brake_max_attitude_deg)),
+        )
+        lateral_budget = float(np.sqrt(max(
+            max_total_acceleration ** 2 - longitudinal_acceleration ** 2,
+            0.0,
+        )))
+        lateral_acceleration = float(np.clip(
+            lateral_acceleration, -lateral_budget, lateral_budget
+        ))
+        physical_acceleration_xy = (
+            longitudinal_acceleration * direction
+            + lateral_acceleration * lateral_direction
+        )
+        nominal_acceleration_xy = (
+            physical_acceleration_xy
+            / self.coast_attitude_acceleration_scale
+        )
+        attitude = world_acceleration_to_attitude(
+            nominal_acceleration_xy,
+            yaw_deg,
+            max_attitude_deg=self.brake_max_attitude_deg,
+        )
+        desired_rp = np.array([
+            attitude['roll_deg'], attitude['pitch_deg']
+        ])
+        previous_rp = np.array([
+            self.contact_roll_deg, self.contact_pitch_deg
+        ])
+        rp_delta = desired_rp - previous_rp
+        rp_delta_norm = float(np.linalg.norm(rp_delta))
+        rp_delta_limit = (
+            self.coast_jerk_limited_max_attitude_rate_deg_s
+            * command_dt_s
+        )
+        self.coast_jerk_limited_attitude_slew_limited = bool(
+            rp_delta_norm > rp_delta_limit and rp_delta_norm > 1e-12
+        )
+        if self.coast_jerk_limited_attitude_slew_limited:
+            desired_rp = previous_rp + rp_delta * (
+                rp_delta_limit / rp_delta_norm
+            )
+            nominal_acceleration_xy = attitude_to_world_acceleration(
+                desired_rp[0], desired_rp[1], yaw_deg
+            )
+            physical_acceleration_xy = (
+                self.coast_attitude_acceleration_scale
+                * nominal_acceleration_xy
+            )
+            longitudinal_acceleration = float(
+                physical_acceleration_xy @ direction
+            )
+            lateral_acceleration = float(
+                physical_acceleration_xy @ lateral_direction
+            )
+            longitudinal_tracking_error = abs(
+                longitudinal_acceleration - sample.acceleration_m_s2
+            )
+            if longitudinal_tracking_error > max(
+                self.coast_command_acceleration_deadband_m_s2,
+                1e-6,
+            ):
+                self._activate_jerk_limited_fallback(
+                    'runtime attitude slew limiting invalidated the '
+                    'validated longitudinal jerk profile',
+                    velocity_xy,
+                    prefer_unwind=True,
+                )
+                return False
+
+        self.set_contact_attitude(
+            desired_rp[0], desired_rp[1], 0.0, yaw_deg=yaw_deg
+        )
+        self.hover_z = self.velocity_coast_fixed_zdistance_m
+        self.brake_command_tilt_deg = float(np.linalg.norm(desired_rp))
+        self.coast_jerk_limited_elapsed_s = min(
+            elapsed_s, profile.duration_s
+        )
+        self.coast_jerk_limited_reference_progress_m = sample.position_m
+        self.coast_jerk_limited_reference_velocity_m_s = sample.velocity_m_s
+        self.coast_jerk_limited_reference_acceleration_m_s2 = (
+            sample.acceleration_m_s2
+        )
+        self.coast_jerk_limited_reference_jerk_m_s3 = sample.jerk_m_s3
+        self.coast_jerk_limited_longitudinal_acceleration_m_s2 = (
+            longitudinal_acceleration
+        )
+        self.coast_jerk_limited_lateral_acceleration_m_s2 = (
+            lateral_acceleration
+        )
+        self.coast_jerk_limited_command_acceleration_xy_m_s2 = (
+            physical_acceleration_xy.copy()
+        )
+        self.coast_tracking_action = (
+            'jerk_limited_level_hold'
+            if sample.complete else 'jerk_limited_attitude_brake'
+        )
+        self.coast_tracking_acceleration_m_s2 = (
+            physical_acceleration_xy.copy()
+        )
+        self.coast_tracking_acceleration_saturated = bool(
+            attitude['saturated']
+            or self.coast_jerk_limited_attitude_slew_limited
+        )
+        tracked_velocity_xy = (
+            self._coast_previous_velocity_xy
+            if velocity_xy is None else np.asarray(velocity_xy, dtype=float)
+        )
+        self.coast_tracking_power_w_per_kg = (
+            None
+            if tracked_velocity_xy is None else
+            float(physical_acceleration_xy @ tracked_velocity_xy[:2])
+        )
+        self.coast_tracking_velocity_error_m_s = None
+
+        terminal_command = bool(
+            sample.complete
+            and np.linalg.norm(physical_acceleration_xy)
+            <= max(self.coast_command_acceleration_deadband_m_s2, 1e-6)
+            and np.linalg.norm(desired_rp) <= 1e-6
+        )
+        if terminal_command:
+            self.coast_velocity_phase = 'jerk_level_hold'
+        else:
+            self.coast_jerk_limited_terminal_command_started_at = None
+        return True
+
+    def _advance_septic_jerk_profile_command(
+            self, command_timestamp, yaw_deg):
+        """Advance the septic profile on its send clock, never on stale state."""
+        if not self.coast_jerk_limited_septic_smoothing_enabled:
+            return True
+        if not self.coast_jerk_limited_attitude_active:
+            return True
+        if self.coast_velocity_phase not in (
+                'jerk_attitude_brake', 'jerk_level_hold'):
+            return True
+        profile_start = self.coast_jerk_limited_profile_started_at
+        profile = self.coast_jerk_limited_profile
+        command_timestamp = float(command_timestamp)
+        if (
+            profile_start is None
+            or profile is None
+            or not np.isfinite(command_timestamp)
+        ):
+            self._activate_jerk_limited_fallback(
+                'septic profile playback has no valid profile clock',
+                self._coast_previous_velocity_xy,
+                prefer_unwind=True,
+            )
+            return False
+
+        last_playback_at = self.coast_jerk_limited_last_playback_at
+        if last_playback_at is None:
+            playback_at = max(command_timestamp, float(profile_start))
+            command_dt_s = 0.0
+            self.coast_jerk_limited_playback_hold_s = 0.0
+            self.coast_jerk_limited_playback_deadline_miss_s = 0.0
+        elif command_timestamp < float(profile_start) - 1e-12:
+            # The first setpoint is deliberately sent just before the guarded
+            # activation instant. Keep sample(0) latched until that instant.
+            self.coast_jerk_limited_playback_hold_s = 0.0
+            self.coast_jerk_limited_playback_deadline_miss_s = 0.0
+            self.coast_jerk_limited_pending_playback_at = None
+            return True
+        else:
+            command_dt_s = command_timestamp - float(last_playback_at)
+            if command_dt_s < -1e-12:
+                self._activate_jerk_limited_fallback(
+                    'septic profile playback clock moved backward',
+                    self._coast_previous_velocity_xy,
+                    prefer_unwind=True,
+                )
+                return False
+            command_dt_s = max(command_dt_s, 0.0)
+            self.coast_jerk_limited_playback_hold_s = command_dt_s
+            validation_hold_s = (
+                self.coast_jerk_limited_validation_command_period_s
+            )
+            if validation_hold_s is None:
+                self._activate_jerk_limited_fallback(
+                    'septic profile playback has no validated hold limit',
+                    self._coast_previous_velocity_xy,
+                    prefer_unwind=True,
+                )
+                return False
+            self.coast_jerk_limited_playback_deadline_miss_s = max(
+                command_dt_s - float(validation_hold_s), 0.0
+            )
+            if self.coast_jerk_limited_playback_deadline_miss_s > 1e-9:
+                self._activate_jerk_limited_fallback(
+                    'septic profile playback cadence exceeded its validated '
+                    'zero-order-hold interval',
+                    self._coast_previous_velocity_xy,
+                    prefer_unwind=True,
+                )
+                return False
+            if (
+                command_dt_s + 1e-12
+                < self.coast_jerk_limited_playback_period_s
+            ):
+                self.coast_jerk_limited_pending_playback_at = None
+                return True
+            playback_at = command_timestamp
+
+        if not self._apply_jerk_limited_profile_command(
+            playback_at,
+            yaw_deg,
+            command_dt_s,
+            velocity_xy=self._coast_previous_velocity_xy,
+        ):
+            self.coast_jerk_limited_pending_playback_at = None
+            return False
+        self.coast_jerk_limited_pending_playback_at = float(playback_at)
         return True
 
     def _update_jerk_limited_attitude(
@@ -6258,7 +7091,7 @@ class TranslationControlHandoff:
                     )
                 # Preserve the previous fail-closed behavior when the bounded
                 # history-completion feature is not explicitly enabled.
-                if not self._initialize_jerk_limited_profile(
+                if not self._initialize_jerk_limited_provisional_profile(
                         position, velocity, timestamp, command_timestamp):
                     return False
             if self.coast_velocity_phase == 'jerk_history_level_hold':
@@ -6398,7 +7231,7 @@ class TranslationControlHandoff:
                 self.coast_velocity_phase = 'jerk_profile_pending'
             if self.coast_velocity_phase != 'jerk_profile_pending':
                 return False
-            if not self._initialize_jerk_limited_profile(
+            if not self._initialize_jerk_limited_provisional_profile(
                     position, velocity, timestamp, command_timestamp):
                 return False
         profile = self.coast_jerk_limited_profile
@@ -6410,18 +7243,23 @@ class TranslationControlHandoff:
 
         profile_start = self.coast_jerk_limited_profile_started_at
         elapsed_s = max(command_timestamp - profile_start, 0.0)
-        sample = profile.sample(elapsed_s)
+        profile_sample = profile.sample(elapsed_s)
+        profile_sample_complete = bool(profile_sample.complete)
         direction = self.brake_direction[:2].copy()
-        direction /= np.linalg.norm(direction)
+        direction_norm = float(np.linalg.norm(direction))
+        if direction_norm <= 1e-9:
+            self._activate_jerk_limited_fallback(
+                'jerk profile lost its interaction direction', velocity[:2]
+            )
+            return False
+        direction /= direction_norm
         lateral_direction = np.array([-direction[1], direction[0]])
-        longitudinal_acceleration = float(sample.acceleration_m_s2)
         self.coast_jerk_limited_reverse_guard_applied = False
         if (
-            longitudinal_acceleration < 0.0
+            profile_sample.acceleration_m_s2 < 0.0
             and self.brake_projected_speed_m_s
             <= -self.coast_jerk_limited_terminal_speed_margin_m_s
         ):
-            longitudinal_acceleration = 0.0
             self.coast_jerk_limited_reverse_guard_applied = True
             self._activate_jerk_limited_fallback(
                 'measured longitudinal speed reached the nonreverse floor',
@@ -6435,12 +7273,7 @@ class TranslationControlHandoff:
             (position[:2] - release_position[:2]) @ lateral_direction
         )
         cross_track_velocity = float(velocity[:2] @ lateral_direction)
-        remaining_profile_s = max(profile.duration_s - elapsed_s, 0.0)
-        lateral_fade = min(
-            remaining_profile_s / self.coast_jerk_limited_lateral_fade_s,
-            1.0,
-        )
-        lateral_target = lateral_fade * float(np.clip(
+        self.coast_jerk_limited_lateral_feedback_target_m_s2 = float(np.clip(
             -self.coast_jerk_limited_lateral_position_gain_s2
             * cross_track_position
             - self.coast_jerk_limited_lateral_velocity_gain_s
@@ -6448,145 +7281,36 @@ class TranslationControlHandoff:
             -self.coast_jerk_limited_lateral_max_acceleration_m_s2,
             self.coast_jerk_limited_lateral_max_acceleration_m_s2,
         ))
-        lateral_delta_limit = (
-            self.coast_jerk_limited_lateral_max_jerk_m_s3
-            * max(update_dt_s, 0.0)
-        )
-        lateral_acceleration = float(
-            self.coast_jerk_limited_lateral_acceleration_m_s2
-            + np.clip(
-                lateral_target
-                - self.coast_jerk_limited_lateral_acceleration_m_s2,
-                -lateral_delta_limit,
-                lateral_delta_limit,
-            )
-        )
-        if sample.complete and abs(lateral_acceleration) <= max(
-                self.coast_command_acceleration_deadband_m_s2, 1e-6):
-            lateral_acceleration = 0.0
-
-        max_total_acceleration = min(
-            self.coast_max_acceleration_m_s2,
-            self.coast_attitude_acceleration_scale
-            * 9.81 * np.tan(np.radians(self.brake_max_attitude_deg)),
-        )
-        lateral_budget = float(np.sqrt(max(
-            max_total_acceleration ** 2 - longitudinal_acceleration ** 2,
-            0.0,
-        )))
-        lateral_acceleration = float(np.clip(
-            lateral_acceleration, -lateral_budget, lateral_budget
-        ))
-        physical_acceleration_xy = (
-            longitudinal_acceleration * direction
-            + lateral_acceleration * lateral_direction
-        )
-        nominal_acceleration_xy = (
-            physical_acceleration_xy
-            / self.coast_attitude_acceleration_scale
-        )
         yaw_deg = float(np.degrees(orientation_rpy[2]))
-        attitude = world_acceleration_to_attitude(
-            nominal_acceleration_xy,
-            yaw_deg,
-            max_attitude_deg=self.brake_max_attitude_deg,
-        )
-        desired_rp = np.array([
-            attitude['roll_deg'], attitude['pitch_deg']
-        ])
-        previous_rp = np.array([
-            self.contact_roll_deg, self.contact_pitch_deg
-        ])
-        rp_delta = desired_rp - previous_rp
-        rp_delta_norm = float(np.linalg.norm(rp_delta))
-        rp_delta_limit = (
-            self.coast_jerk_limited_max_attitude_rate_deg_s
-            * max(update_dt_s, 0.0)
-        )
-        self.coast_jerk_limited_attitude_slew_limited = bool(
-            rp_delta_norm > rp_delta_limit and rp_delta_norm > 1e-12
-        )
-        if self.coast_jerk_limited_attitude_slew_limited:
-            desired_rp = previous_rp + rp_delta * (
-                rp_delta_limit / rp_delta_norm
-            )
-            nominal_acceleration_xy = attitude_to_world_acceleration(
-                desired_rp[0], desired_rp[1], yaw_deg
-            )
-            physical_acceleration_xy = (
-                self.coast_attitude_acceleration_scale
-                * nominal_acceleration_xy
-            )
-            longitudinal_acceleration = float(
-                physical_acceleration_xy @ direction
-            )
-            lateral_acceleration = float(
-                physical_acceleration_xy @ lateral_direction
-            )
-            longitudinal_tracking_error = abs(
-                longitudinal_acceleration - sample.acceleration_m_s2
-            )
-            if longitudinal_tracking_error > max(
-                self.coast_command_acceleration_deadband_m_s2,
-                1e-6,
-            ):
-                self._activate_jerk_limited_fallback(
-                    'runtime attitude slew limiting invalidated the '
-                    'validated longitudinal jerk profile',
-                    velocity[:2],
-                    prefer_unwind=True,
-                )
-                return False
-        self.set_contact_attitude(
-            desired_rp[0], desired_rp[1], 0.0, yaw_deg=yaw_deg
-        )
-        self.hover_z = self.velocity_coast_fixed_zdistance_m
-        self.brake_command_tilt_deg = float(np.linalg.norm(desired_rp))
-        self.coast_jerk_limited_elapsed_s = min(
-            elapsed_s, profile.duration_s
-        )
-        self.coast_jerk_limited_reference_progress_m = sample.position_m
-        self.coast_jerk_limited_reference_velocity_m_s = sample.velocity_m_s
-        self.coast_jerk_limited_reference_acceleration_m_s2 = (
-            sample.acceleration_m_s2
-        )
-        self.coast_jerk_limited_reference_jerk_m_s3 = sample.jerk_m_s3
-        self.coast_jerk_limited_longitudinal_acceleration_m_s2 = (
-            longitudinal_acceleration
-        )
-        self.coast_jerk_limited_lateral_acceleration_m_s2 = (
-            lateral_acceleration
-        )
-        self.coast_jerk_limited_command_acceleration_xy_m_s2 = (
-            physical_acceleration_xy.copy()
-        )
         self.coast_jerk_limited_cross_track_position_m = cross_track_position
         self.coast_jerk_limited_cross_track_velocity_m_s = cross_track_velocity
-        self.coast_tracking_action = (
-            'jerk_limited_level_hold'
-            if sample.complete else 'jerk_limited_attitude_brake'
+        if not self.coast_jerk_limited_septic_smoothing_enabled:
+            # The legacy controller intentionally remains state-clocked.
+            if not self._apply_jerk_limited_profile_command(
+                command_timestamp,
+                yaw_deg,
+                max(update_dt_s, 0.0),
+                velocity_xy=velocity[:2],
+            ):
+                return False
+
+        physical_acceleration_xy = (
+            self.coast_jerk_limited_command_acceleration_xy_m_s2.copy()
         )
-        self.coast_tracking_acceleration_m_s2 = (
-            physical_acceleration_xy.copy()
-        )
-        self.coast_tracking_acceleration_saturated = bool(
-            attitude['saturated']
-            or self.coast_jerk_limited_attitude_slew_limited
-        )
+        desired_rp = np.array([
+            self.contact_roll_deg, self.contact_pitch_deg
+        ])
         self.coast_tracking_power_w_per_kg = float(
             physical_acceleration_xy @ velocity[:2]
         )
-        self.coast_tracking_velocity_error_m_s = None
 
         terminal_command = bool(
-            sample.complete
+            self.coast_velocity_phase == 'jerk_level_hold'
             and np.linalg.norm(physical_acceleration_xy)
             <= max(self.coast_command_acceleration_deadband_m_s2, 1e-6)
             and np.linalg.norm(desired_rp) <= 1e-6
         )
-        if terminal_command:
-            self.coast_velocity_phase = 'jerk_level_hold'
-        else:
+        if not terminal_command:
             self.coast_jerk_limited_terminal_command_started_at = None
         response_delay_s = (
             self.coast_attitude_response_delay_s
@@ -6765,7 +7489,7 @@ class TranslationControlHandoff:
             else profile_start + profile.duration_s
         )
         if (
-            sample.complete
+            profile_sample_complete
             and timestamp - terminal_timeout_anchor
             >= (
                 terminal_response_required_s
@@ -8917,11 +9641,12 @@ class TranslationControlHandoff:
     def _prepare_jerk_limited_first_send(self, command_timestamp):
         """Replan against a declared first-send time before taking ownership.
 
-        Runtime calls reserve a short future deadline, complete the full
-        delayed/ZOH validation, then wait for that deadline. Tests and replay
-        may provide an exact timestamp directly. A missed runtime deadline is
-        a fail-closed transition; the caller sends one level-attitude bridge so
-        the velocity PID can be reset on the next loop before it owns thrust.
+        Runtime calls reserve a future activation deadline, complete the full
+        delayed/ZOH validation, and immediately send the equivalent sample(0).
+        Tests and replay may provide an exact timestamp directly. A missed
+        runtime deadline is a fail-closed transition; the caller sends one
+        level-attitude bridge so the velocity PID can be reset on the next loop
+        before it owns thrust.
         """
         position = self._coast_jerk_limited_plan_position_m
         velocity = self._coast_jerk_limited_plan_velocity_m_s
@@ -8934,10 +9659,18 @@ class TranslationControlHandoff:
 
         explicit_timestamp = command_timestamp is not None
         prepare_started_at = time.time()
+        effective_prepare_lead_s = float(
+            0.0
+            if explicit_timestamp
+            else self._effective_jerk_limited_prepare_lead_s()
+        )
+        self.coast_jerk_limited_effective_prepare_lead_s = (
+            effective_prepare_lead_s
+        )
         scheduled_send_at = float(
             command_timestamp
             if explicit_timestamp
-            else prepare_started_at + self.coast_jerk_limited_prepare_lead_s
+            else prepare_started_at + effective_prepare_lead_s
         )
         profile_activation_at = float(
             scheduled_send_at
@@ -9058,9 +9791,11 @@ class TranslationControlHandoff:
         if explicit_timestamp:
             actual_send_at = scheduled_send_at
         else:
-            remaining_s = scheduled_send_at - time.time()
-            if remaining_s > 0.0:
-                time.sleep(remaining_s)
+            # sample(0) reproduces the last actually sent world-acceleration
+            # command, including the frozen lateral component. Send it as soon
+            # as the authoritative plan is ready instead of sleeping toward a
+            # host deadline: OS oversleep would consume the entire activation
+            # guard without improving the plant-side profile alignment.
             actual_send_at = time.time()
             deadline_miss_s = max(
                 actual_send_at - profile_activation_at, 0.0
@@ -9244,6 +9979,7 @@ class TranslationControlHandoff:
         prepared_first_send_at = None
         fallback_bridge_source_rp = None
         fallback_bridge_source_sent_at = None
+        previous_septic_playback_at = None
         if self.coast_jerk_limited_attitude_active:
             current_yaw_deg = float(
                 self.yaw_deg if yaw_deg is None else yaw_deg
@@ -9257,15 +9993,28 @@ class TranslationControlHandoff:
                 prepared, prepared_first_send_at = (
                     self._prepare_jerk_limited_first_send(command_timestamp)
                 )
-            elif (
-                fallback_bridge_source_sent_at is not None
+            candidate_send_at = float(
+                prepared_first_send_at
+                if prepared_first_send_at is not None else
+                time.time()
+                if command_timestamp is None else command_timestamp
+            )
+            if prepared and self.coast_jerk_limited_septic_smoothing_enabled:
+                previous_septic_playback_at = (
+                    self.coast_jerk_limited_last_playback_at
+                )
+                if not self._advance_septic_jerk_profile_command(
+                        candidate_send_at, current_yaw_deg):
+                    prepared = False
+                    if prepared_first_send_at is None:
+                        prepared_first_send_at = candidate_send_at
+            if (
+                prepared
+                and self.coast_jerk_limited_first_actual_send_at is not None
+                and fallback_bridge_source_sent_at is not None
                 and self.coast_jerk_limited_validation_command_period_s
                 is not None
             ):
-                candidate_send_at = float(
-                    time.time()
-                    if command_timestamp is None else command_timestamp
-                )
                 cadence_hold_s = max(
                     candidate_send_at - fallback_bridge_source_sent_at,
                     0.0,
@@ -9439,6 +10188,15 @@ class TranslationControlHandoff:
                 yaw_deg=current_yaw_deg,
             )
             if (
+                jerk_was_active
+                and self.coast_jerk_limited_septic_smoothing_enabled
+                and self.coast_jerk_limited_pending_playback_at is not None
+            ):
+                self.coast_jerk_limited_last_playback_at = float(
+                    self.coast_jerk_limited_pending_playback_at
+                )
+                self.coast_jerk_limited_pending_playback_at = None
+            if (
                 history_wait_was_active
                 and self.coast_jerk_limited_history_wait_first_actual_send_at
                 is None
@@ -9526,10 +10284,47 @@ class TranslationControlHandoff:
                 post_call_miss_origin = 'first_send_completion'
             elif (
                 jerk_was_active
+                and self.coast_jerk_limited_septic_smoothing_enabled
                 and command_timestamp is None
-                and previous_actual_attitude_send_at is not None
+                and previous_septic_playback_at is not None
                 and self.coast_jerk_limited_validation_command_period_s
                 is not None
+            ):
+                # Until this synchronous call returns, the aircraft can still
+                # be holding the previous profile sample. Check that sample's
+                # actual age directly; separate candidate and completion
+                # cadence checks do not bound their combined phase offset.
+                self.coast_jerk_limited_actual_sample_age_s = max(
+                    send_call_completed_at
+                    - float(previous_septic_playback_at),
+                    0.0,
+                )
+                sample_age_limit_s = float(
+                    self.coast_jerk_limited_validation_command_period_s
+                )
+                self.coast_jerk_limited_sample_age_deadline_miss_s = max(
+                    self.coast_jerk_limited_actual_sample_age_s
+                    - sample_age_limit_s,
+                    0.0,
+                )
+                if (
+                    self.coast_jerk_limited_sample_age_deadline_miss_s
+                    > 1e-9
+                ):
+                    post_call_miss_reason = (
+                        'septic jerk profile previous sample exceeded its '
+                        'validated zero-order-hold age'
+                    )
+                    post_call_miss_origin = 'profile_sample_age'
+            if (
+                post_call_miss_reason is None
+                and (
+                    jerk_was_active
+                    and command_timestamp is None
+                    and previous_actual_attitude_send_at is not None
+                    and self.coast_jerk_limited_validation_command_period_s
+                    is not None
+                )
             ):
                 post_call_hold_s = max(
                     send_call_completed_at
@@ -9612,6 +10407,13 @@ class TranslationControlHandoff:
                         ),
                         'commander_send_elapsed_s': (
                             self.coast_jerk_limited_commander_send_elapsed_s
+                        ),
+                        'actual_sample_age_s': (
+                            self.coast_jerk_limited_actual_sample_age_s
+                        ),
+                        'sample_age_deadline_miss_s': (
+                            self
+                            .coast_jerk_limited_sample_age_deadline_miss_s
                         ),
                         'send_deadline_miss_s': (
                             self.coast_jerk_limited_send_deadline_miss_s
@@ -11644,6 +12446,41 @@ class InteractionsControl:
                 'control_handoff.coast_jerk_limited_attitude_enabled must be '
                 'boolean'
             )
+        jerk_limited_septic_smoothing_enabled = (
+            config['control_handoff'].get(
+                'coast_jerk_limited_septic_smoothing_enabled', False
+            )
+        )
+        if type(jerk_limited_septic_smoothing_enabled) is not bool:
+            raise ValueError(
+                'control_handoff.'
+                'coast_jerk_limited_septic_smoothing_enabled must be boolean'
+            )
+        jerk_limited_playback_period_s = float(
+            config['control_handoff'].get(
+                'coast_jerk_limited_playback_period_s', 0.01
+            )
+        )
+        if (
+            jerk_limited_septic_smoothing_enabled
+            and (
+                not np.isfinite(jerk_limited_playback_period_s)
+                or jerk_limited_playback_period_s <= 0.0
+            )
+        ):
+            raise ValueError(
+                'control_handoff.coast_jerk_limited_playback_period_s must be '
+                'finite and positive'
+            )
+        if (
+            jerk_limited_septic_smoothing_enabled
+            and self.ctrl_rate + 1e-9
+            < 1.0 / jerk_limited_playback_period_s
+        ):
+            raise ValueError(
+                'septic jerk playback requires control_rate_hz >= '
+                f'{1.0 / jerk_limited_playback_period_s:.1f}'
+            )
         jerk_history_wait_enabled = config['control_handoff'].get(
             'coast_jerk_limited_history_wait_enabled', False
         )
@@ -11709,6 +12546,14 @@ class InteractionsControl:
             raise ValueError(
                 'jerk-limited attitude braking requires velocity braking and '
                 'predictive unwind fallback'
+            )
+        if (
+            jerk_limited_septic_smoothing_enabled
+            and not jerk_limited_attitude_enabled
+        ):
+            raise ValueError(
+                'septic smoothing requires '
+                'coast_jerk_limited_attitude_enabled'
             )
         if (
             velocity_unwind_virtual_friction_target_enabled
@@ -12225,6 +13070,12 @@ class InteractionsControl:
                             ),
                             'jerk_limited_attitude_enabled': (
                                 jerk_limited_attitude_enabled
+                            ),
+                            'jerk_limited_septic_smoothing_enabled': (
+                                jerk_limited_septic_smoothing_enabled
+                            ),
+                            'jerk_limited_playback_period_s': (
+                                jerk_limited_playback_period_s
                             ),
                             'velocity_unwind_virtual_friction_target_enabled': (
                                 velocity_unwind_virtual_friction_target_enabled
@@ -19349,6 +20200,28 @@ class InteractionsControl:
                 'coast_jerk_limited_attitude_enabled': (
                     translation_control.coast_jerk_limited_attitude_enabled
                 ),
+                'coast_jerk_limited_septic_smoothing_enabled': (
+                    translation_control
+                    .coast_jerk_limited_septic_smoothing_enabled
+                ),
+                'coast_jerk_limited_playback_period_s': (
+                    translation_control
+                    .coast_jerk_limited_playback_period_s
+                ),
+                'coast_jerk_limited_last_playback_at': (
+                    translation_control.coast_jerk_limited_last_playback_at
+                ),
+                'coast_jerk_limited_playback_hold_s': (
+                    translation_control.coast_jerk_limited_playback_hold_s
+                ),
+                'coast_jerk_limited_playback_deadline_miss_s': (
+                    translation_control
+                    .coast_jerk_limited_playback_deadline_miss_s
+                ),
+                'coast_jerk_limited_lateral_feedback_target_m_s2': (
+                    translation_control
+                    .coast_jerk_limited_lateral_feedback_target_m_s2
+                ),
                 'coast_jerk_limited_history_wait_enabled': (
                     translation_control
                     .coast_jerk_limited_history_wait_enabled
@@ -19394,6 +20267,14 @@ class InteractionsControl:
                 'coast_jerk_limited_prepare_elapsed_s': (
                     translation_control.coast_jerk_limited_prepare_elapsed_s
                 ),
+                'coast_jerk_limited_provisional_prepare_elapsed_s': (
+                    translation_control
+                    .coast_jerk_limited_provisional_prepare_elapsed_s
+                ),
+                'coast_jerk_limited_effective_prepare_lead_s': (
+                    translation_control
+                    .coast_jerk_limited_effective_prepare_lead_s
+                ),
                 'coast_jerk_limited_send_deadline_miss_s': (
                     translation_control
                     .coast_jerk_limited_send_deadline_miss_s
@@ -19401,6 +20282,14 @@ class InteractionsControl:
                 'coast_jerk_limited_commander_send_elapsed_s': (
                     translation_control
                     .coast_jerk_limited_commander_send_elapsed_s
+                ),
+                'coast_jerk_limited_actual_sample_age_s': (
+                    translation_control
+                    .coast_jerk_limited_actual_sample_age_s
+                ),
+                'coast_jerk_limited_sample_age_deadline_miss_s': (
+                    translation_control
+                    .coast_jerk_limited_sample_age_deadline_miss_s
                 ),
                 'coast_jerk_limited_commander_send_completed_at': (
                     translation_control
@@ -19538,6 +20427,14 @@ class InteractionsControl:
                 'coast_jerk_limited_validation_max_attitude_rate_deg_s': (
                     translation_control
                     .coast_jerk_limited_validation_max_attitude_rate_deg_s
+                ),
+                'coast_jerk_limited_validation_sampled_attitude_rate_deg_s': (
+                    translation_control
+                    .coast_jerk_limited_validation_sampled_attitude_rate_deg_s
+                ),
+                'coast_jerk_limited_validation_analytic_attitude_rate_deg_s': (
+                    translation_control
+                    .coast_jerk_limited_validation_analytic_attitude_rate_deg_s
                 ),
                 'coast_jerk_limited_selected_deceleration_m_s2': (
                     translation_control

@@ -1,0 +1,6 @@
+# metric_direction: higher_is_better
+cycle	timestamp	hop	outcome	units_before	units_after	verification	notes
+1	2026-09-12T20:28:00Z	acceptance-test	progressed	3	2	profile unit tests	Septic acceleration ramps integrate to seventh-order position with continuous p-v-a-j endpoints.
+2	2026-09-12T21:40:00Z	fix	progressed	2	1	focused controller tests	Added default-off 100 Hz playback, fixed Z, delayed-ZOH validation, and legacy fallback.
+3	2026-09-12T23:45:00Z	verify	progressed	1	1	adversarial timing review	Closed least-braking cadence, measured planning lead, OS oversleep, and combined sample-age gaps.
+4	2026-09-13T00:28:09Z	regression	progressed	1	0	221 focused tests; 115938 randomized sends	Active-like acceptance restored without relaxing the negative-speed floor; full-suite reds are pre-existing and unrelated.

@@ -44,6 +44,12 @@ class DefaultConfigTests(unittest.TestCase):
         self.assertFalse(
             handoff["coast_velocity_predictive_unwind_enabled"]
         )
+        self.assertFalse(
+            handoff["coast_jerk_limited_septic_smoothing_enabled"]
+        )
+        self.assertEqual(
+            handoff["coast_jerk_limited_playback_period_s"], 0.01
+        )
         self.assertEqual(
             handoff["coast_velocity_unwind_terminal_speed_m_s"], 0.10
         )
