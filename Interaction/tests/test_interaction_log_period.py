@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from cflib.crazyflie.log import LogConfig
+from Interaction import config as interaction_config
 from Interaction.log_manager import InteractionLogger
 
 
@@ -79,6 +80,27 @@ class InteractionLogPeriodTests(unittest.TestCase):
         self.assertEqual(config['STATE']['log_period_ms'], 10)
         self.assertEqual(
             blocks[0].variables, [('stateEstimate.x', 'float')]
+        )
+
+    def test_gyro_diagnostic_group_requests_one_millisecond_period(self):
+        blocks = self.initialize(interaction_config.LOG_VARS)
+        gyro = next(block for block in blocks if block.name == 'GYRO_1KHZ')
+
+        # InteractionLogger compensates for the deployed firmware's 1 ms
+        # legacy period units.  cflib therefore receives 10 ms and encodes
+        # byte 1, which that firmware executes once per millisecond.
+        self.assertEqual(gyro.period_in_ms, 10)
+        self.assertEqual(LogConfig('GYRO_1KHZ', 10).period, 1)
+        self.assertEqual(
+            gyro.variables,
+            [
+                ('gyro.x', 'float'),
+                ('gyro.y', 'float'),
+                ('gyro.z', 'float'),
+            ],
+        )
+        self.assertEqual(
+            interaction_config.LOG_VARS['GYRO_1KHZ']['log_period_ms'], 1
         )
 
 

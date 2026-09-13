@@ -494,6 +494,29 @@ RATE_EST = {
 }
 
 
+# Full-resolution, bias-corrected IMU gyro samples.  Keep this in its own
+# compact block so the 1 kHz diagnostic stream does not raise the rate of the
+# position, estimator, motor, or controller log groups.
+GYRO_1KHZ = {
+    "log_period_ms": 1,
+    "gyro.x": {
+        "type": "float",
+        "unit": "deg/s",
+        "data": [],
+    },
+    "gyro.y": {
+        "type": "float",
+        "unit": "deg/s",
+        "data": [],
+    },
+    "gyro.z": {
+        "type": "float",
+        "unit": "deg/s",
+        "data": [],
+    },
+}
+
+
 # PID yaw actuator output and the gyro rate used by the PID controller. Keep
 # these in their own small CRTP log block so the existing log groups stay below
 # the Crazyflie log-packet payload limit.
@@ -685,6 +708,7 @@ LOG_VARS = {
     'VEL_ORI': VEL_ORI,
     'POS_ACC': POS_ACC,
     'RATE_EST': RATE_EST,
+    'GYRO_1KHZ': GYRO_1KHZ,
     'YAW_CTL': YAW_CTL,
     'MOT_BAT': MOT_BAT,
     'POS_CTL_I_D': CTL_I_D,
