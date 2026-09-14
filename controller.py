@@ -783,7 +783,7 @@ class Controller:
         logger.info(f"Returning to landing tile")
         commander.go_to(
             initial_x, initial_y, current_z, yaw, duration_1, relative=False)
-        time.sleep(duration_1 + 0.5)
+        time.sleep(duration_1 + 2)
 
         distance_2 = abs(threshold - current_z)
         duration_2 = max(1.5, distance_2 / speed)
