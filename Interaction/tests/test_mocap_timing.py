@@ -128,6 +128,7 @@ class ForwardTimingTests(unittest.TestCase):
         stub_class = type('ControllerStub', (), {name: namespace[name] for name in names})
         self.controller = stub_class()
         self.controller.send_vicon_to_cf = True
+        self.controller.contact_attitude_diagnostics_enabled = False
         self.controller.log_manager = Mock()
         self.controller.log_manager.live_logger = None
         self.controller.cf = SimpleNamespace(extpos=Mock())
@@ -144,6 +145,9 @@ class ForwardTimingTests(unittest.TestCase):
         self.controller.cf.extpos.send_extpos.assert_called_once_with(1, 2, 3)
         logged = self.last_logged_frame()
         self.assertEqual(logged['time'], 42.)
+        self.assertNotIn('mocap_estimator_input', logged)
+        self.assertNotIn('position_forwarded_to_onboard_ekf', logged)
+        self.assertNotIn('orientation_forwarded_to_onboard_ekf', logged)
         self.assertEqual(self.frame['mocap_timing'], {'wait_return_monotonic_s': 9.999})
         timing = logged['mocap_timing']
         self.assertTrue(timing['extpos_send_called'])
@@ -160,12 +164,22 @@ class ForwardTimingTests(unittest.TestCase):
         self.controller.cf.extpos.send_extpos.assert_not_called()
         self.assertFalse(self.last_logged_frame()['mocap_timing']['extpos_send_called'])
         self.assertNotIn('extpos_send_duration_s', self.last_logged_frame()['mocap_timing'])
+        self.assertNotIn('mocap_estimator_input', self.last_logged_frame())
 
     def test_full_pose_preserves_existing_forwarding_semantics(self):
         self.controller.send_vicon_to_cf = False  # Full pose has always sent regardless.
         self.controller._send_position_orientation(self.frame)
         self.controller.cf.extpos.send_extpose.assert_called_once_with(1, 2, 3, 0, 0, 0, 1)
         self.assertAlmostEqual(self.last_logged_frame()['mocap_timing']['extpos_send_duration_s'], .002)
+        self.assertNotIn('mocap_estimator_input', self.last_logged_frame())
+
+    def test_contact_attitude_opt_in_adds_routing_provenance(self):
+        self.controller.contact_attitude_diagnostics_enabled = True
+        self.controller._send_position(self.frame)
+        logged = self.last_logged_frame()
+        self.assertEqual(logged['mocap_estimator_input'], 'extpos_position_only')
+        self.assertTrue(logged['position_forwarded_to_onboard_ekf'])
+        self.assertFalse(logged['orientation_forwarded_to_onboard_ekf'])
 
     def test_legacy_frame_does_not_claim_capture_age(self):
         del self.frame['mocap_timing']

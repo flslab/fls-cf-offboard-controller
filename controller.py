@@ -147,6 +147,8 @@ class Controller:
         self.force_sensor = None
         self.rpi_power_monitor = None
         self.log_manager = None
+        self.contact_attitude_shadow = None
+        self._contact_attitude_shadow_prearm = None
         self.bat_logger = None
         self.sub_socket = None
         self.push_socket = None
@@ -230,7 +232,9 @@ class Controller:
         self.setup_sockets()
         self.download_mission_config()
         self.prepare_mpc_mission()
+        self.prepare_contact_attitude_experiment_mission()
         self.setup_logging()
+        self.setup_contact_attitude_shadow()
         self.setup_force_sensor()
         self.setup_commander()
         self.setup_motion_capture()
@@ -246,11 +250,13 @@ class Controller:
             if self.led:
                 self.led.show_single_color(color=(230, 180, 0))
             self.save_init_coord()
+            self.verify_contact_attitude_mocap_ready()
             self.setup_params()
             if self.led:
                 self.led.show_single_color(color=(80, 240, 30))
 
         self.handshake()
+        self.verify_contact_attitude_final_prearm_ready()
         self.mission_start_time = time.time()
 
         if not self.args.droneless:
@@ -275,6 +281,175 @@ class Controller:
         if self.missions:
             self.missions[0] = self.mission
 
+    def prepare_contact_attitude_experiment_mission(self):
+        """Validate and freeze one of the three comparison flights pre-arm."""
+        run = getattr(self.args, 'contact_attitude_run', None)
+        try:
+            wrench = self.mission['Interaction']['config'].get(
+                'wrench_interaction'
+            ) or {}
+            embedded_run = wrench.get('contact_attitude_experiment_run')
+        except (AttributeError, KeyError, TypeError):
+            wrench = {}
+            embedded_run = None
+        if embedded_run is not None:
+            from Interaction.contact_attitude_experiment import (
+                experiment_run_config,
+            )
+            experiment_run_config(embedded_run)
+            if run is None:
+                raise ValueError(
+                    'mission contact_attitude_experiment_run requires a '
+                    'matching --contact-attitude-run selection'
+                )
+            if int(embedded_run) != int(run):
+                raise ValueError(
+                    'mission contact_attitude_experiment_run does not match '
+                    '--contact-attitude-run'
+                )
+        if run is None:
+            self.contact_attitude_diagnostics_enabled = (
+                wrench.get('contact_attitude_shadow_enabled', False) is True
+            )
+            return
+        from Interaction.contact_attitude_experiment import (
+            prepare_contact_attitude_experiment_mission,
+            validate_contact_attitude_cli,
+        )
+        validate_contact_attitude_cli(self.args)
+        self.mission = prepare_contact_attitude_experiment_mission(
+            self.mission, run
+        )
+        if self.missions:
+            self.missions[0] = self.mission
+        self.contact_attitude_diagnostics_enabled = True
+
+    def setup_contact_attitude_shadow(self):
+        """Construct and register the explicit shadow data path pre-arm.
+
+        Callbacks stay inactive until the interaction starts, so they prove
+        that every required CRTP stream is actually reaching the registered
+        listener without filling the bounded shadow queue during takeoff.
+        """
+        previous = getattr(self, '_contact_attitude_shadow_prearm', None)
+        if previous is not None:
+            previous.close()
+            if (
+                self.log_manager is not None
+                and getattr(
+                    self.log_manager,
+                    'contact_attitude_shadow_prearm',
+                    None,
+                ) is previous
+            ):
+                self.log_manager.contact_attitude_shadow_prearm = None
+        self.contact_attitude_shadow = None
+        self._contact_attitude_shadow_prearm = None
+        run = getattr(self.args, 'contact_attitude_run', None)
+        if run is None:
+            return
+        if self.log_manager is None:
+            raise RuntimeError(
+                'contact-attitude experiment requires flight logging'
+            )
+        from Interaction.contact_attitude_prearm import (
+            ContactAttitudePrearmHandle,
+        )
+
+        wrench = self.mission['Interaction']['config']['wrench_interaction']
+        target = self.mission['drones'][self.args.drone_id]['target']
+        nominal_yaw_deg = (
+            target[3]
+            if len(target) > 3
+            else wrench.get('nominal_yaw_deg', 0.0)
+        )
+        handle = None
+        try:
+            handle = ContactAttitudePrearmHandle.build(
+                log_manager=self.log_manager,
+                mode=wrench['contact_attitude_shadow_mode'],
+                experiment_run=wrench['contact_attitude_experiment_run'],
+                vicon_orientation_forwarded=wrench[
+                    'contact_attitude_vicon_orientation_forwarded'
+                ],
+                alignment_yaw_deg=float(nominal_yaw_deg),
+            )
+            self.contact_attitude_shadow = handle.shadow
+            self._contact_attitude_shadow_prearm = handle
+            # The interaction object receives the same logger, so this handle
+            # is the single owner transferred from pre-arm to runtime.
+            self.log_manager.contact_attitude_shadow_prearm = handle
+            self.log_manager.add_log_entry('events', {
+                'time': time.time(),
+                'name': 'Contact Attitude Shadow Prepared Pre-Arm',
+                'experiment_run': int(run),
+                'shadow_only': True,
+                'command_authority': False,
+                'listeners_registered_pre_arm': True,
+                'listener_queueing_active': False,
+            })
+        except Exception:
+            if handle is not None:
+                handle.close()
+            self.contact_attitude_shadow = None
+            self._contact_attitude_shadow_prearm = None
+            if self.log_manager is not None:
+                self.log_manager.contact_attitude_shadow_prearm = None
+            raise
+
+    def verify_contact_attitude_mocap_ready(self):
+        """Fail pre-arm unless one routed Vicon frame matches the run contract."""
+        run = getattr(self.args, 'contact_attitude_run', None)
+        if run is None:
+            return
+        if self.contact_attitude_shadow is None:
+            raise RuntimeError('contact-attitude shadow was not prepared pre-arm')
+        handle = self._contact_attitude_shadow_prearm
+        if handle is None or not handle.verified:
+            raise RuntimeError(
+                'contact-attitude listeners were not verified pre-arm'
+            )
+        handle.assert_fresh(
+            now_s=time.monotonic(),
+            max_age_s=self.contact_attitude_shadow.config.max_packet_host_age_s,
+        )
+        try:
+            frame = self._get_latest_mocap_frame()
+        except (IndexError, KeyError, TypeError) as error:
+            raise RuntimeError(
+                'contact-attitude experiment has no Vicon frame pre-arm'
+            ) from error
+        position = np.asarray(frame.get('tvec'), dtype=float)
+        if position.shape != (3,) or not np.all(np.isfinite(position)):
+            raise RuntimeError(
+                'contact-attitude experiment Vicon position is invalid pre-arm'
+            )
+        expected_orientation_route = run == 3
+        if (
+            frame.get('position_forwarded_to_onboard_ekf') is not True
+            or frame.get('orientation_forwarded_to_onboard_ekf')
+            is not expected_orientation_route
+        ):
+            raise RuntimeError(
+                'contact-attitude experiment Vicon route is invalid pre-arm'
+            )
+        if run in (2, 3):
+            quaternion = np.asarray(frame.get('quat'), dtype=float)
+            if (
+                quaternion.shape != (4,)
+                or not np.all(np.isfinite(quaternion))
+                or float(np.linalg.norm(quaternion)) <= 1e-12
+            ):
+                raise RuntimeError(
+                    'contact-attitude rigid-body quaternion is invalid pre-arm'
+                )
+
+    def verify_contact_attitude_final_prearm_ready(self):
+        """Recheck exact listener freshness after handshake and before arm."""
+        if getattr(self.args, 'contact_attitude_run', None) is None:
+            return
+        self.verify_contact_attitude_mocap_ready()
+
     def stop(self):
         self.mission_duration = time.time() - self.mission_start_time
 
@@ -290,6 +465,15 @@ class Controller:
 
         if self.mocap:
             self.mocap.stop()
+
+        handle = getattr(self, '_contact_attitude_shadow_prearm', None)
+        if handle is not None:
+            try:
+                handle.close()
+            except Exception:
+                logger.exception(
+                    'Failed to close contact-attitude pre-arm listeners'
+                )
 
         if self.force_sensor:
             self.force_sensor.stop()
@@ -907,7 +1091,14 @@ class Controller:
             from Interaction.log_manager import InteractionLogger
             self.log_manager = InteractionLogger(controller_args=self.args)
             if not self.args.droneless:
-                self.log_manager.init_cf_logger(self.cf, self.cfg.LOG_VARS, self.args.cf_log_period)
+                select_log_vars = getattr(
+                    self.cfg, 'log_vars_for_mission',
+                    lambda _mission: self.cfg.LOG_VARS,
+                )
+                self.log_manager.init_cf_logger(
+                    self.cf, select_log_vars(self.mission),
+                    self.args.cf_log_period,
+                )
             # Legacy interactions still receive Vicon-derived velocity.  The
             # onboard wrench path consumes stateEstimate velocity directly and
             # must not run a redundant external position Kalman filter.
@@ -1024,6 +1215,17 @@ class Controller:
                 'motor.m1', 'motor.m2', 'motor.m3', 'motor.m4', 'pm.vbat',
             ),
         }
+        run = getattr(self.args, 'contact_attitude_run', None)
+        if run in (2, 3):
+            required.update({
+                'GYRO_1KHZ': (
+                    'contactImu.gx', 'contactImu.gy', 'contactImu.gz',
+                    'contactImu.ax', 'contactImu.ay', 'contactImu.az',
+                    'contactImu.px', 'contactImu.py', 'contactImu.pz',
+                    'contactImu.vx', 'contactImu.vy', 'contactImu.vz',
+                    'contactImu.epoch',
+                ),
+            })
         logger.info('Verifying onboard interaction state logs...')
         deadline = time.monotonic() + 5.0
         missing = []
@@ -1038,7 +1240,15 @@ class Controller:
                     value = values.get(variable_name)
                     if not isinstance(value, (int, float)) or not np.isfinite(value):
                         missing.append(f'{group_name}.{variable_name}')
+            handle = getattr(self, '_contact_attitude_shadow_prearm', None)
+            if handle is not None:
+                missing.extend(
+                    f'listener.{group_name}'
+                    for group_name in handle.missing_seen_groups()
+                )
             if not missing:
+                if handle is not None:
+                    handle.mark_verified()
                 logger.info('Onboard interaction state logs are ready')
                 return
             time.sleep(0.05)
@@ -1091,6 +1301,7 @@ class Controller:
         if self.args.ground_test or self.args.skip_arm:
             return
 
+        self.verify_contact_attitude_final_prearm_ready()
         logger.info("Arming...")
         self.cf.platform.send_arming_request(True)
         time.sleep(1.0)
@@ -1651,11 +1862,16 @@ class Controller:
                                              force_sensor=self.force_sensor,
                                              sense_axis=self.args.sense_axis,
                                              sense_sign=self.args.sense_sign,
-                                             sense_max_age_s=self.args.sense_max_age)
+                                             sense_max_age_s=self.args.sense_max_age,
+                                             contact_attitude_shadow=(
+                                                 self.contact_attitude_shadow
+                                             ))
                     IC.run()
 
         except Exception as e:
             logging.error(f"Interaction Error: {e}\n")
+            if getattr(self.args, 'contact_attitude_run', None) is not None:
+                raise
         finally:
             self.ll_commander.send_notify_setpoint_stop()
 
@@ -2455,6 +2671,15 @@ class Controller:
 
     def _send_position(self, frame):
         frame = self._prepare_mocap_forward_timing(frame)
+        if getattr(self, 'contact_attitude_diagnostics_enabled', False):
+            frame['mocap_estimator_input'] = (
+                'extpos_position_only'
+                if self.send_vicon_to_cf else 'not_forwarded'
+            )
+            frame['position_forwarded_to_onboard_ekf'] = bool(
+                self.send_vicon_to_cf
+            )
+            frame['orientation_forwarded_to_onboard_ekf'] = False
         if self.send_vicon_to_cf:
             started = time.monotonic()
             self.cf.extpos.send_extpos(*frame['tvec'])
@@ -2463,6 +2688,10 @@ class Controller:
 
     def _send_position_orientation(self, frame):
         frame = self._prepare_mocap_forward_timing(frame)
+        if getattr(self, 'contact_attitude_diagnostics_enabled', False):
+            frame['mocap_estimator_input'] = 'extpose_position_and_orientation'
+            frame['position_forwarded_to_onboard_ekf'] = True
+            frame['orientation_forwarded_to_onboard_ekf'] = True
         started = time.monotonic()
         self.cf.extpos.send_extpose(*frame['tvec'], *frame['quat'])
         self._finish_mocap_forward_timing(frame, started)
@@ -2549,6 +2778,14 @@ if __name__ == '__main__':
     ap.add_argument("--orchestrated", action="store_true", help="orchestrated by orchestrator")
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
+    ap.add_argument(
+        "--contact-attitude-run", type=int, choices=(1, 2, 3), default=None,
+        help=(
+            "three-flight shadow attitude protocol: 1=pointcloud/onboard "
+            "mirror, 2=rigidbody position-only/custom inertial EKF, "
+            "3=rigidbody full extpose/custom inertial EKF"
+        ),
+    )
     ap.add_argument(
         "--hover", action="store_true",
         help="move to world (0, 0, 1) and hold until stopped",

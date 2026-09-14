@@ -20,10 +20,12 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
             b"1234,925,925.25,4.522,7.100\n",
             spring_constant_n_per_mm=0.16,
             host_time=10.0,
+            host_monotonic_time=20.0,
         )
 
         self.assertIsNotNone(sample)
         self.assertEqual(sample.host_time, 10.0)
+        self.assertEqual(sample.host_monotonic_time, 20.0)
         self.assertEqual(sample.arduino_time_ms, 1234)
         self.assertEqual(sample.raw, 925)
         self.assertAlmostEqual(sample.filtered_raw, 925.25)
@@ -298,17 +300,102 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         self.assertFalse(detector.ready)
         self.assertFalse(detector.update(0.01, 1.02).started)
         self.assertTrue(detector.ready)
-        self.assertFalse(detector.update(0.10, 1.04).started)
+        candidate = detector.update(0.10, 1.04)
+        self.assertFalse(candidate.started)
+        self.assertTrue(candidate.onset_candidate_started)
+        self.assertTrue(candidate.onset_candidate_active)
         decision = detector.update(0.40, 1.07)
 
         self.assertTrue(decision.started)
         self.assertTrue(decision.active)
+        self.assertFalse(decision.onset_candidate_started)
+        self.assertFalse(decision.onset_candidate_active)
+        self.assertFalse(decision.onset_candidate_cancelled)
         self.assertAlmostEqual(decision.peak_force_n, 0.40)
 
         detector.mark_released()
 
         self.assertFalse(detector.active)
         self.assertFalse(detector.update(0.40, 1.09).started)
+
+    def test_contact_detector_reports_false_onset_candidate_cancellation(self):
+        detector = PotentiometerContactDetector(
+            force_threshold_n=0.08,
+            onset_dwell_s=0.03,
+        )
+        detector.update(0.01, 1.00)
+
+        candidate = detector.update(0.10, 1.01)
+        cancelled = detector.update(0.02, 1.02)
+
+        self.assertTrue(candidate.onset_candidate_started)
+        self.assertTrue(candidate.onset_candidate_active)
+        self.assertTrue(cancelled.onset_candidate_cancelled)
+        self.assertFalse(cancelled.onset_candidate_active)
+        self.assertFalse(cancelled.started)
+        self.assertTrue(cancelled.ready)
+
+    def test_contact_detector_reports_candidate_cancel_when_disabled(self):
+        detector = PotentiometerContactDetector(
+            force_threshold_n=0.08,
+            onset_dwell_s=0.03,
+        )
+        detector.update(0.01, 1.00)
+        detector.update(0.10, 1.01)
+
+        decision = detector.update(0.10, 1.02, enabled=False)
+
+        self.assertTrue(decision.onset_candidate_cancelled)
+        self.assertFalse(decision.onset_candidate_active)
+        self.assertFalse(decision.started)
+        self.assertFalse(decision.ready)
+
+    def test_contact_dwell_never_counts_across_a_sensor_gap(self):
+        detector = PotentiometerContactDetector(
+            force_threshold_n=0.08,
+            onset_dwell_s=0.03,
+            max_sample_gap_s=0.05,
+        )
+        detector.update(0.01, 1.00)
+        detector.update(0.10, 1.01)
+
+        recovered_high = detector.update(0.10, 1.20)
+
+        self.assertTrue(recovered_high.onset_candidate_cancelled)
+        self.assertFalse(recovered_high.onset_candidate_started)
+        self.assertFalse(recovered_high.onset_candidate_active)
+        self.assertFalse(recovered_high.started)
+        self.assertFalse(recovered_high.ready)
+        recovered_low = detector.update(0.01, 1.21)
+        self.assertTrue(recovered_low.ready)
+        restarted = detector.update(0.10, 1.22)
+        self.assertTrue(restarted.onset_candidate_started)
+
+    def test_contact_detector_default_preserves_legacy_gap_semantics(self):
+        detector = PotentiometerContactDetector(
+            force_threshold_n=0.08,
+            onset_dwell_s=0.03,
+        )
+        detector.update(0.01, 1.00)
+        detector.update(0.10, 1.01)
+
+        decision = detector.update(0.10, 1.20)
+
+        self.assertTrue(decision.started)
+        self.assertTrue(decision.active)
+
+    def test_explicit_stale_cancel_requires_a_new_baseline(self):
+        detector = PotentiometerContactDetector(
+            force_threshold_n=0.08,
+            onset_dwell_s=0.03,
+        )
+        detector.update(0.01, 1.00)
+        detector.update(0.10, 1.01)
+
+        self.assertTrue(detector.cancel_pending())
+        self.assertFalse(detector.ready)
+        self.assertFalse(detector.update(0.10, 1.02).onset_candidate_started)
+        self.assertTrue(detector.update(0.01, 1.03).ready)
 
     def test_release_detector_can_inherit_precontact_peak(self):
         detector = PotentiometerReleaseDetector(

@@ -37,6 +37,7 @@ class PotentiometerForceSample:
     compression_mm: float
     length_mm: float
     force_n: float
+    host_monotonic_time: float | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,9 @@ class PotentiometerContactDecision:
     current_force_n: float
     peak_force_n: float
     onset_elapsed_s: float
+    onset_candidate_started: bool = False
+    onset_candidate_active: bool = False
+    onset_candidate_cancelled: bool = False
 
 
 class PotentiometerContactDetector:
@@ -74,18 +78,31 @@ class PotentiometerContactDetector:
     the post-coast grace period.
     """
 
-    def __init__(self, force_threshold_n=0.08, onset_dwell_s=0.03):
+    def __init__(
+            self, force_threshold_n=0.08, onset_dwell_s=0.03,
+            max_sample_gap_s=None,
+    ):
         self.force_threshold_n = float(force_threshold_n)
         self.onset_dwell_s = float(onset_dwell_s)
+        self.max_sample_gap_s = (
+            None if max_sample_gap_s is None else float(max_sample_gap_s)
+        )
         if (
             not math.isfinite(self.force_threshold_n)
             or not math.isfinite(self.onset_dwell_s)
             or self.force_threshold_n <= 0.0
             or self.onset_dwell_s < 0.0
+            or (
+                self.max_sample_gap_s is not None
+                and (
+                    not math.isfinite(self.max_sample_gap_s)
+                    or self.max_sample_gap_s <= 0.0
+                )
+            )
         ):
             raise ValueError(
                 'potentiometer contact threshold must be positive and dwell '
-                'must be non-negative'
+                'must be non-negative and maximum sample gap must be positive'
             )
         self.reset()
 
@@ -102,6 +119,18 @@ class PotentiometerContactDetector:
         self.active = False
         self._onset_started_at = None
 
+    @property
+    def candidate_active(self):
+        return bool(self._onset_started_at is not None and not self.active)
+
+    def cancel_pending(self):
+        """Cancel an onset whose sensor continuity can no longer be proved."""
+        cancelled = self.candidate_active
+        self.ready = False
+        self._onset_started_at = None
+        self._peak_force_n = 0.0
+        return bool(cancelled)
+
     def update(self, force_n, timestamp, enabled=True):
         force_n = max(float(force_n), 0.0)
         timestamp = float(timestamp)
@@ -109,17 +138,38 @@ class PotentiometerContactDetector:
             raise ValueError('potentiometer contact values must be finite')
 
         started = False
-        if (
-            self._last_timestamp is not None
-            and timestamp < self._last_timestamp
+        onset_candidate_started = False
+        onset_candidate_cancelled = False
+        if self._last_timestamp is not None and (
+            timestamp < self._last_timestamp
+            or (
+                self.max_sample_gap_s is not None
+                and timestamp - self._last_timestamp > self.max_sample_gap_s
+            )
         ):
+            onset_candidate_cancelled = bool(
+                self._onset_started_at is not None and not self.active
+            )
             self.reset()
         self._last_timestamp = timestamp
 
         if not bool(enabled):
+            onset_candidate_cancelled = bool(
+                onset_candidate_cancelled
+                or (
+                    self._onset_started_at is not None
+                    and not self.active
+                )
+            )
+            self.ready = False
             self._onset_started_at = None
+            self._peak_force_n = 0.0
         elif not self.active:
             if force_n < self.force_threshold_n:
+                onset_candidate_cancelled = bool(
+                    onset_candidate_cancelled
+                    or self._onset_started_at is not None
+                )
                 self.ready = True
                 self._onset_started_at = None
                 self._peak_force_n = 0.0
@@ -127,6 +177,7 @@ class PotentiometerContactDetector:
                 self._peak_force_n = max(self._peak_force_n, force_n)
                 if self._onset_started_at is None:
                     self._onset_started_at = timestamp
+                    onset_candidate_started = True
                 if timestamp - self._onset_started_at >= self.onset_dwell_s:
                     self.active = True
                     started = True
@@ -143,6 +194,11 @@ class PotentiometerContactDetector:
             current_force_n=force_n,
             peak_force_n=float(self._peak_force_n),
             onset_elapsed_s=float(onset_elapsed_s),
+            onset_candidate_started=bool(onset_candidate_started),
+            onset_candidate_active=bool(
+                self._onset_started_at is not None and not self.active
+            ),
+            onset_candidate_cancelled=bool(onset_candidate_cancelled),
         )
 
 
@@ -524,6 +580,7 @@ def parse_potentiometer_line(
         line: bytes | str,
         spring_constant_n_per_mm: float = 0.16,
         host_time: float | None = None,
+        host_monotonic_time: float | None = None,
         max_extension_mm: float = 10.4,
 ) -> PotentiometerForceSample | None:
     """Parse one Arduino CSV row; headers and malformed rows return ``None``."""
@@ -571,8 +628,18 @@ def parse_potentiometer_line(
 
     length_mm = max(max_extension - compression_mm, 0.0)
 
+    received_wall_time = time.time() if host_time is None else float(host_time)
+    received_monotonic_time = (
+        time.monotonic()
+        if host_monotonic_time is None else float(host_monotonic_time)
+    )
+    if (
+        not math.isfinite(received_wall_time)
+        or not math.isfinite(received_monotonic_time)
+    ):
+        return None
     return PotentiometerForceSample(
-        host_time=time.time() if host_time is None else float(host_time),
+        host_time=received_wall_time,
         arduino_time_ms=arduino_time_ms,
         raw=raw,
         filtered_raw=filtered_raw,
@@ -581,6 +648,7 @@ def parse_potentiometer_line(
         compression_mm=compression_mm,
         length_mm=length_mm,
         force_n=compression_mm * spring_constant,
+        host_monotonic_time=received_monotonic_time,
     )
 
 

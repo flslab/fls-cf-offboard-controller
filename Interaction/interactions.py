@@ -599,6 +599,7 @@ class InitialContactArmingGate:
             self,
             max_xy_speed_m_s=0.03,
             stationary_dwell_s=0.5,
+            max_sample_gap_s=0.10,
             enabled=True,
             apply_after_each_interaction=True,
     ):
@@ -608,6 +609,7 @@ class InitialContactArmingGate:
         )
         self.max_xy_speed_m_s = float(max_xy_speed_m_s)
         self.stationary_dwell_s = float(stationary_dwell_s)
+        self.max_sample_gap_s = float(max_sample_gap_s)
         if (
             not np.isfinite(self.max_xy_speed_m_s)
             or self.max_xy_speed_m_s <= 0.0
@@ -621,6 +623,13 @@ class InitialContactArmingGate:
         ):
             raise ValueError(
                 'initial contact arming stationary_dwell_s must be non-negative'
+            )
+        if (
+            not np.isfinite(self.max_sample_gap_s)
+            or self.max_sample_gap_s <= 0.0
+        ):
+            raise ValueError(
+                'initial contact arming max_sample_gap_s must be positive'
             )
         self.armed = not self.enabled
         self.stationary_since = None
@@ -659,9 +668,9 @@ class InitialContactArmingGate:
         if self.armed:
             self._last_timestamp = timestamp
             return False
-        if (
-            self._last_timestamp is not None
-            and timestamp < self._last_timestamp
+        if self._last_timestamp is not None and (
+            timestamp <= self._last_timestamp
+            or timestamp - self._last_timestamp > self.max_sample_gap_s
         ):
             self.stationary_since = None
             self.stationary_elapsed_s = 0.0
@@ -2977,6 +2986,7 @@ class TranslationControlHandoff:
             coast_velocity_unwind_lateral_max_target_error_m_s=0.05,
             coast_velocity_unwind_lateral_slew_rate_m_s2=0.50,
             coast_jerk_limited_attitude_enabled=False,
+            coast_jerk_limited_profile_pending_timeout_s=0.10,
             coast_jerk_limited_history_wait_enabled=False,
             coast_jerk_limited_history_wait_max_s=0.50,
             coast_jerk_limited_history_wait_max_distance_m=0.35,
@@ -3157,6 +3167,9 @@ class TranslationControlHandoff:
         )
         self.coast_jerk_limited_attitude_enabled = bool(
             coast_jerk_limited_attitude_enabled
+        )
+        self.coast_jerk_limited_profile_pending_timeout_s = float(
+            coast_jerk_limited_profile_pending_timeout_s
         )
         if type(coast_jerk_limited_septic_smoothing_enabled) is not bool:
             raise ValueError(
@@ -3340,6 +3353,19 @@ class TranslationControlHandoff:
                 'jerk-limited attitude braking requires velocity braking and '
                 'predictive unwind so the established fallback remains '
                 'available'
+            )
+        if (
+            self.coast_jerk_limited_attitude_enabled
+            and (
+                not np.isfinite(
+                    self.coast_jerk_limited_profile_pending_timeout_s
+                )
+                or self.coast_jerk_limited_profile_pending_timeout_s <= 0.0
+            )
+        ):
+            raise ValueError(
+                'coast_jerk_limited_profile_pending_timeout_s must be finite '
+                'and positive when jerk-limited attitude braking is enabled'
             )
         if (
             self.coast_jerk_limited_history_wait_enabled
@@ -3713,6 +3739,12 @@ class TranslationControlHandoff:
 
     def _reset_jerk_limited_episode_state(self):
         self.coast_jerk_limited_profile = None
+        self.coast_jerk_limited_profile_pending_started_at = None
+        self.coast_jerk_limited_profile_pending_deadline_at = None
+        self.coast_jerk_limited_profile_pending_last_checked_at = None
+        self.coast_jerk_limited_profile_pending_elapsed_s = None
+        self.coast_jerk_limited_profile_pending_deadline_miss_s = None
+        self.coast_jerk_limited_profile_pending_watchdog_reason = None
         self.coast_jerk_limited_profile_started_at = None
         self.coast_jerk_limited_first_actual_send_at = None
         self.coast_jerk_limited_scheduled_first_send_at = None
@@ -3828,6 +3860,155 @@ class TranslationControlHandoff:
         self._coast_jerk_limited_level_before_fallback_reason = None
         self._coast_jerk_limited_start_event = None
         self._coast_jerk_limited_event_pending = None
+
+    def _fail_jerk_profile_pending_watchdog(
+            self, reason, velocity_xy=None, clock_value=None):
+        """Fail closed from pending planning through the fixed-Z bridge."""
+        self.coast_jerk_limited_profile_pending_watchdog_reason = str(reason)
+        if clock_value is not None and np.isfinite(clock_value):
+            started_at = self.coast_jerk_limited_profile_pending_started_at
+            deadline_at = self.coast_jerk_limited_profile_pending_deadline_at
+            if started_at is not None and np.isfinite(started_at):
+                self.coast_jerk_limited_profile_pending_elapsed_s = max(
+                    float(clock_value) - float(started_at), 0.0
+                )
+            if deadline_at is not None and np.isfinite(deadline_at):
+                self.coast_jerk_limited_profile_pending_deadline_miss_s = max(
+                    float(clock_value) - float(deadline_at), 0.0
+                )
+        cached_velocity = (
+            self._coast_previous_velocity_xy
+            if velocity_xy is None else velocity_xy
+        )
+        self._activate_jerk_limited_fallback(
+            reason,
+            cached_velocity,
+            prefer_unwind=True,
+        )
+        # The update loop may consume a PID-reset request before send() runs.
+        # Force an actually dispatched fixed-Z level bridge first, even when no
+        # prior attitude command metadata is available or it was already level.
+        self.coast_jerk_limited_fallback_bridge_pending = True
+        self._coast_velocity_pid_reset_pending = False
+        if self._coast_jerk_limited_event_pending is not None:
+            self._coast_jerk_limited_event_pending.update({
+                'fallback_bridge_pending': True,
+                'profile_pending_timeout_s': (
+                    self.coast_jerk_limited_profile_pending_timeout_s
+                ),
+                'profile_pending_started_monotonic_s': (
+                    self.coast_jerk_limited_profile_pending_started_at
+                ),
+                'profile_pending_deadline_monotonic_s': (
+                    self.coast_jerk_limited_profile_pending_deadline_at
+                ),
+                'profile_pending_last_checked_monotonic_s': (
+                    self.coast_jerk_limited_profile_pending_last_checked_at
+                ),
+                'profile_pending_elapsed_s': (
+                    self.coast_jerk_limited_profile_pending_elapsed_s
+                ),
+                'profile_pending_deadline_miss_s': (
+                    self.coast_jerk_limited_profile_pending_deadline_miss_s
+                ),
+                'profile_pending_watchdog_reason': (
+                    self.coast_jerk_limited_profile_pending_watchdog_reason
+                ),
+            })
+        return False
+
+    def _enter_jerk_profile_pending(self, velocity_xy=None):
+        """Enter pending with a fresh, independent monotonic deadline."""
+        self.coast_velocity_phase = 'jerk_profile_pending'
+        try:
+            now = float(time.monotonic())
+        except Exception as error:
+            return self._fail_jerk_profile_pending_watchdog(
+                'jerk profile pending watchdog clock read failed: '
+                f'{type(error).__name__}',
+                velocity_xy,
+            )
+        if now is None or not np.isfinite(now):
+            return self._fail_jerk_profile_pending_watchdog(
+                'jerk profile pending watchdog clock is non-finite at entry',
+                velocity_xy,
+                clock_value=now,
+            )
+        deadline_at = float(
+            now + self.coast_jerk_limited_profile_pending_timeout_s
+        )
+        if not np.isfinite(deadline_at):
+            return self._fail_jerk_profile_pending_watchdog(
+                'jerk profile pending watchdog deadline is non-finite',
+                velocity_xy,
+                clock_value=now,
+            )
+        self.coast_jerk_limited_profile_pending_started_at = now
+        self.coast_jerk_limited_profile_pending_deadline_at = deadline_at
+        self.coast_jerk_limited_profile_pending_last_checked_at = now
+        self.coast_jerk_limited_profile_pending_elapsed_s = 0.0
+        self.coast_jerk_limited_profile_pending_deadline_miss_s = 0.0
+        self.coast_jerk_limited_profile_pending_watchdog_reason = None
+        return True
+
+    def _check_jerk_profile_pending_watchdog(self, velocity_xy=None):
+        """Check pending age before any update rejection or command send."""
+        if not (
+            self.coast_jerk_limited_attitude_enabled
+            and not self.coast_jerk_limited_velocity_fallback_active
+            and self.coast_velocity_phase == 'jerk_profile_pending'
+        ):
+            return True
+        try:
+            now = float(time.monotonic())
+        except Exception as error:
+            return self._fail_jerk_profile_pending_watchdog(
+                'jerk profile pending watchdog clock read failed: '
+                f'{type(error).__name__}',
+                velocity_xy,
+            )
+        if now is None or not np.isfinite(now):
+            return self._fail_jerk_profile_pending_watchdog(
+                'jerk profile pending watchdog clock is non-finite',
+                velocity_xy,
+                clock_value=now,
+            )
+        started_at = self.coast_jerk_limited_profile_pending_started_at
+        deadline_at = self.coast_jerk_limited_profile_pending_deadline_at
+        last_checked_at = (
+            self.coast_jerk_limited_profile_pending_last_checked_at
+        )
+        if any(
+            value is None or not np.isfinite(value)
+            for value in (started_at, deadline_at, last_checked_at)
+        ):
+            return self._fail_jerk_profile_pending_watchdog(
+                'jerk profile pending watchdog lost its monotonic deadline',
+                velocity_xy,
+                clock_value=now,
+            )
+        if now < float(last_checked_at) or now < float(started_at):
+            return self._fail_jerk_profile_pending_watchdog(
+                'jerk profile pending watchdog clock moved backward',
+                velocity_xy,
+                clock_value=now,
+            )
+        self.coast_jerk_limited_profile_pending_last_checked_at = now
+        self.coast_jerk_limited_profile_pending_elapsed_s = float(
+            now - float(started_at)
+        )
+        self.coast_jerk_limited_profile_pending_deadline_miss_s = max(
+            now - float(deadline_at), 0.0
+        )
+        # At the deadline there is no remaining budget in which to finish a
+        # plan and dispatch its first command, so equality fails closed.
+        if now >= float(deadline_at):
+            return self._fail_jerk_profile_pending_watchdog(
+                'jerk profile pending watchdog reached its hard timeout',
+                velocity_xy,
+                clock_value=now,
+            )
+        return True
 
     def _validate_calibrated_braking_direction(self, direction_xy):
         if self.coast_calibrated_direction_xy is None:
@@ -5084,6 +5265,7 @@ class TranslationControlHandoff:
                 # The first S-curve sample starts from the most recently sent
                 # attitude acceleration, avoiding a release-time command step.
                 self._pending_attitude_yaw_deg = yaw_deg
+                self._enter_jerk_profile_pending(velocity[:2])
             self.brake_force_feedforward_acceleration_m_s2 = 0.0
         else:
             # Legacy observer release uses measured velocity and force for
@@ -5240,7 +5422,7 @@ class TranslationControlHandoff:
             self.coast_jerk_limited_release_projected_speed_m_s = float(
                 confirmed_velocity[:2] @ self.brake_direction[:2]
             )
-            self.coast_velocity_phase = 'jerk_profile_pending'
+            self._enter_jerk_profile_pending(confirmed_velocity[:2])
         self._release_candidate_mode = None
 
     def _update_predictive_unwind_position_target(
@@ -5709,6 +5891,8 @@ class TranslationControlHandoff:
             )
             return False
 
+        if not self._check_jerk_profile_pending_watchdog(velocity[:2]):
+            return False
         self.coast_velocity_phase = 'jerk_history_level_hold'
         self.set_contact_attitude(
             next_rp[0], next_rp[1], 0.0, yaw_deg=yaw_deg
@@ -6560,6 +6744,8 @@ class TranslationControlHandoff:
             )
             return False
 
+        if not self._check_jerk_profile_pending_watchdog(velocity[:2]):
+            return False
         self.coast_jerk_limited_profile = profile
         self.coast_jerk_limited_profile_started_at = command_timestamp
         self.coast_jerk_limited_first_actual_send_at = None
@@ -6683,6 +6869,18 @@ class TranslationControlHandoff:
             'predicted_stop_distance_m': predicted_stop_distance,
             'fixed_zdistance_m': self.velocity_coast_fixed_zdistance_m,
             'profile_started_at': command_timestamp,
+            'profile_pending_timeout_s': (
+                self.coast_jerk_limited_profile_pending_timeout_s
+            ),
+            'profile_pending_started_monotonic_s': (
+                self.coast_jerk_limited_profile_pending_started_at
+            ),
+            'profile_pending_deadline_monotonic_s': (
+                self.coast_jerk_limited_profile_pending_deadline_at
+            ),
+            'profile_pending_elapsed_s': (
+                self.coast_jerk_limited_profile_pending_elapsed_s
+            ),
             'scheduled_first_send_at': (
                 self.coast_jerk_limited_scheduled_first_send_at
             ),
@@ -7228,7 +7426,8 @@ class TranslationControlHandoff:
                     0.0,
                 )
                 self.coast_jerk_limited_history_wait_remaining_s = 0.0
-                self.coast_velocity_phase = 'jerk_profile_pending'
+                if not self._enter_jerk_profile_pending(velocity[:2]):
+                    return False
             if self.coast_velocity_phase != 'jerk_profile_pending':
                 return False
             if not self._initialize_jerk_limited_provisional_profile(
@@ -7531,6 +7730,8 @@ class TranslationControlHandoff:
         from following a later reversal.
         """
         if self.shadow_mode or self.mode != self.VELOCITY_COAST:
+            return False
+        if not self._check_jerk_profile_pending_watchdog():
             return False
         position = np.asarray(current_position, dtype=float)
         velocity = np.asarray(current_velocity, dtype=float)
@@ -9620,22 +9821,33 @@ class TranslationControlHandoff:
                 return result
         return None
 
-    def sent_commands_in_window(self, start_time, end_time):
-        """Return actual sends in the closed host-time interval."""
+    def sent_commands_in_window(
+            self, start_time, end_time, *, start_inclusive=True):
+        """Return actual sends in a bounded host-time interval."""
         start_time = float(start_time)
         end_time = float(end_time)
+        if type(start_inclusive) is not bool:
+            raise ValueError('command-history interval closure must be boolean')
         if (
             not np.all(np.isfinite([start_time, end_time]))
             or end_time < start_time
         ):
             raise ValueError('command-history window must be finite/ordered')
+        def after_start(command_time):
+            if start_inclusive:
+                return command_time >= start_time-1e-12
+            return command_time > start_time+1e-12
+
         return [
             {
                 key: (list(value) if isinstance(value, list) else value)
                 for key, value in command.items()
             }
             for command in self._sent_command_history
-            if start_time-1e-12 <= command['sent_at'] <= end_time+1e-12
+            if (
+                after_start(command['sent_at'])
+                and command['sent_at'] <= end_time+1e-12
+            )
         ]
 
     def _prepare_jerk_limited_first_send(self, command_timestamp):
@@ -9919,6 +10131,12 @@ class TranslationControlHandoff:
         return sent_at
 
     def send(self, commander, command_timestamp=None, yaw_deg=None):
+        if not self._check_jerk_profile_pending_watchdog():
+            return self._send_pending_jerk_fallback_bridge(
+                commander,
+                command_timestamp=command_timestamp,
+                yaw_deg=yaw_deg,
+            )
         if self.coast_jerk_limited_history_wait_active:
             bridge_time = float(
                 time.time()
@@ -10595,7 +10813,8 @@ class InteractionsControl:
     def __init__(self, cf, sleep_function, log_manager, mission, ctrl_rate, log_command=True, execute=True,
                  leader_info=None, pub_socket=None, sub_socket=None, drone_id=None, set_color=None,
                  orchestrator_ip=None, force_sensor=None, sense_axis='x',
-                 sense_sign=1, sense_max_age_s=0.25, *args, **kwargs):
+                 sense_sign=1, sense_max_age_s=0.25,
+                 contact_attitude_shadow=None, *args, **kwargs):
         self.cf = cf
         self.log_manager = log_manager
         self.mission = mission
@@ -10606,6 +10825,7 @@ class InteractionsControl:
         self.set_color = set_color
         self.orchestrator_ip = orchestrator_ip
         self.force_sensor = force_sensor
+        self.contact_attitude_shadow = contact_attitude_shadow
         self.sense_axis = str(sense_axis).lower()
         if self.sense_axis not in ('x', 'y', 'z'):
             raise ValueError('sense_axis must be x, y, or z')
@@ -10676,6 +10896,11 @@ class InteractionsControl:
             'force_sensor_axis': axis,
             'force_sensor_sign': sign,
             'force_sensor_sample_time': float(sample.host_time),
+            'force_sensor_sample_monotonic_time': (
+                None
+                if getattr(sample, 'host_monotonic_time', None) is None
+                else float(sample.host_monotonic_time)
+            ),
             'force_sensor_sample_age_s': age_s,
             'force_sensor_arduino_time_ms': int(sample.arduino_time_ms),
             'force_sensor_raw': int(sample.raw),
@@ -10972,11 +11197,43 @@ class InteractionsControl:
         finally:
             self.lo_commander.send_notify_setpoint_stop()
 
+    def _unsubscribe_contact_attitude_shadow(self, *, close_prearm=True):
+        if close_prearm:
+            handle = getattr(
+                self, '_contact_attitude_shadow_prearm_handle', None
+            )
+            self._contact_attitude_shadow_prearm_handle = None
+            if handle is not None:
+                try:
+                    handle.close()
+                except Exception:
+                    logger.exception(
+                        'Failed to close contact-attitude pre-arm listeners'
+                    )
+                if getattr(
+                    self.log_manager,
+                    'contact_attitude_shadow_prearm',
+                    None,
+                ) is handle:
+                    self.log_manager.contact_attitude_shadow_prearm = None
+        unsubscribers = tuple(getattr(
+            self, '_contact_attitude_shadow_unsubscribers', ()
+        ))
+        self._contact_attitude_shadow_unsubscribers = ()
+        for unsubscribe in reversed(unsubscribers):
+            try:
+                unsubscribe()
+            except Exception:
+                logger.exception(
+                    'Failed to unsubscribe contact-attitude shadow listener'
+                )
+
     def _run_translation(self, calibration_mode=False, braking_test_mode=False,
                          mpc_calibration_mode=False,
                          braking_test_direction=None, braking_test_repetitions=None) -> None:
         """Run model-based interaction, with a legacy velocity-mode fallback."""
         prediction_session = None
+        self._unsubscribe_contact_attitude_shadow(close_prearm=False)
         self._translation_exit_target = None
         self._translation_high_level_active = False
         try:
@@ -11375,7 +11632,20 @@ class InteractionsControl:
         except Exception as e:
             tb_info = traceback.format_exc()
             logging.error(f"Translation Error: {e}\nTraceback:\n{tb_info}")
-            if calibration_mode or mpc_calibration_mode:
+            try:
+                experiment_run = (
+                    self.mission['Interaction']['config']
+                    ['wrench_interaction'].get(
+                        'contact_attitude_experiment_run'
+                    )
+                )
+            except (AttributeError, KeyError, TypeError):
+                experiment_run = None
+            if (
+                calibration_mode
+                or mpc_calibration_mode
+                or experiment_run is not None
+            ):
                 raise
         finally:
             try:
@@ -11386,8 +11656,11 @@ class InteractionsControl:
                     # Legacy paths have their own control lifecycle.
                     self.lo_commander.send_notify_setpoint_stop()
             finally:
-                if prediction_session is not None:
-                    prediction_session.close()
+                try:
+                    self._unsubscribe_contact_attitude_shadow()
+                finally:
+                    if prediction_session is not None:
+                        prediction_session.close()
 
     def _handoff_translation_hold(self, position, yaw_deg):
         """Transfer ownership once, before blocking fits or leaving translation.
@@ -12187,6 +12460,183 @@ class InteractionsControl:
             )
         pipeline = OnboardMomentumWrenchPipeline(config)
         config = pipeline.config
+        # Some offline harnesses construct the interaction object without its
+        # full runtime initializer. Absence is exactly the legacy/default-off
+        # state and must remain equivalent to an explicit ``None``.
+        contact_attitude_shadow = getattr(
+            self, 'contact_attitude_shadow', None
+        )
+        contact_attitude_shadow_enabled = config.get(
+            'contact_attitude_shadow_enabled', False
+        )
+        if not isinstance(contact_attitude_shadow_enabled, bool):
+            raise ValueError('contact_attitude_shadow_enabled must be boolean')
+        contact_attitude_experiment_run = config.get(
+            'contact_attitude_experiment_run'
+        )
+        if (
+            contact_attitude_experiment_run is not None
+            and not contact_attitude_shadow_enabled
+        ):
+            raise ValueError(
+                'contact_attitude_experiment_run requires '
+                'contact_attitude_shadow_enabled=true'
+            )
+        if contact_attitude_shadow_enabled:
+            shadow_unsubscribers = []
+            contact_attitude_shadow_mode = config.get(
+                'contact_attitude_shadow_mode', 'inertial_position'
+            )
+            vicon_orientation_forwarded = config.get(
+                'contact_attitude_vicon_orientation_forwarded'
+            )
+            prearm_handle = None
+            try:
+                if contact_attitude_experiment_run is not None:
+                    prearm_handle = getattr(
+                        self.log_manager,
+                        'contact_attitude_shadow_prearm',
+                        None,
+                    )
+                    if prearm_handle is None:
+                        raise RuntimeError(
+                            'explicit contact-attitude listeners were not '
+                            'registered before arming'
+                        )
+                    if (
+                        contact_attitude_shadow is not None
+                        and contact_attitude_shadow is not prearm_handle.shadow
+                    ):
+                        raise RuntimeError(
+                            'runtime contact-attitude observer is not the '
+                            'verified pre-arm instance'
+                        )
+                    contact_attitude_shadow = prearm_handle.activate(
+                        mode=contact_attitude_shadow_mode,
+                        experiment_run=contact_attitude_experiment_run,
+                        vicon_orientation_forwarded=(
+                            vicon_orientation_forwarded
+                        ),
+                    )
+                    self._contact_attitude_shadow_prearm_handle = (
+                        prearm_handle
+                    )
+                else:
+                    # Local import keeps the default-disabled path free of
+                    # observer initialization and high-rate packet processing.
+                    from Interaction.contact_attitude_shadow import (
+                        ContactAttitudeShadow,
+                        ContactAttitudeShadowConfig,
+                    )
+                    if contact_attitude_shadow is None:
+                        contact_attitude_shadow = ContactAttitudeShadow(
+                            config=ContactAttitudeShadowConfig(
+                                mode=contact_attitude_shadow_mode,
+                                experiment_run=None,
+                                vicon_orientation_forwarded=(
+                                    vicon_orientation_forwarded
+                                ),
+                            ),
+                            report=lambda record: (
+                                self.log_manager.add_log_entry(
+                                    'contact_attitude_shadow', record
+                                )
+                            ),
+                        )
+                        self.log_manager.add_log_group(
+                            'contact_attitude_shadow'
+                        )
+                    elif (
+                        contact_attitude_shadow.config.mode
+                        != contact_attitude_shadow_mode
+                        or contact_attitude_shadow.config.experiment_run
+                        is not None
+                        or contact_attitude_shadow.config
+                        .vicon_orientation_forwarded
+                        is not vicon_orientation_forwarded
+                    ):
+                        raise RuntimeError(
+                            'contact-attitude observer configuration changed'
+                        )
+                    shadow_unsubscribers.append(
+                        self.log_manager.add_cf_packet_listener(
+                            contact_attitude_shadow.enqueue_packet
+                        )
+                    )
+                    shadow_unsubscribers.append(
+                        self.log_manager.add_mocap_frame_listener(
+                            contact_attitude_shadow.enqueue_mocap_frame
+                        )
+                    )
+                    self._contact_attitude_shadow_unsubscribers = tuple(
+                        shadow_unsubscribers
+                    )
+                self._log_event('Contact Attitude Shadow Started', {
+                    'shadow_only': True,
+                    'command_authority': False,
+                    'experiment_run': contact_attitude_experiment_run,
+                    'shadow_mode': contact_attitude_shadow_mode,
+                    'vicon_mode': config.get('contact_attitude_vicon_mode'),
+                    'accelerometer_policy': (
+                        'not_used_direct_onboard_ekf_copy'
+                        if contact_attitude_shadow_mode == 'onboard_mirror'
+                        else (
+                            'frozen_during_contact_then_measured_specific_'
+                            'force_process_input'
+                        )
+                    ),
+                    'state_source': (
+                        'synchronized_onboard_ekf_telemetry_copy'
+                        if contact_attitude_shadow_mode == 'onboard_mirror'
+                        else 'raw_cf_imu_plus_raw_vicon_position_only'
+                    ),
+                    'position_measurement_is_onboard_estimator_output': False,
+                    'vicon_orientation_forwarded_to_onboard_ekf': (
+                        vicon_orientation_forwarded
+                    ),
+                    'vicon_orientation_used_by_shadow_ekf': False,
+                    'alignment_yaw_source': (
+                        'configured_nominal_yaw'
+                        if contact_attitude_experiment_run is not None
+                        else 'onboard_ekf_yaw'
+                    ),
+                })
+            except Exception as error:
+                # Failure to start an opt-in diagnostic must not change the
+                # existing controller/fallback path.
+                for unsubscribe in reversed(shadow_unsubscribers):
+                    try:
+                        unsubscribe()
+                    except Exception:
+                        logger.exception(
+                            'Failed to roll back contact-attitude listener'
+                        )
+                self._contact_attitude_shadow_unsubscribers = ()
+                if prearm_handle is not None:
+                    self._contact_attitude_shadow_prearm_handle = None
+                    try:
+                        prearm_handle.close()
+                    except Exception:
+                        logger.exception(
+                            'Failed to roll back contact-attitude pre-arm '
+                            'listeners'
+                        )
+                contact_attitude_shadow = None
+                try:
+                    self._log_event('Contact Attitude Shadow Unavailable', {
+                        'reason': str(error),
+                        'actual_flight_controller_unchanged': True,
+                        'command_authority': False,
+                    })
+                except Exception:
+                    logger.exception(
+                        'Contact-attitude shadow failed before diagnostics '
+                        'could be logged; legacy controller continues'
+                    )
+                if contact_attitude_experiment_run is not None:
+                    raise RuntimeError(
+                        'explicit contact-attitude shadow failed to attach'
+                    ) from error
         retired_release_goto_keys = (
             'coast_release_goto_takeover_enabled',
             'coast_release_goto_deceleration_m_s2',
@@ -12842,6 +13292,10 @@ class InteractionsControl:
             PotentiometerContactDetector(
                 force_threshold_n=potentiometer_contact_force_n,
                 onset_dwell_s=potentiometer_contact_dwell_s,
+                max_sample_gap_s=(
+                    release_max_sample_gap_s
+                    if contact_attitude_shadow is not None else None
+                ),
             )
             if contact_detection_source == 'potentiometer' else None
         )
@@ -13236,6 +13690,9 @@ class InteractionsControl:
                     'stationary_dwell_s': (
                         initial_contact_gate.stationary_dwell_s
                     ),
+                    'max_sample_gap_s': (
+                        initial_contact_gate.max_sample_gap_s
+                    ),
                 },
                 'config': config,
             },
@@ -13396,10 +13853,14 @@ class InteractionsControl:
             return details
         potentiometer_release_decision = None
         potentiometer_release_processed = False
+        contact_attitude_release_retry = None
+        contact_attitude_release_retry_timeout_s = 0.25
         potentiometer_release_pending = False
         candidate_release_force_world = None
         candidate_release_direction = None
+        candidate_release_direction_source = None
         candidate_release_attitude_deg = None
+        candidate_release_started_monotonic_s = None
         candidate_release_sensor_stale_logged = False
         candidate_release_sensor_stale_since = None
         potentiometer_contact_decision = None
@@ -14169,6 +14630,140 @@ class InteractionsControl:
             last_state_time = state_time
 
             position = state['position']
+            if contact_attitude_shadow is not None:
+                contact_attitude_shadow.update_onboard_state(
+                    position,
+                    state['velocity'],
+                    state['attitude_rpy'],
+                    angular_velocity_rad_s=state['angular_velocity'],
+                    state_time_s=state_time,
+                    host_receive_monotonic_s=time.monotonic(),
+                )
+                contact_attitude_shadow.drain()
+                if contact_attitude_release_retry is not None:
+                    retry_now = time.monotonic()
+                    retry_age_s = (
+                        retry_now
+                        - contact_attitude_release_retry[
+                            'requested_at_monotonic_s'
+                        ]
+                    )
+                    if retry_age_s <= contact_attitude_release_retry_timeout_s:
+                        contact_attitude_release_retry['attempt_count'] += 1
+                        shadow_release = contact_attitude_shadow.release(
+                            contact_attitude_release_retry[
+                                'host_loop_position'
+                            ],
+                            contact_attitude_release_retry[
+                                'host_loop_velocity'
+                            ],
+                            interaction_direction=(
+                                contact_attitude_release_retry[
+                                    'interaction_direction'
+                                ]
+                            ),
+                            interaction_direction_source=(
+                                contact_attitude_release_retry[
+                                    'interaction_direction_source'
+                                ]
+                            ),
+                            active_setpoint=contact_attitude_release_retry[
+                                'active_setpoint'
+                            ],
+                            effective_command_at_state=(
+                                contact_attitude_release_retry[
+                                    'effective_command_at_state'
+                                ]
+                            ),
+                            pending_transport_commands=(
+                                contact_attitude_release_retry[
+                                    'pending_transport_commands'
+                                ]
+                            ),
+                            inner_loop_tail=contact_attitude_release_retry[
+                                'inner_loop_tail'
+                            ],
+                            release_event_monotonic_s=(
+                                contact_attitude_release_retry[
+                                    'release_event_monotonic_s'
+                                ]
+                            ),
+                        )
+                        shadow_estimate = shadow_release.get(
+                            'shadow_estimate'
+                        ) or {}
+                        shadow_release_complete = bool(
+                            shadow_release.get('valid')
+                            and (
+                                shadow_estimate.get('phase') == 'released'
+                                or (
+                                    shadow_release.get('post_release_ekf')
+                                    is not None
+                                    and (
+                                        shadow_release.get('observer') or {}
+                                    ).get('phase') == 'released'
+                                )
+                            )
+                        )
+                        if shadow_release_complete:
+                            self._log_event(
+                                'Contact Attitude Shadow Released',
+                                {
+                                    **shadow_release,
+                                    'cf_timestamp_ms': (
+                                        shadow_release.get(
+                                            'release_snapshot'
+                                        ) or {}
+                                    ).get('cf_timestamp_ms'),
+                                    'release_retry_count': (
+                                        contact_attitude_release_retry[
+                                            'attempt_count'
+                                        ] - 1
+                                    ),
+                                },
+                            )
+                            contact_attitude_release_retry = None
+                        elif shadow_release.get('fatal_reason') is not None:
+                            shadow_release = (
+                                contact_attitude_shadow
+                                .abandon_release_transaction(
+                                    'shadow_fatal_error'
+                                )
+                            )
+                            self._log_event(
+                                'Contact Attitude Shadow Release Failed',
+                                {
+                                    **shadow_release,
+                                    'reason': 'shadow_fatal_error',
+                                    'release_retry_age_s': retry_age_s,
+                                },
+                            )
+                            contact_attitude_release_retry = None
+                    else:
+                        abandoned_shadow = (
+                            contact_attitude_shadow
+                            .abandon_release_transaction('retry_timeout')
+                        )
+                        self._log_event(
+                            'Contact Attitude Shadow Release Failed',
+                            {
+                                'reason': 'release_retry_timeout',
+                                'release_retry_age_s': retry_age_s,
+                                'release_retry_timeout_s': (
+                                    contact_attitude_release_retry_timeout_s
+                                ),
+                                'release_attempt_count': (
+                                    contact_attitude_release_retry[
+                                        'attempt_count'
+                                    ]
+                                ),
+                                'shadow_snapshot': (
+                                    abandoned_shadow
+                                ),
+                                'command_authority': False,
+                            },
+                        )
+                        contact_attitude_release_retry = None
             try:
                 self.check_interaction_boundary(position)
             except BoundaryExceededError:
@@ -14553,6 +15148,30 @@ class InteractionsControl:
                 braking_force_source = 'measured_xy_velocity'
             contacts = output.contacts
             if (
+                potentiometer_contact_detector is not None
+                and not bool(sensor_fields.get('force_sensor_fresh'))
+                and potentiometer_contact_detector.cancel_pending()
+            ):
+                shadow_contact = None
+                if contact_attitude_shadow is not None:
+                    shadow_contact = (
+                        contact_attitude_shadow.cancel_contact_candidate()
+                    )
+                self._log_event(
+                    'Potentiometer Contact Candidate Cancelled',
+                    {
+                        'reason': 'force_sensor_stale_during_onset_dwell',
+                        'sample_age_s': sensor_fields.get(
+                            'force_sensor_sample_age_s'
+                        ),
+                        'maximum_sample_age_s': getattr(
+                            self, 'sense_max_age_s', 0.25
+                        ),
+                        'shadow_observer': shadow_contact,
+                        'state_source': 'potentiometer_force_sensor',
+                    },
+                )
+            if (
                 potentiometer_release_detector is not None
                 and bool(sensor_fields.get('force_sensor_fresh'))
             ):
@@ -14591,6 +15210,42 @@ class InteractionsControl:
                             ),
                         )
                     )
+                    if (
+                        potentiometer_contact_decision
+                        .onset_candidate_started
+                        and contact_attitude_shadow is not None
+                    ):
+                        shadow_contact = contact_attitude_shadow.begin_contact()
+                        self._log_event(
+                            'Contact Attitude Shadow Contact Candidate Started',
+                            {
+                                **shadow_contact,
+                                'compression_force_N': sensor_force_n,
+                                'contact_force_threshold_N': (
+                                    potentiometer_contact_force_n
+                                ),
+                                'state_source': 'raw_imu_shadow',
+                            },
+                        )
+                    elif (
+                        potentiometer_contact_decision
+                        .onset_candidate_cancelled
+                        and contact_attitude_shadow is not None
+                    ):
+                        shadow_contact = (
+                            contact_attitude_shadow.cancel_contact_candidate()
+                        )
+                        self._log_event(
+                            'Contact Attitude Shadow Contact Candidate Cancelled',
+                            {
+                                **shadow_contact,
+                                'compression_force_N': sensor_force_n,
+                                'contact_force_threshold_N': (
+                                    potentiometer_contact_force_n
+                                ),
+                                'state_source': 'raw_imu_shadow',
+                            },
+                        )
                 elif potentiometer_release_detector.armed:
                     potentiometer_release_decision = (
                         potentiometer_release_detector.update(
@@ -14598,6 +15253,11 @@ class InteractionsControl:
                         )
                     )
                     if potentiometer_release_decision.candidate_started:
+                        candidate_release_started_monotonic_s = (
+                            sensor_fields.get(
+                                'force_sensor_sample_monotonic_time'
+                            )
+                        )
                         self._log_event(
                             'Potentiometer Release Candidate Started',
                             {
@@ -14797,6 +15457,18 @@ class InteractionsControl:
                 potentiometer_contact_decision is not None
                 and potentiometer_contact_decision.started
                 and bool(sensor_fields.get('force_sensor_fresh'))
+            ):
+                if contact_attitude_shadow is not None:
+                    shadow_contact = contact_attitude_shadow.confirm_contact()
+                    self._log_event(
+                        'Contact Attitude Shadow Contact Confirmed',
+                        shadow_contact,
+                    )
+
+            if (
+                potentiometer_contact_decision is not None
+                and potentiometer_contact_decision.started
+                and bool(sensor_fields.get('force_sensor_fresh'))
                 and release_dataset_episode_id is not None
                 and translation_control.mode in (
                     translation_control.ATTITUDE_COAST,
@@ -14902,10 +15574,31 @@ class InteractionsControl:
                     velocity_mpc_shadow_last_log_time = None
                     velocity_mpc_terminal_since = None
                 potentiometer_release_processed = False
+                if (
+                    contact_attitude_release_retry is not None
+                    and contact_attitude_shadow is not None
+                ):
+                    abandoned_shadow = (
+                        contact_attitude_shadow
+                        .abandon_release_transaction(
+                            'recontact_before_release_commit'
+                        )
+                    )
+                    self._log_event(
+                        'Contact Attitude Shadow Release Failed',
+                        {
+                            'reason': 'recontact_before_release_commit',
+                            'shadow_snapshot': abandoned_shadow,
+                            'command_authority': False,
+                        },
+                    )
+                contact_attitude_release_retry = None
                 potentiometer_release_pending = False
                 candidate_release_force_world = None
                 candidate_release_direction = None
+                candidate_release_direction_source = None
                 candidate_release_attitude_deg = None
+                candidate_release_started_monotonic_s = None
                 candidate_release_sensor_stale_logged = False
                 potentiometer_release_decision = None
                 coast_initial_velocity = None
@@ -15178,7 +15871,9 @@ class InteractionsControl:
                                     potentiometer_release_pending = False
                                     candidate_release_force_world = None
                                     candidate_release_direction = None
+                                    candidate_release_direction_source = None
                                     candidate_release_attitude_deg = None
+                                    candidate_release_started_monotonic_s = None
                                     candidate_release_sensor_stale_logged = False
                                     potentiometer_release_decision = None
                                     coast_initial_velocity = None
@@ -15436,6 +16131,7 @@ class InteractionsControl:
                 potentiometer_release_pending = True
                 candidate_release_force_world = candidate_force_world.copy()
                 candidate_release_direction = candidate_direction.copy()
+                candidate_release_direction_source = candidate_direction_source
                 candidate_release_attitude_deg = np.array([
                     translation_control.contact_roll_deg,
                     translation_control.contact_pitch_deg,
@@ -15505,7 +16201,9 @@ class InteractionsControl:
                 potentiometer_release_pending = False
                 candidate_release_force_world = None
                 candidate_release_direction = None
+                candidate_release_direction_source = None
                 candidate_release_attitude_deg = None
+                candidate_release_started_monotonic_s = None
                 candidate_release_sensor_stale_logged = False
                 coast_initial_velocity = None
                 coast_stop_prediction = None
@@ -15537,6 +16235,153 @@ class InteractionsControl:
                     or translation_control.position_interaction_mode
                 )
             ):
+                if contact_attitude_shadow is not None:
+                    unresolved_command_history = (
+                        translation_control.sent_commands_in_window(
+                            state_time
+                            - translation_control.coast_attitude_response_delay_s,
+                            state_observed_at,
+                            start_inclusive=False,
+                        )
+                    )
+                    contact_attitude_release_retry = {
+                        'requested_at_monotonic_s': time.monotonic(),
+                        'release_event_monotonic_s': (
+                            candidate_release_started_monotonic_s
+                            if candidate_release_started_monotonic_s is not None
+                            else sensor_fields.get(
+                                'force_sensor_sample_monotonic_time'
+                            )
+                        ),
+                        'attempt_count': 1,
+                        'host_loop_position': position.tolist(),
+                        'host_loop_velocity': (
+                            output.estimate.velocity.tolist()
+                        ),
+                        'interaction_direction': (
+                            None
+                            if candidate_release_direction is None
+                            else np.asarray(
+                                candidate_release_direction, dtype=float
+                            ).tolist()
+                        ),
+                        'interaction_direction_source': (
+                            candidate_release_direction_source
+                        ),
+                        'active_setpoint': (
+                            translation_control.sent_command_snapshot()
+                        ),
+                        'effective_command_at_state': deepcopy(
+                            actual_command_applied_at_state
+                        ),
+                        'pending_transport_commands': deepcopy(
+                            unresolved_command_history
+                        ),
+                        'inner_loop_tail': {
+                            'attitude_response_delay_s': (
+                                translation_control
+                                .coast_attitude_response_delay_s
+                            ),
+                            'attitude_time_constant_s': (
+                                translation_control
+                                .coast_attitude_time_constant_s
+                            ),
+                            'source': 'current_inner_loop_response_only',
+                            'state_sample_time_s': state_time,
+                            'state_observed_wall_time_s': state_observed_at,
+                            'effective_command_delay_s': (
+                                translation_control
+                                .coast_attitude_response_delay_s
+                            ),
+                            'effective_query_time_s': (
+                                state_time
+                                - translation_control
+                                .coast_attitude_response_delay_s
+                            ),
+                            'pending_command_interval': '(effective_time, observed_time]',
+                            'time_basis': 'host_wall_clock',
+                        },
+                    }
+                    shadow_release = contact_attitude_shadow.release(
+                        position,
+                        output.estimate.velocity,
+                        interaction_direction=(
+                            contact_attitude_release_retry[
+                                'interaction_direction'
+                            ]
+                        ),
+                        interaction_direction_source=(
+                            contact_attitude_release_retry[
+                                'interaction_direction_source'
+                            ]
+                        ),
+                        active_setpoint=(
+                            contact_attitude_release_retry['active_setpoint']
+                        ),
+                        effective_command_at_state=(
+                            contact_attitude_release_retry[
+                                'effective_command_at_state'
+                            ]
+                        ),
+                        pending_transport_commands=(
+                            contact_attitude_release_retry[
+                                'pending_transport_commands'
+                            ]
+                        ),
+                        inner_loop_tail=contact_attitude_release_retry[
+                            'inner_loop_tail'
+                        ],
+                        release_event_monotonic_s=(
+                            contact_attitude_release_retry[
+                                'release_event_monotonic_s'
+                            ]
+                        ),
+                    )
+                    shadow_estimate = shadow_release.get(
+                        'shadow_estimate'
+                    ) or {}
+                    shadow_release_complete = bool(
+                        shadow_release.get('valid')
+                        and (
+                            shadow_estimate.get('phase') == 'released'
+                            or (
+                                shadow_release.get('post_release_ekf')
+                                is not None
+                                and (
+                                    shadow_release.get('observer') or {}
+                                ).get('phase') == 'released'
+                            )
+                        )
+                    )
+                    if shadow_release_complete:
+                        self._log_event(
+                            'Contact Attitude Shadow Released',
+                            {
+                                **shadow_release,
+                                'cf_timestamp_ms': (
+                                    shadow_release.get('release_snapshot') or {}
+                                ).get('cf_timestamp_ms'),
+                                'release_retry_count': 0,
+                            },
+                        )
+                        contact_attitude_release_retry = None
+                    else:
+                        self._log_event(
+                            'Contact Attitude Shadow Release Deferred',
+                            {
+                                **shadow_release,
+                                'cf_timestamp_ms': shadow_release.get(
+                                    'pending_release_cf_timestamp_ms'
+                                ),
+                                'release_request': deepcopy(
+                                    contact_attitude_release_retry
+                                ),
+                                'release_retry_timeout_s': (
+                                    contact_attitude_release_retry_timeout_s
+                                ),
+                                'command_authority': False,
+                            },
+                        )
                 last_force_n = float(
                     potentiometer_release_decision.last_force_n
                 )
@@ -15995,7 +16840,9 @@ class InteractionsControl:
                     potentiometer_release_pending = False
                     candidate_release_force_world = None
                     candidate_release_direction = None
+                    candidate_release_direction_source = None
                     candidate_release_attitude_deg = None
+                    candidate_release_started_monotonic_s = None
                     candidate_release_sensor_stale_logged = False
                     if potentiometer_contact_detector is not None:
                         potentiometer_contact_detector.mark_released()
@@ -16174,6 +17021,7 @@ class InteractionsControl:
                                     state_time
                                     - release_dataset_effective_command_delay_s,
                                     state_observed_at,
+                                    start_inclusive=False,
                                 )
                             ),
                             'offline_lmpc_dataset_only': True,
@@ -16597,6 +17445,7 @@ class InteractionsControl:
                                             state_time
                                             - release_dataset_effective_command_delay_s,
                                             state_observed_at,
+                                            start_inclusive=False,
                                         )
                                     ),
                                     'initial_command_mode': (
@@ -17257,6 +18106,7 @@ class InteractionsControl:
                         state_time
                         - release_dataset_effective_command_delay_s,
                         state_observed_at,
+                        start_inclusive=False,
                     )
                 )
                 pending_dataset_command_kinds = tuple(
@@ -20199,6 +21049,34 @@ class InteractionsControl:
                 ),
                 'coast_jerk_limited_attitude_enabled': (
                     translation_control.coast_jerk_limited_attitude_enabled
+                ),
+                'coast_jerk_limited_profile_pending_timeout_s': (
+                    translation_control
+                    .coast_jerk_limited_profile_pending_timeout_s
+                ),
+                'coast_jerk_limited_profile_pending_started_monotonic_s': (
+                    translation_control
+                    .coast_jerk_limited_profile_pending_started_at
+                ),
+                'coast_jerk_limited_profile_pending_deadline_monotonic_s': (
+                    translation_control
+                    .coast_jerk_limited_profile_pending_deadline_at
+                ),
+                'coast_jerk_limited_profile_pending_last_checked_monotonic_s': (
+                    translation_control
+                    .coast_jerk_limited_profile_pending_last_checked_at
+                ),
+                'coast_jerk_limited_profile_pending_elapsed_s': (
+                    translation_control
+                    .coast_jerk_limited_profile_pending_elapsed_s
+                ),
+                'coast_jerk_limited_profile_pending_deadline_miss_s': (
+                    translation_control
+                    .coast_jerk_limited_profile_pending_deadline_miss_s
+                ),
+                'coast_jerk_limited_profile_pending_watchdog_reason': (
+                    translation_control
+                    .coast_jerk_limited_profile_pending_watchdog_reason
                 ),
                 'coast_jerk_limited_septic_smoothing_enabled': (
                     translation_control

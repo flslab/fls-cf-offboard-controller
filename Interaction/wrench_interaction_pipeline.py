@@ -18,6 +18,13 @@ from Interaction.wrench_contact_detector import WrenchContactDetector, WrenchCon
 
 
 DEFAULT_WRENCH_INTERACTION_CONFIG = {
+    # Diagnostic-only contact attitude observer. Enabling this activates extra
+    # IMU logging and shadow computation only; it never grants command authority.
+    "contact_attitude_shadow_enabled": False,
+    "contact_attitude_shadow_mode": "inertial_position",
+    "contact_attitude_experiment_run": None,
+    "contact_attitude_vicon_mode": None,
+    "contact_attitude_vicon_orientation_forwarded": None,
     # The motor/torque model and thresholds must be identified from flight data
     # before this is disabled. Shadow mode estimates and logs, but never moves
     # the position/yaw reference in response to a detected contact.
@@ -40,6 +47,7 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "enabled": True,
         "max_xy_speed_m_s": 0.03,
         "stationary_dwell_s": 0.50,
+        "max_sample_gap_s": 0.10,
     },
     "calibration_excitation": {
         "enabled": False,
@@ -282,6 +290,11 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # roll/pitch directly at fixed nominal Z, and retains the continuous
         # velocity-unwind controller as a fail-safe fallback.
         "coast_jerk_limited_attitude_enabled": False,
+        # Bound the release-to-profile-planning state with an independent
+        # monotonic watchdog. This is consulted only while the opt-in jerk
+        # controller owns ``jerk_profile_pending``; legacy/default-disabled
+        # control does not read the watchdog clock.
+        "coast_jerk_limited_profile_pending_timeout_s": 0.10,
         # Smooth each acceleration ramp with a quintic smootherstep. Its
         # analytic double integral is a seventh-order position trajectory with
         # zero jerk at every phase boundary. The legacy profile remains the

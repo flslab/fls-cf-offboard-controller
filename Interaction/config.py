@@ -517,6 +517,36 @@ GYRO_1KHZ = {
 }
 
 
+# Opt-in firmware-latched replacement for GYRO_1KHZ. Twelve FP16 values and
+# one uint16 epoch fill one 26-byte CRTP log payload, so gyro, accelerometer,
+# onboard position, and onboard velocity share one producer sample and consume
+# one radio packet per requested millisecond instead of three.
+CONTACT_IMU_1KHZ = {
+    "log_period_ms": 1,
+    "contactImu.gx": {
+        "type": "FP16", "unit": "deg/s", "data": [],
+    },
+    "contactImu.gy": {
+        "type": "FP16", "unit": "deg/s", "data": [],
+    },
+    "contactImu.gz": {
+        "type": "FP16", "unit": "deg/s", "data": [],
+    },
+    "contactImu.ax": {"type": "FP16", "unit": "g", "data": []},
+    "contactImu.ay": {"type": "FP16", "unit": "g", "data": []},
+    "contactImu.az": {"type": "FP16", "unit": "g", "data": []},
+    "contactImu.px": {"type": "FP16", "unit": "m", "data": []},
+    "contactImu.py": {"type": "FP16", "unit": "m", "data": []},
+    "contactImu.pz": {"type": "FP16", "unit": "m", "data": []},
+    "contactImu.vx": {"type": "FP16", "unit": "m/s", "data": []},
+    "contactImu.vy": {"type": "FP16", "unit": "m/s", "data": []},
+    "contactImu.vz": {"type": "FP16", "unit": "m/s", "data": []},
+    "contactImu.epoch": {
+        "type": "uint16_t", "unit": "ms low16", "data": [],
+    },
+}
+
+
 # PID yaw actuator output and the gyro rate used by the PID controller. Keep
 # these in their own small CRTP log block so the existing log groups stay below
 # the Crazyflie log-packet payload limit.
@@ -715,6 +745,50 @@ LOG_VARS = {
     'POS_VEL_CTL': POS_VEL_CTL,
     'ATT_RATE_CTL': ATT_RATE_CTL,
 }
+
+
+def log_vars_for_mission(mission):
+    """Return interaction log groups with new shadow streams opt-in only.
+
+    ``GYRO_1KHZ`` predates the contact-attitude shadow and remains enabled in
+    the default path. The inertial shadow replaces its variables with one
+    firmware-latched contactImu packet containing gyro, accelerometer, and the
+    release state from one epoch. Disabling the shadow preserves the legacy
+    logging contract.
+    """
+    try:
+        wrench_config = mission['Interaction']['config'].get(
+            'wrench_interaction'
+        ) or {}
+        enabled = wrench_config.get(
+            'contact_attitude_shadow_enabled', False
+        )
+        mode = wrench_config.get(
+            'contact_attitude_shadow_mode', 'inertial_position'
+        )
+    except (AttributeError, KeyError, TypeError):
+        enabled = False
+        mode = 'inertial_position'
+    if not isinstance(enabled, bool):
+        raise ValueError(
+            'contact_attitude_shadow_enabled must be boolean'
+        )
+    # A dormant diagnostic must not make a legacy mission fail because it
+    # happens to carry an old or misspelled shadow-mode value.  Mode validation
+    # belongs exclusively to the explicitly enabled path.
+    if not enabled:
+        return LOG_VARS
+    if mode not in ('onboard_mirror', 'inertial_position'):
+        raise ValueError(
+            'contact_attitude_shadow_mode must be onboard_mirror or '
+            'inertial_position'
+        )
+    if mode == 'inertial_position':
+        return {
+            **LOG_VARS,
+            'GYRO_1KHZ': CONTACT_IMU_1KHZ,
+        }
+    return LOG_VARS
 # PID Configurations
 PID_VALUES_PROP_2_NO_I = {
     # 'quadSysId.armLength': '0.053',

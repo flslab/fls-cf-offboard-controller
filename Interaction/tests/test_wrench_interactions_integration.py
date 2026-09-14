@@ -52,6 +52,7 @@ class InitialContactArmingGateTests(unittest.TestCase):
         gate = InitialContactArmingGate(
             max_xy_speed_m_s=0.03,
             stationary_dwell_s=0.5,
+            max_sample_gap_s=1.0,
         )
 
         self.assertFalse(gate.update([0.02, 0.0, 0.0], 1.0))
@@ -69,10 +70,38 @@ class InitialContactArmingGateTests(unittest.TestCase):
         self.assertTrue(gate.armed)
         self.assertFalse(gate.update([1.0, 0.0, 0.0], 0.0))
 
+    def test_sample_gap_does_not_count_as_stationary_dwell(self):
+        gate = InitialContactArmingGate(
+            max_xy_speed_m_s=0.03,
+            stationary_dwell_s=0.5,
+            max_sample_gap_s=0.1,
+        )
+
+        self.assertFalse(gate.update([0.0, 0.0, 0.0], 1.0))
+        self.assertFalse(gate.update([0.0, 0.0, 0.0], 10.0))
+        self.assertEqual(gate.stationary_elapsed_s, 0.0)
+        self.assertFalse(gate.update([0.0, 0.0, 0.0], 10.1))
+        self.assertFalse(gate.armed)
+
+    def test_duplicate_timestamp_restarts_stationary_dwell(self):
+        gate = InitialContactArmingGate(
+            max_xy_speed_m_s=0.03,
+            stationary_dwell_s=0.5,
+            max_sample_gap_s=0.5,
+        )
+
+        self.assertFalse(gate.update([0.0, 0.0, 0.0], 1.0))
+        self.assertFalse(gate.update([0.0, 0.0, 0.0], 1.4))
+        self.assertFalse(gate.update([0.0, 0.0, 0.0], 1.4))
+        self.assertEqual(gate.stationary_elapsed_s, 0.0)
+        self.assertFalse(gate.update([0.0, 0.0, 0.0], 1.8))
+        self.assertFalse(gate.armed)
+
     def test_reset_requires_a_new_stationary_dwell(self):
         gate = InitialContactArmingGate(
             max_xy_speed_m_s=0.03,
             stationary_dwell_s=0.5,
+            max_sample_gap_s=1.0,
         )
         gate.update([0.0, 0.0, 0.0], 1.0)
         self.assertTrue(gate.update([0.0, 0.0, 0.0], 1.5))
@@ -87,6 +116,7 @@ class InitialContactArmingGateTests(unittest.TestCase):
         gate = InitialContactArmingGate(
             max_xy_speed_m_s=0.03,
             stationary_dwell_s=0.5,
+            max_sample_gap_s=1.0,
             apply_after_each_interaction=False,
         )
         gate.update([0.0, 0.0, 0.0], 1.0)
@@ -4086,6 +4116,167 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                     places=6,
                 )
 
+    def _make_pending_jerk_control(
+            self, *, timeout_s=0.05, kinematic_guard=False):
+        control = TranslationControlHandoff(
+            initial_position=[0.0, 0.0, 1.0],
+            yaw_deg=0.0,
+            shadow_mode=False,
+            coast_velocity_braking_enabled=True,
+            coast_velocity_predictive_unwind_enabled=True,
+            coast_jerk_limited_attitude_enabled=True,
+            coast_jerk_limited_profile_pending_timeout_s=timeout_s,
+            coast_jerk_limited_virtual_friction_enabled=False,
+            coast_velocity_rebrake_enabled=False,
+            coast_state_kinematic_guard_enabled=kinematic_guard,
+        )
+        self.assertTrue(control.start_contact('orientation'))
+        self.assertTrue(control.end_contact(
+            [0.0, 0.0, 1.0], [0.0, 0.40, 0.0], 1.0,
+            interaction_direction=[0.0, 1.0, 0.0],
+            current_orientation_rpy=np.zeros(3),
+            coast=True,
+        ))
+        self.assertEqual(control.coast_velocity_phase, 'jerk_profile_pending')
+        return control
+
+    def test_jerk_pending_watchdog_bounds_repeated_rejected_updates_without_send(
+            self):
+        clock = SimpleNamespace(now=10.0)
+        with patch(
+                'Interaction.interactions.time.monotonic',
+                side_effect=lambda: clock.now):
+            control = self._make_pending_jerk_control(
+                timeout_s=0.05, kinematic_guard=True
+            )
+            self.assertAlmostEqual(
+                control.coast_jerk_limited_profile_pending_started_at, 10.0
+            )
+            self.assertAlmostEqual(
+                control.coast_jerk_limited_profile_pending_deadline_at, 10.05
+            )
+
+            for clock_value, state_time, x_position in (
+                (10.01, 1.01, 1.0),
+                (10.049, 1.02, 2.0),
+            ):
+                clock.now = clock_value
+                self.assertFalse(control.update_coast_velocity(
+                    [x_position, 0.0, 1.0], [0.0, 0.40, 0.0], state_time,
+                    current_orientation_rpy=np.zeros(3),
+                    current_angular_velocity=np.zeros(3),
+                    command_timestamp=state_time,
+                ))
+                self.assertEqual(
+                    control.coast_velocity_phase, 'jerk_profile_pending'
+                )
+                self.assertFalse(
+                    control.coast_jerk_limited_velocity_fallback_active
+                )
+
+            # Equality is the hard boundary: there is no planning/send budget
+            # left once the deadline itself has been reached.
+            clock.now = control.coast_jerk_limited_profile_pending_deadline_at
+            self.assertFalse(control.update_coast_velocity(
+                [3.0, 0.0, 1.0], [0.0, 0.40, 0.0], 1.03,
+                current_orientation_rpy=np.zeros(3),
+                current_angular_velocity=np.zeros(3),
+                command_timestamp=1.03,
+            ))
+
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertTrue(control.coast_jerk_limited_fallback_bridge_pending)
+        self.assertFalse(control.consume_velocity_pid_reset_request())
+        self.assertEqual(
+            control.coast_jerk_limited_profile_pending_deadline_miss_s, 0.0
+        )
+        event = control.consume_jerk_limited_event()
+        self.assertIn('hard timeout', event['reason'])
+        self.assertEqual(event['profile_pending_deadline_miss_s'], 0.0)
+
+    def test_jerk_pending_watchdog_send_after_stale_state_uses_level_bridge(
+            self):
+        commander = FakeCommander()
+        clock = SimpleNamespace(now=20.0)
+        with patch(
+                'Interaction.interactions.time.monotonic',
+                side_effect=lambda: clock.now):
+            control = self._make_pending_jerk_control(timeout_s=0.05)
+            # Model the outer loop withholding an update because state groups
+            # are stale/skewed: send() must independently enforce the timeout.
+            clock.now = 20.051
+            control.send(commander, command_timestamp=1.051, yaw_deg=0.0)
+
+        self.assertEqual(commander.calls, [(
+            'zdistance', (0.0, 0.0, 0.0, 1.0), {}
+        )])
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertTrue(control.coast_jerk_limited_fallback_bridge_level_sent)
+        self.assertFalse(control.coast_jerk_limited_fallback_bridge_pending)
+        self.assertTrue(control.consume_velocity_pid_reset_request())
+
+    def test_jerk_pending_watchdog_clock_rollback_fails_closed(self):
+        commander = FakeCommander()
+        clock = SimpleNamespace(now=30.0)
+        with patch(
+                'Interaction.interactions.time.monotonic',
+                side_effect=lambda: clock.now):
+            control = self._make_pending_jerk_control(
+                timeout_s=0.50, kinematic_guard=True
+            )
+            clock.now = 30.02
+            self.assertFalse(control.update_coast_velocity(
+                [1.0, 0.0, 1.0], [0.0, 0.40, 0.0], 1.01,
+                current_orientation_rpy=np.zeros(3),
+                current_angular_velocity=np.zeros(3),
+                command_timestamp=1.01,
+            ))
+            clock.now = 30.01
+            control.send(commander, command_timestamp=1.02, yaw_deg=0.0)
+
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(commander.calls[-1][1][:2], [0.0, 0.0])
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertIn(
+            'moved backward', control.coast_jerk_limited_fallback_reason
+        )
+
+    def test_jerk_pending_watchdog_nonfinite_clock_fails_closed(self):
+        clock = SimpleNamespace(now=40.0)
+        with patch(
+                'Interaction.interactions.time.monotonic',
+                side_effect=lambda: clock.now):
+            control = self._make_pending_jerk_control(timeout_s=0.50)
+            clock.now = np.nan
+            self.assertFalse(control.update_coast_velocity(
+                [0.0, 0.0, 1.0], [0.0, 0.40, 0.0], 1.01,
+                current_orientation_rpy=np.zeros(3),
+                current_angular_velocity=np.zeros(3),
+                command_timestamp=1.01,
+            ))
+
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertTrue(control.coast_jerk_limited_fallback_bridge_pending)
+        self.assertIn(
+            'non-finite', control.coast_jerk_limited_fallback_reason
+        )
+
+    def test_jerk_pending_watchdog_clock_exception_fails_closed(self):
+        commander = FakeCommander()
+        with patch(
+                'Interaction.interactions.time.monotonic',
+                side_effect=[50.0, RuntimeError('clock unavailable')]):
+            control = self._make_pending_jerk_control(timeout_s=0.50)
+            control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
+
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        np.testing.assert_allclose(commander.calls[-1][1][:2], [0.0, 0.0])
+        self.assertTrue(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertTrue(control.coast_jerk_limited_fallback_bridge_level_sent)
+        self.assertIn(
+            'clock read failed', control.coast_jerk_limited_fallback_reason
+        )
+
     def test_jerk_profile_uses_modeled_queue_state_not_last_command(self):
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
@@ -6139,6 +6330,9 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             timestamp=0.32,
             current_velocity=[0.0, 0.60, 0.0],
         )
+        initial_pending_started_at = (
+            control.coast_jerk_limited_profile_pending_started_at
+        )
 
         self.assertFalse(control.update_coast_velocity(
             [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 0.32,
@@ -6191,15 +6385,33 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                 commander.calls[-1][1][:2], [0.0, 0.0]
             )
 
-        self.assertFalse(control.update_coast_velocity(
-            [0.0, 0.264, 1.0], [0.0, 0.60, 0.0], 0.76,
-            current_orientation_rpy=np.zeros(3),
-            current_angular_velocity=np.zeros(3),
-            command_timestamp=0.76,
-        ))
+        with patch(
+                'Interaction.interactions.time.monotonic',
+                return_value=100.0):
+            self.assertFalse(control.update_coast_velocity(
+                [0.0, 0.264, 1.0], [0.0, 0.60, 0.0], 0.76,
+                current_orientation_rpy=np.zeros(3),
+                current_angular_velocity=np.zeros(3),
+                command_timestamp=0.76,
+            ))
         self.assertFalse(control.coast_jerk_limited_history_wait_active)
         self.assertEqual(control.coast_velocity_phase, 'jerk_attitude_brake')
         self.assertFalse(control.coast_jerk_limited_velocity_fallback_active)
+        self.assertNotEqual(
+            control.coast_jerk_limited_profile_pending_started_at,
+            initial_pending_started_at,
+        )
+        self.assertEqual(
+            control.coast_jerk_limited_profile_pending_started_at, 100.0
+        )
+        self.assertAlmostEqual(
+            control.coast_jerk_limited_profile_pending_deadline_at,
+            100.0
+            + control.coast_jerk_limited_profile_pending_timeout_s,
+        )
+        self.assertEqual(
+            control.coast_jerk_limited_profile_pending_last_checked_at, 100.0
+        )
         self.assertAlmostEqual(
             control.coast_jerk_limited_history_wait_elapsed_s, 0.44
         )
@@ -6878,6 +7090,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             yaw_deg=0.0,
             shadow_mode=False,
             coast_jerk_limited_attitude_enabled=False,
+            coast_jerk_limited_profile_pending_timeout_s=np.nan,
             coast_jerk_limited_min_deceleration_m_s2=0.0,
             coast_jerk_limited_max_deceleration_m_s2=0.0,
             coast_jerk_limited_max_jerk_m_s3=0.0,
@@ -6888,6 +7101,31 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         )
 
         self.assertFalse(control.coast_jerk_limited_attitude_enabled)
+        with patch(
+                'Interaction.interactions.time.monotonic',
+                side_effect=AssertionError('disabled path read watchdog clock')):
+            self.assertTrue(control.start_contact('orientation'))
+            self.assertTrue(control.end_contact(
+                [0.0, 0.0, 1.0], [0.0, 0.40, 0.0], 1.0,
+                interaction_direction=[0.0, 1.0, 0.0],
+                current_orientation_rpy=np.zeros(3),
+                coast=True,
+            ))
+
+    def test_enabled_jerk_path_requires_finite_positive_pending_timeout(self):
+        for timeout_s in (0.0, -0.01, np.nan, np.inf):
+            with self.subTest(timeout_s=timeout_s):
+                with self.assertRaisesRegex(
+                        ValueError, 'profile_pending_timeout_s must be finite'):
+                    TranslationControlHandoff(
+                        initial_position=[0.0, 0.0, 1.0],
+                        yaw_deg=0.0,
+                        shadow_mode=False,
+                        coast_velocity_braking_enabled=True,
+                        coast_velocity_predictive_unwind_enabled=True,
+                        coast_jerk_limited_attitude_enabled=True,
+                        coast_jerk_limited_profile_pending_timeout_s=timeout_s,
+                    )
 
     def test_jerk_history_wait_requires_jerk_attitude_owner(self):
         with self.assertRaisesRegex(
@@ -7473,6 +7711,13 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual(
             [command['sequence'] for command in window],
             [velocity['sequence'], attitude['sequence']],
+        )
+        open_window = control.sent_commands_in_window(
+            1.01, 1.02, start_inclusive=False
+        )
+        self.assertEqual(
+            [command['sequence'] for command in open_window],
+            [attitude['sequence']],
         )
         before_attitude_delay = control.sent_command_effective_at(
             1.049, delay_s=0.04
@@ -8441,7 +8686,96 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'apply_after_each_interaction': True,
             'max_xy_speed_m_s': 0.03,
             'stationary_dwell_s': 0.5,
+            'max_sample_gap_s': 0.1,
         })
+
+    def test_explicit_contact_attitude_reuses_verified_prearm_listeners(self):
+        logs = FakeOnboardLogManager(time.time())
+
+        class RuntimeShadow:
+            def __init__(self):
+                self.state_updates = 0
+                self.drains = 0
+
+            def update_onboard_state(self, *_args, **_kwargs):
+                self.state_updates += 1
+
+            def drain(self):
+                self.drains += 1
+                return {'valid': True}
+
+        class PrearmHandle:
+            def __init__(self, shadow):
+                self.shadow = shadow
+                self.activation = None
+                self.closed = False
+
+            def activate(self, **protocol):
+                self.activation = protocol
+                return self.shadow
+
+            def close(self):
+                self.closed = True
+
+        shadow = RuntimeShadow()
+        handle = PrearmHandle(shadow)
+        logs.contact_attitude_shadow_prearm = handle
+        controller = InteractionsControl.__new__(InteractionsControl)
+        controller.log_manager = logs
+        controller.contact_attitude_shadow = shadow
+        controller.ctrl_rate = 100
+        controller.bounds = {
+            'x_min': -1, 'x_max': 1,
+            'y_min': -1, 'y_max': 1,
+            'z_min': 0.3, 'z_max': 2,
+        }
+        controller.hl_commander = FakeCommander()
+        controller.lo_commander = FakeCommander()
+        controller.force_sensor = None
+        controller._safe_sleep = lambda _duration: logs.advance()
+
+        controller.interaction_onboard_wrench_admittance(
+            duration=0,
+            nominal_position=[0, 0, 1],
+            nominal_yaw_deg=5,
+            config={
+                'state_source': 'onboard',
+                'shadow_mode': True,
+                'observer_settle_s': 0,
+                'bias_calibration_s': 0.01,
+                'minimum_bias_samples': 1,
+                'motor_model': {'hover_pwm': 30000, 'hover_voltage': 8.0},
+                'contact_attitude_shadow_enabled': True,
+                'contact_attitude_shadow_mode': 'inertial_position',
+                'contact_attitude_experiment_run': 2,
+                'contact_attitude_vicon_orientation_forwarded': False,
+                'control_handoff': {},
+                'safety': {
+                    'max_frame_age_s': 10,
+                    'max_state_age_s': 10,
+                    'max_motor_age_s': 10,
+                    'max_motor_pose_skew_s': 1,
+                    'max_state_group_skew_s': 1,
+                    'max_motor_state_skew_s': 1,
+                    'startup_timeout_s': 1,
+                    'require_motor_data': True,
+                },
+            },
+        )
+
+        self.assertEqual(handle.activation, {
+            'mode': 'inertial_position',
+            'experiment_run': 2,
+            'vicon_orientation_forwarded': False,
+        })
+        self.assertGreater(shadow.state_updates, 0)
+        self.assertGreater(shadow.drains, 0)
+        self.assertIs(
+            controller._contact_attitude_shadow_prearm_handle, handle
+        )
+        controller._unsubscribe_contact_attitude_shadow()
+        self.assertTrue(handle.closed)
+        self.assertIsNone(logs.contact_attitude_shadow_prearm)
 
 if __name__ == '__main__':
     unittest.main()

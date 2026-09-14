@@ -5,6 +5,9 @@ import os
 import re
 import subprocess
 import threading
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Callable, Mapping
 
 from Interaction.Kalman_Filter import VelocityKalmanFilter
 from Interaction.live_logger import LiveLogger
@@ -14,6 +17,107 @@ import time
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+CF_TIMESTAMP_MODULUS_MS = 1 << 24
+CONTACT_SOURCE_TIMESTAMP_BASIS = (
+    'firmware_latched_stabilizer_tick_low16_v1'
+)
+CONTACT_SOURCE_MAX_TRANSPORT_SKEW_MS = 100
+_CONTACT_SOURCE_EPOCH_KEYS = {
+    # The packed live stream is first. Legacy keys remain readable so old
+    # flight logs and focused compatibility fixtures can still be replayed.
+    'GYRO_1KHZ': ('contactImu.epoch', 'contactGyro.epoch'),
+    'ACC_ALIGN': ('contactAccel.epoch',),
+    'CONTACT_STATE_SEED': ('contactSeed.epoch',),
+}
+
+
+def reconstruct_contact_source_timestamp_ms(transport_timestamp_ms, epoch):
+    """Lift a firmware low-16 source tick onto the nearest CRTP 24-bit tick.
+
+    The transport header supplies the high-order neighborhood while the
+    producer-latched ``epoch`` supplies the exact low 16 bits.  Returning a
+    value only for a small transport/source skew avoids silently accepting the
+    wrong 65.536 s epoch after a delayed or malformed packet.
+    """
+    if isinstance(transport_timestamp_ms, bool) or isinstance(epoch, bool):
+        return None, None
+    try:
+        transport = int(transport_timestamp_ms)
+        low16 = int(epoch)
+    except (TypeError, ValueError, OverflowError):
+        return None, None
+    if not 0 <= transport < CF_TIMESTAMP_MODULUS_MS:
+        return None, None
+    if not 0 <= low16 < (1 << 16):
+        return None, None
+    base = (transport & ~0xFFFF) | low16
+    candidates = tuple({
+        base % CF_TIMESTAMP_MODULUS_MS,
+        (base - (1 << 16)) % CF_TIMESTAMP_MODULUS_MS,
+        (base + (1 << 16)) % CF_TIMESTAMP_MODULUS_MS,
+    })
+
+    def signed_delta(left, right):
+        delta = (int(left) - int(right)) % CF_TIMESTAMP_MODULUS_MS
+        if delta >= CF_TIMESTAMP_MODULUS_MS // 2:
+            delta -= CF_TIMESTAMP_MODULUS_MS
+        return delta
+
+    source = min(
+        candidates,
+        key=lambda candidate: abs(signed_delta(transport, candidate)),
+    )
+    transport_minus_source_ms = signed_delta(transport, source)
+    if abs(transport_minus_source_ms) > (
+            CONTACT_SOURCE_MAX_TRANSPORT_SKEW_MS):
+        return None, transport_minus_source_ms
+    return int(source), int(transport_minus_source_ms)
+
+
+def _immutable_copy(value):
+    """Recursively copy JSON-like diagnostics into immutable containers."""
+    if isinstance(value, dict):
+        return MappingProxyType({
+            key: _immutable_copy(item) for key, item in value.items()
+        })
+    if isinstance(value, (list, tuple)):
+        return tuple(_immutable_copy(item) for item in value)
+    return copy.deepcopy(value)
+
+
+@dataclass(frozen=True)
+class CfLogPacket:
+    """Immutable, read-only view delivered to shadow packet listeners."""
+
+    sequence: int
+    group: str
+    cf_timestamp_ms: int
+    host_receive_time_s: float
+    data: Mapping[str, object]
+    host_receive_monotonic_s: float | None = None
+    # For ordinary log blocks cf_timestamp_ms is the transport header tick.
+    # Contact telemetry instead replaces it with the producer-latched
+    # stabilizer tick reconstructed from a low-16 epoch field.
+    transport_cf_timestamp_ms: int | None = None
+    source_cf_timestamp_basis: str | None = None
+    source_snapshot_atomic: bool = False
+
+
+@dataclass(frozen=True)
+class MocapFramePacket:
+    """Immutable copy of the primary Vicon frame seen after forwarding."""
+
+    sequence: int
+    group: str
+    host_receive_time_s: float
+    data: Mapping[str, object]
+    # Real Vicon frames currently have no Crazyflie clock.  CrazySim and
+    # offline fixtures may provide one explicitly; consumers must never invent
+    # a device timestamp from host arrival order.
+    cf_timestamp_ms: int | None = None
+    host_receive_monotonic_s: float | None = None
 
 
 class InteractionLogger(LogManager):
@@ -33,6 +137,10 @@ class InteractionLogger(LogManager):
         # writing, and reject callbacks that arrive after shutdown begins.
         self.cf_log_callback_lock = threading.Lock()
         self._accepting_cf_log_callbacks = True
+        self._cf_log_packet_sequence = 0
+        self._cf_log_packet_listeners = []
+        self._mocap_frame_sequence = 0
+        self._mocap_frame_listeners = []
         self.args = kwargs.get('controller_args', False)
         self.verbose = self.args.verbose
 
@@ -54,6 +162,8 @@ class InteractionLogger(LogManager):
     def stop(self, *args, **kwargs):
         with self.cf_log_callback_lock:
             self._accepting_cf_log_callbacks = False
+            self._cf_log_packet_listeners = []
+            self._mocap_frame_listeners = []
 
         if self.cf_var_logger is not None:
             for log_config in self.cf_var_logger:
@@ -70,7 +180,7 @@ class InteractionLogger(LogManager):
             # divides period_in_ms by 10 before sending CONTROL_START_BLOCK,
             # while the deployed FLS firmware consumes that byte in 1 ms
             # units. Multiplying here preserves the configured period on that
-            # firmware (for example 10 -> 100 -> byte 10 -> actual 10 ms).
+            # firmware (for example 1 -> 10 -> byte 1 -> actual 1 ms).
             log_period = cf_log_period * 10
             if "log_period_ms" in log_group:
                 log_period = log_group.pop("log_period_ms") * 10
@@ -102,16 +212,78 @@ class InteractionLogger(LogManager):
             }
 
     def add_log_entry(self, group_name, entry, *args, **kwargs):
+        # Preserve the legacy/default-disabled timing path. The additional
+        # shutdown serialization is needed only while an opt-in diagnostic
+        # listener exists.
+        listener_active = bool(
+            getattr(self, '_cf_log_packet_listeners', ())
+            or getattr(self, '_mocap_frame_listeners', ())
+        )
+        if listener_active:
+            with self.cf_log_callback_lock:
+                if not self._accepting_cf_log_callbacks:
+                    return
+                return self._add_log_entry(
+                    group_name, entry, *args, **kwargs
+                )
+        return self._add_log_entry(group_name, entry, *args, **kwargs)
+
+    def _add_log_entry(self, group_name, entry, *args, **kwargs):
+        if (
+                group_name == 'frames'
+                and isinstance(entry, dict)
+                and entry.get('tvec') is not None
+        ):
+            listeners = tuple(
+                getattr(self, '_mocap_frame_listeners', ())
+            )
+            if listeners:
+                received_at = time.time()
+                received_monotonic = time.monotonic()
+                sequence = getattr(self, '_mocap_frame_sequence', 0)
+                self._mocap_frame_sequence = sequence + 1
+                # Only the opt-in diagnostic path adds these fields. The
+                # payload already passed through send_extpos/send_extpose.
+                entry = copy.deepcopy(entry)
+                entry['mocap_frame_sequence'] = sequence
+                entry['host_receive_time_s'] = received_at
+                entry['host_receive_monotonic_s'] = received_monotonic
+                packet = MocapFramePacket(
+                    sequence=sequence,
+                    group=group_name,
+                    host_receive_time_s=received_at,
+                    data=_immutable_copy(entry),
+                    cf_timestamp_ms=(
+                        None
+                        if entry.get('cf_timestamp_ms') is None
+                        else int(entry['cf_timestamp_ms'])
+                    ),
+                    host_receive_monotonic_s=received_monotonic,
+                )
+                for listener in listeners:
+                    try:
+                        listener(packet)
+                    except Exception:
+                        logger.exception(
+                            'read-only mocap frame listener failed; ignored'
+                        )
         if group_name not in self.groups.keys():
             self.groups[group_name] = []
         kf = self.group_kfs.get(group_name)
-        if kf is not None and entry is not None and entry.get('tvec', None) is not None:
+        if (
+            kf is not None and entry is not None
+            and entry.get('tvec', None) is not None
+        ):
             entry['vel'] = self._update_kf(entry['tvec'], kf)
 
         self.groups[group_name].append(entry)
 
         if self.live_logger:
-            self.live_logger.write({"type": group_name, 'name': kwargs.get('name', None), "data": entry})
+            self.live_logger.write({
+                "type": group_name,
+                'name': kwargs.get('name', None),
+                "data": entry,
+            })
 
     def get_latest_group_log_data(self, log_group=None):
         if self.cf_log_data is None:
@@ -157,6 +329,43 @@ class InteractionLogger(LogManager):
         data = group[param_name].get("data")
         return data[-1] if data else None
 
+    def add_cf_packet_listener(self, listener: Callable[[CfLogPacket], None]):
+        """Register a read-only listener and return an idempotent unsubscribe.
+
+        Listeners run inside the callback/shutdown serialization lock and must
+        only enqueue or copy data.  Exceptions are isolated from flight logging.
+        """
+        if not callable(listener):
+            raise TypeError("listener must be callable")
+        with self.cf_log_callback_lock:
+            if not self._accepting_cf_log_callbacks:
+                raise RuntimeError("Crazyflie logging is shutting down")
+            self._cf_log_packet_listeners.append(listener)
+
+        def unsubscribe():
+            with self.cf_log_callback_lock:
+                if listener in self._cf_log_packet_listeners:
+                    self._cf_log_packet_listeners.remove(listener)
+
+        return unsubscribe
+
+    def add_mocap_frame_listener(
+            self, listener: Callable[[MocapFramePacket], None]):
+        """Register a diagnostic listener for main-drone Vicon frames."""
+        if not callable(listener):
+            raise TypeError('listener must be callable')
+        with self.cf_log_callback_lock:
+            if not self._accepting_cf_log_callbacks:
+                raise RuntimeError('motion-capture logging is shutting down')
+            self._mocap_frame_listeners.append(listener)
+
+        def unsubscribe():
+            with self.cf_log_callback_lock:
+                if listener in self._mocap_frame_listeners:
+                    self._mocap_frame_listeners.remove(listener)
+
+        return unsubscribe
+
     def _cf_log_group_callback(self, timestamp, data, log_conf):
         with self.cf_log_callback_lock:
             if not self._accepting_cf_log_callbacks:
@@ -164,6 +373,32 @@ class InteractionLogger(LogManager):
 
             cur_time = time.time()
             group_name = log_conf.name
+            transport_timestamp = int(timestamp)
+            effective_timestamp = transport_timestamp
+            source_timestamp = None
+            source_transport_skew_ms = None
+            source_timestamp_basis = None
+            source_snapshot_atomic = False
+            source_timestamp_error = None
+            epoch_keys = _CONTACT_SOURCE_EPOCH_KEYS.get(group_name)
+            epoch_key = None
+            if epoch_keys is not None:
+                epoch_key = next(
+                    (key for key in epoch_keys if key in data), epoch_keys[0]
+                )
+                source_timestamp, source_transport_skew_ms = (
+                    reconstruct_contact_source_timestamp_ms(
+                        transport_timestamp, data.get(epoch_key)
+                    )
+                )
+                if source_timestamp is None:
+                    source_timestamp_error = (
+                        'missing_invalid_or_ambiguous_firmware_source_epoch'
+                    )
+                else:
+                    effective_timestamp = source_timestamp
+                    source_timestamp_basis = CONTACT_SOURCE_TIMESTAMP_BASIS
+                    source_snapshot_atomic = True
             self.cf_log_group_times[group_name] = cur_time
             data['time'] = cur_time
             with self.cf_log_packet_lock:
@@ -174,6 +409,38 @@ class InteractionLogger(LogManager):
                     if var_name in data:
                         var_info['data'].append(data[var_name])
 
+            packet_sequence = None
+            if getattr(self, '_cf_log_packet_listeners', None):
+                listeners = tuple(self._cf_log_packet_listeners)
+                # Preserve the exact default-disabled callback path: immutable
+                # packet allocation and global sequencing exist only while an
+                # opt-in shadow listener is registered.
+                sequence = getattr(self, '_cf_log_packet_sequence', 0)
+                self._cf_log_packet_sequence = sequence + 1
+                packet_sequence = sequence
+                cur_monotonic = time.monotonic()
+                packet_data = MappingProxyType({
+                    key: value for key, value in data.items() if key != 'time'
+                })
+                packet = CfLogPacket(
+                    sequence=sequence,
+                    group=group_name,
+                    cf_timestamp_ms=effective_timestamp,
+                    host_receive_time_s=cur_time,
+                    data=packet_data,
+                    host_receive_monotonic_s=cur_monotonic,
+                    transport_cf_timestamp_ms=transport_timestamp,
+                    source_cf_timestamp_basis=source_timestamp_basis,
+                    source_snapshot_atomic=source_snapshot_atomic,
+                )
+                for listener in listeners:
+                    try:
+                        listener(packet)
+                    except Exception:
+                        logger.exception(
+                            "read-only Crazyflie packet listener failed; ignored"
+                        )
+
             if self.live_logger:
                 # Preserve both clocks for offline delay/jitter analysis.  The
                 # Crazyflie callback timestamp is the raw 24-bit millisecond
@@ -181,8 +448,27 @@ class InteractionLogger(LogManager):
                 # Keep these fields out of runtime packet buffers so state age,
                 # nearest-packet selection, and control timing remain unchanged.
                 saved_data = dict(data)
-                saved_data['cf_timestamp_ms'] = timestamp
+                saved_data['cf_timestamp_ms'] = effective_timestamp
+                saved_data['transport_cf_timestamp_ms'] = transport_timestamp
+                if epoch_key is not None:
+                    saved_data['source_cf_timestamp_ms'] = source_timestamp
+                    saved_data['source_cf_timestamp_basis'] = (
+                        source_timestamp_basis
+                    )
+                    saved_data['source_snapshot_atomic'] = (
+                        source_snapshot_atomic
+                    )
+                    saved_data['source_cf_transport_skew_ms'] = (
+                        source_transport_skew_ms
+                    )
+                    if source_timestamp_error is not None:
+                        saved_data['source_cf_timestamp_error'] = (
+                            source_timestamp_error
+                        )
                 saved_data['host_receive_time_s'] = cur_time
+                if packet_sequence is not None:
+                    saved_data['cf_packet_sequence'] = packet_sequence
+                    saved_data['host_receive_monotonic_s'] = cur_monotonic
                 self.live_logger.write({
                     "type": 'state', "group": group_name, "data": saved_data,
                 })
