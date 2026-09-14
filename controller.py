@@ -156,6 +156,8 @@ class Controller:
         self.voltage = None
         self.deck_attached_event = Event()
         self.battery_critical = Event()
+        self.low_voltage_sample_count = 0
+        self.battery_critical_consecutive_samples = 2
         self.mission_start_time = 0
         self.mission_duration = 0
         self.animation_start_times = []
@@ -2559,8 +2561,23 @@ class Controller:
         self.voltage = voltage
         logger.debug(f"Voltage: {voltage:.2f}V")
         if voltage < self.min_voltage:
-            self.battery_critical.set()
-            self.log_manager.add_log_entry("events", {"time": time.time(), "name": "battery_critical", "voltage": voltage})
+            self.low_voltage_sample_count += 1
+            if (
+                self.low_voltage_sample_count
+                >= self.battery_critical_consecutive_samples
+                and not self.battery_critical.is_set()
+            ):
+                self.battery_critical.set()
+                self.log_manager.add_log_entry("events", {
+                    "time": time.time(),
+                    "name": "battery_critical",
+                    "voltage": voltage,
+                    "consecutive_low_voltage_samples": (
+                        self.low_voltage_sample_count
+                    ),
+                })
+        else:
+            self.low_voltage_sample_count = 0
 
     def _send_landing_confirmation(self, voltage):
         if self.args.orchestrated:

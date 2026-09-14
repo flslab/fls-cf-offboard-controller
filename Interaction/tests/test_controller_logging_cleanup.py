@@ -2,6 +2,7 @@
 import ast
 import math
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -22,6 +23,38 @@ def methods(names, **namespace):
 
 
 class LoggingCleanupTests(unittest.TestCase):
+    def test_battery_critical_requires_two_consecutive_low_samples(self):
+        namespace = methods({'_watch_battery'}, logger=Mock(), time=Mock())
+        logs = Mock()
+        controller = SimpleNamespace(
+            voltage=None,
+            min_voltage=7.0,
+            low_voltage_sample_count=0,
+            battery_critical_consecutive_samples=2,
+            battery_critical=Event(),
+            log_manager=logs,
+        )
+        watch = namespace['_watch_battery']
+
+        watch(controller, 0, {'pm.vbat': 6.9}, None)
+        self.assertFalse(controller.battery_critical.is_set())
+        self.assertEqual(controller.low_voltage_sample_count, 1)
+
+        watch(controller, 1, {'pm.vbat': 7.1}, None)
+        self.assertFalse(controller.battery_critical.is_set())
+        self.assertEqual(controller.low_voltage_sample_count, 0)
+
+        watch(controller, 2, {'pm.vbat': 6.8}, None)
+        watch(controller, 3, {'pm.vbat': 6.7}, None)
+        self.assertTrue(controller.battery_critical.is_set())
+        self.assertEqual(controller.low_voltage_sample_count, 2)
+        logs.add_log_entry.assert_called_once()
+        event = logs.add_log_entry.call_args.args[1]
+        self.assertEqual(event['consecutive_low_voltage_samples'], 2)
+
+        watch(controller, 4, {'pm.vbat': 6.6}, None)
+        logs.add_log_entry.assert_called_once()
+
     def test_emergency_prepare_never_touches_peripherals_or_flight_control(self):
         namespace = methods({'_prepare_for_emergency_landing'})
         controller = SimpleNamespace(
