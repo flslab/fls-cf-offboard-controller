@@ -12482,15 +12482,16 @@ class InteractionsControl:
                 'contact_attitude_experiment_run requires '
                 'contact_attitude_shadow_enabled=true'
             )
+        prearm_handle = None
         if contact_attitude_shadow_enabled:
             shadow_unsubscribers = []
+            contact_attitude_shadow_start_event = None
             contact_attitude_shadow_mode = config.get(
                 'contact_attitude_shadow_mode', 'inertial_position'
             )
             vicon_orientation_forwarded = config.get(
                 'contact_attitude_vicon_orientation_forwarded'
             )
-            prearm_handle = None
             try:
                 if contact_attitude_experiment_run is not None:
                     prearm_handle = getattr(
@@ -12511,13 +12512,10 @@ class InteractionsControl:
                             'runtime contact-attitude observer is not the '
                             'verified pre-arm instance'
                         )
-                    contact_attitude_shadow = prearm_handle.activate(
-                        mode=contact_attitude_shadow_mode,
-                        experiment_run=contact_attitude_experiment_run,
-                        vicon_orientation_forwarded=(
-                            vicon_orientation_forwarded
-                        ),
-                    )
+                    # Keep the verified listeners inactive during the initial
+                    # two-second go-to below.  Activating here would enqueue
+                    # roughly 2,000 1 kHz IMU packets without any drain call.
+                    contact_attitude_shadow = prearm_handle.shadow
                     self._contact_attitude_shadow_prearm_handle = (
                         prearm_handle
                     )
@@ -12571,7 +12569,7 @@ class InteractionsControl:
                     self._contact_attitude_shadow_unsubscribers = tuple(
                         shadow_unsubscribers
                     )
-                self._log_event('Contact Attitude Shadow Started', {
+                contact_attitude_shadow_start_event = {
                     'shadow_only': True,
                     'command_authority': False,
                     'experiment_run': contact_attitude_experiment_run,
@@ -12600,7 +12598,12 @@ class InteractionsControl:
                         if contact_attitude_experiment_run is not None
                         else 'onboard_ekf_yaw'
                     ),
-                })
+                }
+                if prearm_handle is None:
+                    self._log_event(
+                        'Contact Attitude Shadow Started',
+                        contact_attitude_shadow_start_event,
+                    )
             except Exception as error:
                 # Failure to start an opt-in diagnostic must not change the
                 # existing controller/fallback path.
@@ -13748,8 +13751,46 @@ class InteractionsControl:
         )
         self._safe_sleep(2.0)
 
+        if prearm_handle is not None:
+            try:
+                contact_attitude_shadow = prearm_handle.activate(
+                    mode=contact_attitude_shadow_mode,
+                    experiment_run=contact_attitude_experiment_run,
+                    vicon_orientation_forwarded=(
+                        vicon_orientation_forwarded
+                    ),
+                )
+                # Establish an empty/clean processing boundary immediately at
+                # activation, before the startup-state wait and main loop.
+                contact_attitude_shadow.drain()
+                self._log_event(
+                    'Contact Attitude Shadow Started',
+                    contact_attitude_shadow_start_event,
+                )
+            except Exception as error:
+                self._contact_attitude_shadow_prearm_handle = None
+                try:
+                    prearm_handle.close()
+                except Exception:
+                    logger.exception(
+                        'Failed to close deferred contact-attitude pre-arm '
+                        'listeners'
+                    )
+                contact_attitude_shadow = None
+                self._log_event('Contact Attitude Shadow Unavailable', {
+                    'reason': str(error),
+                    'actual_flight_controller_unchanged': True,
+                    'command_authority': False,
+                })
+                raise RuntimeError(
+                    'explicit contact-attitude shadow failed to activate '
+                    'after initial go-to'
+                ) from error
+
         startup_deadline = time.time() + float(safety['startup_timeout_s'])
         while True:
+            if contact_attitude_shadow is not None:
+                contact_attitude_shadow.drain()
             state = self._get_synchronized_onboard_wrench_state()
             now = time.time()
             if state is not None:

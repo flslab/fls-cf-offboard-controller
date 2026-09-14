@@ -8691,6 +8691,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
 
     def test_explicit_contact_attitude_reuses_verified_prearm_listeners(self):
         logs = FakeOnboardLogManager(time.time())
+        initial_go_to_complete = [False]
 
         class RuntimeShadow:
             def __init__(self):
@@ -8711,6 +8712,9 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                 self.closed = False
 
             def activate(self, **protocol):
+                self.activation_after_initial_go_to = (
+                    initial_go_to_complete[0]
+                )
                 self.activation = protocol
                 return self.shadow
 
@@ -8732,7 +8736,12 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         controller.hl_commander = FakeCommander()
         controller.lo_commander = FakeCommander()
         controller.force_sensor = None
-        controller._safe_sleep = lambda _duration: logs.advance()
+        def safe_sleep(duration):
+            logs.advance()
+            if duration == 2.0:
+                initial_go_to_complete[0] = True
+
+        controller._safe_sleep = safe_sleep
 
         controller.interaction_onboard_wrench_admittance(
             duration=0,
@@ -8768,6 +8777,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             'experiment_run': 2,
             'vicon_orientation_forwarded': False,
         })
+        self.assertTrue(handle.activation_after_initial_go_to)
         self.assertGreater(shadow.state_updates, 0)
         self.assertGreater(shadow.drains, 0)
         self.assertIs(
