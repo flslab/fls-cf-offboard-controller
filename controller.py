@@ -785,7 +785,7 @@ class Controller:
             initial_x, initial_y, current_z, yaw, duration_1, relative=False)
         time.sleep(duration_1 + 0.5)
 
-        distance_2 = math.abs(threshold - current_z)
+        distance_2 = abs(threshold - current_z)
         duration_2 = max(1.5, distance_2 / speed)
         logger.info(f"Returning to MyGrid acquisition height {threshold:.3f}m")
         commander.go_to(
