@@ -778,16 +778,19 @@ class Controller:
         yaw = self.args.landing_yaw
         self._set_marker_grid_mode(MyGridRequest.STATIC)
 
-        distance = math.sqrt(
-            (initial_x - current_x) ** 2
-            + (initial_y - current_y) ** 2
-            + (threshold - current_z) ** 2
-        )
-        duration = max(1.0, distance / speed)
+        distance_1 = math.sqrt((initial_x - current_x) ** 2 + (initial_y - current_y) ** 2)
+        duration_1 = max(1.5, distance_1 / speed)
+        logger.info(f"Returning to landing tile")
+        commander.go_to(
+            initial_x, initial_y, current_z, yaw, duration_1, relative=False)
+        time.sleep(duration_1 + 0.5)
+
+        distance_2 = math.abs(threshold - current_z)
+        duration_2 = max(1.5, distance_2 / speed)
         logger.info(f"Returning to MyGrid acquisition height {threshold:.3f}m")
         commander.go_to(
-            initial_x, initial_y, threshold, yaw, duration, relative=False)
-        time.sleep(duration + 0.5)
+            initial_x, initial_y, threshold, yaw, duration_2, relative=False)
+        time.sleep(duration_2 + 0.5)
 
         # Keep tracking the HyperGrid until the vehicle has reached the
         # acquisition height. The MyGrid was enabled before the move, so it is
