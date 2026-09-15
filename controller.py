@@ -977,7 +977,7 @@ class Controller:
         logger.info(f"Returning to MyGrid acquisition height {threshold:.3f}m")
         commander.go_to(
             initial_x, initial_y, threshold, yaw, duration_2, relative=False)
-        time.sleep(duration_2 + 0.5)
+        time.sleep(duration_2)
 
         # Keep tracking the HyperGrid until the vehicle has reached the
         # acquisition height. The MyGrid was enabled before the move, so it is
