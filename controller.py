@@ -971,8 +971,9 @@ class Controller:
             initial_x, initial_y, current_z, yaw, duration_1, relative=False)
         time.sleep(duration_1 + 2)
 
+        land_speed = speed * 0.5
         distance_2 = abs(threshold - current_z)
-        duration_2 = max(1.5, distance_2 / speed)
+        duration_2 = max(1.5, distance_2 / land_speed)
         logger.info(f"Returning to MyGrid acquisition height {threshold:.3f}m")
         commander.go_to(
             initial_x, initial_y, threshold, yaw, duration_2, relative=False)
@@ -991,7 +992,7 @@ class Controller:
         except TimeoutError:
             logger.warning("MyGrid was not acquired at the landing threshold")
 
-        duration = max(2.0, (threshold - height) / speed)
+        duration = max(2.0, (threshold - height) / land_speed)
         commander.land(height, duration, yaw=yaw)
         logger.info(f"Landing duration: {duration} seconds")
         time.sleep(duration + 1)
