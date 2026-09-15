@@ -2222,7 +2222,8 @@ class Controller:
 
         for _ in range(iterations):
             if iterations > 1:
-                self.smooth_controller.set_group_values("pointers", pointers[0], duration=0)
+                if len(waypoints):
+                    self.smooth_controller.set_group_values("pointers", pointers[0], duration=0)
                 sleep_duration = self.animation_start_times[mission_index] + elapsed_time + 0.1 - time.time()
                 elapsed_time += 0.1
                 self._safe_sleep(sleep_duration)
