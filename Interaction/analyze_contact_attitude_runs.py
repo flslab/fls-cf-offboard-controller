@@ -21,20 +21,30 @@ from typing import Mapping
 import numpy as np
 
 from Interaction.contact_attitude_observer import CF_TIMESTAMP_MODULUS_MS
-from Interaction.contact_attitude_experiment import experiment_run_config
+from Interaction.contact_attitude_experiment import (
+    ARDUINO_TO_CF_RELEASE_CLOCK_MAPPING_BASIS,
+    CONTACT_ATTITUDE_PROTOCOL_VERSION,
+    DIAGNOSTIC_RELEASE_CLOCK_MAPPING_BASES,
+    RELEASE_EVENT_TIME_SOURCE,
+    experiment_run_config,
+)
+from Interaction.log_manager import (
+    CONTACT_SOURCE_MAX_TRANSPORT_SKEW_MS,
+    CONTACT_SOURCE_TIMESTAMP_BASIS,
+    TRUSTED_MOCAP_CF_TIMESTAMP_BASES,
+)
 
 
 DEFAULT_MIN_COMPARISON_SAMPLES = 30
 MIN_UNIQUE_STRICT_POSITION_UPDATES = 10
 MIN_COMPARISON_TIME_COVERAGE_S = 0.20
 MAX_COMPARISON_SAMPLE_GAP_S = 0.05
-STRICT_COMPARISON_TIME_BASES = frozenset({
-    'cf_device_timestamp_exact',
-    'vicon_capture_to_cf_clock_calibrated',
-})
-STRICT_POSITION_TIME_BASES = frozenset({
-    'cf_device_timestamp_exact',
-})
+STRICT_COMPARISON_TIME_BASES = TRUSTED_MOCAP_CF_TIMESTAMP_BASES
+STRICT_POSITION_TIME_BASES = TRUSTED_MOCAP_CF_TIMESTAMP_BASES
+PROTOCOL_EVENT_NAMES = (
+    'Contact Attitude Shadow Prepared Pre-Arm',
+    'Contact Attitude Shadow Started',
+)
 INTEGRITY_COUNTERS = (
     'dropped_packets',
     'skipped_position_packets',
@@ -189,6 +199,127 @@ def _signed_cf_delta_ms(current, previous):
     return delta
 
 
+def _contact_imu_provenance_valid(data):
+    required = (
+        'contactImu.gx', 'contactImu.gy', 'contactImu.gz',
+        'contactImu.ax', 'contactImu.ay', 'contactImu.az',
+        'contactImu.px', 'contactImu.py', 'contactImu.pz',
+        'contactImu.vx', 'contactImu.vy', 'contactImu.vz',
+        'contactImu.epoch',
+    )
+    if not isinstance(data, Mapping) or any(key not in data for key in required):
+        return False
+    source = _nonnegative_integer(data.get('source_cf_timestamp_ms'))
+    transport = _nonnegative_integer(data.get('transport_cf_timestamp_ms'))
+    effective = _nonnegative_integer(data.get('cf_timestamp_ms'))
+    epoch = _nonnegative_integer(data.get('contactImu.epoch'))
+    if any(value is None for value in (source, transport, effective, epoch)):
+        return False
+    if any(value >= CF_TIMESTAMP_MODULUS_MS for value in (
+            source, transport, effective)) or epoch >= (1 << 16):
+        return False
+    transport_skew = _signed_cf_delta_ms(transport, source)
+    logged_skew = data.get('source_cf_transport_skew_ms')
+    if logged_skew is not None:
+        logged_skew = _finite(logged_skew)
+        if (
+            logged_skew is None or not logged_skew.is_integer()
+            or int(logged_skew) != transport_skew
+        ):
+            return False
+    return bool(
+        effective == source
+        and epoch == (source & 0xFFFF)
+        and abs(transport_skew) <= CONTACT_SOURCE_MAX_TRANSPORT_SKEW_MS
+        and data.get('source_cf_timestamp_basis')
+        == CONTACT_SOURCE_TIMESTAMP_BASIS
+        and data.get('source_snapshot_atomic') is True
+        and data.get('source_cf_timestamp_error') is None
+    )
+
+
+def _protocol_evidence(records, rows, expected_run, protocol):
+    """Validate immutable protocol metadata from rows and both lifecycle events."""
+    failures = []
+    unsupported = []
+    row_versions = [row.get('protocol_version') for row in rows]
+    if rows and any(value is None for value in row_versions):
+        unsupported.append('protocol_version_missing_from_shadow_rows')
+    elif rows and set(row_versions) != {CONTACT_ATTITUDE_PROTOCOL_VERSION}:
+        unsupported.append('protocol_version_unsupported')
+
+    yaw_values = [_finite(row.get('alignment_nominal_yaw_deg')) for row in rows]
+    if rows and any(value is None for value in yaw_values):
+        unsupported.append('alignment_nominal_yaw_missing_or_invalid')
+    rounded_yaws = {
+        round(value, 12) for value in yaw_values if value is not None
+    }
+    if len(rounded_yaws) > 1:
+        failures.append('alignment_nominal_yaw_changed_within_run')
+    if rows and any(
+        row.get('alignment_yaw_source') != 'configured_nominal_yaw'
+        for row in rows
+    ):
+        failures.append('alignment_yaw_source_invalid')
+
+    event_candidates = {}
+    for record in records:
+        if (
+            not isinstance(record, Mapping)
+            or record.get('type') != 'events'
+            or record.get('name') not in PROTOCOL_EVENT_NAMES
+            or not isinstance(record.get('data'), Mapping)
+        ):
+            continue
+        data = record['data']
+        run = _nonnegative_integer(data.get('experiment_run'))
+        yaw = _finite(data.get('alignment_nominal_yaw_deg'))
+        forwarded = data.get(
+            'vicon_orientation_forwarded_to_onboard_ekf'
+        )
+        candidate = (
+            data.get('protocol_version'), run,
+            data.get('shadow_mode'), data.get('vicon_mode'), forwarded,
+            None if yaw is None else round(yaw, 12),
+        )
+        event_candidates.setdefault(record.get('name'), set()).add(candidate)
+    for name in PROTOCOL_EVENT_NAMES:
+        candidates = event_candidates.get(name)
+        if not candidates:
+            unsupported.append(
+                'protocol_event_missing:' + name.replace(' ', '_').lower()
+            )
+            continue
+        if len(candidates) != 1:
+            failures.append('protocol_event_metadata_inconsistent')
+            continue
+        version, run, mode, vicon_mode, forwarded, yaw = next(iter(candidates))
+        if any(value is None for value in (
+                version, run, mode, vicon_mode, forwarded, yaw)):
+            unsupported.append('protocol_event_metadata_incomplete')
+            continue
+        if version != CONTACT_ATTITUDE_PROTOCOL_VERSION:
+            unsupported.append('protocol_version_unsupported')
+        if (
+            run != expected_run
+            or mode != protocol['shadow_mode']
+            or vicon_mode != protocol['vicon_mode']
+            or not isinstance(forwarded, bool)
+            or forwarded != protocol['vicon_orientation_forwarded']
+        ):
+            failures.append('protocol_event_fields_mismatch')
+        if rounded_yaws and yaw not in rounded_yaws:
+            failures.append('protocol_event_yaw_mismatch')
+    return {
+        'failures': failures,
+        'unsupported_reasons': unsupported,
+        'alignment_nominal_yaw_deg': (
+            None if len(rounded_yaws) != 1 else next(iter(rounded_yaws))
+        ),
+        'event_names': sorted(event_candidates),
+    }
+
+
 def analyze_run(
         records, expected_run, max_join_skew_s=0.03,
         min_comparison_samples=DEFAULT_MIN_COMPARISON_SAMPLES):
@@ -208,6 +339,30 @@ def analyze_run(
     unsupported = []
     if not rows:
         unsupported.append('contact_attitude_shadow_rows_missing')
+    protocol_evidence = _protocol_evidence(
+        records, rows, expected_run, protocol
+    )
+    failures.extend(protocol_evidence['failures'])
+    unsupported.extend(protocol_evidence['unsupported_reasons'])
+
+    contact_imu_records = [
+        record['data'] for record in records
+        if isinstance(record, Mapping)
+        and record.get('type') == 'state'
+        and record.get('group') == 'GYRO_1KHZ'
+        and isinstance(record.get('data'), Mapping)
+    ]
+    invalid_contact_imu_provenance_count = sum(
+        not _contact_imu_provenance_valid(data)
+        for data in contact_imu_records
+    )
+    if expected_run != 1:
+        if len(contact_imu_records) < min_comparison_samples:
+            unsupported.append('minimum_producer_latched_contact_imu_not_met')
+        if invalid_contact_imu_provenance_count:
+            unsupported.append(
+                'producer_latched_contact_imu_provenance_missing_or_invalid'
+            )
 
     observed_runs = sorted({
         row.get('experiment_run') for row in rows
@@ -309,6 +464,8 @@ def analyze_run(
     saw_zero_strict_position_update = False
     saw_strict_position_epoch_missing = False
     saw_unproven_position_counter_increment = False
+    saw_vicon_capture_provenance_invalid = False
+    saw_vicon_clock_provenance_invalid = False
     release_snapshots = []
     saw_release_snapshot_missing = False
 
@@ -448,12 +605,6 @@ def analyze_run(
             observed_basis_counts[str(basis)] = (
                 observed_basis_counts.get(str(basis), 0) + 1
             )
-        aligned = comparison.get('comparison_time_aligned')
-        if aligned is None:
-            saw_alignment_missing = True
-        elif aligned is not True:
-            saw_unaligned_comparison = True
-            continue
         capture_available = comparison.get(
             'vicon_capture_timestamp_available'
         )
@@ -466,6 +617,29 @@ def analyze_run(
         if capture_available is not True or common_cf_clock is not True:
             saw_capture_clock_unavailable = True
             continue
+        source_capture_time_s = (
+            _finite(vicon.get('source_capture_time_s'))
+            if isinstance(vicon, Mapping) else None
+        )
+        source_capture_time_basis = (
+            vicon.get('source_capture_time_basis')
+            if isinstance(vicon, Mapping) else None
+        )
+        if (
+            not isinstance(vicon, Mapping)
+            or vicon.get('source_capture_time_available') is not True
+            or source_capture_time_s is None
+            or not isinstance(source_capture_time_basis, str)
+            or not source_capture_time_basis.strip()
+        ):
+            saw_vicon_capture_provenance_invalid = True
+            continue
+        aligned = comparison.get('comparison_time_aligned')
+        if aligned is None:
+            saw_alignment_missing = True
+        elif aligned is not True:
+            saw_unaligned_comparison = True
+            continue
         scientific = comparison.get('comparison_scientifically_valid')
         if scientific is None:
             saw_scientific_flag_missing = True
@@ -474,12 +648,69 @@ def analyze_run(
             saw_nonstrict_scientific_flag = True
             continue
         if basis not in STRICT_COMPARISON_TIME_BASES:
+            saw_vicon_clock_provenance_invalid = True
+            continue
+        vicon_cf_timestamp = (
+            _nonnegative_integer(vicon.get('cf_timestamp_ms'))
+            if isinstance(vicon, Mapping) else None
+        )
+        vicon_basis = (
+            vicon.get('cf_timestamp_basis')
+            if isinstance(vicon, Mapping) else None
+        )
+        vicon_uncertainty_ms = (
+            _finite(vicon.get('cf_timestamp_uncertainty_ms'))
+            if isinstance(vicon, Mapping) else None
+        )
+        if (
+            vicon_cf_timestamp is None
+            or vicon_cf_timestamp >= CF_TIMESTAMP_MODULUS_MS
+            or vicon_basis not in TRUSTED_MOCAP_CF_TIMESTAMP_BASES
+            or vicon_uncertainty_ms is None
+            or vicon_uncertainty_ms < 0.0
+            or vicon_uncertainty_ms > 1000.0 * max_join_skew_s
+            or vicon.get('cf_timestamp_scientifically_trusted') is not True
+            or basis != vicon_basis
+        ):
+            saw_vicon_clock_provenance_invalid = True
+            continue
+        comparison_reference_cf = _nonnegative_integer(
+            comparison.get('comparison_reference_cf_timestamp_ms')
+        )
+        comparison_reference_unwrapped = _nonnegative_integer(
+            comparison.get('comparison_reference_unwrapped_timestamp_ms')
+        )
+        comparison_shadow_cf = _nonnegative_integer(
+            comparison.get('comparison_shadow_cf_timestamp_ms')
+        )
+        comparison_onboard_cf = _nonnegative_integer(
+            comparison.get('comparison_onboard_cf_timestamp_ms')
+        )
+        if (
+            comparison_reference_cf != vicon_cf_timestamp
+            or comparison_shadow_cf != comparison_reference_cf
+            or comparison_onboard_cf is None
+            or comparison_reference_unwrapped is None
+            or comparison_reference_unwrapped % CF_TIMESTAMP_MODULUS_MS
+            != comparison_reference_cf
+        ):
+            saw_vicon_clock_provenance_invalid = True
             continue
         skew = _comparison_skew(comparison)
         if skew is None:
             saw_strict_skew_missing = True
             continue
-        if abs(skew) > max_join_skew_s:
+        expected_skew_s = _signed_cf_delta_ms(
+            comparison_onboard_cf, comparison_reference_cf
+        ) / 1000.0
+        if not math.isclose(
+                skew, expected_skew_s, rel_tol=0.0, abs_tol=1e-12):
+            saw_vicon_clock_provenance_invalid = True
+            continue
+        if (
+            abs(skew) + vicon_uncertainty_ms / 1000.0
+            > max_join_skew_s
+        ):
             saw_unaligned_comparison = True
             continue
 
@@ -493,6 +724,7 @@ def analyze_run(
         if (
             position_timing_valid is not True
             or position_basis not in STRICT_POSITION_TIME_BASES
+            or position_basis != vicon_basis
         ):
             saw_nonstrict_position_timing = True
             continue
@@ -516,10 +748,10 @@ def analyze_run(
             _nonnegative_integer(vicon.get('frame_sequence'))
             if isinstance(vicon, Mapping) else None
         )
-        shadow_epoch = (
-            _nonnegative_integer(estimate.get('unwrapped_timestamp_ms'))
-            if isinstance(estimate, Mapping) else None
-        )
+        # The producer may compare a mapped Vicon frame to a historical EKF
+        # state while the live estimate continues advancing.  Deduplicate on
+        # that explicit comparison epoch, never on the latest shadow epoch.
+        shadow_epoch = comparison_reference_unwrapped
         strict_position_count = _nonnegative_integer(
             row.get('strict_position_time_update_count')
         )
@@ -599,8 +831,58 @@ def analyze_run(
         }
         if None in event_sources:
             unsupported.append('release_event_time_source_missing')
-        elif event_sources != {'force_sensor_candidate_onset_monotonic'}:
+        elif event_sources != {RELEASE_EVENT_TIME_SOURCE}:
             failures.append('release_event_time_source_invalid')
+        event_times = [
+            _finite(snapshot.get('release_event_monotonic_s'))
+            for snapshot in release_snapshots
+        ]
+        confirmation_times = [
+            _finite(snapshot.get('release_confirmation_monotonic_s'))
+            for snapshot in release_snapshots
+        ]
+        event_sample_ids = [
+            _nonnegative_integer(snapshot.get(
+                'release_event_arduino_time_ms'
+            ))
+            for snapshot in release_snapshots
+        ]
+        confirmation_sample_ids = [
+            _nonnegative_integer(snapshot.get(
+                'release_confirmation_arduino_time_ms'
+            ))
+            for snapshot in release_snapshots
+        ]
+        mapping_bases = {
+            snapshot.get('release_clock_mapping_basis')
+            for snapshot in release_snapshots
+        }
+        if any(value is None for value in event_times + confirmation_times):
+            unsupported.append('release_confirmation_timing_missing')
+        elif any(
+            confirmation < event
+            for event, confirmation in zip(event_times, confirmation_times)
+        ):
+            failures.append('release_confirmation_precedes_first_unloaded')
+        if any(value is None for value in (
+                event_sample_ids + confirmation_sample_ids)):
+            unsupported.append('release_sample_identity_missing')
+        release_clock_trusted = bool(
+            len(mapping_bases) == 1
+            and next(iter(mapping_bases))
+            in DIAGNOSTIC_RELEASE_CLOCK_MAPPING_BASES
+        )
+        if not release_clock_trusted:
+            unsupported.append('release_clock_mapping_untrusted')
+        if (
+            release_clock_trusted
+            and next(iter(mapping_bases))
+            == ARDUINO_TO_CF_RELEASE_CLOCK_MAPPING_BASIS
+            and any(value is None for value in (
+                event_sample_ids + confirmation_sample_ids
+            ))
+        ):
+            unsupported.append('release_arduino_sample_identity_missing')
         release_event_skews = [
             _finite(snapshot.get(
                 'release_event_to_state_skew_s'
@@ -609,7 +891,9 @@ def analyze_run(
             ))
             for snapshot in release_snapshots
         ]
-        if any(value is None for value in release_event_skews):
+        if not release_clock_trusted:
+            pass
+        elif any(value is None for value in release_event_skews):
             unsupported.append('release_event_epoch_skew_missing')
         elif any(
                 abs(value) > max_join_skew_s
@@ -674,6 +958,13 @@ def analyze_run(
                 'state_seed_packet_sequence', 'state_seed_cf_timestamp_ms',
                 'position_seed_packet_sequence',
                 'release_gyro_packet_sequence', 'release_event_monotonic_s',
+                'state_seed_source_timestamp_basis',
+                'state_seed_source_snapshot_atomic',
+                'state_seed_transport_cf_timestamp_ms',
+                'release_gyro_source_timestamp_basis',
+                'release_gyro_source_snapshot_atomic',
+                'release_gyro_transport_cf_timestamp_ms',
+                'release_replayed_imu_count',
             )
             if any(
                     any(field not in snapshot for field in required_release_fields)
@@ -703,9 +994,6 @@ def analyze_run(
                     initial_position = _fingerprint_vector(
                         snapshot.get('initial_position_seed_m'), 3
                     )
-                    external_position = _fingerprint_vector(
-                        snapshot.get('external_position_seed_m'), 3
-                    )
                     initial_velocity = _fingerprint_vector(
                         snapshot.get('onboard_ekf_velocity_m_s'), 3
                     )
@@ -733,9 +1021,18 @@ def analyze_run(
                     event_time = _finite(
                         snapshot.get('release_event_monotonic_s')
                     )
+                    state_transport_epoch = _nonnegative_integer(
+                        snapshot.get('state_seed_transport_cf_timestamp_ms')
+                    )
+                    gyro_transport_epoch = _nonnegative_integer(
+                        snapshot.get('release_gyro_transport_cf_timestamp_ms')
+                    )
+                    replayed_imu_count = _nonnegative_integer(
+                        snapshot.get('release_replayed_imu_count')
+                    )
                     if (
                         snapshot.get('position_source')
-                        != 'raw_vicon_tvec_forwarded_to_onboard_ekf'
+                        != 'onboard_ekf_position_common_cf_epoch'
                         or snapshot.get('velocity_source')
                         != 'onboard_ekf_velocity_common_cf_epoch'
                         or snapshot.get(
@@ -750,26 +1047,11 @@ def analyze_run(
                     position_timing_basis = snapshot.get(
                         'position_seed_timing_basis'
                     )
-                    if position_timing_strict is True:
-                        if position_timing_basis != 'cf_device_timestamp_exact':
-                            failures.append(
-                                'release_state_source_or_timing_invalid'
-                            )
-                            continue
-                    elif position_timing_strict is False:
-                        if (
-                            position_timing_basis
-                            != 'host_after_wait_availability_approximation'
-                            or position_epoch is not None
-                        ):
-                            failures.append(
-                                'release_state_source_or_timing_invalid'
-                            )
-                            continue
-                        unsupported.append(
-                            'release_position_seed_not_on_common_cf_clock'
-                        )
-                    else:
+                    if (
+                        position_timing_strict is not True
+                        or position_timing_basis
+                        != 'firmware_latched_stabilizer_source_timestamp_exact'
+                    ):
                         failures.append('release_state_source_or_timing_invalid')
                         continue
                     if (
@@ -777,13 +1059,10 @@ def analyze_run(
                         or release_epoch is None or state_epoch is None
                         or release_epoch >= CF_TIMESTAMP_MODULUS_MS
                         or state_epoch >= CF_TIMESTAMP_MODULUS_MS
-                        or (
-                            position_epoch is not None
-                            and position_epoch >= CF_TIMESTAMP_MODULUS_MS
-                        )
+                        or position_epoch is None
+                        or position_epoch >= CF_TIMESTAMP_MODULUS_MS
                         or quaternion is None
                         or initial_position is None
-                        or external_position is None
                         or initial_velocity is None
                         or atomic_onboard_position is None
                         or release_position is None
@@ -792,11 +1071,43 @@ def analyze_run(
                         or position_sequence is None
                         or gyro_sequence is None
                         or event_time is None
+                        or state_transport_epoch is None
+                        or gyro_transport_epoch is None
+                        or replayed_imu_count is None
+                        or state_transport_epoch >= CF_TIMESTAMP_MODULUS_MS
+                        or gyro_transport_epoch >= CF_TIMESTAMP_MODULUS_MS
                     ):
                         failures.append('release_common_epoch_value_invalid')
                         continue
-                    if initial_position != external_position:
-                        failures.append('release_extpos_position_seed_mismatch')
+                    if snapshot.get('external_position_seed_m') is not None:
+                        failures.append('release_external_position_seed_forbidden')
+                        continue
+                    if initial_position != atomic_onboard_position:
+                        failures.append('release_atomic_onboard_position_mismatch')
+                        continue
+                    if (
+                        position_sequence != state_sequence
+                        or position_epoch != state_epoch
+                    ):
+                        failures.append('release_seed_not_atomic')
+                        continue
+                    if (
+                        snapshot.get('state_seed_source_timestamp_basis')
+                        != CONTACT_SOURCE_TIMESTAMP_BASIS
+                        or snapshot.get('state_seed_source_snapshot_atomic')
+                        is not True
+                        or snapshot.get('release_gyro_source_timestamp_basis')
+                        != CONTACT_SOURCE_TIMESTAMP_BASIS
+                        or snapshot.get('release_gyro_source_snapshot_atomic')
+                        is not True
+                        or abs(_signed_cf_delta_ms(
+                            state_transport_epoch, state_epoch
+                        )) > CONTACT_SOURCE_MAX_TRANSPORT_SKEW_MS
+                        or abs(_signed_cf_delta_ms(
+                            gyro_transport_epoch, release_epoch
+                        )) > CONTACT_SOURCE_MAX_TRANSPORT_SKEW_MS
+                    ):
+                        failures.append('release_producer_provenance_invalid')
                         continue
                     expected_state_skew = _signed_cf_delta_ms(
                         state_epoch, release_epoch
@@ -804,32 +1115,28 @@ def analyze_run(
                     if (
                         abs(position_skew) > 1000.0 * max_join_skew_s
                         or abs(velocity_skew) > 1000.0 * max_join_skew_s
+                        or expected_state_skew > 0
+                        or abs(position_skew - expected_state_skew) > 1e-6
                         or abs(velocity_skew - expected_state_skew) > 1e-6
                     ):
                         failures.append('release_common_epoch_mismatch')
                         continue
-                    if position_timing_strict is True:
-                        if (
-                            position_epoch is None
-                            or abs(
-                                position_skew - _signed_cf_delta_ms(
-                                    position_epoch, release_epoch
-                                )
-                            ) > 1e-6
-                        ):
-                            failures.append('release_common_epoch_mismatch')
-                            continue
+                    if expected_state_skew < 0 and replayed_imu_count < 1:
+                        failures.append('release_measured_imu_replay_missing')
+                        continue
                     release_fingerprints.add((
                         release_epoch, state_epoch, position_epoch,
                         position_skew, position_timing_strict,
                         position_timing_basis,
                         snapshot.get('position_source'),
                         snapshot.get('velocity_source'),
-                        quaternion, initial_position, external_position,
+                        quaternion, initial_position,
                         initial_velocity,
                         atomic_onboard_position,
                         release_position, release_velocity,
                         state_sequence, position_sequence, gyro_sequence,
+                        state_transport_epoch, gyro_transport_epoch,
+                        replayed_imu_count,
                         round(event_time, 12),
                     ))
                 if len(release_fingerprints) > 1:
@@ -974,6 +1281,10 @@ def analyze_run(
             unsupported.append('strict_position_update_epoch_missing')
         if saw_unproven_position_counter_increment:
             unsupported.append('strict_position_counter_increment_unproven')
+        if saw_vicon_capture_provenance_invalid:
+            unsupported.append('vicon_source_capture_provenance_invalid')
+        if saw_vicon_clock_provenance_invalid:
+            unsupported.append('vicon_cf_timestamp_provenance_invalid')
         if saw_approximate_position_update:
             unsupported.append('approximate_position_updates_present')
         if saw_zero_strict_position_update:
@@ -1101,6 +1412,20 @@ def analyze_run(
         'failures': failures,
         'unsupported_reasons': unsupported,
         'errors': sorted(set(failures + unsupported)),
+        'observed_protocol': {
+            'protocol_version': CONTACT_ATTITUDE_PROTOCOL_VERSION,
+            'alignment_nominal_yaw_deg': protocol_evidence[
+                'alignment_nominal_yaw_deg'
+            ],
+            'protocol_event_names': protocol_evidence['event_names'],
+        },
+        'producer_latched_contact_imu': {
+            'sample_count': len(contact_imu_records),
+            'invalid_provenance_count': (
+                invalid_contact_imu_provenance_count
+            ),
+            'required_for_this_run': expected_run != 1,
+        },
         'shadow_row_count': len(rows),
         'valid_shadow_row_count': valid_count,
         'valid_post_release_row_count': valid_post_release_count,
@@ -1141,19 +1466,30 @@ def analyze_three_runs(
         analyze_run(run2, 2, max_join_skew_s, min_comparison_samples),
         analyze_run(run3, 3, max_join_skew_s, min_comparison_samples),
     ]
+    cross_run_failures = []
+    nominal_yaws = {
+        report['observed_protocol']['alignment_nominal_yaw_deg']
+        for report in reports
+        if report['observed_protocol'][
+            'alignment_nominal_yaw_deg'
+        ] is not None
+    }
+    if len(nominal_yaws) > 1:
+        cross_run_failures.append('alignment_nominal_yaw_changed_across_runs')
     statuses = {report['status'] for report in reports}
     status = (
-        'FAIL' if 'FAIL' in statuses else
+        'FAIL' if cross_run_failures or 'FAIL' in statuses else
         'UNSUPPORTED' if 'UNSUPPORTED' in statuses else
         'READY_FOR_COMPARISON'
     )
     return {
-        'schema_version': 2,
+        'schema_version': 3,
         'offline_only': True,
         'command_authority': False,
         'status': status,
         'scientific_gate_passed': status == 'READY_FOR_COMPARISON',
         'minimum_comparison_samples_per_run': min_comparison_samples,
+        'cross_run_failures': cross_run_failures,
         'runs': reports,
     }
 

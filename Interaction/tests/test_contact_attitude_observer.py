@@ -209,10 +209,36 @@ class ContactAttitudeObserverTests(unittest.TestCase):
         ))
         for timestamp in (0, 10, 20):
             result = observer.add_alignment_sample(
-                timestamp, [0, 0, 1], [4.0, 0.0, 0.0], 0.0
+                timestamp, [0, 0, 1], [6.0, 0.0, 0.0], 0.0
             )
         self.assertFalse(result.valid)
         self.assertEqual(result.reason, "alignment_mean_rotation_exceeded")
+
+    def test_ready_alignment_survives_contact_onset_acceleration(self):
+        observer = ContactAttitudeObserver(ContactAttitudeConfig(
+            alignment_window_ms=20,
+            alignment_min_samples=3,
+            alignment_max_sample_gap_ms=10,
+        ))
+        for timestamp in (0, 10, 20):
+            result = observer.add_alignment_sample(
+                timestamp, [0, 0, 1], [0, 0, 0], 0.0
+            )
+        self.assertTrue(result.valid)
+        self.assertEqual(result.phase, observer.READY)
+
+        result = observer.add_alignment_sample(
+            21, [0, 0, 1.3], [10, 0, 0], 0.0
+        )
+
+        self.assertTrue(result.valid)
+        self.assertEqual(result.phase, observer.READY)
+        self.assertEqual(result.cf_timestamp_ms, 21)
+        self.assertEqual(
+            result.reason,
+            'ready_gyro_propagating_after_alignment_acceleration_unstable',
+        )
+        self.assertTrue(observer.begin_contact().valid)
 
     def test_alignment_does_not_bridge_an_imu_sample_hole(self):
         observer = ContactAttitudeObserver(ContactAttitudeConfig(

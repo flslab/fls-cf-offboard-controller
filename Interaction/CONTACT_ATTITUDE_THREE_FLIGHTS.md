@@ -64,21 +64,36 @@ not re-zero roll or pitch at release. The shadow alignment yaw comes from the
 configured nominal yaw, so flight 3's full-pose correction cannot leak into its
 initialization.
 
-At release, flights 2 and 3 latch position from the latest causal Vicon `tvec`
-that was actually forwarded to the onboard EKF, velocity from one atomic
-onboard-EKF state packet, and attitude plus gyro bias from the selected gyro
-history on the Crazyflie clock. The onboard position at the velocity epoch is
-kept only as a diagnostic. The host-loop state, past commands, current
-setpoint, and pending command history are also diagnostic-only and never
-reconstruct release velocity. The EKF nominal state is created at the frozen
-release gyro epoch, so the release `tvec` is not accidentally propagated from
-the older velocity-sample epoch. After release, measured body-frame specific
-force drives velocity through the estimated attitude, while raw Vicon `tvec`
-continues to be fused only as a position observation. Vicon quaternion remains
-evaluation-only for the shadow filter. A live Vicon observation without a
-capture-to-Crazyflie clock map is labelled as a host-after-wait approximation;
-an offline or simulator frame is strict only when it carries a genuine
-Crazyflie-clock timestamp.
+At release, flights 2 and 3 latch position and velocity from one atomic
+onboard-EKF state packet, and attitude plus gyro bias from gyro history. The
+host-loop state, past commands, current setpoint, and pending command history
+are diagnostic-only and never reconstruct release velocity. After release,
+measured body-frame specific force drives velocity through the estimated
+attitude, while raw Vicon `tvec` is fused only as a position observation. Vicon
+quaternion remains evaluation-only for the shadow filter.
+
+Control-grade handoff is deliberately stricter than these shadow comparison
+runs. The first-unloaded preview must finish before dwell confirmation; its
+complete identity and mapping evidence are immutable. The mapped release,
+release gyro, and atomic p/v seed must be exactly the same raw and unwrapped CF
+epoch with zero mapping uncertainty. Every producer-to-transport IMU delay must
+be causal and within `0..5 ms`; the wider `±100 ms` low-16 reconstruction
+window is diagnostic only. A live Vicon observation without an exact-zero
+capture-to-Crazyflie clock map remains approximate and ineligible. Absolute yaw
+must include a numeric value and certificate bound to the configured alignment,
+and body-rate uncertainty must be strictly positive and tied to the same named
+joint IMU calibration artifact. The present independent Arduino clock mapping
+is always shadow-only, even if YAML claims zero error. The estimator authority
+gate accepts only the future `firmware_shared_clock_release_latch_v1` basis;
+Arduino and CrazySim clock bases remain diagnostic-only.
+
+For eventual active use, those named values cannot remain self-reported YAML
+claims. The release/yaw/IMU/body-rate/EKF-noise evidence must be loaded from an
+immutable artifact bound to the vehicle, rig and extrinsics, firmware, boot/run
+session, validity interval, and content hash. The yaw artifact must include its
+measured uncertainty. A continuous Crazyflie clock/boot heartbeat and a
+post-host-stall recovery dwell are also required because callback receive age
+alone cannot rule out a cached packet that was delayed before reaching the host.
 
 For an explicit three-flight run, the observer and both listeners are
 constructed and registered before arming. The callbacks initially record only
@@ -135,3 +150,61 @@ per run. The report includes source hashes and roll/pitch bias, MAE, RMSE,
 strict timing and integrity gates. `READY_FOR_COMPARISON` means that the data is
 eligible for offline comparison; it is not an estimator-performance pass and
 does not grant flight-control authority.
+
+## Local validation status (2026-09-14)
+
+The local shadow implementation and the position-only CrazySim plant gate are
+complete. The captured trace used an explicitly armed simulated vehicle, a
+powered-hover gate, a 100 ms scheduled wrench interval, 1 kHz IMU, 200 Hz
+odometry, and 1.5 s of post-release motion. All records used the Gazebo
+simulation clock. Odometry quaternion was retained only for scoring; a
+mutation/removal canary confirmed that it did not change the estimator output.
+The saved evaluation reports are:
+
+- `autoresearch/loop-260913-1317/crazysim-trace-v2.jsonl` (retained source);
+- `autoresearch/loop-260913-1317/crazysim-capture-report-v2.json`;
+- `autoresearch/loop-260913-1317/crazysim-nominal-v2.json`;
+- `autoresearch/loop-260913-1317/crazysim-bias-stress-v2.json`.
+
+The nominal run passed the absolute error gates: fused attitude RMSE/p95/final
+were `0.221/0.550/0.175 deg`. Its ideal simulated gyro-only baseline was better
+(`0.030/0.045/0.015 deg`), so no nominal A/B-improvement claim is made. With a
+deterministic `[+1.0, -0.6, 0.0] deg/s` post-release gyro-bias stress, the fused
+RMSE/p95/final were `0.582/0.867/0.902 deg`, versus
+`0.999/1.636/1.732 deg` for gyro-only. The fused-to-gyro RMSE ratio was `0.583`.
+Both runs used 300 position-only updates with zero rejection, a 4 ms causal
+finite-difference seed, a `0.174 deg` release-seed attitude error, and no command
+history as estimator input. That 4 ms trace passes the offline numerical
+evaluator but cannot pass the newer production exact-epoch gate; it is attitude
+estimator evidence, not authority evidence. The simulator's odometry twist is
+ignored: release velocity is calculated in the world frame from a 10 ms causal
+position-only finite difference, and the latest causal position is extrapolated
+to the release epoch. Mutating every odometry velocity and quaternion leaves the
+estimator-output hash unchanged.
+
+The firmware core is also ported behind an opt-in build switch and remains
+runtime-disabled by default. It passes 11 targeted lifecycle tests, all 15
+`kalman_core` tests, isolated strict/default Docker builds and CTest, and an
+isolated strict CrazySim firmware-in-loop input chain. Schema v4 stages only
+gyro attitude/bias before release (`preImuN=247`), fuses no pre-release position
+(`prePosN=0`) and explicitly ignores 50 such samples. Wrench clear occurred at
+`9,145,000 us`; an independent post-physics world-linear-acceleration detector
+observed release at `9,146,000 us`. The attitude seed is exact at that epoch
+(`qSeedExact=1`, attitude `seedSkew=0`). After release the run records
+`imuN=4080`, `posN=450`, `posRej=366`, a `1000 us` maximum IMU gap, zero late
+inputs, zero pair skew, and zero unmatched inputs. A separate default-off run
+passes without a release-sensor artifact. Both generated `cf2` files are Linux
+ARM64 SITL executables, not flashable Crazyflie firmware.
+
+This strict run closes local transport, independent release-response, lifecycle,
+and attitude-seed timing gates; it does not prove the translation seed epoch.
+Release p/v are copied from an untimestamped current firmware Kalman core, so
+`transEpoch=0` and control eligibility is explicitly false. The world applies a
+direct wrench and has no contact geometry or load-cell/potentiometer model, and
+absolute attitude accuracy is unscored. Real command authority also remains
+blocked by the absence of a firmware/shared-clock physical release latch,
+exact-zero Vicon timing, resolved session/vehicle calibration artifacts,
+calibrated EKF noise/prior and observability thresholds, current planar braking
+calibration, real commander/watchdog fault injection, and the on-site three-run
+protocol. No local result in this section authorizes deployment, flashing, or
+flight-control authority.

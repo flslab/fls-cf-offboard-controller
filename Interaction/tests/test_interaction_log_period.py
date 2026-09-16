@@ -66,6 +66,47 @@ class InteractionLogPeriodTests(unittest.TestCase):
     def test_installed_cflib_encodes_compensated_period_as_legacy_byte(self):
         self.assertEqual(LogConfig('STATE', period_in_ms=100).period, 10)
 
+    def test_crazysim_uses_upstream_ten_millisecond_period_units(self):
+        self.logger.args = SimpleNamespace(crazysim=True)
+
+        blocks = self.initialize({
+            'STATE': {'stateEstimate.x': {'type': 'float', 'data': []}},
+            'REFERENCE': {
+                'log_period_ms': 20,
+                'kalmanPRel.q0': {'type': 'float', 'data': []},
+            },
+        })
+
+        self.assertEqual(blocks[0].period_in_ms, 10)
+        self.assertEqual(blocks[1].period_in_ms, 20)
+
+    def test_crazysim_reference_state_is_100_hz_and_status_proves_imu_rate(self):
+        self.logger.args = SimpleNamespace(crazysim=True)
+        blocks = self.initialize(
+            interaction_config.log_vars_for_crazysim({}), default_period=10
+        )
+        by_name = {block.name: block for block in blocks}
+        self.assertEqual(by_name['P_REL_STATUS'].period_in_ms, 20)
+        self.assertEqual(by_name['P_REL_ATT'].period_in_ms, 10)
+        self.assertEqual(by_name['P_REL_ACC'].period_in_ms, 10)
+        self.assertEqual(by_name['P_REL_HLC'].period_in_ms, 20)
+        self.assertEqual(by_name['ATT_DES'].period_in_ms, 10)
+        self.assertEqual(
+            [name for name, _ in by_name['ATT_DES'].variables],
+            ['controller.roll', 'controller.pitch'],
+        )
+        status_names = {
+            name for name, _ in by_name['P_REL_STATUS'].variables
+        }
+        self.assertIn('kalmanPRel.imuN', status_names)
+        self.assertIn('kalmanPRel.maxGapUs', status_names)
+        self.assertIn('kalmanPRel.brkReady', status_names)
+        handoff_names = {
+            name for name, _ in by_name['P_REL_HLC'].variables
+        }
+        self.assertIn('kalmanPRel.transEpoch', handoff_names)
+        self.assertIn('hlCommander.pRelUsed', handoff_names)
+
     def test_group_override_is_consumed_without_mutating_source(self):
         config = {
             'STATE': {

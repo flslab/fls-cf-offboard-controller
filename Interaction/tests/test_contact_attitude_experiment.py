@@ -92,6 +92,9 @@ class ContactAttitudeExperimentTests(unittest.TestCase):
         self.assertEqual(wrench["contact_attitude_shadow_mode"], INERTIAL_POSITION)
         self.assertEqual(wrench["contact_attitude_experiment_run"], 2)
         self.assertFalse(wrench["contact_attitude_vicon_orientation_forwarded"])
+        self.assertTrue(wrench[
+            'contact_attitude_shadow_post_release_vicon_position_fusion'
+        ])
         self.assertFalse(wrench["shadow_mode"])
 
     def test_requires_exact_physical_lifecycle_sources(self):
@@ -243,6 +246,18 @@ class ContactAttitudeExperimentTests(unittest.TestCase):
     def test_position_only_rigidbody_rejects_full_pose(self):
         with self.assertRaisesRegex(ValueError, "without --vicon-full-pose"):
             validate_contact_attitude_cli(args(2, vicon_full_pose=True))
+
+    def test_pure_inertial_release_option_requires_custom_shadow_run(self):
+        with self.assertRaisesRegex(ValueError, 'requires run 2 or 3'):
+            validate_contact_attitude_cli(args(
+                1, contact_attitude_shadow_no_vicon_position=True
+            ))
+        self.assertEqual(
+            validate_contact_attitude_cli(args(
+                2, contact_attitude_shadow_no_vicon_position=True
+            )),
+            experiment_run_config(2),
+        )
 
     def test_full_pose_run_requires_rigidbody_name(self):
         with self.assertRaisesRegex(ValueError, "requires --obj-name"):

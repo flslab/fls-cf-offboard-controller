@@ -5,6 +5,7 @@ import numpy as np
 from Interaction.jerk_limited_braking import (
     JerkLimitedBrakeError,
     make_jerk_limited_brake_profile,
+    make_release_state_septic_brake_profile,
     make_septic_brake_profile,
 )
 
@@ -144,6 +145,84 @@ class JerkLimitedBrakeProfileTests(unittest.TestCase):
 
 
 class SepticBrakeProfileTests(unittest.TestCase):
+    def test_release_state_profile_preserves_v_a_j_and_ends_level(self):
+        profile = make_release_state_septic_brake_profile(
+            0.89, -0.475, -4.3, 2.0, 12.0,
+            initial_position_m=-0.2,
+        )
+        initial = profile.sample(0.0)
+        terminal = profile.sample(profile.duration_s)
+        samples = [
+            profile.sample(value)
+            for value in np.linspace(0.0, profile.duration_s, 4001)
+        ]
+
+        self.assertEqual(
+            profile.profile_type, 'release_state_septic_free_stop'
+        )
+        self.assertAlmostEqual(initial.position_m, -0.2)
+        self.assertAlmostEqual(initial.velocity_m_s, 0.89)
+        self.assertAlmostEqual(initial.acceleration_m_s2, -0.475)
+        self.assertAlmostEqual(initial.jerk_m_s3, -4.3)
+        self.assertLessEqual(
+            max(abs(sample.acceleration_m_s2) for sample in samples),
+            2.0+1e-7,
+        )
+        self.assertLessEqual(
+            max(abs(sample.jerk_m_s3) for sample in samples), 12.0+1e-7
+        )
+        self.assertGreaterEqual(
+            min(sample.velocity_m_s for sample in samples), -1e-7
+        )
+        self.assertAlmostEqual(terminal.velocity_m_s, 0.0)
+        self.assertAlmostEqual(terminal.acceleration_m_s2, 0.0)
+        self.assertAlmostEqual(terminal.jerk_m_s3, 0.0)
+        coefficients = np.asarray(
+            profile.normalized_position_coefficients, dtype=float
+        )
+        terminal_snap = np.polynomial.polynomial.polyval(
+            1.0, np.polynomial.polynomial.polyder(coefficients, 4)
+        )/profile.duration_s**4
+        self.assertAlmostEqual(terminal_snap, 0.0, places=7)
+
+    def test_release_rate_jerk_above_command_limit_is_preserved(self):
+        profile = make_release_state_septic_brake_profile(
+            1.13, -0.65, -17.8, 2.0, 12.0,
+        )
+        samples = [
+            profile.sample(value)
+            for value in np.linspace(0.0, profile.duration_s, 4001)
+        ]
+        self.assertAlmostEqual(profile.sample(0.0).jerk_m_s3, -17.8)
+        self.assertGreaterEqual(profile.max_jerk_m_s3, 17.8)
+        self.assertLessEqual(profile.max_jerk_m_s3, 2.5*17.8+1e-7)
+        self.assertLessEqual(
+            max(abs(sample.jerk_m_s3) for sample in samples),
+            profile.max_jerk_m_s3+1e-7,
+        )
+        self.assertGreaterEqual(
+            min(sample.velocity_m_s for sample in samples), -1e-7
+        )
+        self.assertTrue(profile.sample(profile.duration_s).complete)
+
+    def test_release_state_profile_honors_attitude_bandwidth_duration(self):
+        profile = make_release_state_septic_brake_profile(
+            0.90, -0.50, -4.0, 3.0, 12.0,
+            min_duration_s=0.90,
+        )
+        samples = [
+            profile.sample(value)
+            for value in np.linspace(0.0, profile.duration_s, 4001)
+        ]
+
+        self.assertGreaterEqual(profile.duration_s, 0.90)
+        self.assertGreaterEqual(
+            min(sample.velocity_m_s for sample in samples), -1e-7
+        )
+        self.assertAlmostEqual(samples[-1].velocity_m_s, 0.0)
+        self.assertAlmostEqual(samples[-1].acceleration_m_s2, 0.0)
+        self.assertAlmostEqual(samples[-1].jerk_m_s3, 0.0)
+
     def test_zero_acceleration_profile_has_smooth_terminal_conditions(self):
         profile = make_septic_brake_profile(
             0.60, 0.0, 1.0, 4.0, initial_position_m=-0.25

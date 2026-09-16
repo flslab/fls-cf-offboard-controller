@@ -139,8 +139,11 @@ class ContactAttitudeConfig:
     alignment_mean_accel_norm_tolerance_g: float = 0.05
     alignment_max_accel_direction_rms_deg: float = 2.0
     alignment_max_tilt_deg: float = 12.0
-    alignment_max_gyro_std_deg_s: float = 1.5
-    alignment_max_mean_gyro_deg_s: float = 3.0
+    # Calibrated from stable-hover lb11 data. Position/velocity and
+    # accelerometer gates remain required, so motion is not certified from
+    # gyro thresholds alone.
+    alignment_max_gyro_std_deg_s: float = 2.5
+    alignment_max_mean_gyro_deg_s: float = 5.0
     alignment_max_sample_gap_ms: float = 5.0
     alignment_min_yaw_resultant: float = 0.98
     alignment_max_yaw_deviation_deg: float = 5.0
@@ -238,17 +241,47 @@ class ContactAttitudeObserver:
         acceleration = _vector3(accel_g, "accel_g")
         gyro = _vector3(gyro_deg_s, "gyro_deg_s")
         yaw = float(ekf_legacy_yaw_deg)
+        was_ready = self.phase == self.READY
+        previous_unwrapped = self._unwrapped_timestamp
         unwrapped, timestamp_error = self._unwrap(cf_timestamp_ms)
         if timestamp_error:
             return self.snapshot(timestamp_error)
+
+        def reject(reason, *, reset_window=False):
+            if reset_window:
+                self._alignment_samples.clear()
+            if was_ready:
+                gap_ms = float(unwrapped - previous_unwrapped)
+                self._max_gap_ms = max(self._max_gap_ms, gap_ms)
+                if gap_ms > self.config.max_gyro_gap_ms:
+                    self.phase = self.ALIGNING
+                    self.reason = "alignment_sample_gap"
+                    return self.snapshot()
+                corrected = gyro - self._bias_deg_s
+                previous_corrected = (
+                    self._last_gyro_deg_s - self._bias_deg_s
+                )
+                mean_rate_rad_s = np.radians(
+                    0.5 * (previous_corrected + corrected)
+                )
+                self._quaternion = integrate_body_rate(
+                    self._quaternion, mean_rate_rad_s, gap_ms / 1000.0
+                )
+                self._last_gyro_deg_s = gyro
+                self._native_rate_rad_s = np.radians(corrected)
+                self._sample_count += 1
+                self.reason = "ready_gyro_propagating_after_" + reason
+                return self.snapshot()
+            if reset_window:
+                self.phase = self.ALIGNING
+            self.reason = reason
+            return self.snapshot()
+
         if not math.isfinite(yaw):
-            return self.snapshot("invalid_alignment_yaw")
+            return reject("invalid_alignment_yaw")
         if abs(float(np.linalg.norm(acceleration)) - 1.0) > (
                 self.config.alignment_accel_norm_tolerance_g):
-            self._alignment_samples.clear()
-            self.phase = self.ALIGNING
-            self.reason = "alignment_acceleration_unstable"
-            return self.snapshot()
+            return reject("alignment_acceleration_unstable", reset_window=True)
         self._alignment_samples.append((unwrapped, acceleration, gyro, yaw))
         cutoff = unwrapped - self.config.alignment_window_ms
         self._alignment_samples = [
@@ -264,27 +297,21 @@ class ContactAttitudeObserver:
                 # history.  Keep only the first sample after the hole so a new,
                 # contiguous stable-hover interval can form.
                 self._alignment_samples = [self._alignment_samples[-1]]
-                self.phase = self.ALIGNING
-                self.reason = "alignment_sample_gap"
-                return self.snapshot()
+                return reject("alignment_sample_gap")
         if len(self._alignment_samples) < self.config.alignment_min_samples:
-            self.reason = "alignment_insufficient_samples"
-            return self.snapshot()
+            return reject("alignment_insufficient_samples")
         span_ms = self._alignment_samples[-1][0] - self._alignment_samples[0][0]
         if span_ms < self.config.alignment_window_ms:
-            self.reason = "alignment_window_short"
-            return self.snapshot()
+            return reject("alignment_window_short")
         gyros = np.stack([sample[2] for sample in self._alignment_samples])
         if np.any(np.std(gyros, axis=0) > self.config.alignment_max_gyro_std_deg_s):
-            self.reason = "alignment_gyro_unstable"
-            return self.snapshot()
+            return reject("alignment_gyro_unstable")
         mean_gyro = np.mean(gyros, axis=0)
         if float(np.linalg.norm(mean_gyro)) > (
                 self.config.alignment_max_mean_gyro_deg_s):
             # A constant rotation has zero standard deviation and must not be
             # mistaken for gyro bias during the stationary alignment phase.
-            self.reason = "alignment_mean_rotation_exceeded"
-            return self.snapshot()
+            return reject("alignment_mean_rotation_exceeded")
         accelerations = np.stack([sample[1] for sample in self._alignment_samples])
         yaws = np.radians([sample[3] for sample in self._alignment_samples])
         accel_norms = np.linalg.norm(accelerations, axis=1)
@@ -292,8 +319,7 @@ class ContactAttitudeObserver:
         mean_accel_norm = float(np.linalg.norm(mean_acceleration))
         if abs(mean_accel_norm - 1.0) > (
                 self.config.alignment_mean_accel_norm_tolerance_g):
-            self.reason = "alignment_mean_acceleration_not_gravity"
-            return self.snapshot()
+            return reject("alignment_mean_acceleration_not_gravity")
         unit_accelerations = accelerations / accel_norms[:, None]
         mean_direction = mean_acceleration / mean_accel_norm
         direction_errors_deg = np.degrees(np.arccos(np.clip(
@@ -302,28 +328,24 @@ class ContactAttitudeObserver:
         direction_rms_deg = float(np.sqrt(np.mean(direction_errors_deg ** 2)))
         if direction_rms_deg > (
                 self.config.alignment_max_accel_direction_rms_deg):
-            self.reason = "alignment_acceleration_direction_unstable"
-            return self.snapshot()
+            return reject("alignment_acceleration_direction_unstable")
         tilt_deg = math.degrees(math.acos(float(np.clip(
             mean_direction[2], -1.0, 1.0
         ))))
         if tilt_deg > self.config.alignment_max_tilt_deg:
-            self.reason = "alignment_tilt_exceeded"
-            return self.snapshot()
+            return reject("alignment_tilt_exceeded")
         mean_sin = float(np.mean(np.sin(yaws)))
         mean_cos = float(np.mean(np.cos(yaws)))
         yaw_resultant = math.hypot(mean_sin, mean_cos)
         if yaw_resultant < self.config.alignment_min_yaw_resultant:
-            self.reason = "alignment_yaw_ambiguous"
-            return self.snapshot()
+            return reject("alignment_yaw_ambiguous")
         mean_yaw = math.atan2(mean_sin, mean_cos)
         yaw_deviations_deg = np.degrees(np.arctan2(
             np.sin(yaws - mean_yaw), np.cos(yaws - mean_yaw)
         ))
         if float(np.max(np.abs(yaw_deviations_deg))) > (
                 self.config.alignment_max_yaw_deviation_deg):
-            self.reason = "alignment_yaw_unstable"
-            return self.snapshot()
+            return reject("alignment_yaw_unstable")
         self._quaternion = quaternion_from_accel_and_legacy_yaw(
             mean_acceleration, mean_yaw
         )

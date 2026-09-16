@@ -14,6 +14,37 @@ from typing import Mapping
 
 ONBOARD_MIRROR = "onboard_mirror"
 INERTIAL_POSITION = "inertial_position"
+CONTACT_ATTITUDE_PROTOCOL_VERSION = (
+    'contact_attitude_three_flight_v3_optional_pure_inertial_release'
+)
+RELEASE_EVENT_TIME_SOURCE = (
+    'potentiometer_first_unloaded_uart_receive_monotonic_confirmed_by_dwell'
+)
+CRAZYSIM_RELEASE_CLOCK_MAPPING_BASIS = (
+    'crazysim_shared_monotonic_cf_clock_v1'
+)
+ARDUINO_TO_CF_RELEASE_CLOCK_MAPPING_BASIS = (
+    'arduino_to_cf_calibrated_v1'
+)
+FIRMWARE_SHARED_CLOCK_RELEASE_LATCH_BASIS = (
+    'firmware_shared_clock_release_latch_v1'
+)
+UNCALIBRATED_ARDUINO_RELEASE_CLOCK_MAPPING_BASIS = (
+    'arduino_device_time_paired_with_uart_receive_monotonic_'
+    'no_calibrated_cf_mapping'
+)
+# Arduino mappings and the CrazySim shared clock remain useful evidence for
+# offline/shadow analysis, but neither proves a physical release latch in the
+# Crazyflie producer clock.  Keep diagnostic acceptance explicitly separate
+# from the authority allowlist.
+DIAGNOSTIC_RELEASE_CLOCK_MAPPING_BASES = frozenset({
+    CRAZYSIM_RELEASE_CLOCK_MAPPING_BASIS,
+    ARDUINO_TO_CF_RELEASE_CLOCK_MAPPING_BASIS,
+    FIRMWARE_SHARED_CLOCK_RELEASE_LATCH_BASIS,
+})
+AUTHORITY_RELEASE_CLOCK_MAPPING_BASES = frozenset({
+    FIRMWARE_SHARED_CLOCK_RELEASE_LATCH_BASIS,
+})
 EXPERIMENT_RUNS = {
     1: {
         "shadow_mode": ONBOARD_MIRROR,
@@ -267,6 +298,7 @@ def prepare_contact_attitude_experiment_mission(mission, run):
         "contact_attitude_vicon_orientation_forwarded": (
             protocol["vicon_orientation_forwarded"]
         ),
+        "contact_attitude_shadow_post_release_vicon_position_fusion": True,
     })
     return prepared
 
@@ -277,6 +309,15 @@ def validate_contact_attitude_cli(args):
     if run is None:
         return None
     protocol = experiment_run_config(run)
+    if (
+        run == 1
+        and bool(getattr(
+            args, 'contact_attitude_shadow_no_vicon_position', False
+        ))
+    ):
+        raise ValueError(
+            '--contact-attitude-shadow-no-vicon-position requires run 2 or 3'
+        )
     if not getattr(args, "interaction", False):
         raise ValueError("--contact-attitude-run requires --interaction")
     if not getattr(args, "sense", False):

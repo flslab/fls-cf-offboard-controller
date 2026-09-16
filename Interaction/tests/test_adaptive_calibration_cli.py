@@ -113,6 +113,50 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
             with self.subTest(options=options), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parse_controller_args(['--calibrate', '--adaptive-braking-calibration', *options])
 
+    def test_crazysim_accepts_orchestrated_calibration_at_100_hz(self):
+        args = parse_controller_args([
+            '--orchestrated', '--calibrate', '--crazysim',
+            '--radio', 'udp://127.0.0.1:19850', '--log',
+            '--smooth-controller-rate', '100', '--cf-log-period', '10',
+        ])
+        self.assertTrue(args.crazysim)
+        self.assertTrue(args.calibrate)
+        self.assertFalse(args.targeted_braking_calibration)
+        self.assertFalse(args.interaction)
+        self.assertFalse(args.sense)
+
+    def test_post_release_15state_is_an_explicit_crazysim_pid_option(self):
+        args = parse_controller_args([
+            '--orchestrated', '--interaction', '--sense', '--crazysim',
+            '--radio', 'udp://127.0.0.1:19850', '--log',
+            '--pid-attitude-source', 'post-release-15state',
+        ])
+        self.assertEqual(args.controller_type, 'pid')
+        self.assertEqual(
+            args.pid_attitude_source, 'post-release-15state'
+        )
+        for incompatible in (
+                ['--interaction', '--sense', '--log'],
+                ['--orchestrated', '--interaction', '--sense', '--crazysim',
+                 '--radio', 'udp://127.0.0.1:19850', '--log',
+                 '--controller-type', 'mellinger']):
+            with self.subTest(incompatible=incompatible), redirect_stderr(
+                    io.StringIO()), self.assertRaises(SystemExit):
+                parse_controller_args([
+                    *incompatible,
+                    '--pid-attitude-source', 'post-release-15state',
+                ])
+
+    def test_crazysim_still_rejects_unscoped_modes(self):
+        for mode in ([], ['--interaction'], ['--sense']):
+            with self.subTest(mode=mode), redirect_stderr(
+                    io.StringIO()), self.assertRaises(SystemExit):
+                parse_controller_args([
+                    '--orchestrated', *mode, '--crazysim',
+                    '--radio', 'udp://127.0.0.1:19850', '--log',
+                    '--smooth-controller-rate', '100',
+                ])
+
     def test_default_calibration_disables_planar_stage_in_independent_copy(self):
         run, factory = calibration_switch()
         mission = {'Interaction': {'config': {'wrench_interaction': {

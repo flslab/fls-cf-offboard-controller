@@ -11,7 +11,7 @@ deployment, or firmware-write path.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import math
@@ -29,7 +29,20 @@ from Interaction.contact_attitude_shadow import (
     ContactAttitudeShadow,
     ContactAttitudeShadowConfig,
 )
-from Interaction.log_manager import CfLogPacket, MocapFramePacket
+from Interaction.contact_attitude_experiment import (
+    ARDUINO_TO_CF_RELEASE_CLOCK_MAPPING_BASIS,
+    CONTACT_ATTITUDE_PROTOCOL_VERSION,
+    DIAGNOSTIC_RELEASE_CLOCK_MAPPING_BASES,
+    RELEASE_EVENT_TIME_SOURCE,
+    experiment_run_config,
+)
+from Interaction.log_manager import (
+    CONTACT_SOURCE_MAX_TRANSPORT_SKEW_MS,
+    CONTACT_SOURCE_TIMESTAMP_BASIS,
+    TRUSTED_MOCAP_CF_TIMESTAMP_BASES,
+    CfLogPacket,
+    MocapFramePacket,
+)
 from Interaction.post_release_inertial_ekf import (
     PostReleaseEkfConfig,
     rotation_matrix,
@@ -76,8 +89,6 @@ LOGGED_SHADOW_COUNTERS = (
     "drain_budget_exceeded_count",
     "release_budget_exceeded_count",
 )
-
-
 @dataclass(frozen=True)
 class ReplayGateConfig:
     """Accuracy gates and clock joins for one offline replay."""
@@ -130,6 +141,9 @@ class _TimedQuaternion:
     source: str
     valid: bool = True
     reason: str | None = None
+    cf_timestamp_basis: str | None = None
+    cf_timestamp_uncertainty_ms: float | None = None
+    cf_timestamp_trusted: bool = False
 
 
 def _finite_float(value):
@@ -150,6 +164,27 @@ def _raw_cf_timestamp(data: Mapping, record: Mapping | None = None):
                 result = int(value)
                 return result if 0 <= result < CF_TIMESTAMP_MODULUS_MS else None
     return None
+
+
+def _cf_timestamp_metadata(data: Mapping, record: Mapping | None = None):
+    basis = None
+    uncertainty = None
+    for source in (data, record or {}):
+        candidate = source.get('cf_timestamp_basis')
+        if isinstance(candidate, str):
+            basis = candidate
+            break
+    for source in (data, record or {}):
+        candidate = _finite_float(source.get('cf_timestamp_uncertainty_ms'))
+        if candidate is not None:
+            uncertainty = candidate
+            break
+    trusted = bool(
+        basis in TRUSTED_MOCAP_CF_TIMESTAMP_BASES
+        and uncertainty is not None
+        and uncertainty >= 0.0
+    )
+    return basis, uncertainty, trusted
 
 
 def _host_time(data: Mapping, record: Mapping | None = None):
@@ -221,6 +256,244 @@ def _optional_cf_timestamp(value):
         return None
     timestamp = int(numeric)
     return timestamp if 0 <= timestamp < CF_TIMESTAMP_MODULUS_MS else None
+
+
+def _nonnegative_integer(value):
+    if isinstance(value, bool):
+        return None
+    numeric = _finite_float(value)
+    if numeric is None or numeric < 0.0 or not numeric.is_integer():
+        return None
+    return int(numeric)
+
+
+def _protocol_metadata(records):
+    """Extract one immutable, self-describing experiment protocol."""
+    candidates = []
+    incomplete = False
+    seen_names = set()
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        data = record.get('data')
+        if not isinstance(data, Mapping):
+            continue
+        relevant = bool(
+            record.get('type') == 'events'
+            and record.get('name') in (
+                'Contact Attitude Shadow Prepared Pre-Arm',
+                'Contact Attitude Shadow Started',
+            )
+        )
+        if not relevant or not any(key in data for key in (
+                'protocol_version', 'experiment_run', 'shadow_mode', 'mode')):
+            if relevant:
+                incomplete = True
+            continue
+        seen_names.add(record.get('name'))
+        version = data.get('protocol_version')
+        run = data.get('experiment_run')
+        mode = data.get('shadow_mode', data.get('mode'))
+        vicon_mode = data.get('vicon_mode')
+        forwarded = data.get(
+            'vicon_orientation_forwarded_to_onboard_ekf',
+            data.get('vicon_orientation_forwarded'),
+        )
+        position_fusion = data.get(
+            'shadow_post_release_vicon_position_fusion'
+        )
+        if position_fusion is None:
+            # v2 logs predate the optional pure-inertial route and always
+            # fused position after release.
+            position_fusion = True
+        yaw = _finite_float(data.get('alignment_nominal_yaw_deg'))
+        run_numeric = _finite_float(run)
+        if (
+            isinstance(run, bool) or run_numeric is None
+            or not run_numeric.is_integer()
+        ):
+            run = None
+        else:
+            run = int(run_numeric)
+        if (
+            version is None or run is None or mode is None
+            or not isinstance(vicon_mode, str) or not vicon_mode
+            or not isinstance(forwarded, bool)
+            or not isinstance(position_fusion, bool)
+            or yaw is None
+        ):
+            incomplete = True
+            continue
+        candidates.append({
+            'protocol_version': str(version),
+            'experiment_run': run,
+            'shadow_mode': str(mode),
+            'vicon_mode': None if vicon_mode is None else str(vicon_mode),
+            'vicon_orientation_forwarded': forwarded,
+            'shadow_post_release_vicon_position_fusion': position_fusion,
+            'alignment_nominal_yaw_deg': yaw,
+        })
+    reasons = []
+    for required_name, reason in (
+        (
+            'Contact Attitude Shadow Prepared Pre-Arm',
+            'contact_attitude_prearm_protocol_metadata_missing',
+        ),
+        (
+            'Contact Attitude Shadow Started',
+            'contact_attitude_started_protocol_metadata_missing',
+        ),
+    ):
+        if required_name not in seen_names:
+            reasons.append(reason)
+    if not candidates:
+        reasons.append('contact_attitude_protocol_metadata_missing')
+        if incomplete:
+            reasons.append('contact_attitude_protocol_metadata_incomplete')
+        return None, reasons
+    canonical = {
+        (
+            item['protocol_version'], item['experiment_run'],
+            item['shadow_mode'], item['vicon_mode'],
+            item['vicon_orientation_forwarded'],
+            item['shadow_post_release_vicon_position_fusion'],
+            item['alignment_nominal_yaw_deg'],
+        )
+        for item in candidates
+    }
+    if len(canonical) != 1 or incomplete:
+        reasons.append('contact_attitude_protocol_metadata_inconsistent')
+    metadata = candidates[0]
+    if metadata['protocol_version'] != CONTACT_ATTITUDE_PROTOCOL_VERSION:
+        reasons.append('contact_attitude_protocol_version_unsupported')
+    try:
+        expected = experiment_run_config(metadata['experiment_run'])
+    except ValueError:
+        reasons.append('contact_attitude_protocol_run_invalid')
+    else:
+        if (
+            metadata['shadow_mode'] != expected['shadow_mode']
+            or metadata['vicon_orientation_forwarded']
+            != expected['vicon_orientation_forwarded']
+            or (
+                metadata['vicon_mode'] is not None
+                and metadata['vicon_mode'] != expected['vicon_mode']
+            )
+        ):
+            reasons.append('contact_attitude_protocol_fields_mismatch')
+    return metadata, reasons
+
+
+def _contact_packet_provenance_valid(group, data, cf_timestamp_ms):
+    accepted_signatures = {
+        'GYRO_1KHZ': (
+            (
+                'contactImu.gx', 'contactImu.gy', 'contactImu.gz',
+                'contactImu.ax', 'contactImu.ay', 'contactImu.az',
+                'contactImu.px', 'contactImu.py', 'contactImu.pz',
+                'contactImu.vx', 'contactImu.vy', 'contactImu.vz',
+                'contactImu.epoch',
+            ),
+            (
+                'contactGyro.x', 'contactGyro.y', 'contactGyro.z',
+                'contactGyro.epoch',
+            ),
+        ),
+        'ACC_ALIGN': ((
+            'contactAccel.x', 'contactAccel.y', 'contactAccel.z',
+            'contactAccel.yaw', 'contactAccel.epoch',
+        ),),
+        'CONTACT_STATE_SEED': ((
+            'contactSeed.x', 'contactSeed.y', 'contactSeed.z',
+            'contactSeed.vx', 'contactSeed.vy', 'contactSeed.vz',
+            'contactSeed.epoch',
+        ),),
+    }
+    signatures = accepted_signatures.get(group)
+    if signatures is None:
+        return True
+    names = next((
+        signature for signature in signatures
+        if all(name in data for name in signature)
+    ), None)
+    if names is None:
+        return False
+    source = _optional_cf_timestamp(data.get('source_cf_timestamp_ms'))
+    transport = _optional_cf_timestamp(data.get('transport_cf_timestamp_ms'))
+    epoch = _finite_float(data.get(names[-1]))
+    transport_skew = (
+        None if source is None or transport is None else
+        _signed_timestamp_delta_ms(transport, source)
+    )
+    logged_transport_skew = _finite_float(
+        data.get('source_cf_transport_skew_ms')
+    )
+    return bool(
+        cf_timestamp_ms is not None
+        and source == cf_timestamp_ms
+        and transport is not None
+        and data.get('source_cf_timestamp_basis')
+        == CONTACT_SOURCE_TIMESTAMP_BASIS
+        and data.get('source_snapshot_atomic') is True
+        and data.get('source_cf_timestamp_error') is None
+        and transport_skew is not None
+        and abs(transport_skew) <= CONTACT_SOURCE_MAX_TRANSPORT_SKEW_MS
+        and (
+            logged_transport_skew is None
+            or (
+                logged_transport_skew.is_integer()
+                and int(logged_transport_skew) == transport_skew
+            )
+        )
+        and epoch is not None
+        and epoch.is_integer()
+        and 0 <= int(epoch) < (1 << 16)
+        and int(epoch) == (int(cf_timestamp_ms) & 0xFFFF)
+    )
+
+
+def _release_time_provenance(metadata):
+    """Classify the physical release clock evidence without inventing a join."""
+    unsupported = []
+    failures = []
+    source = metadata.get('release_event_time_source')
+    event_time = _finite_float(metadata.get('release_event_monotonic_s'))
+    confirmation_time = _finite_float(
+        metadata.get('release_confirmation_monotonic_s')
+    )
+    mapping_basis = metadata.get('release_clock_mapping_basis')
+    event_sample_id = _nonnegative_integer(
+        metadata.get('release_event_arduino_time_ms')
+    )
+    confirmation_sample_id = _nonnegative_integer(
+        metadata.get('release_confirmation_arduino_time_ms')
+    )
+    if source is None or event_time is None or confirmation_time is None:
+        unsupported.append('release_time_provenance_missing')
+    elif source != RELEASE_EVENT_TIME_SOURCE:
+        failures.append('release_event_time_source_invalid')
+    elif confirmation_time < event_time:
+        failures.append('release_confirmation_precedes_first_unloaded')
+    if mapping_basis not in DIAGNOSTIC_RELEASE_CLOCK_MAPPING_BASES:
+        unsupported.append('release_clock_mapping_untrusted')
+    if mapping_basis == ARDUINO_TO_CF_RELEASE_CLOCK_MAPPING_BASIS and (
+        event_sample_id is None or confirmation_sample_id is None
+    ):
+        unsupported.append('release_arduino_sample_identity_missing')
+    return {
+        'valid': not unsupported and not failures,
+        'status': (
+            'FAIL' if failures else 'UNSUPPORTED' if unsupported else 'PASS'
+        ),
+        'unsupported_reasons': unsupported,
+        'failures': failures,
+        'release_event_time_source': source,
+        'release_event_monotonic_s': event_time,
+        'release_confirmation_monotonic_s': confirmation_time,
+        'release_event_arduino_time_ms': event_sample_id,
+        'release_confirmation_arduino_time_ms': confirmation_sample_id,
+        'release_clock_mapping_basis': mapping_basis,
+    }
 
 
 def _replay_cf_packet(
@@ -318,6 +591,9 @@ def _truth_sample(record, index):
         return None
     host_time = _host_time(data, record)
     cf_timestamp = _raw_cf_timestamp(data, record)
+    cf_basis, cf_uncertainty, cf_trusted = _cf_timestamp_metadata(
+        data, record
+    )
     if host_time is None and cf_timestamp is None:
         return None
     return _TimedQuaternion(
@@ -326,6 +602,9 @@ def _truth_sample(record, index):
         cf_timestamp_ms=cf_timestamp,
         quaternion_wxyz=quaternion,
         source=f"{record_type or 'unknown'}:{group or '-'}:{convention}",
+        cf_timestamp_basis=cf_basis,
+        cf_timestamp_uncertainty_ms=cf_uncertainty,
+        cf_timestamp_trusted=cf_trusted,
     )
 
 
@@ -760,6 +1039,25 @@ def _episode_metrics(episode, truth_samples, config):
             "insufficient_strict_position_update_time_coverage",
         ),
     }
+    release_time_provenance = episode.get('release_time_provenance') or {}
+    release_time_status = release_time_provenance.get(
+        'status', 'UNSUPPORTED'
+    )
+    release_time_reasons = (
+        list(release_time_provenance.get('failures') or ())
+        + list(release_time_provenance.get('unsupported_reasons') or ())
+    )
+    gates['release_time_provenance'] = {
+        'status': release_time_status,
+        'value': release_time_provenance.get('valid'),
+        'limit': True,
+        'passed': True if release_time_status == 'PASS' else (
+            False if release_time_status == 'FAIL' else None
+        ),
+        'reason': None if not release_time_reasons else ','.join(
+            release_time_reasons
+        ),
+    }
     if strict_position_max_gap_ms is None:
         gates["strict_position_update_max_gap_ms"] = {
             "status": "UNSUPPORTED", "value": None,
@@ -840,6 +1138,7 @@ def _episode_metrics(episode, truth_samples, config):
         "release_state_join_distance_ms": episode["release_state_join_distance_ms"],
         "release_valid": episode["release_valid"],
         "release_invalid_reason": episode.get("release_invalid_reason"),
+        "release_time_provenance": release_time_provenance,
         "release_tilt_error_deg": release_tilt_error,
         "release_full_attitude_error_deg": release_full_error,
         "release_truth_join_distance_ms": release_truth_distance,
@@ -877,6 +1176,34 @@ def analyze_records(
     if not isinstance(records, list):
         raise ValueError("LiveLogger input must be a JSON array")
     config = config or ReplayGateConfig()
+    protocol_metadata, protocol_metadata_reasons = _protocol_metadata(records)
+    effective_shadow_config = (
+        shadow_config
+        or ContactAttitudeShadowConfig(queue_capacity=8192)
+    )
+    if protocol_metadata is not None:
+        if (
+            effective_shadow_config.experiment_run is not None
+            and effective_shadow_config.experiment_run
+            != protocol_metadata['experiment_run']
+        ):
+            protocol_metadata_reasons.append(
+                'replay_shadow_config_protocol_mismatch'
+            )
+        effective_shadow_config = replace(
+            effective_shadow_config,
+            mode=protocol_metadata['shadow_mode'],
+            experiment_run=protocol_metadata['experiment_run'],
+            vicon_orientation_forwarded=(
+                protocol_metadata['vicon_orientation_forwarded']
+            ),
+            alignment_legacy_yaw_deg=(
+                protocol_metadata['alignment_nominal_yaw_deg']
+            ),
+            fuse_vicon_position_after_release=protocol_metadata[
+                'shadow_post_release_vicon_position_fusion'
+            ],
+        )
     event_names = _select_event_names(records)
     truth_samples = [
         sample for index, record in enumerate(records)
@@ -885,6 +1212,10 @@ def analyze_records(
     common_clock_truth_samples = [
         sample for sample in truth_samples
         if sample.cf_timestamp_ms is not None
+        and sample.cf_timestamp_trusted
+        and sample.cf_timestamp_uncertainty_ms is not None
+        and sample.cf_timestamp_uncertainty_ms
+        <= config.truth_join_tolerance_ms
     ]
     explicit_packet_monotonic_clock = any(
         _host_monotonic_time(record.get("data", {}), record) is not None
@@ -927,7 +1258,7 @@ def analyze_records(
 
     replay_clock = [0.0]
     shadow = ContactAttitudeShadow(
-        config=shadow_config or ContactAttitudeShadowConfig(queue_capacity=8192),
+        config=effective_shadow_config,
         observer_config=observer_config,
         ekf_config=ekf_config,
         clock=lambda: replay_clock[0],
@@ -956,6 +1287,13 @@ def analyze_records(
     }
     logged_shadow_counter_invalid = set()
     logged_shadow_fatal_reasons = set()
+    invalid_contact_source_provenance_groups = set()
+    release_time_provenance_status_counts = {
+        'PASS': 0, 'UNSUPPORTED': 0, 'FAIL': 0,
+    }
+    release_time_provenance_unsupported_reasons = set()
+    release_time_provenance_failures = set()
+    pending_release_time_metadata = None
     episodes = []
     active_episode = None
 
@@ -1004,6 +1342,9 @@ def analyze_records(
             host_time = _host_time(data, record)
             host_monotonic_time = replay_monotonic_time(data, record)
             cf_timestamp = _raw_cf_timestamp(data, record)
+            cf_basis, cf_uncertainty, cf_trusted = _cf_timestamp_metadata(
+                data, record
+            )
             if host_monotonic_time is None:
                 missing_packet_field_count += 1
                 continue
@@ -1015,6 +1356,9 @@ def analyze_records(
             clock = _TimedQuaternion(
                 index, host_time, cf_timestamp,
                 (1.0, 0.0, 0.0, 0.0), "frames:tvec",
+                cf_timestamp_basis=cf_basis,
+                cf_timestamp_uncertainty_ms=cf_uncertainty,
+                cf_timestamp_trusted=cf_trusted,
             )
             latest_position = {"value": position, "clock": clock}
             frame_sequence = data.get("mocap_frame_sequence", index)
@@ -1029,6 +1373,8 @@ def analyze_records(
                 data=data,
                 cf_timestamp_ms=cf_timestamp,
                 host_receive_monotonic_s=host_monotonic_time,
+                cf_timestamp_basis=cf_basis,
+                cf_timestamp_uncertainty_ms=cf_uncertainty,
             ))
             continue
 
@@ -1041,6 +1387,9 @@ def analyze_records(
                 continue
             counts[group] += 1
             cf_timestamp = _raw_cf_timestamp(data, record)
+            if not _contact_packet_provenance_valid(
+                    group, data, cf_timestamp):
+                invalid_contact_source_provenance_groups.add(str(group))
             host_time = _host_time(data, record)
             host_monotonic_time = replay_monotonic_time(data, record)
             if host_monotonic_time is None:
@@ -1378,10 +1727,27 @@ def analyze_records(
                     release_event_monotonic_s=request.get(
                         "release_event_monotonic_s"
                     ),
+                    release_event_time_source=request.get(
+                        'release_event_time_source'
+                    ),
+                    release_event_arduino_time_ms=request.get(
+                        'release_event_arduino_time_ms'
+                    ),
+                    release_confirmation_monotonic_s=request.get(
+                        'release_confirmation_monotonic_s'
+                    ),
+                    release_confirmation_arduino_time_ms=request.get(
+                        'release_confirmation_arduino_time_ms'
+                    ),
+                    release_clock_mapping_basis=request.get(
+                        'release_clock_mapping_basis'
+                    ),
                 )
             except (TypeError, ValueError) as error:
                 result = {"valid": False, "invalid_reason": str(error)}
             anchored = result.get("pending_release_cf_timestamp_ms") is not None
+            if anchored:
+                pending_release_time_metadata = dict(request)
             lifecycle_results.append({
                 "record_index": index,
                 "action": "release_request",
@@ -1396,7 +1762,40 @@ def analyze_records(
                 or name != event_names["release"]):
             continue
         counts["release"] += 1
-        # If the event has no clock of its own, anchor it to the latest raw gyro.
+        release_metadata = data.get("release_snapshot")
+        if not isinstance(release_metadata, Mapping):
+            release_metadata = (
+                pending_release_time_metadata
+                if isinstance(pending_release_time_metadata, Mapping)
+                else {}
+            )
+        release_time_provenance = _release_time_provenance(
+            release_metadata
+        )
+        release_time_provenance_status_counts[
+            release_time_provenance['status']
+        ] += 1
+        release_time_provenance_unsupported_reasons.update(
+            release_time_provenance['unsupported_reasons']
+        )
+        release_time_provenance_failures.update(
+            release_time_provenance['failures']
+        )
+        # Prefer the estimator's recorded release epoch. Falling back to the
+        # latest gyro is replay-only compatibility and can never satisfy the
+        # release provenance gate by itself.
+        release_snapshot_cf_timestamp = _optional_cf_timestamp(
+            release_metadata.get('cf_timestamp_ms')
+        )
+        if (
+            event_marker.cf_timestamp_ms is None
+            and release_snapshot_cf_timestamp is not None
+        ):
+            event_marker = _TimedQuaternion(
+                index, event_marker.host_time_s,
+                release_snapshot_cf_timestamp,
+                event_marker.quaternion_wxyz, event_marker.source,
+            )
         observer_before_release = shadow.snapshot().get("observer") or {}
         if event_marker.cf_timestamp_ms is None:
             event_marker = _TimedQuaternion(
@@ -1415,26 +1814,63 @@ def analyze_records(
                 "reason": "fresh_CONTACT_STATE_SEED_required_at_release",
             })
             continue
-        release_metadata = data.get("release_snapshot")
-        if not isinstance(release_metadata, Mapping):
-            release_metadata = {}
+        release_call = {
+            'interaction_direction': release_metadata.get(
+                'interaction_direction'
+            ),
+            'interaction_direction_source': release_metadata.get(
+                'interaction_direction_source'
+            ),
+            'active_setpoint': release_metadata.get('active_setpoint'),
+            'effective_command_at_state': release_metadata.get(
+                'effective_command_at_state'
+            ),
+            'pending_transport_commands': release_metadata.get(
+                'pending_transport_commands'
+            ),
+            'inner_loop_tail': release_metadata.get('inner_loop_tail'),
+            'release_event_monotonic_s': release_metadata.get(
+                'release_event_monotonic_s'
+            ),
+            'release_event_time_source': release_metadata.get(
+                'release_event_time_source'
+            ),
+            'release_event_arduino_time_ms': release_metadata.get(
+                'release_event_arduino_time_ms'
+            ),
+            'release_confirmation_monotonic_s': release_metadata.get(
+                'release_confirmation_monotonic_s'
+            ),
+            'release_confirmation_arduino_time_ms': release_metadata.get(
+                'release_confirmation_arduino_time_ms'
+            ),
+            'release_clock_mapping_basis': release_metadata.get(
+                'release_clock_mapping_basis'
+            ),
+        }
         try:
             result = shadow.release(
-                latest_state_seed["position"],
-                latest_state_seed["velocity"],
-                interaction_direction=release_metadata.get("interaction_direction"),
-                interaction_direction_source=release_metadata.get(
-                    "interaction_direction_source"
-                ),
-                active_setpoint=release_metadata.get("active_setpoint"),
-                pending_transport_commands=release_metadata.get(
-                    "pending_transport_commands"
-                ),
-                inner_loop_tail=release_metadata.get("inner_loop_tail"),
-                release_event_monotonic_s=release_metadata.get(
-                    "release_event_monotonic_s"
-                ),
+                latest_state_seed['position'],
+                latest_state_seed['velocity'],
+                **release_call,
             )
+            # Production resumes a time-sliced shadow release from subsequent
+            # state-loop iterations.  Offline replay has no controller loop to
+            # service, so exhaust those same bounded slices here.
+            retry_count = 0
+            while (
+                result.get('invalid_reason') in (
+                    'release_processing_deferred', 'release_replay_pending'
+                )
+                and result.get('fatal_reason') is None
+                and retry_count < 512
+            ):
+                retry_count += 1
+                result = shadow.release(
+                    latest_state_seed['position'],
+                    latest_state_seed['velocity'],
+                    **release_call,
+                )
         except (TypeError, ValueError) as error:
             result = {"valid": False, "invalid_reason": str(error)}
         observer = result.get("observer") or {}
@@ -1471,6 +1907,7 @@ def analyze_records(
             "estimates": [release_estimate],
             "release_valid": bool(result.get("valid")),
             "release_invalid_reason": result.get("invalid_reason"),
+            "release_time_provenance": release_time_provenance,
             "release_state_sources": {
                 "position": release_snapshot.get("position_source"),
                 "velocity": release_snapshot.get("velocity_source"),
@@ -1508,6 +1945,7 @@ def analyze_records(
             "strict_position_update_trace": [],
         }
         episodes.append(active_episode)
+        pending_release_time_metadata = None
         lifecycle_results.append({
             "record_index": index, "action": "release",
             "valid": bool(result.get("valid")),
@@ -1594,8 +2032,30 @@ def analyze_records(
         "common_cf_clock_truth_sample_count": len(
             common_clock_truth_samples
         ),
+        "truth_sample_rejected_from_common_clock_count": (
+            len(truth_samples) - len(common_clock_truth_samples)
+        ),
+        "truth_clock_uncertainty_limit_ms": (
+            config.truth_join_tolerance_ms
+        ),
         "orientation_truth_common_clock_required_for_gates": True,
         "truth_sources": sorted({sample.source for sample in truth_samples}),
+        "protocol_metadata": protocol_metadata,
+        "protocol_metadata_reasons": sorted(set(
+            protocol_metadata_reasons
+        )),
+        "invalid_contact_source_provenance_groups": sorted(
+            invalid_contact_source_provenance_groups
+        ),
+        "release_time_provenance_status_counts": dict(
+            release_time_provenance_status_counts
+        ),
+        "release_time_provenance_unsupported_reasons": sorted(
+            release_time_provenance_unsupported_reasons
+        ),
+        "release_time_provenance_failures": sorted(
+            release_time_provenance_failures
+        ),
     }
     episode_reports = [
         _episode_metrics(episode, common_clock_truth_samples, config)
@@ -1639,6 +2099,25 @@ def analyze_records(
     }
 
     unsupported_reasons = []
+    protocol_failure_reasons = {
+        'contact_attitude_protocol_metadata_inconsistent',
+        'contact_attitude_protocol_fields_mismatch',
+        'replay_shadow_config_protocol_mismatch',
+    }
+    protocol_failures = set(protocol_metadata_reasons).intersection(
+        protocol_failure_reasons
+    )
+    unsupported_reasons.extend(
+        reason for reason in protocol_metadata_reasons
+        if reason not in protocol_failures
+    )
+    if invalid_contact_source_provenance_groups:
+        unsupported_reasons.append(
+            'producer_latched_contact_timestamp_provenance_missing_or_invalid'
+        )
+    unsupported_reasons.extend(
+        release_time_provenance_unsupported_reasons
+    )
     if counts["GYRO_1KHZ"] == 0:
         unsupported_reasons.append("GYRO_1KHZ_stream_missing")
     if counts["ACC_ALIGN"] == 0:
@@ -1690,6 +2169,8 @@ def analyze_records(
         or malformed_record_count > 0
         or missing_packet_field_count > 0
         or any(not result["valid"] for result in lifecycle_results)
+        or bool(protocol_failures)
+        or bool(release_time_provenance_failures)
     )
     schema_blockers = {
         "GYRO_1KHZ_stream_missing",
@@ -1701,6 +2182,16 @@ def analyze_records(
         "raw_Crazyflie_timestamp_missing",
         "contact_start_lifecycle_event_missing",
         "confirmed_release_lifecycle_event_missing",
+        "contact_attitude_protocol_metadata_missing",
+        "contact_attitude_protocol_metadata_incomplete",
+        "contact_attitude_prearm_protocol_metadata_missing",
+        "contact_attitude_started_protocol_metadata_missing",
+        "contact_attitude_protocol_version_unsupported",
+        "contact_attitude_protocol_run_invalid",
+        "producer_latched_contact_timestamp_provenance_missing_or_invalid",
+        "release_time_provenance_missing",
+        "release_clock_mapping_untrusted",
+        "release_arduino_sample_identity_missing",
     }
     # A legacy log that never recorded the required raw fields cannot falsify
     # the estimator; classify it as unsupported instead of turning missing
@@ -1717,7 +2208,7 @@ def analyze_records(
         verdict = "UNSUPPORTED"
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "offline_only": True,
         "command_authority": False,
         "flight_commands_generated": False,
@@ -1727,10 +2218,12 @@ def analyze_records(
         ),
         "truth_fed_to_filter": False,
         "velocity_policy": (
-            "onboard_EKF_velocity_release_seed_then_measured_accelerometer_"
-            "propagation_plus_position_only_extpos_updates"
+            "atomic_onboard_EKF_position_velocity_seed_then_measured_body_"
+            "specific_force_propagation_using_current_estimated_attitude_"
+            "plus_position_only_extpos_updates"
         ),
         "command_history_used_for_state_reconstruction": False,
+        "protocol_metadata": protocol_metadata,
         "lifecycle_event_names": event_names,
         "lifecycle_counts": counts,
         "lifecycle_results": lifecycle_results,

@@ -204,21 +204,55 @@ class PostReleaseInertialEkf:
 
         transition = np.eye(15)
         transition[0:3, 3:6] = np.eye(3) * dt
-        transition[3:6, 6:9] = -rotation @ _skew(corrected_force) * dt
-        transition[3:6, 12:15] = -rotation * dt
+        acceleration_attitude_jacobian = -rotation @ _skew(corrected_force)
+        acceleration_bias_jacobian = -rotation
+        half_dt_squared = 0.5 * dt * dt
+        # Match the nominal p <- p + v*dt + 0.5*a*dt^2 propagation.  Without
+        # these blocks, the first position innovation after release cannot use
+        # the physically present position/attitude or position/bias
+        # cross-covariance.
+        transition[0:3, 6:9] = (
+            acceleration_attitude_jacobian * half_dt_squared
+        )
+        transition[0:3, 12:15] = (
+            acceleration_bias_jacobian * half_dt_squared
+        )
+        transition[3:6, 6:9] = acceleration_attitude_jacobian * dt
+        transition[3:6, 12:15] = acceleration_bias_jacobian * dt
         transition[6:9, 6:9] -= _skew(omega) * dt
         transition[6:9, 9:12] = -np.eye(3) * dt
 
-        q_diag = np.r_[
-            [0.0] * 3,
-            [self.config.accel_noise_m_s2_sqrt_hz ** 2] * 3,
-            [self.config.gyro_noise_rad_s_sqrt_hz ** 2] * 3,
-            [self.config.gyro_bias_walk_rad_s2_sqrt_hz ** 2] * 3,
-            [self.config.accel_bias_walk_m_s3_sqrt_hz ** 2] * 3,
-        ] * dt
+        process_covariance = np.zeros((15, 15))
+        accel_noise_body = (
+            np.eye(3) * self.config.accel_noise_m_s2_sqrt_hz ** 2
+        )
+        # The accelerometer noise density is specified in the body frame.  It
+        # is isotropic today, so R Q R^T is algebraically unchanged, but retain
+        # the frame transform here to keep the discretization explicit and
+        # correct if axis-specific calibration is introduced later.
+        accel_noise_world = rotation @ accel_noise_body @ rotation.T
+        process_covariance[0:3, 0:3] = (
+            accel_noise_world * dt ** 3 / 3.0
+        )
+        process_covariance[0:3, 3:6] = (
+            accel_noise_world * dt * dt / 2.0
+        )
+        process_covariance[3:6, 0:3] = (
+            accel_noise_world * dt * dt / 2.0
+        )
+        process_covariance[3:6, 3:6] = accel_noise_world * dt
+        process_covariance[6:9, 6:9] = (
+            np.eye(3) * self.config.gyro_noise_rad_s_sqrt_hz ** 2 * dt
+        )
+        process_covariance[9:12, 9:12] = (
+            np.eye(3) * self.config.gyro_bias_walk_rad_s2_sqrt_hz ** 2 * dt
+        )
+        process_covariance[12:15, 12:15] = (
+            np.eye(3) * self.config.accel_bias_walk_m_s3_sqrt_hz ** 2 * dt
+        )
         self.covariance = np.einsum(
             "ij,jk,lk->il", transition, self.covariance, transition
-        ) + np.diag(q_diag)
+        ) + process_covariance
         self.covariance = 0.5 * (self.covariance + self.covariance.T)
         self._reason = "propagating"
         return self.snapshot()

@@ -55,6 +55,31 @@ class LoggingCleanupTests(unittest.TestCase):
         watch(controller, 4, {'pm.vbat': 6.6}, None)
         logs.add_log_entry.assert_called_once()
 
+    def test_crazysim_existing_hlc_owner_lands_in_place(self):
+        handoff = Mock(side_effect=AssertionError('unexpected second handoff'))
+        namespace = methods({'land'}, time=Mock(), math=math, logger=Mock(),
+                            CommandWrapper=CommandWrapper, HandoffError=HandoffError,
+                            handoff_to_high_level=handoff)
+        logs = Mock()
+        logs.get_latest_cf_log_data.side_effect = [0.1, 0.2, 1.0]
+        controller = SimpleNamespace(
+            args=SimpleNamespace(skip_landing=False, takeoff_altitude=1.,
+                                 init_yaw=0., vicon=False, crazysim=True),
+            hl_commander=Mock(), ll_commander=Mock(), cf=Mock(), log_manager=logs,
+            voltage=4.2, init_coord=[0., -1., 0.], flying=True,
+            mission={'takeoff_speed': .5}, use_flowdeck=False,
+            _interaction_high_level_active=True,
+            _send_landing_confirmation=Mock(),
+        )
+        namespace['land'](controller)
+        handoff.assert_not_called()
+        controller.ll_commander.send_position_setpoint.assert_not_called()
+        controller.hl_commander.go_to.assert_not_called()
+        controller.hl_commander.land.assert_called_once_with(.02, 2.)
+        controller.hl_commander.stop.assert_called_once_with()
+        self.assertFalse(controller.flying)
+        controller._send_landing_confirmation.assert_called_once_with(4.2)
+
     def test_emergency_prepare_never_touches_peripherals_or_flight_control(self):
         namespace = methods({'_prepare_for_emergency_landing'})
         controller = SimpleNamespace(

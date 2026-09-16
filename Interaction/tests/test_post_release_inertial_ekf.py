@@ -62,6 +62,78 @@ class PostReleaseInertialEkfTests(unittest.TestCase):
         self.assertLess(abs(math.degrees(estimated_native_pitch - true_pitch)), 1.0)
         self.assertGreater(ekf.snapshot().position_update_count, 50)
 
+    def test_first_imu_step_builds_analytic_position_attitude_cross_covariance(self):
+        ekf = self.make_filter()
+        initial_attitude_variance = math.radians(4.0) ** 2
+        dt = 0.005
+
+        ekf.propagate(105, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0])
+
+        force = np.array([0.0, 0.0, GRAVITY_M_S2])
+        phi_position_attitude = -0.5 * rotation_matrix(
+            [1.0, 0.0, 0.0, 0.0]
+        ) @ np.array([
+            [0.0, -force[2], force[1]],
+            [force[2], 0.0, -force[0]],
+            [-force[1], force[0], 0.0],
+        ]) * dt * dt
+        expected_attitude_position = (
+            initial_attitude_variance * phi_position_attitude.T
+        )
+        np.testing.assert_allclose(
+            ekf.covariance[6:9, 0:3],
+            expected_attitude_position,
+            rtol=1e-12,
+            atol=1e-18,
+        )
+        self.assertGreater(ekf.covariance[7, 0], 0.0)
+
+        before = np.asarray(ekf.snapshot().quaternion_wxyz)
+        ekf.update_extpos([0.001, 0.0, 1.0], std_m=0.001)
+        after = np.asarray(ekf.snapshot().quaternion_wxyz)
+        self.assertGreater(float(np.linalg.norm(after - before)), 1e-8)
+
+    def test_accelerometer_white_noise_discretization_is_analytic_and_psd(self):
+        ekf = self.make_filter(
+            quaternion_wxyz=quaternion_from_native_rpy(0.3, -0.2, 0.7)
+        )
+        ekf.covariance = np.zeros((15, 15))
+        dt = 0.005
+        variance_density = ekf.config.accel_noise_m_s2_sqrt_hz ** 2
+
+        ekf.propagate(105, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0])
+
+        np.testing.assert_allclose(
+            ekf.covariance[0:3, 0:3],
+            np.eye(3) * variance_density * dt ** 3 / 3.0,
+            rtol=1e-12,
+            atol=1e-18,
+        )
+        np.testing.assert_allclose(
+            ekf.covariance[0:3, 3:6],
+            np.eye(3) * variance_density * dt * dt / 2.0,
+            rtol=1e-12,
+            atol=1e-18,
+        )
+        np.testing.assert_allclose(
+            ekf.covariance[3:6, 0:3],
+            np.eye(3) * variance_density * dt * dt / 2.0,
+            rtol=1e-12,
+            atol=1e-18,
+        )
+        np.testing.assert_allclose(
+            ekf.covariance[3:6, 3:6],
+            np.eye(3) * variance_density * dt,
+            rtol=1e-12,
+            atol=1e-18,
+        )
+        np.testing.assert_allclose(
+            ekf.covariance, ekf.covariance.T, rtol=0.0, atol=1e-18
+        )
+        self.assertGreaterEqual(
+            float(np.min(np.linalg.eigvalsh(ekf.covariance))), -1e-15
+        )
+
     def test_position_update_never_uses_an_orientation_measurement(self):
         ekf = self.make_filter()
         ekf.propagate(101, [0, 0, 0], [0, 0, 1])

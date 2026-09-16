@@ -1,6 +1,3 @@
-from turtle import forward
-
-from cflib import crazyflie
 from cflib import crazyflie
 import argparse
 from copy import deepcopy
@@ -36,7 +33,6 @@ from Interaction.command_wrapper import CommandWrapper
 from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.braking_repeat_test import validate_repeat_test_options
 
-from mocap import Mocap
 from smooth_controller import SmoothController
 from tracker import (
     LocalizerState,
@@ -138,7 +134,10 @@ class Controller:
         self.manifest = None
         self.mission = None
         self.missions = []
-        self.min_voltage = self.cfg.MIN_LIHV_VOLT * 2
+        self.min_voltage = (
+            0.0 if getattr(self.args, 'crazysim', False)
+            else self.cfg.MIN_LIHV_VOLT * 2
+        )
 
         self.mocap = None
         self.servo = None
@@ -193,7 +192,7 @@ class Controller:
         )
 
     def __enter__(self):
-        if self.args.radio:
+        if self.args.radio and not getattr(self.args, 'crazysim', False):
             import cflib.crtp
             from cflib.utils.power_switch import PowerSwitch
             cflib.crtp.init_drivers(enable_serial_driver=True)
@@ -309,6 +308,21 @@ class Controller:
                     'mission contact_attitude_experiment_run does not match '
                     '--contact-attitude-run'
                 )
+        post_release_control = wrench.get(
+            'post_release_estimator_control'
+        ) or {}
+        if not isinstance(post_release_control, dict):
+            raise ValueError(
+                'post_release_estimator_control must be a mapping'
+            )
+        if (
+            run is not None
+            and post_release_control.get('enabled', False) is True
+        ):
+            raise ValueError(
+                'contact-attitude comparison flights are shadow-only and '
+                'cannot enable post-release estimator control'
+            )
         if run is None:
             self.contact_attitude_diagnostics_enabled = (
                 wrench.get('contact_attitude_shadow_enabled', False) is True
@@ -322,6 +336,11 @@ class Controller:
         self.mission = prepare_contact_attitude_experiment_mission(
             self.mission, run
         )
+        self.mission['Interaction']['config']['wrench_interaction'][
+            'contact_attitude_shadow_post_release_vicon_position_fusion'
+        ] = not bool(getattr(
+            self.args, 'contact_attitude_shadow_no_vicon_position', False
+        ))
         if self.missions:
             self.missions[0] = self.mission
         self.contact_attitude_diagnostics_enabled = True
@@ -357,13 +376,27 @@ class Controller:
         from Interaction.contact_attitude_prearm import (
             ContactAttitudePrearmHandle,
         )
+        from Interaction.contact_attitude_experiment import (
+            CONTACT_ATTITUDE_PROTOCOL_VERSION,
+            experiment_run_config,
+        )
+        from Interaction.contact_attitude_shadow import (
+            shadow_evidence_config_kwargs,
+        )
 
         wrench = self.mission['Interaction']['config']['wrench_interaction']
+        release_behavior = (
+            self.mission['Interaction']['config'].get('virtual_object', {})
+            .get('release_behavior', {})
+        )
         target = self.mission['drones'][self.args.drone_id]['target']
         nominal_yaw_deg = (
             target[3]
             if len(target) > 3
             else wrench.get('nominal_yaw_deg', 0.0)
+        )
+        shadow_evidence_kwargs = shadow_evidence_config_kwargs(
+            wrench.get('post_release_estimator_control') or {}
         )
         handle = None
         try:
@@ -374,7 +407,15 @@ class Controller:
                 vicon_orientation_forwarded=wrench[
                     'contact_attitude_vicon_orientation_forwarded'
                 ],
+                fuse_vicon_position_after_release=wrench.get(
+                    'contact_attitude_shadow_post_release_vicon_position_fusion',
+                    True,
+                ),
                 alignment_yaw_deg=float(nominal_yaw_deg),
+                release_confirmation_dwell_s=float(
+                    release_behavior.get('unloaded_dwell_s', 0.05)
+                ),
+                shadow_evidence_kwargs=shadow_evidence_kwargs,
             )
             self.contact_attitude_shadow = handle.shadow
             self._contact_attitude_shadow_prearm = handle
@@ -384,7 +425,18 @@ class Controller:
             self.log_manager.add_log_entry('events', {
                 'time': time.time(),
                 'name': 'Contact Attitude Shadow Prepared Pre-Arm',
+                'protocol_version': CONTACT_ATTITUDE_PROTOCOL_VERSION,
                 'experiment_run': int(run),
+                'shadow_mode': wrench['contact_attitude_shadow_mode'],
+                'vicon_mode': experiment_run_config(int(run))['vicon_mode'],
+                'vicon_orientation_forwarded_to_onboard_ekf': wrench[
+                    'contact_attitude_vicon_orientation_forwarded'
+                ],
+                'shadow_post_release_vicon_position_fusion': wrench.get(
+                    'contact_attitude_shadow_post_release_vicon_position_fusion',
+                    True,
+                ),
+                'alignment_nominal_yaw_deg': float(nominal_yaw_deg),
                 'shadow_only': True,
                 'command_authority': False,
                 'listeners_registered_pre_arm': True,
@@ -574,6 +626,15 @@ class Controller:
             raise Exception(f"No mission found for drone {self.args.drone_id}")
         else:
             self.mission = self.missions[0]
+            if getattr(self.args, 'crazysim', False):
+                # This marker is injected locally and cannot be supplied by a
+                # downloaded hardware mission to bypass flight calibration.
+                wrench = (
+                    self.mission.setdefault('Interaction', {})
+                    .setdefault('config', {})
+                    .setdefault('wrench_interaction', {})
+                )
+                wrench['_crazysim_model_verified'] = True
 
     def setup_commander(self):
         log_function = self.log_manager.add_log_entry if self.log_manager else None
@@ -642,6 +703,8 @@ class Controller:
     def setup_motion_capture(self):
         if not self.args.vicon and not self.args.save_vicon:
             return
+
+        from mocap import Mocap
 
         if self.args.save_vicon:
             on_pose = self._log_mocap
@@ -752,7 +815,11 @@ class Controller:
         time.sleep(delay)
 
     def save_init_coord(self):
-        if self.mocap and not self.args.ground_test and not (self.args.skip_landing and self.args.skip_takeoff):
+        if getattr(self.args, 'crazysim', False):
+            # CrazySim's position-only bridge initializes the firmware EKF at
+            # this known spawn point; no host Vicon process is involved.
+            self.init_coord = list(self.args.init_pos)
+        elif self.mocap and not self.args.ground_test and not (self.args.skip_landing and self.args.skip_takeoff):
             while self.init_coord is None:
                 try:
                     self.init_coord = self._get_latest_mocap_frame()["tvec"]
@@ -911,6 +978,23 @@ class Controller:
             height = 0.1 if self.args.vicon or self.use_flowdeck else 0.02
             if getattr(self, "tracker", None):
                 self._land_with_localizer(commander, height, takeoff_speed)
+                self.flying = False
+                self._send_landing_confirmation(voltage)
+                return
+            if (
+                getattr(self.args, 'crazysim', False)
+                and getattr(self, '_interaction_high_level_active', False)
+            ):
+                # This simulation has already transferred ownership to HLC
+                # and refreshed its fixed hold target. An acknowledged LL->HL
+                # transfer here is a second, unnecessary handoff; if its ACK
+                # is delayed the fallback low-level XY descent can interrupt
+                # the hold. Land at the current XY under the existing owner.
+                commander.land(height, dt)
+                logger.info(f"Landing duration: {dt} seconds")
+                time.sleep(dt + 1)
+                commander.stop()
+                self.cf.param.set_value('hlCommander.pRelVel', '0')
                 self.flying = False
                 self._send_landing_confirmation(voltage)
                 return
@@ -1096,7 +1180,12 @@ class Controller:
             self.log_manager = InteractionLogger(controller_args=self.args)
             if not self.args.droneless:
                 select_log_vars = getattr(
-                    self.cfg, 'log_vars_for_mission',
+                    self.cfg,
+                    (
+                        'log_vars_for_crazysim'
+                        if getattr(self.args, 'crazysim', False)
+                        else 'log_vars_for_mission'
+                    ),
                     lambda _mission: self.cfg.LOG_VARS,
                 )
                 self.log_manager.init_cf_logger(
@@ -1132,7 +1221,6 @@ class Controller:
         from Interaction.potentiometer_force_sensor import (
             PotentiometerForceSensor,
         )
-        from Interaction.rpi_power_monitor import RaspberryPiPowerMonitor
 
         self.force_sensor = PotentiometerForceSensor(
             port=self.args.sense_port,
@@ -1141,13 +1229,18 @@ class Controller:
             max_extension_mm=self.args.sense_max_extension,
         )
         self.force_sensor.start(startup_timeout_s=self.args.sense_startup_timeout)
-        self.rpi_power_monitor = RaspberryPiPowerMonitor(
-            poll_interval_s=self.args.sense_power_poll_interval,
-        )
-        self.rpi_power_monitor.start()
-        self.force_sensor.rpi_power_monitor = self.rpi_power_monitor
+        if not getattr(self.args, 'crazysim', False):
+            from Interaction.rpi_power_monitor import RaspberryPiPowerMonitor
+            self.rpi_power_monitor = RaspberryPiPowerMonitor(
+                poll_interval_s=self.args.sense_power_poll_interval,
+            )
+            self.rpi_power_monitor.start()
+            self.force_sensor.rpi_power_monitor = self.rpi_power_monitor
         sample = self.force_sensor.latest()
-        power_sample = self.rpi_power_monitor.latest()
+        power_sample = (
+            None if self.rpi_power_monitor is None
+            else self.rpi_power_monitor.latest()
+        )
         logger.info(
             "Potentiometer force sensor ready on %s: compression %.3f mm, "
             "length %.3f mm, %.3f N; "
@@ -1280,7 +1373,8 @@ class Controller:
         logger.info("Setting up parameters...")
 
         self._activate_kalman_estimator()
-        self._activate_tumble_check()
+        if not getattr(self.args, 'crazysim', False):
+            self._activate_tumble_check()
         if self.args.vicon or self.args.tracker:
             self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
         if self.args.vicon:
@@ -1297,9 +1391,23 @@ class Controller:
         else:
             self._set_pid_values(self.cfg.PID_VALUES)
 
-        if (self.args.vicon or self.use_flowdeck) and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
+        if (self.args.vicon or self.use_flowdeck or getattr(self.args, 'crazysim', False)) and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
             self._set_initial_position(self.init_coord[0], self.init_coord[1], self.init_coord[2], self.args.init_yaw)
             reset_estimator(self.cf)
+        if getattr(self.args, 'crazysim', False):
+            # estimatorKalmanInit() deliberately clears this experiment gate.
+            # Arm it only after the reset so contact-to-release propagation is
+            # available to offboard braking. The optional PID mode changes
+            # only the roll/pitch estimate consumed by the existing attitude
+            # PID; position, velocity, yaw and the PID law stay unchanged.
+            # Authority is opened only by the confirmed contact transition and
+            # closed in the exact profile-completion/handoff cycle.
+            self.cf.param.set_value('kalmanPRel.controlRp', '0')
+            self.cf.param.set_value('kalmanPRel.enable', '1')
+            self.cf.param.set_value(
+                'hlCommander.pRelVel',
+                '0',
+            )
 
     def arm(self):
         if self.args.ground_test or self.args.skip_arm:
@@ -1869,14 +1977,28 @@ class Controller:
                                              sense_max_age_s=self.args.sense_max_age,
                                              contact_attitude_shadow=(
                                                  self.contact_attitude_shadow
+                                             ),
+                                             pid_attitude_source=(
+                                                 self.args.pid_attitude_source
                                              ))
-                    IC.run()
+                    try:
+                        IC.run()
+                    finally:
+                        self._interaction_high_level_active = bool(
+                            getattr(IC, '_translation_high_level_active', False)
+                        )
 
         except Exception as e:
             logging.error(f"Interaction Error: {e}\n")
             if getattr(self.args, 'contact_attitude_run', None) is not None:
                 raise
         finally:
+            if (
+                getattr(self.args, 'crazysim', False)
+                and self.args.pid_attitude_source
+                == 'post-release-15state'
+            ):
+                self.cf.param.set_value('kalmanPRel.controlRp', '0')
             self.ll_commander.send_notify_setpoint_stop()
 
     def calibration_switch(self):
@@ -2796,6 +2918,10 @@ if __name__ == '__main__':
     ap.add_argument("--tag", default=tag, type=str, help="tag included in filename of saved log files")
     ap.add_argument("--drone-id", type=str, help="drone id")
     ap.add_argument("--orchestrated", action="store_true", help="orchestrated by orchestrator")
+    ap.add_argument(
+        "--crazysim", action="store_true",
+        help=argparse.SUPPRESS,
+    )
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
     ap.add_argument(
@@ -2804,6 +2930,15 @@ if __name__ == '__main__':
             "three-flight shadow attitude protocol: 1=pointcloud/onboard "
             "mirror, 2=rigidbody position-only/custom inertial EKF, "
             "3=rigidbody full extpose/custom inertial EKF"
+        ),
+    )
+    ap.add_argument(
+        "--contact-attitude-shadow-no-vicon-position",
+        action="store_true",
+        help=(
+            "after release, propagate the RPi shadow EKF from gyro and "
+            "accelerometer only; Vicon remains available for evaluation and "
+            "for the onboard estimator"
         ),
     )
     ap.add_argument(
@@ -2976,6 +3111,15 @@ if __name__ == '__main__':
     ap.add_argument("--camera-offset", type=float, nargs=3, help="camera offset from marker coordinates x y z", default=[0.015, -0.035, -0.035])
     ap.add_argument("--marker-offset", type=float, nargs=3, help="marker offset from marker module coordinates x y z", default=[0.01, 0.035, -0.035])
     ap.add_argument("--controller-type", type=str, choices=["pid", "mellinger"], help="pid or mellinger", default="pid")
+    ap.add_argument(
+        "--pid-attitude-source",
+        choices=("standard", "post-release-15state"),
+        default="standard",
+        help=(
+            "roll/pitch estimate used by PID; post-release-15state is an "
+            "experimental CrazySim-only contact/release ESKF source"
+        ),
+    )
     ap.add_argument("--autotune", action="store_true", help="run automatic pid tuner")
 
     args = ap.parse_args()
@@ -3009,6 +3153,23 @@ if __name__ == '__main__':
         )
     if args.sense and not args.log:
         ap.error('--sense requires --log so sensor and estimate data are recorded')
+    crazysim_mode_valid = bool(
+        (args.interaction and args.sense) or args.calibrate
+    )
+    if args.crazysim and not (
+            args.orchestrated and crazysim_mode_valid
+            and isinstance(args.radio, str)
+            and args.radio.startswith('udp://')):
+        ap.error(
+            '--crazysim requires --orchestrated, a udp:// radio URI, and '
+            'either --interaction --sense or --calibrate'
+        )
+    if args.pid_attitude_source == 'post-release-15state' and (
+            args.controller_type != 'pid' or not args.crazysim):
+        ap.error(
+            '--pid-attitude-source post-release-15state requires '
+            '--controller-type pid and --crazysim'
+        )
     if args.calibrate and not args.log:
         ap.error('--calibrate requires --log so the fitted response is recorded')
     if args.calibrate and args.smooth_controller_rate < 50:

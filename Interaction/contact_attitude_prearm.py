@@ -22,7 +22,8 @@ class ContactAttitudePrearmHandle:
 
     def __init__(
             self, *, shadow, log_manager, mode, experiment_run,
-            vicon_orientation_forwarded):
+            vicon_orientation_forwarded,
+            fuse_vicon_position_after_release=True):
         if mode not in self._REQUIRED_GROUPS:
             raise ValueError('unsupported contact-attitude pre-arm mode')
         self.shadow = shadow
@@ -31,6 +32,9 @@ class ContactAttitudePrearmHandle:
         self.experiment_run = int(experiment_run)
         self.vicon_orientation_forwarded = bool(
             vicon_orientation_forwarded
+        )
+        self.fuse_vicon_position_after_release = bool(
+            fuse_vicon_position_after_release
         )
         self.required_cf_groups = self._REQUIRED_GROUPS[mode]
         self._seen_cf_groups = set()
@@ -49,7 +53,10 @@ class ContactAttitudePrearmHandle:
     @classmethod
     def build(
             cls, *, log_manager, mode, experiment_run,
-            vicon_orientation_forwarded, alignment_yaw_deg):
+            vicon_orientation_forwarded, alignment_yaw_deg,
+            release_confirmation_dwell_s=0.05,
+            fuse_vicon_position_after_release=True,
+            shadow_evidence_kwargs=None):
         """Construct the observer and atomically register both listeners."""
         if log_manager is None:
             raise RuntimeError(
@@ -65,7 +72,14 @@ class ContactAttitudePrearmHandle:
                 mode=mode,
                 experiment_run=experiment_run,
                 vicon_orientation_forwarded=vicon_orientation_forwarded,
+                fuse_vicon_position_after_release=(
+                    fuse_vicon_position_after_release
+                ),
                 alignment_legacy_yaw_deg=alignment_yaw_deg,
+                release_confirmation_dwell_s=(
+                    release_confirmation_dwell_s
+                ),
+                **dict(shadow_evidence_kwargs or {}),
             ),
             report=lambda record: log_manager.add_log_entry(
                 'contact_attitude_shadow', record
@@ -77,6 +91,9 @@ class ContactAttitudePrearmHandle:
             mode=mode,
             experiment_run=experiment_run,
             vicon_orientation_forwarded=vicon_orientation_forwarded,
+            fuse_vicon_position_after_release=(
+                fuse_vicon_position_after_release
+            ),
         )
         log_manager.add_log_group('contact_attitude_shadow')
         try:
@@ -269,7 +286,8 @@ class ContactAttitudePrearmHandle:
 
     def activate(
             self, *, mode, experiment_run,
-            vicon_orientation_forwarded):
+            vicon_orientation_forwarded,
+            fuse_vicon_position_after_release=True):
         """Enable enqueueing only after the verified handle reaches runtime."""
         with self._lock:
             if self._closed or not self._accepting_callbacks:
@@ -289,6 +307,8 @@ class ContactAttitudePrearmHandle:
                 or int(experiment_run) != self.experiment_run
                 or bool(vicon_orientation_forwarded)
                 != self.vicon_orientation_forwarded
+                or bool(fuse_vicon_position_after_release)
+                != self.fuse_vicon_position_after_release
             ):
                 raise RuntimeError(
                     'contact-attitude runtime does not match pre-arm protocol'

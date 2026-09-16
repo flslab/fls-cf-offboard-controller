@@ -25,6 +25,17 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
     "contact_attitude_experiment_run": None,
     "contact_attitude_vicon_mode": None,
     "contact_attitude_vicon_orientation_forwarded": None,
+    # Optional estimator-backed braking remains disabled.  Each evidence
+    # mapping is validated separately; None means unavailable, never a
+    # permissive default.
+    "post_release_estimator_control": {
+        "enabled": False,
+        "gate": {},
+        "release_clock_mapping": None,
+        "imu_quality": None,
+        "absolute_yaw_reference": None,
+        "body_rate_measurement": None,
+    },
     # The motor/torque model and thresholds must be identified from flight data
     # before this is disabled. Shadow mode estimates and logs, but never moves
     # the position/yaw reference in response to a detected contact.
@@ -222,6 +233,11 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         "coast_attitude_response_delay_s": 0.12,
         "coast_attitude_time_constant_s": 0.08,
         "coast_attitude_acceleration_scale": 1.0,
+        "coast_attitude_second_order_feedforward_enabled": False,
+        "coast_attitude_axis_delay_s": [0.04, 0.04],
+        "coast_attitude_axis_wn_rad_s": [12.0, 12.0],
+        "coast_attitude_axis_zeta": [0.5, 0.5],
+        "coast_attitude_axis_command_gain": [1.0, 1.0],
         "coast_calibrated_direction_xy": None,
         # Level slightly before the model predicts zero terminal velocity.
         # This buffer absorbs fit/discretization error without preventing the
@@ -290,6 +306,14 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # roll/pitch directly at fixed nominal Z, and retains the continuous
         # velocity-unwind controller as a fail-safe fallback.
         "coast_jerk_limited_attitude_enabled": False,
+        # Simulation-only rapid validation path.  It commands the maximum
+        # calibrated counter-tilt immediately, then performs exactly one smooth
+        # unwind when the measured attitude/rate model predicts that the
+        # remaining braking impulse will reach the terminal-speed reserve.
+        "coast_max_tilt_predictive_brake_enabled": False,
+        "coast_max_tilt_level_duration_s": 0.24,
+        "coast_max_tilt_terminal_target_speed_m_s": 0.015,
+        "coast_max_tilt_handoff_min_speed_m_s": -0.010,
         # Bound the release-to-profile-planning state with an independent
         # monotonic watchdog. This is consulted only while the opt-in jerk
         # controller owns ``jerk_profile_pending``; legacy/default-disabled

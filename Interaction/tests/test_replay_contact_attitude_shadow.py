@@ -8,7 +8,15 @@ from Interaction.contact_attitude_observer import (
     quaternion_from_native_rpy,
 )
 from Interaction.contact_attitude_shadow import ContactAttitudeShadowConfig
-from Interaction.log_manager import CONTACT_SOURCE_TIMESTAMP_BASIS
+from Interaction.contact_attitude_experiment import (
+    CONTACT_ATTITUDE_PROTOCOL_VERSION,
+    CRAZYSIM_RELEASE_CLOCK_MAPPING_BASIS,
+    RELEASE_EVENT_TIME_SOURCE,
+)
+from Interaction.log_manager import (
+    CONTACT_SOURCE_TIMESTAMP_BASIS,
+    CRAZYSIM_CF_TIMESTAMP_BASIS,
+)
 from Interaction.replay_contact_attitude_shadow import (
     ReplayGateConfig,
     analyze_records,
@@ -30,17 +38,26 @@ def synthetic_records(*, include_truth=True, bad_release_truth_deg=0.0):
     def add(ms, priority, record):
         timeline.append((ms, priority, record))
 
+    protocol_data = {
+        "protocol_version": CONTACT_ATTITUDE_PROTOCOL_VERSION,
+        "experiment_run": 2,
+        "shadow_mode": "inertial_position",
+        "vicon_mode": "rigidbody",
+        "vicon_orientation_forwarded_to_onboard_ekf": False,
+        "alignment_nominal_yaw_deg": 0.0,
+    }
+    for ms, name in (
+        (-2, "Contact Attitude Shadow Prepared Pre-Arm"),
+        (-1, "Contact Attitude Shadow Started"),
+    ):
+        add(ms, -1, {
+            "type": "events", "name": name,
+            "data": {**protocol_data, "time": base_time + ms / 1000.0},
+        })
+
     for timestamp_ms in range(0, 861):
         host_time = base_time + timestamp_ms / 1000.0
         if timestamp_ms % 10 == 0:
-            add(timestamp_ms, 0, {
-                "type": "state", "group": "ACC_ALIGN", "data": {
-                    "cf_timestamp_ms": timestamp_ms,
-                    "host_receive_time_s": host_time,
-                    "acc.x": 0.0, "acc.y": 0.0, "acc.z": 1.0,
-                    "stateEstimate.yaw": 0.0,
-                },
-            })
             add(timestamp_ms, 1, {
                 "type": "state", "group": "POS_ACC", "data": {
                     "cf_timestamp_ms": timestamp_ms,
@@ -67,28 +84,18 @@ def synthetic_records(*, include_truth=True, bad_release_truth_deg=0.0):
                     "stateEstimate.yaw": 0.0,
                 },
             })
-            add(timestamp_ms, 3, {
-                "type": "state", "group": "CONTACT_STATE_SEED", "data": {
-                    "cf_timestamp_ms": timestamp_ms,
-                    "host_receive_time_s": host_time,
-                    "stateEstimate.x": 0.0,
-                    "stateEstimate.y": 0.0,
-                    "stateEstimate.z": 1.0,
-                    "stateEstimate.vx": 0.0,
-                    "stateEstimate.vy": 0.0,
-                    "stateEstimate.vz": 0.0,
-                },
-            })
             frame_data = {
                 "time": host_time,
                 "cf_timestamp_ms": timestamp_ms,
+                "cf_timestamp_basis": CRAZYSIM_CF_TIMESTAMP_BASIS,
+                "cf_timestamp_uncertainty_ms": 0.0,
                 "tvec": [0.0, 0.0, 1.0],
                 "position_forwarded_to_onboard_ekf": True,
                 "orientation_forwarded_to_onboard_ekf": False,
             }
             if include_truth:
                 truth_roll = (
-                    bad_release_truth_deg if timestamp_ms >= 60 else 0.0
+                    bad_release_truth_deg if timestamp_ms >= 50 else 0.0
                 )
                 truth = quaternion_from_native_rpy(
                     math.radians(truth_roll), 0.0, 0.0
@@ -101,14 +108,36 @@ def synthetic_records(*, include_truth=True, bad_release_truth_deg=0.0):
             "type": "state", "group": "GYRO_1KHZ", "data": {
                 "cf_timestamp_ms": timestamp_ms,
                 "host_receive_time_s": host_time,
-                "gyro.x": 0.0, "gyro.y": 0.0, "gyro.z": 0.0,
+                "contactImu.gx": 0.0,
+                "contactImu.gy": 0.0,
+                "contactImu.gz": 0.0,
+                "contactImu.ax": 0.0,
+                "contactImu.ay": 0.0,
+                "contactImu.az": 1.0,
+                "contactImu.px": 0.0,
+                "contactImu.py": 0.0,
+                "contactImu.pz": 1.0,
+                "contactImu.vx": 0.0,
+                "contactImu.vy": 0.0,
+                "contactImu.vz": 0.0,
+                "contactImu.epoch": timestamp_ms & 0xFFFF,
+                "transport_cf_timestamp_ms": timestamp_ms,
+                "source_cf_timestamp_ms": timestamp_ms,
+                "source_cf_timestamp_basis": (
+                    CONTACT_SOURCE_TIMESTAMP_BASIS
+                ),
+                "source_snapshot_atomic": True,
+                "source_cf_transport_skew_ms": 0,
             },
         })
 
-    def event(ms, priority, name):
+    def event(ms, priority, name, **event_data):
         add(ms, priority, {
             "type": "events", "name": name,
-            "data": {"time": base_time + ms / 1000.0},
+            "data": {
+                "time": base_time + ms / 1000.0,
+                **event_data,
+            },
         })
 
     # Contact begins after stable-hover alignment. Release-candidate cancellation
@@ -120,7 +149,21 @@ def synthetic_records(*, include_truth=True, bad_release_truth_deg=0.0):
     event(45, 9, "Potentiometer Release Candidate Started")
     event(47, 9, "Potentiometer Release Candidate Cancelled")
     event(50, 9, "Potentiometer Release Candidate Started")
-    event(60, 9, "Contact Attitude Shadow Released")
+    event(
+        60, 9, "Contact Attitude Shadow Released",
+        cf_timestamp_ms=50,
+        release_snapshot={
+            "cf_timestamp_ms": 50,
+            "release_event_monotonic_s": base_time + 0.050,
+            "release_event_time_source": RELEASE_EVENT_TIME_SOURCE,
+            "release_event_arduino_time_ms": 50,
+            "release_confirmation_monotonic_s": base_time + 0.060,
+            "release_confirmation_arduino_time_ms": 60,
+            "release_clock_mapping_basis": (
+                CRAZYSIM_RELEASE_CLOCK_MAPPING_BASIS
+            ),
+        },
+    )
 
     records = [record for _ms, _priority, record in sorted(
         timeline, key=lambda item: item[:2]
@@ -191,56 +234,18 @@ class ContactAttitudeReplayTests(unittest.TestCase):
         )
         self.assertEqual(
             episode["release_state_sources"]["position"],
-            "raw_vicon_tvec_forwarded_to_onboard_ekf",
+            "onboard_ekf_position_common_cf_epoch",
         )
         self.assertEqual(
-            episode["final_filter_snapshot"]["position_update_count"], 80
+            episode["final_filter_snapshot"]["position_update_count"], 81
+        )
+        self.assertEqual(
+            episode["gates"]["release_time_provenance"]["status"],
+            "PASS",
         )
 
     def test_firmware_latched_field_names_and_provenance_replay(self):
         records = synthetic_records()
-        renames = {
-            'GYRO_1KHZ': {
-                'gyro.x': 'contactGyro.x',
-                'gyro.y': 'contactGyro.y',
-                'gyro.z': 'contactGyro.z',
-            },
-            'ACC_ALIGN': {
-                'acc.x': 'contactAccel.x',
-                'acc.y': 'contactAccel.y',
-                'acc.z': 'contactAccel.z',
-                'stateEstimate.yaw': 'contactAccel.yaw',
-            },
-            'CONTACT_STATE_SEED': {
-                'stateEstimate.x': 'contactSeed.x',
-                'stateEstimate.y': 'contactSeed.y',
-                'stateEstimate.z': 'contactSeed.z',
-                'stateEstimate.vx': 'contactSeed.vx',
-                'stateEstimate.vy': 'contactSeed.vy',
-                'stateEstimate.vz': 'contactSeed.vz',
-            },
-        }
-        epoch_keys = {
-            'GYRO_1KHZ': 'contactGyro.epoch',
-            'ACC_ALIGN': 'contactAccel.epoch',
-            'CONTACT_STATE_SEED': 'contactSeed.epoch',
-        }
-        for record in records:
-            group = record.get('group')
-            if record.get('type') != 'state' or group not in renames:
-                continue
-            data = record['data']
-            for old, new in renames[group].items():
-                data[new] = data.pop(old)
-            timestamp = data['cf_timestamp_ms']
-            data[epoch_keys[group]] = timestamp & 0xFFFF
-            data['transport_cf_timestamp_ms'] = timestamp
-            data['source_cf_timestamp_ms'] = timestamp
-            data['source_cf_timestamp_basis'] = (
-                CONTACT_SOURCE_TIMESTAMP_BASIS
-            )
-            data['source_snapshot_atomic'] = True
-
         report = analyze(records, experiment_run=2)
 
         self.assertEqual(report['gate_verdict'], 'PASS')
@@ -248,6 +253,12 @@ class ContactAttitudeReplayTests(unittest.TestCase):
             report['data_quality']['missing_required_packet_field_count'], 0
         )
         self.assertIsNone(report['data_quality']['replay_fatal_reason'])
+        self.assertEqual(
+            report['data_quality'][
+                'invalid_contact_source_provenance_groups'
+            ],
+            [],
+        )
 
     def test_independent_truth_failure_fails_release_gate(self):
         report = analyze(synthetic_records(bad_release_truth_deg=3.0))
@@ -287,6 +298,102 @@ class ContactAttitudeReplayTests(unittest.TestCase):
             report["data_quality"]["common_cf_clock_truth_sample_count"], 0
         )
 
+    def test_numeric_truth_timestamp_without_provenance_is_unsupported(self):
+        records = synthetic_records()
+        for record in records:
+            if record.get("type") == "frames":
+                record["data"].pop("cf_timestamp_basis")
+                record["data"].pop("cf_timestamp_uncertainty_ms")
+
+        report = analyze(records)
+
+        self.assertEqual(report["gate_verdict"], "UNSUPPORTED")
+        self.assertIn(
+            "orientation_truth_common_cf_clock_missing",
+            report["unsupported_reasons"],
+        )
+
+    def test_truth_clock_uncertainty_above_join_limit_is_unsupported(self):
+        records = synthetic_records()
+        for record in records:
+            if record.get("type") == "frames":
+                record["data"]["cf_timestamp_uncertainty_ms"] = 1000.0
+
+        report = analyze(records)
+
+        self.assertEqual(report["gate_verdict"], "UNSUPPORTED")
+        self.assertEqual(
+            report["data_quality"]["common_cf_clock_truth_sample_count"], 0
+        )
+
+    def test_missing_protocol_metadata_is_unsupported(self):
+        records = [
+            record for record in synthetic_records()
+            if record.get("name") not in (
+                "Contact Attitude Shadow Prepared Pre-Arm",
+                "Contact Attitude Shadow Started",
+            )
+        ]
+
+        report = analyze(records)
+
+        self.assertEqual(report["gate_verdict"], "UNSUPPORTED")
+        self.assertIn(
+            "contact_attitude_protocol_metadata_missing",
+            report["unsupported_reasons"],
+        )
+
+    def test_missing_producer_latched_timestamp_is_unsupported(self):
+        records = synthetic_records()
+        packet = next(
+            record for record in records
+            if record.get("group") == "GYRO_1KHZ"
+        )
+        packet["data"]["source_snapshot_atomic"] = False
+
+        report = analyze(records)
+
+        self.assertEqual(report["gate_verdict"], "UNSUPPORTED")
+        self.assertIn(
+            "producer_latched_contact_timestamp_provenance_missing_or_invalid",
+            report["unsupported_reasons"],
+        )
+
+    def test_excessive_transport_to_source_skew_is_unsupported(self):
+        records = synthetic_records()
+        packet = next(
+            record for record in records
+            if record.get("group") == "GYRO_1KHZ"
+        )
+        packet["data"]["transport_cf_timestamp_ms"] = 1000
+        packet["data"]["source_cf_transport_skew_ms"] = 1000
+
+        report = analyze(records)
+
+        self.assertEqual(report["gate_verdict"], "UNSUPPORTED")
+        self.assertIn(
+            "producer_latched_contact_timestamp_provenance_missing_or_invalid",
+            report["unsupported_reasons"],
+        )
+
+    def test_untrusted_release_clock_mapping_is_unsupported(self):
+        records = synthetic_records()
+        release = next(
+            record for record in records
+            if record.get("name") == "Contact Attitude Shadow Released"
+        )["data"]["release_snapshot"]
+        release["release_clock_mapping_basis"] = (
+            "arduino_uart_receive_without_calibrated_cf_mapping"
+        )
+
+        report = analyze(records)
+
+        self.assertEqual(report["gate_verdict"], "UNSUPPORTED")
+        self.assertIn(
+            "release_clock_mapping_untrusted",
+            report["unsupported_reasons"],
+        )
+
     def test_replay_keeps_wall_and_monotonic_packet_clocks_separate(self):
         records = synthetic_records()
         for record in records:
@@ -312,9 +419,9 @@ class ContactAttitudeReplayTests(unittest.TestCase):
                     record.get("type") == "events"
                     and record.get("name")
                     == "Contact Attitude Shadow Released"):
-                data["release_snapshot"] = {
-                    "release_event_monotonic_s": 1000.060,
-                }
+                data["release_snapshot"][
+                    "release_event_monotonic_s"
+                ] = 1000.050
 
         report = analyze(records)
 
@@ -323,7 +430,7 @@ class ContactAttitudeReplayTests(unittest.TestCase):
             report["data_quality"]["replay_skipped_position_packets"], 0
         )
         episode = report["episodes"][0]
-        self.assertEqual(episode["approximate_position_update_count"], 80)
+        self.assertEqual(episode["approximate_position_update_count"], 81)
         self.assertEqual(episode["rejected_position_update_count"], 0)
         self.assertEqual(
             episode["gates"]["approximate_position_updates"]["status"],
@@ -348,7 +455,12 @@ class ContactAttitudeReplayTests(unittest.TestCase):
             data = record["data"]
             if record.get("type") == "state":
                 raw = data["cf_timestamp_ms"]
-                data["cf_timestamp_ms"] = (offset + raw) % CF_TIMESTAMP_MODULUS_MS
+                shifted = (offset + raw) % CF_TIMESTAMP_MODULUS_MS
+                data["cf_timestamp_ms"] = shifted
+                if record.get("group") == "GYRO_1KHZ":
+                    data["source_cf_timestamp_ms"] = shifted
+                    data["transport_cf_timestamp_ms"] = shifted
+                    data["contactImu.epoch"] = shifted & 0xFFFF
                 data.pop("host_receive_time_s")
             elif record.get("type") == "frames":
                 raw = round((data["time"] - 1000.0) * 1000.0)
@@ -356,6 +468,19 @@ class ContactAttitudeReplayTests(unittest.TestCase):
                 data.pop("time")
             elif record.get("type") == "events":
                 data.pop("time")
+                if record.get("name") == "Contact Attitude Shadow Released":
+                    shifted_release = (
+                        offset + 50
+                    ) % CF_TIMESTAMP_MODULUS_MS
+                    data["cf_timestamp_ms"] = shifted_release
+                    release = data["release_snapshot"]
+                    release["cf_timestamp_ms"] = shifted_release
+                    release["release_event_monotonic_s"] = (
+                        offset + 50
+                    ) / 1000.0
+                    release["release_confirmation_monotonic_s"] = (
+                        offset + 60
+                    ) / 1000.0
         report = analyze(records)
         self.assertEqual(report["gate_verdict"], "PASS")
         self.assertEqual(
@@ -482,65 +607,22 @@ class ContactAttitudeReplayTests(unittest.TestCase):
             "UNSUPPORTED",
         )
 
-    def test_deferred_release_replay_keeps_the_first_release_epoch(self):
+    def test_confirmed_release_replay_keeps_the_first_unloaded_epoch(self):
         records = synthetic_records()
-        late_seed_records = []
-        retained = []
-        for record in records:
-            if (
-                record.get("group") == "CONTACT_STATE_SEED"
-                and record["data"]["cf_timestamp_ms"] in (50, 60)
-            ):
-                late_seed_records.append(record)
-            else:
-                retained.append(record)
-        records = retained
-        release_record = next(
-            record for record in records
-            if record.get("name") == "Contact Attitude Shadow Released"
-        )
-        release_record["name"] = "Contact Attitude Shadow Release Deferred"
-        release_record["data"].update({
-            "cf_timestamp_ms": 60,
-            "release_request": {
-                "host_loop_position": [0, 0, 1],
-                "host_loop_velocity": [0.2, 0, 0],
-                "active_setpoint": {"kind": "attitude_zdistance"},
-            },
-        })
-        insertion = next(
-            index + 1 for index, record in enumerate(records)
-            if (
-                record.get("group") == "GYRO_1KHZ"
-                and record["data"]["cf_timestamp_ms"] == 62
-            )
-        )
-        records[insertion:insertion] = late_seed_records + [{
-            "type": "events",
-            "name": "Contact Attitude Shadow Released",
-            "data": {
-                "time": 1000.062,
-                "cf_timestamp_ms": 60,
-            },
-        }]
-        sequence = 0
-        for record in records:
-            if record.get("type") == "state":
-                record["data"]["sequence"] = sequence
-                sequence += 1
 
         report = analyze(records)
 
         self.assertEqual(report["gate_verdict"], "PASS")
-        self.assertEqual(report["lifecycle_counts"]["release_request"], 1)
+        self.assertEqual(report["lifecycle_counts"]["release_request"], 0)
         self.assertEqual(report["lifecycle_counts"]["release"], 1)
-        request_result = next(
-            result for result in report["lifecycle_results"]
-            if result["action"] == "release_request"
-        )
-        self.assertTrue(request_result["valid"])
         episode = report["episodes"][0]
-        self.assertEqual(episode["release_cf_timestamp_ms"], 60)
+        self.assertEqual(episode["release_cf_timestamp_ms"], 50)
+        self.assertEqual(
+            episode["release_time_provenance"][
+                "release_confirmation_monotonic_s"
+            ],
+            1000.060,
+        )
         self.assertEqual(
             episode["final_filter_snapshot"]["cf_timestamp_ms"], 860
         )

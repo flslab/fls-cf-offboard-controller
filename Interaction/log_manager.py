@@ -20,10 +20,25 @@ logger = logging.getLogger(__name__)
 
 
 CF_TIMESTAMP_MODULUS_MS = 1 << 24
+CF_LOG_TRANSPORT_TIMESTAMP_BASIS = 'crazyflie_log_transport_tick_v1'
 CONTACT_SOURCE_TIMESTAMP_BASIS = (
     'firmware_latched_stabilizer_tick_low16_v1'
 )
 CONTACT_SOURCE_MAX_TRANSPORT_SKEW_MS = 100
+# The wider bound above is only sufficient to reconstruct a low-16 producer
+# tick for diagnostics.  A packet used by the post-release authority path must
+# also prove a causal, tightly bounded trip from producer latch to CRTP log
+# transport.  Keep this as a non-configurable ceiling so a mission cannot
+# silently relax it.
+CONTACT_SOURCE_AUTHORITY_MAX_TRANSPORT_SKEW_MS = 5
+CRAZYSIM_CF_TIMESTAMP_BASIS = 'crazysim_device_clock_v1'
+VICON_CAPTURE_TO_CF_TIMESTAMP_BASIS = (
+    'vicon_capture_to_cf_calibrated_v1'
+)
+TRUSTED_MOCAP_CF_TIMESTAMP_BASES = frozenset({
+    CRAZYSIM_CF_TIMESTAMP_BASIS,
+    VICON_CAPTURE_TO_CF_TIMESTAMP_BASIS,
+})
 _CONTACT_SOURCE_EPOCH_KEYS = {
     # The packed live stream is first. Legacy keys remain readable so old
     # flight logs and focused compatibility fixtures can still be replayed.
@@ -118,6 +133,8 @@ class MocapFramePacket:
     # a device timestamp from host arrival order.
     cf_timestamp_ms: int | None = None
     host_receive_monotonic_s: float | None = None
+    cf_timestamp_basis: str | None = None
+    cf_timestamp_uncertainty_ms: float | None = None
 
 
 class InteractionLogger(LogManager):
@@ -128,6 +145,9 @@ class InteractionLogger(LogManager):
         self.cf_log_data = None
         self.cf_log_group_times = {}
         self.cf_log_group_packets = collections.defaultdict(
+            lambda: collections.deque(maxlen=1000)
+        )
+        self.cf_log_group_packet_metadata = collections.defaultdict(
             lambda: collections.deque(maxlen=1000)
         )
         self.cf_log_packet_lock = threading.Lock()
@@ -176,14 +196,20 @@ class InteractionLogger(LogManager):
 
         self.cf_var_logger = []
         for name, log_group in self.cf_log_data.items():
-            # Match the ordinary logger's legacy-period compensation. cflib
-            # divides period_in_ms by 10 before sending CONTROL_START_BLOCK,
-            # while the deployed FLS firmware consumes that byte in 1 ms
-            # units. Multiplying here preserves the configured period on that
-            # firmware (for example 1 -> 10 -> byte 1 -> actual 1 ms).
-            log_period = cf_log_period * 10
+            # The deployed FLS firmware consumes the cflib period byte in 1 ms
+            # units and therefore needs the legacy x10 compensation. CrazySim
+            # SITL follows the upstream 10 ms unit, so applying that workaround
+            # there would turn a requested 10 ms control stream into 100 ms.
+            period_scale = (
+                1
+                if getattr(getattr(self, 'args', None), 'crazysim', False)
+                else 10
+            )
+            log_period = cf_log_period * period_scale
             if "log_period_ms" in log_group:
-                log_period = log_group.pop("log_period_ms") * 10
+                log_period = (
+                    log_group.pop("log_period_ms") * period_scale
+                )
 
             var_logger = LogConfig(name=f'{name}', period_in_ms=log_period)
 
@@ -259,6 +285,10 @@ class InteractionLogger(LogManager):
                         else int(entry['cf_timestamp_ms'])
                     ),
                     host_receive_monotonic_s=received_monotonic,
+                    cf_timestamp_basis=entry.get('cf_timestamp_basis'),
+                    cf_timestamp_uncertainty_ms=entry.get(
+                        'cf_timestamp_uncertainty_ms'
+                    ),
                 )
                 for listener in listeners:
                     try:
@@ -316,6 +346,62 @@ class InteractionLogger(LogManager):
             return None, None
         packet = min(snapshot, key=lambda candidate: abs(candidate['time'] - timestamp))
         return packet.copy(), abs(packet['time'] - timestamp)
+
+    def get_nearest_group_log_metadata(self, log_group, timestamp):
+        """Return timing/provenance without changing runtime data packets."""
+        metadata = getattr(self, 'cf_log_group_packet_metadata', None)
+        if metadata is None:
+            return None, None
+        packets = metadata.get(log_group)
+        if not packets:
+            return None, None
+        with self.cf_log_packet_lock:
+            snapshot = list(packets)
+        if not snapshot:
+            return None, None
+        packet = min(
+            snapshot,
+            key=lambda candidate: abs(candidate['time'] - timestamp),
+        )
+        return packet.copy(), abs(packet['time'] - timestamp)
+
+    def get_nearest_group_log_data_by_cf_timestamp(
+            self, log_group, cf_timestamp_ms):
+        """Return the packet nearest a Crazyflie-clock epoch.
+
+        Host callback order is not a synchronization clock: separate 100 Hz
+        log blocks can be delayed independently by Python scheduling even
+        though their firmware samples are adjacent.  Pair the immutable
+        timing sidecar with its data packet and compare the wrapping 24-bit
+        log timestamp instead.
+        """
+        metadata = getattr(self, 'cf_log_group_packet_metadata', None)
+        data_packets = self.cf_log_group_packets.get(log_group)
+        metadata_packets = None if metadata is None else metadata.get(log_group)
+        if not data_packets or not metadata_packets:
+            return None, None
+        with self.cf_log_packet_lock:
+            data_snapshot = list(data_packets)
+            metadata_snapshot = list(metadata_packets)
+        if not data_snapshot or len(data_snapshot) != len(metadata_snapshot):
+            return None, None
+        reference = int(cf_timestamp_ms) & 0xFFFFFF
+
+        def signed_delta_ms(candidate):
+            value = candidate.get('cf_timestamp_ms')
+            if value is None:
+                return None
+            return ((int(value) - reference + 0x800000) & 0xFFFFFF) - 0x800000
+
+        candidates = []
+        for data, timing in zip(data_snapshot, metadata_snapshot):
+            delta_ms = signed_delta_ms(timing)
+            if delta_ms is not None:
+                candidates.append((abs(delta_ms), data))
+        if not candidates:
+            return None, None
+        skew_ms, packet = min(candidates, key=lambda item: item[0])
+        return packet.copy(), 0.001 * float(skew_ms)
 
     def get_latest_cf_log_data(self, group_name, param_name):
         if self.cf_log_data is None:
@@ -402,7 +488,26 @@ class InteractionLogger(LogManager):
             self.cf_log_group_times[group_name] = cur_time
             data['time'] = cur_time
             with self.cf_log_packet_lock:
+                if not hasattr(self, 'cf_log_group_packet_metadata'):
+                    # Some focused/offline fixtures intentionally construct a
+                    # minimal logger without running __init__. Keep the new
+                    # provenance sidecar backward compatible with that path.
+                    self.cf_log_group_packet_metadata = (
+                        collections.defaultdict(
+                            lambda: collections.deque(maxlen=1000)
+                        )
+                    )
                 self.cf_log_group_packets[group_name].append(data.copy())
+                self.cf_log_group_packet_metadata[group_name].append({
+                    'time': cur_time,
+                    'cf_timestamp_ms': effective_timestamp,
+                    'transport_cf_timestamp_ms': transport_timestamp,
+                    'cf_timestamp_basis': (
+                        source_timestamp_basis
+                        or CF_LOG_TRANSPORT_TIMESTAMP_BASIS
+                    ),
+                    'source_snapshot_atomic': source_snapshot_atomic,
+                })
             if group_name in self.cf_log_data.keys():
                 # Append data to each variable in the group
                 for var_name, var_info in self.cf_log_data[group_name].items():
