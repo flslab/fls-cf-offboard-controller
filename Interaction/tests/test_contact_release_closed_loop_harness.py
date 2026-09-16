@@ -56,6 +56,23 @@ class ContactReleaseClosedLoopHarnessTests(unittest.TestCase):
         )
         self.assertIn("CrazySim/SITL", result.remaining_live_gate)
 
+    def test_fixed_position_delay_compensation_is_shadow_only_and_not_robust_to_unknown_few_ms(self):
+        config = dataclasses.replace(
+            ClosedLoopHarnessConfig(),
+            position_delay_s=0.003,
+            position_delay_compensation_enabled=True,
+        )
+        matched = run_contact_release_closed_loop_harness(
+            config=config, faults=ClosedLoopFaults(position_delay_s=0.003)
+        )
+        mismatched = run_contact_release_closed_loop_harness(
+            config=config, faults=ClosedLoopFaults(position_delay_s=0.005)
+        )
+        self.assertTrue(matched.passed)
+        self.assertFalse(matched.authoritative)
+        self.assertFalse(mismatched.gates["stop_overshoot"].passed)
+        self.assertFalse(mismatched.authoritative)
+
     def test_rebounded_release_candidate_is_discarded_before_second_boundary(self):
         result = run_contact_release_closed_loop_harness(faults=ClosedLoopFaults(
             release_candidate_rebound=True,

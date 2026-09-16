@@ -50,6 +50,10 @@ class ClosedLoopHarnessConfig:
     command_period_s: float = 0.010
     position_period_s: float = 0.010
     position_delay_s: float = 0.0
+    # Simulation-only trial: extrapolate a delayed position observation to
+    # estimator-now using the EKF velocity and an assumed fixed delay. The
+    # default false path is byte-for-byte equivalent to the prior harness.
+    position_delay_compensation_enabled: bool = False
     maximum_position_age_s: float = 0.035
     maximum_position_gap_s: float = 0.055
     contact_start_s: float = 0.050
@@ -116,6 +120,7 @@ class ClosedLoopHarnessConfig:
         if (
             any(not math.isfinite(value) or value < 0.0
                 for value in nonnegative)
+            or type(self.position_delay_compensation_enabled) is not bool
             or self.integration_step_s > min(
                 self.detector_period_s,
                 self.command_period_s,
@@ -674,7 +679,27 @@ def run_contact_release_closed_loop_harness(
                     )
                 last_fused_position_capture_s = capture_time
                 if ekf is not None and estimate is not None and estimate.valid:
-                    estimate = ekf.update_extpos(measured_position)
+                    if config.position_delay_compensation_enabled:
+                        # Never use plant truth or the simulator's exact
+                        # capture-to-arrival age as the correction. This is
+                        # only the configured fixed-delay hypothesis.
+                        delay = config.position_delay_s
+                        corrected_position = (
+                            np.asarray(measured_position)
+                            + np.asarray(estimate.velocity_m_s) * delay
+                        )
+                        velocity_uncertainty = max(
+                            config.velocity_uncertainty_m_s
+                        )
+                        std = math.hypot(
+                            ekf.config.extpos_std_m,
+                            velocity_uncertainty * delay,
+                        )
+                        estimate = ekf.update_extpos(
+                            corrected_position, std_m=std,
+                        )
+                    else:
+                        estimate = ekf.update_extpos(measured_position)
 
             position_gap = (
                 boundary_elapsed if last_fused_position_capture_s is None
