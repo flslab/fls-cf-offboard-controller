@@ -2023,6 +2023,9 @@ class Controller:
             targeted_braking = bool(getattr(
                 self.args, 'targeted_braking_calibration', False
             ))
+            planar_braking = bool(getattr(
+                self.args, 'planar_braking_calibration', False
+            ))
             if targeted_braking and (
                     not getattr(self.args, 'calibrate', False)
                     or getattr(self.args, 'braking_test', False)
@@ -2050,6 +2053,12 @@ class Controller:
                     '--adaptive-braking-calibration requires --calibrate '
                     'without --interaction or --braking-test'
                 )
+            if planar_braking and (not self.args.calibrate or targeted_braking
+                                   or adaptive_braking or self.args.ground_test):
+                raise ValueError(
+                    '--planar-braking-calibration requires isolated --calibrate '
+                    'without targeted/adaptive braking or ground-test'
+                )
             if self.args.ground_test:
                 self._safe_sleep(1)
                 return
@@ -2076,7 +2085,7 @@ class Controller:
                 ] = adaptive_braking
                 wrench_config.setdefault('planar_braking_calibration', {})[
                     'enabled'
-                ] = adaptive_braking
+                ] = adaptive_braking or planar_braking
                 if targeted_braking:
                     # The targeted protocol is deliberately deterministic: it
                     # collects controlled high-speed +/-Y data at three brake
@@ -3029,6 +3038,11 @@ if __name__ == '__main__':
         ),
     )
     ap.add_argument(
+        '--planar-braking-calibration', action='store_true',
+        help=('during --calibrate, collect the mission-configured fixed-pulse '
+              'planar braking sweep and save only a quality-passing fit'),
+    )
+    ap.add_argument(
         "--targeted-braking-calibration", action="store_true",
         help=("during --calibrate, collect a fixed 20-degree +/-Y sweep with "
               "0.32 s acceleration and 0.16/0.20/0.24 s braking pulses; "
@@ -3199,6 +3213,14 @@ if __name__ == '__main__':
         ap.error(
             '--targeted-braking-calibration requires --calibrate without '
             '--interaction, --braking-test, or --ground-test'
+        )
+    if args.planar_braking_calibration and (
+            not args.calibrate or args.targeted_braking_calibration
+            or args.adaptive_braking_calibration is True
+            or args.ground_test or args.crazysim):
+        ap.error(
+            '--planar-braking-calibration requires hardware --calibrate '
+            'without targeted/adaptive braking or ground-test'
         )
     if args.adaptive_braking_calibration is not None and (
             not args.calibrate or args.interaction or args.braking_test

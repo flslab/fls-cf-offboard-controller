@@ -95,6 +95,22 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
                     '--smooth-controller-rate', '100',
                 ])
 
+    def test_fixed_planar_flag_requires_isolated_hardware_calibration(self):
+        args = parse_controller_args([
+            '--calibrate', '--planar-braking-calibration',
+            '--no-adaptive-braking-calibration', '--log',
+            '--smooth-controller-rate', '100',
+        ])
+        self.assertTrue(args.planar_braking_calibration)
+        for extra in (['--interaction'], ['--targeted-braking-calibration'],
+                      ['--adaptive-braking-calibration'], ['--ground-test']):
+            with self.subTest(extra=extra), redirect_stderr(
+                    io.StringIO()), self.assertRaises(SystemExit):
+                parse_controller_args([
+                    '--calibrate', '--planar-braking-calibration', *extra,
+                    '--log', '--smooth-controller-rate', '100',
+                ])
+
     def test_cli_rejects_explicit_selection_without_exclusive_calibration(self):
         for option in ('--adaptive-braking-calibration',
                        '--no-adaptive-braking-calibration'):
@@ -172,6 +188,28 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
             'online_prediction_calibration']['enabled'])
         self.assertFalse(configured['Interaction']['config']['wrench_interaction'][
             'planar_braking_calibration']['enabled'])
+        self.assertEqual(mission, before)
+        factory.return_value.run_calibration.assert_called_once()
+
+    def test_fixed_planar_uses_mission_protocol_without_adaptive_or_online_fit(self):
+        run, factory = calibration_switch()
+        mission = {'Interaction': {'config': {'wrench_interaction': {
+            'planar_braking_calibration': {
+                'enabled': False,
+                'accelerate_durations_s': [.16, .24, .32, .45],
+                'repetitions_per_duration': 1,
+            },
+            'adaptive_braking_calibration': {'enabled': True},
+            'online_prediction_calibration': {'enabled': True},
+        }}}}
+        before = deepcopy(mission)
+        run(self.controller(self.args(planar_braking_calibration=True), mission))
+        wrench = factory.call_args.args[3]['Interaction']['config']['wrench_interaction']
+        self.assertTrue(wrench['planar_braking_calibration']['enabled'])
+        self.assertEqual(wrench['planar_braking_calibration'][
+            'accelerate_durations_s'], [.16, .24, .32, .45])
+        self.assertFalse(wrench['adaptive_braking_calibration']['enabled'])
+        self.assertFalse(wrench['online_prediction_calibration']['enabled'])
         self.assertEqual(mission, before)
         factory.return_value.run_calibration.assert_called_once()
 
