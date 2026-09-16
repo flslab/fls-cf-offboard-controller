@@ -234,6 +234,7 @@ class Controller:
         self.download_mission_config()
         self.prepare_mpc_mission()
         self.prepare_contact_attitude_experiment_mission()
+        self.prepare_active_septic_brake_test()
         self.setup_logging()
         self.setup_contact_attitude_shadow()
         self.setup_force_sensor()
@@ -266,6 +267,21 @@ class Controller:
             self.arm()
             self.takeoff()
         self.run_mission()
+
+    def prepare_active_septic_brake_test(self):
+        """Reject an uncalibrated active profile before arming the vehicle."""
+        if not getattr(self.args, 'active_septic_brake_test', False):
+            return
+        from Interaction.active_septic_brake_test import (
+            validate_active_septic_brake_test,
+        )
+        evidence = validate_active_septic_brake_test(
+            self.mission,
+            drone_id=self.args.drone_id,
+            sense_axis=self.args.sense_axis,
+            sense_sign=self.args.sense_sign,
+        )
+        logger.info('Active septic brake test pre-arm gate passed: %s', evidence)
 
     def prepare_mpc_mission(self):
         """Validate and freeze the private LMPC bootstrap mission pre-arm."""
@@ -2925,6 +2941,10 @@ if __name__ == '__main__':
     ap.add_argument("--illumination", action="store_true", help="illumination application")
     ap.add_argument("--interaction", action="store_true", help="interaction application")
     ap.add_argument(
+        "--active-septic-brake-test", action="store_true",
+        help="single-flight active seventh-order brake test with a pre-arm plant-fit gate",
+    )
+    ap.add_argument(
         "--contact-attitude-run", type=int, choices=(1, 2, 3), default=None,
         help=(
             "three-flight shadow attitude protocol: 1=pointcloud/onboard "
@@ -3128,6 +3148,24 @@ if __name__ == '__main__':
     ap.add_argument("--autotune", action="store_true", help="run automatic pid tuner")
 
     args = ap.parse_args()
+    if args.active_septic_brake_test:
+        if not (args.orchestrated and args.interaction and args.sense
+                and args.log and args.vicon_rigidbody_position_only
+                and args.smooth_controller_rate == 100
+                and args.cf_log_period == 10):
+            ap.error(
+                '--active-septic-brake-test requires --orchestrated '
+                '--interaction --sense --log '
+                '--vicon-rigidbody-position-only NAME '
+                '--smooth-controller-rate 100 --cf-log-period 10'
+            )
+        if (args.crazysim or args.radio or args.droneless or args.ground_test
+                or args.skip_arm or args.skip_takeoff or args.skip_landing
+                or args.contact_attitude_run is not None):
+            ap.error(
+                '--active-septic-brake-test requires a normal USB hardware '
+                'flight without skip/ground/contact-attitude overrides'
+            )
     if args.vicon_rigidbody_position_only is not None:
         rigid_body_name = args.vicon_rigidbody_position_only.strip()
         if not rigid_body_name:
