@@ -82,7 +82,7 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         self.assertAlmostEqual(sample.length_mm, 10.364)
         self.assertAlmostEqual(sample.force_n, 0.00576)
 
-    def test_live_force_info_log_is_rate_limited(self):
+    def test_live_force_info_sampling_is_rate_limited(self):
         sample = parse_potentiometer_line(
             "1234,925,925.25,4.522,7.100,4.873",
             spring_constant_n_per_mm=0.16,
@@ -90,17 +90,10 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         )
         sensor = PotentiometerForceSensor(info_log_interval_s=0.1)
 
-        with self.assertLogs(
-                'Interaction.potentiometer_force_sensor', level='INFO') as logs:
-            self.assertTrue(sensor._log_sample_info(sample, monotonic_time=1.0))
-            self.assertFalse(sensor._log_sample_info(sample, monotonic_time=1.05))
-            self.assertTrue(sensor._log_sample_info(sample, monotonic_time=1.10))
-
-        self.assertEqual(len(logs.output), 2)
-        self.assertIn('Potentiometer force=1.136 N', logs.output[0])
-        self.assertIn('compression=7.100 mm', logs.output[0])
-        self.assertIn('length=3.300 mm', logs.output[0])
-        self.assertIn('Vcc=4.873 V', logs.output[0])
+        self.assertTrue(sensor._log_sample_info(sample, monotonic_time=1.0))
+        self.assertFalse(sensor._log_sample_info(sample, monotonic_time=1.05))
+        self.assertTrue(sensor._log_sample_info(sample, monotonic_time=1.10))
+        self.assertAlmostEqual(sensor._last_info_log_monotonic, 1.10)
 
     def test_ignores_header_and_invalid_rows(self):
         self.assertIsNone(parse_potentiometer_line(

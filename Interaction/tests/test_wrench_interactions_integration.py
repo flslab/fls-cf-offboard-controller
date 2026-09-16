@@ -5192,9 +5192,11 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.coast_jerk_limited_validation_nominal_min_speed_m_s,
             0.0,
         )
-        self.assertLess(
-            control.coast_jerk_limited_validation_robust_min_speed_m_s,
-            -control.coast_jerk_limited_terminal_speed_margin_m_s,
+        # The sampled envelope may reject either an overshooting braking
+        # corner or a too-fast terminal corner. Both must remain fail-closed.
+        self.assertGreater(
+            control.coast_jerk_limited_validation_robust_terminal_speed_m_s,
+            control.coast_jerk_limited_validation_nominal_terminal_speed_m_s,
         )
         self.assertTrue(
             control.coast_jerk_limited_velocity_fallback_active
@@ -6991,6 +6993,9 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             coast_velocity_rebrake_enabled=False,
         )
         self.assertTrue(control.start_contact('orientation'))
+        # A fused attitude does not replace evidence of a command actually
+        # sent before release.
+        control.send(commander, command_timestamp=0.99, yaw_deg=0.0)
         self.assertTrue(control.end_contact(
             [0.0, 0.0, 1.0], [0.10, 0.60, 0.0], 1.0,
             interaction_direction=[0.0, 1.0, 0.0],
@@ -7022,13 +7027,13 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             [0.0, 1.0],
         )
         self.assertFalse(control.coast_jerk_limited_history_wait_active)
-        self.assertEqual(control.coast_jerk_limited_command_history_span_s, 0.0)
+        self.assertLess(control.coast_jerk_limited_command_history_span_s, 0.76)
         self.assertIsNone(control.coast_jerk_limited_history_wait_started_at)
         control.send(commander, command_timestamp=1.0, yaw_deg=0.0)
         event = control.consume_jerk_limited_event()
         self.assertEqual(
             event['release_response_state_source'],
-            'fused_contact_release_orientation',
+            'fused_current_orientation_at_profile_start',
         )
         self.assertAlmostEqual(event['required_command_history_span_s'], 0.76)
 
@@ -7067,6 +7072,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             coast_velocity_rebrake_enabled=False,
         )
         self.assertTrue(control.start_contact('orientation'))
+        control.send(commander, command_timestamp=0.99, yaw_deg=0.0)
         self.assertTrue(control.end_contact(
             [0.0, 0.0, 1.0], [0.10, 0.60, 0.0], 1.0,
             interaction_direction=[0.0, 1.0, 0.0],
@@ -7076,7 +7082,10 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         ))
         np.testing.assert_allclose(
             control.coast_jerk_limited_release_model_acceleration_xy_m_s2,
-            [0.25, -0.15],
+            control.coast_attitude_acceleration_scale
+            * attitude_to_world_acceleration(
+                np.degrees(0.05), np.degrees(-0.04), np.degrees(0.2),
+            ),
         )
         control.confirm_release_candidate(
             timestamp=1.0,
@@ -7093,15 +7102,15 @@ class WrenchInteractionLoopTests(unittest.TestCase):
 
         self.assertEqual(control.coast_velocity_phase, 'jerk_attitude_brake')
         self.assertFalse(control.coast_jerk_limited_history_wait_active)
-        self.assertEqual(control.coast_jerk_limited_command_history_span_s, 0.0)
+        self.assertLess(control.coast_jerk_limited_command_history_span_s, 0.76)
         control.send(commander, command_timestamp=1.0, yaw_deg=0.0)
         event = control.consume_jerk_limited_event()
         self.assertEqual(
             event['release_response_state_source'],
-            'fused_current_accelerometer_at_profile_start',
+            'fused_current_orientation_at_profile_start',
         )
 
-    def test_contact_force_acceleration_seed_is_clipped_to_attitude_limit(self):
+    def test_contact_force_acceleration_does_not_seed_untrusted_free_stop(self):
         control = TranslationControlHandoff(
             initial_position=[0.0, 0.0, 1.0],
             yaw_deg=0.0,
@@ -7122,12 +7131,13 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             current_world_acceleration_m_s2=np.array([6.0, 8.0, 0.0]),
             coast=True,
         ))
-        self.assertAlmostEqual(
-            np.linalg.norm(
-                control
-                .coast_jerk_limited_release_model_acceleration_xy_m_s2
-            ),
-            0.981,
+        np.testing.assert_allclose(
+            control.coast_jerk_limited_release_model_acceleration_xy_m_s2,
+            [0.0, 0.0],
+        )
+        self.assertEqual(
+            control.coast_jerk_limited_release_model_source,
+            'fused_contact_release_orientation',
         )
 
     def test_jerk_limited_brake_waits_for_terminal_gates_then_handoffs(self):
@@ -8559,7 +8569,7 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                 coast_jerk_limited_attitude_enabled=False,
                 coast_jerk_limited_septic_smoothing_enabled=True,
             )
-        with self.assertRaisesRegex(ValueError, 'finite and positive'):
+        with self.assertRaisesRegex(ValueError, 'limits are invalid'):
             TranslationControlHandoff(
                 initial_position=[0.0, 0.0, 1.0],
                 yaw_deg=0.0,

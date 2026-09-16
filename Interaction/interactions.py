@@ -15245,9 +15245,10 @@ class InteractionsControl:
         """Open 15-state roll/pitch feedback only during contact braking."""
         requested = bool(
             enabled
-            and self.pid_attitude_source == 'post-release-15state'
+            and getattr(self, 'pid_attitude_source', 'standard')
+            == 'post-release-15state'
         )
-        if requested == self._pid_15state_control_active:
+        if requested == getattr(self, '_pid_15state_control_active', False):
             return
         self.cf.param.set_value(
             'kalmanPRel.controlRp', '1' if requested else '0'
@@ -16112,9 +16113,12 @@ class InteractionsControl:
             low = low.for_safety_cleanup()
         if isinstance(high, CommandWrapper):
             high = high.for_safety_cleanup()
-        wrench_config = self.mission['Interaction']['config'][
-            'wrench_interaction'
-        ]
+        wrench_config = (
+            getattr(self, 'mission', {})
+            .get('Interaction', {})
+            .get('config', {})
+            .get('wrench_interaction', {})
+        )
         handoff_config = wrench_config.get('control_handoff', {})
         if handoff_config.get(
             'coast_max_tilt_predictive_brake_enabled', False
@@ -16165,7 +16169,8 @@ class InteractionsControl:
             waypoint_positions = [final_position]
             first_duration_s = handoff_duration_s
         verified_velocity_handoff = bool(
-            self.pid_attitude_source == 'post-release-15state'
+            getattr(self, 'pid_attitude_source', 'standard')
+            == 'post-release-15state'
         )
         if verified_velocity_handoff:
             # Open the verified source only after the terminal brake earns

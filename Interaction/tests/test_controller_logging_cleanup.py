@@ -5,7 +5,7 @@ from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from Interaction.command_wrapper import CommandWrapper
 from Interaction.commander_handoff import HandoffError
@@ -201,12 +201,18 @@ class LoggingCleanupTests(unittest.TestCase):
             _log_mocap_timing=lambda data: logs.add_log_entry('mocap_timing', data),
         )
         mocap_factory.return_value.start.side_effect = lambda: controller._log_mocap_timing({'frame_id': 0})
-        namespace['setup_motion_capture'](controller)
+        with patch.dict('sys.modules', {
+            'mocap': SimpleNamespace(Mocap=mocap_factory),
+        }):
+            namespace['setup_motion_capture'](controller)
         self.assertEqual(logs.groups['mocap_timing'], [{'frame_id': 0}])
         self.assertIs(mocap_factory.call_args.kwargs['timing_callback'], controller._log_mocap_timing)
         controller.log_manager = None
         mocap_factory.return_value.start.side_effect = None
-        namespace['setup_motion_capture'](controller)
+        with patch.dict('sys.modules', {
+            'mocap': SimpleNamespace(Mocap=mocap_factory),
+        }):
+            namespace['setup_motion_capture'](controller)
         self.assertIsNone(mocap_factory.call_args.kwargs['timing_callback'])
 
 
