@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import numpy as np
+
 from Interaction.braking_response_calibration import PlanarBrakingCalibration
 from Interaction.position_capture_calibration import PositionCaptureCalibration
 from Interaction.interactions import InteractionsControl, StaleLocalizationError
@@ -23,6 +25,11 @@ class CalibrationTrialWaitRuntimeTests(unittest.TestCase):
     def test_planar_only_starts_without_xyz_excitation_or_refitting(self):
         controller, logs, clock, _times, config, _duration = self.make_runtime()
         config['planar_braking_only_calibration'] = True
+        config['planar_braking_calibration'].update({
+            'recovery_s': 5.0,
+            'trial_start_dwell_s': 2.0,
+            'trial_start_timeout_s': 12.0,
+        })
         plan = PlanarBrakingCalibration(
             config['planar_braking_calibration'], start_after_s=0.0,
         )
@@ -59,10 +66,23 @@ class CalibrationTrialWaitRuntimeTests(unittest.TestCase):
         self.assertEqual(len(starts), 2)
         self.assertAlmostEqual(starts[0]['protocol_elapsed_s'],
                                plan.trial_start_s[0])
+        ready = self.events(logs, 'Planar Braking Calibration Trial Ready')
+        final_ready = self.events(logs, 'Planar Braking Final Recovery Calibration Trial Ready')
+        self.assertEqual(len(ready), 2)
+        self.assertEqual(len(final_ready), 1)
+        self.assertTrue(all(
+            item['wait_elapsed_s'] >= 2.0 - 1e-9
+            for item in [*ready, *final_ready]
+        ), [item['wait_elapsed_s'] for item in [*ready, *final_ready]])
 
     def test_planar_only_save_reuses_original_xyz_fit_and_motor_model(self):
         controller, _logs, clock, _times, config, _duration = self.make_runtime()
         config['planar_braking_only_calibration'] = True
+        config['planar_braking_calibration'].update({
+            'recovery_s': 5.0,
+            'trial_start_dwell_s': 2.0,
+            'trial_start_timeout_s': 12.0,
+        })
         plan = PlanarBrakingCalibration(
             config['planar_braking_calibration'], start_after_s=0.0,
         )
@@ -102,6 +122,139 @@ class CalibrationTrialWaitRuntimeTests(unittest.TestCase):
                 save.assert_called_once()
                 self.assertEqual(save.call_args.args[1], old_fit)
                 self.assertEqual(save.call_args.args[2], old_motor)
+
+    def test_late_return_keeps_bounded_target_and_waits_two_seconds(self):
+        recovery_started_at = [None]
+        resumed = [False]
+        simulated_y = [-.7]
+        arrived_at = [None]
+
+        def behavior(state, now, logs, controller):
+            phases = self.events(logs, 'Planar Braking Calibration Phase')
+            if not any(item['segment_id'] == 0 and item['phase'] == 'recovery'
+                       for item in phases):
+                return
+            if recovery_started_at[0] is None:
+                recovery_started_at[0] = now
+            if now-recovery_started_at[0] < 5.4:
+                state['position'][1] = -.7
+                return
+            resumed[0] = True
+            positions = [call[1] for call in controller.lo_commander.calls
+                         if call[0] == 'position']
+            target_y = positions[-1][1] if positions else -.7
+            simulated_y[0] += float(np.clip(
+                target_y-simulated_y[0], -.004, .004,
+            ))
+            state['position'][1] = simulated_y[0]
+            if arrived_at[0] is None and abs(simulated_y[0]) <= .08:
+                arrived_at[0] = now
+
+        runtime = self.make_runtime(wait_behavior=behavior)
+        controller, logs, clock, command_times, config, _duration = runtime
+        config['planar_braking_only_calibration'] = True
+        config['planar_braking_calibration'].update({
+            'recovery_s': 5.0,
+            'trial_start_dwell_s': 2.0,
+            'trial_start_timeout_s': 12.0,
+            'max_displacement_m': 1.2,
+            'max_xy_speed_m_s': 1.6,
+        })
+        plan = PlanarBrakingCalibration(
+            config['planar_braking_calibration'], start_after_s=0.0,
+        )
+        old_fit = {
+            'model_delay_s': [0.0, 0.0, 0.025],
+            'model_time_constant_s': [0.0, 0.0, 0.0],
+            'model_acceleration_scale': [0.78, 0.80, 0.67],
+            'sample_count': 2150,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'calibration.json'
+            save_drone_calibration('test', old_fit, {'hover_pwm': 30000}, path)
+            with ExitStack() as stack:
+                stack.enter_context(patch('Interaction.interactions.time.time',
+                                          lambda: clock[0]))
+                stack.enter_context(patch(
+                    'Interaction.interactions.identify_planar_braking_response',
+                    side_effect=ProtocolFinished,
+                ))
+                with self.assertRaises(ProtocolFinished):
+                    controller.interaction_onboard_wrench_admittance(
+                        duration=plan.end_s + .04,
+                        nominal_position=[0, 0, 1], config=config,
+                        calibration_mode=True, calibration_path=path,
+                    )
+        self.assertTrue(resumed[0])
+        starts = self.events(logs, 'Planar Braking Calibration Trial Wait Started')
+        ready = self.events(logs, 'Planar Braking Calibration Trial Ready')
+        self.assertEqual(len(starts), 2)
+        self.assertEqual(len(ready), 2)
+        self.assertGreater(ready[1]['wait_elapsed_s'], 5.4)
+        self.assertIsNotNone(arrived_at[0])
+        self.assertGreaterEqual(ready[1]['time']-arrived_at[0], 2.0-1e-9)
+        self.assertLess(starts[1]['time'], ready[1]['time'])
+        hold_calls = [call for call, at in zip(controller.lo_commander.calls,
+                                               command_times)
+                      if starts[1]['time'] < at < starts[1]['time']+.3
+                      and call[0] == 'position']
+        self.assertTrue(hold_calls)
+        self.assertTrue(
+            any(call[1][1] < -.4 for call in hold_calls),
+            (starts[1], hold_calls,
+             self.events(logs, 'Planar Braking Bounded Recovery Phase')),
+        )
+
+    def test_return_that_never_reaches_center_times_out_without_next_pulse(self):
+        def behavior(state, _now, logs, _controller):
+            phases = self.events(logs, 'Planar Braking Calibration Phase')
+            if any(item['segment_id'] == 0 and item['phase'] == 'recovery'
+                   for item in phases):
+                state['position'][1] = -.7
+
+        controller, logs, clock, _times, config, _ = self.make_runtime(
+            wait_behavior=behavior,
+        )
+        config['planar_braking_only_calibration'] = True
+        config['planar_braking_calibration'].update({
+            'recovery_s': 5.0,
+            'trial_start_dwell_s': 2.0,
+            'trial_start_timeout_s': 12.0,
+            'max_displacement_m': 1.2,
+        })
+        plan = PlanarBrakingCalibration(
+            config['planar_braking_calibration'], start_after_s=0.0,
+        )
+        old_fit = {
+            'model_delay_s': [0.0, 0.0, 0.025],
+            'model_time_constant_s': [0.0, 0.0, 0.0],
+            'model_acceleration_scale': [0.78, 0.80, 0.67],
+            'sample_count': 2150,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'calibration.json'
+            save_drone_calibration('test', old_fit, {'hover_pwm': 30000}, path)
+            with ExitStack() as stack:
+                stack.enter_context(patch('Interaction.interactions.time.time',
+                                          lambda: clock[0]))
+                with self.assertRaises(TimeoutError):
+                    controller.interaction_onboard_wrench_admittance(
+                        duration=plan.end_s + .04,
+                        nominal_position=[0, 0, 1], config=config,
+                        calibration_mode=True, calibration_path=path,
+                    )
+        self.assertEqual(len(self.events(
+            logs, 'Planar Braking Calibration Trial Ready')),
+            1,
+        )
+        self.assertEqual(len(self.events(
+            logs, 'Planar Braking Calibration Trial Wait Timeout')),
+            1,
+        )
+        self.assertFalse(any(
+            item['segment_id'] == 1
+            for item in self.events(logs, 'Planar Braking Calibration Phase')
+        ))
 
     def make_runtime(self, *, wait_behavior=None):
         clock = [1000.0]

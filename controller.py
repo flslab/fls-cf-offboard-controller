@@ -300,6 +300,25 @@ class Controller:
                 'planar-only braking calibration requires the onboard '
                 'translation mission with a configured planar sweep'
             )
+        from Interaction.calibration_trial_readiness import (
+            CalibrationTrialReadinessGate,
+        )
+        from Interaction.interactions import resolve_wrench_nominal_target
+        from Interaction.planar_calibration_recovery import (
+            BoundedPlanarCalibrationRecovery,
+        )
+        braking = wrench['planar_braking_calibration']
+        readiness = CalibrationTrialReadinessGate(braking)
+        if readiness.trial_start_dwell_s < 2.0:
+            raise ValueError(
+                'planar-only braking calibration requires at least 2 s of '
+                'stable position/speed/tilt before each pulse'
+            )
+        target = resolve_wrench_nominal_target(
+            self.mission['drones'][self.args.drone_id]['target'],
+            wrench, calibration_mode=True,
+        )
+        BoundedPlanarCalibrationRecovery(target[:3], braking)
         path = config.get('wrench_calibration_file', DEFAULT_CALIBRATION_PATH)
         entry = load_required_xyz_calibration(self.args.drone_id, path)
         logger.info(

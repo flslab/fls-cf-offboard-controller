@@ -104,6 +104,7 @@ from Interaction.release_lmpc_terminal_gate import (
     classify_terminal_post_state_commands,
 )
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
+from Interaction.planar_calibration_recovery import BoundedPlanarCalibrationRecovery
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH,
     apply_drone_calibration,
@@ -19120,6 +19121,8 @@ class InteractionsControl:
                         planar_braking_plan.directions.tolist(),
                         planar_braking_plan.repetitions_per_duration)
         planar_only_reference = None
+        bounded_planar_recovery = None
+        last_bounded_recovery_phase = None
         if planar_only_calibration:
             if excitation_config['enabled'] or not planar_braking_plan.enabled:
                 raise ValueError(
@@ -19128,6 +19131,9 @@ class InteractionsControl:
                 )
             load_required_xyz_calibration(self.drone_id, calibration_path)
             planar_only_reference = calibration_reference(calibration_path)
+            bounded_planar_recovery = BoundedPlanarCalibrationRecovery(
+                nominal_position, planar_braking_config,
+            )
         # Keep historical report support, but remove this experiment from all
         # live calibration paths, including callers with an older mission.
         position_capture_config = {}
@@ -19199,6 +19205,15 @@ class InteractionsControl:
                     float(planar_braking_plan.trial_start_s[segment_id]),
                     'Planar Braking', segment_id, gate, planar_braking_plan,
                 ))
+            if bounded_planar_recovery is not None:
+                # Pause the protocol after the final pulse too. Its return to
+                # center and two-second dwell are required before fitting.
+                calibration_trial_boundaries.append((
+                    float(planar_braking_plan.end_s),
+                    'Planar Braking Final Recovery',
+                    len(planar_braking_plan.trial_directions),
+                    gate, planar_braking_plan,
+                ))
         if calibration_mode and position_capture_plan.enabled:
             gate = CalibrationTrialReadinessGate(position_capture_config)
             calibration_trial_gates.append(gate)
@@ -19218,14 +19233,20 @@ class InteractionsControl:
                         and not gate.admitted(segment_id)):
                     if not gate.waiting:
                         gate.begin(segment_id, wall_time)
+                        hold_position = (
+                            bounded_planar_recovery.target
+                            if bounded_planar_recovery is not None
+                            and bounded_planar_recovery.target is not None
+                            else nominal_position
+                        )
                         self._log_event(label + ' Calibration Trial Wait Started', {
                             'segment_id': segment_id,
                             'protocol_elapsed_s': calibration_elapsed_s,
-                            'hold_position_m': nominal_position.tolist(),
+                            'hold_position_m': hold_position.tolist(),
                             'state_source': 'crazyflie_state_estimate',
                         })
-                        logger.info('%s calibration trial %s: holding nominal '
-                                    'position until the start state is stable.',
+                        logger.info('%s calibration trial %s: returning to '
+                                    'nominal position and waiting for stable state.',
                                     label, segment_id)
                     return boundary
             return None
@@ -25352,7 +25373,10 @@ class InteractionsControl:
                     ))
                     # Waiting is not permission to exceed the flight envelope.
                     if ((plan is planar_braking_plan and xy_speed > plan.max_xy_speed_m_s)
-                            or xy_displacement > plan.max_displacement_m):
+                            or xy_displacement > plan.max_displacement_m
+                            or (bounded_planar_recovery is not None
+                                and actual_tilt_deg
+                                > bounded_planar_recovery.max_tilt_deg)):
                         raise RuntimeError(
                             f'{label} calibration exceeded its safety limit '
                             'while waiting for trial readiness '
@@ -25361,10 +25385,53 @@ class InteractionsControl:
                         )
                     check_trial_wait(now)
                     wait_elapsed_s = gate.wait_elapsed_s(now)
-                    ready = gate.update(
-                        segment_id, now, state_time, xy_speed,
-                        actual_tilt_deg, xy_displacement,
-                    )
+                    recovery_pending = False
+                    if (bounded_planar_recovery is not None
+                            and segment_id > 0
+                            and bounded_planar_recovery.segment_id
+                            != segment_id - 1):
+                        raise RuntimeError(
+                            'missing bounded recovery before planar '
+                            'calibration trial admission'
+                        )
+                    if (bounded_planar_recovery is not None
+                            and segment_id > 0
+                            and bounded_planar_recovery.segment_id
+                            == segment_id - 1):
+                        try:
+                            baseline_position, recovery_phase = (
+                                bounded_planar_recovery.update(
+                                    segment_id - 1, position,
+                                    output.estimate.velocity,
+                                    actual_tilt_deg, now,
+                                )
+                            )
+                        except (ValueError, RuntimeError):
+                            self.lo_commander.send_zdistance_setpoint(
+                                0.0, 0.0, 0.0, float(nominal_position[2])
+                            )
+                            raise
+                        if recovery_phase != last_bounded_recovery_phase:
+                            last_bounded_recovery_phase = recovery_phase
+                            self._log_event(
+                                'Planar Braking Bounded Recovery Phase', {
+                                    'segment_id': segment_id - 1,
+                                    'phase': recovery_phase,
+                                    'target_position_m': baseline_position.tolist(),
+                                    'xy_speed_m_s': xy_speed,
+                                    'tilt_deg': actual_tilt_deg,
+                                    'extra_wait': True,
+                                },
+                            )
+                        recovery_pending = not bounded_planar_recovery.complete
+                    if recovery_pending:
+                        gate.invalidate(now)
+                        ready = False
+                    else:
+                        ready = gate.update(
+                            segment_id, now, state_time, xy_speed,
+                            actual_tilt_deg, xy_displacement,
+                        )
                     if ready:
                         self._log_event(label + ' Calibration Trial Ready', {
                             'segment_id': segment_id,
@@ -25539,6 +25606,37 @@ class InteractionsControl:
                         f'tilt={actual_tilt_deg:.2f}deg, '
                         f'phase={planar_braking_command.phase})'
                     )
+                if (bounded_planar_recovery is not None
+                        and planar_braking_command.phase == 'recovery'):
+                    try:
+                        baseline_position, recovery_phase = (
+                            bounded_planar_recovery.update(
+                                planar_braking_command.segment_id,
+                                position,
+                                output.estimate.velocity,
+                                actual_tilt_deg,
+                                now,
+                            )
+                        )
+                    except (ValueError, RuntimeError):
+                        self.lo_commander.send_zdistance_setpoint(
+                            0.0, 0.0, 0.0, float(nominal_position[2])
+                        )
+                        raise
+                    proposed_position = self._bounded_wrench_reference(
+                        baseline_position + output.admittance.translation_offset
+                    )
+                    if recovery_phase != last_bounded_recovery_phase:
+                        last_bounded_recovery_phase = recovery_phase
+                        self._log_event(
+                            'Planar Braking Bounded Recovery Phase', {
+                                'segment_id': planar_braking_command.segment_id,
+                                'phase': recovery_phase,
+                                'target_position_m': baseline_position.tolist(),
+                                'xy_speed_m_s': xy_speed,
+                                'tilt_deg': actual_tilt_deg,
+                            },
+                        )
             if (
                 position_capture_command is not None
                 and position_capture_command.active
@@ -25680,7 +25778,10 @@ class InteractionsControl:
                     )
 
             if calibration_wait_this_cycle:
-                command_position = nominal_position.copy()
+                # The readiness wait is also the bounded return interval.
+                # Sending nominal here would reintroduce the very position
+                # step that the recovery reference above avoids.
+                command_position = baseline_position.copy()
                 command_yaw = nominal_yaw_deg
                 translation_control.hold_position = command_position.copy()
                 translation_control.yaw_deg = nominal_yaw_deg
