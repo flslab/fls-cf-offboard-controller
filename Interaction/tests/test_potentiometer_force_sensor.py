@@ -283,12 +283,25 @@ class PotentiometerForceSensorParsingTest(unittest.TestCase):
         self.assertLess(decision.force_rate_n_s, 0.0)
         self.assertAlmostEqual(decision.pre_release_force_n, 0.81)
 
-        self.assertFalse(detector.update(0.04, 1.06).released)
-        decision = detector.update(0.03, 1.11)
+        first_unloaded = detector.update(0.04, 1.06, sample_id=1060)
+        self.assertFalse(first_unloaded.released)
+        decision = detector.update(0.03, 1.11, sample_id=1110)
 
         self.assertTrue(decision.released)
         self.assertFalse(decision.candidate_active)
         self.assertGreaterEqual(decision.unloaded_elapsed_s, 0.04)
+        self.assertEqual(decision.unloaded_started_at_s, 1.06)
+        self.assertEqual(decision.unloaded_started_sample_id, 1060)
+        self.assertEqual(decision.release_confirmed_at_s, 1.11)
+        self.assertEqual(decision.release_confirmed_sample_id, 1110)
+
+    def test_release_sample_identity_must_be_a_nonnegative_integer(self):
+        detector = PotentiometerReleaseDetector()
+        detector.arm(0.8, 1.0)
+        for sample_id in (True, -1, 1.5, float('nan')):
+            with self.subTest(sample_id=sample_id):
+                with self.assertRaises(ValueError):
+                    detector.update(0.7, 1.02, sample_id=sample_id)
 
     def test_contact_detector_requires_baseline_then_sustained_compression(self):
         detector = PotentiometerContactDetector(

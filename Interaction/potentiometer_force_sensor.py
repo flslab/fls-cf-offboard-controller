@@ -55,6 +55,13 @@ class PotentiometerReleaseDecision:
     candidate_elapsed_s: float
     candidate_cancel_reason: str | None
     pre_release_force_n: float | None
+    # Detector-clock times for the physical release boundary and its later
+    # dwell confirmation. The boundary is frozen at the first fully unloaded
+    # sample; confirmation must never relabel it as a later event.
+    unloaded_started_at_s: float | None
+    release_confirmed_at_s: float | None
+    unloaded_started_sample_id: int | None
+    release_confirmed_sample_id: int | None
 
 
 @dataclass(frozen=True)
@@ -209,7 +216,9 @@ class PotentiometerReleaseDetector:
     does not end contact immediately: the spring must then remain below the
     unloaded-force threshold for a short dwell.  This separates "the user has
     started letting go" from "the force transfer has finished", so the
-    coasting state is initialized from the post-unloading vehicle velocity.
+    dwell confirms that the edge was a real release, while the first fully
+    unloaded sample remains the immutable physical-release timestamp used by
+    the shadow estimator.
     """
 
     def __init__(
@@ -271,6 +280,9 @@ class PotentiometerReleaseDetector:
         self._candidate_started_at = None
         self._candidate_min_force_n = None
         self._candidate_last_progress_at = None
+        self._release_confirmed_at = None
+        self._unloaded_started_sample_id = None
+        self._release_confirmed_sample_id = None
 
     def arm(self, force_n, timestamp, peak_force_n=None):
         force_n = max(float(force_n), 0.0)
@@ -301,6 +313,9 @@ class PotentiometerReleaseDetector:
         self._candidate_started_at = None
         self._candidate_min_force_n = None
         self._candidate_last_progress_at = None
+        self._release_confirmed_at = None
+        self._unloaded_started_sample_id = None
+        self._release_confirmed_sample_id = None
 
     @property
     def candidate_active(self):
@@ -311,6 +326,7 @@ class PotentiometerReleaseDetector:
         self._candidate_reference_force_n = None
         self._pre_release_force_n = None
         self._unloaded_started_at = None
+        self._unloaded_started_sample_id = None
         self._candidate_started_at = None
         self._candidate_min_force_n = None
         self._candidate_last_progress_at = None
@@ -328,6 +344,7 @@ class PotentiometerReleaseDetector:
         self._candidate_min_force_n = float(force_n)
         self._candidate_last_progress_at = float(timestamp)
         self._unloaded_started_at = None
+        self._unloaded_started_sample_id = None
 
     def cancel_candidate(self, preserve_loaded_evidence=False):
         """Cancel a pending release and keep detector/control state aligned.
@@ -344,11 +361,29 @@ class PotentiometerReleaseDetector:
         self._clear_candidate(rebase_edge_force_n=edge_force)
         return True
 
-    def update(self, force_n, timestamp):
+    def update(self, force_n, timestamp, sample_id=None):
         force_n = max(float(force_n), 0.0)
         timestamp = float(timestamp)
         if not math.isfinite(force_n) or not math.isfinite(timestamp):
             raise ValueError('potentiometer release values must be finite')
+        if sample_id is not None:
+            if isinstance(sample_id, bool):
+                raise ValueError('potentiometer release sample id is invalid')
+            try:
+                numeric_sample_id = float(sample_id)
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError(
+                    'potentiometer release sample id is invalid'
+                ) from None
+            if (
+                not math.isfinite(numeric_sample_id)
+                or numeric_sample_id < 0.0
+                or not numeric_sample_id.is_integer()
+            ):
+                raise ValueError(
+                    'potentiometer release sample id is invalid'
+                )
+            sample_id = int(numeric_sample_id)
         previous_force = self._last_force_n
         rate = 0.0
         candidate_started = False
@@ -408,6 +443,7 @@ class PotentiometerReleaseDetector:
                     self._candidate_min_force_n = force_n
                     self._candidate_last_progress_at = timestamp
                 self._unloaded_started_at = timestamp
+                self._unloaded_started_sample_id = sample_id
             else:
                 candidate_cancelled = bool(self._candidate_active)
                 if candidate_cancelled:
@@ -520,11 +556,14 @@ class PotentiometerReleaseDetector:
             ):
                 if self._unloaded_started_at is None:
                     self._unloaded_started_at = timestamp
+                    self._unloaded_started_sample_id = sample_id
                 self.released = bool(
                     timestamp - self._unloaded_started_at
                     >= self.unloaded_dwell_s
                 )
                 if self.released:
+                    self._release_confirmed_at = timestamp
+                    self._release_confirmed_sample_id = sample_id
                     self._candidate_active = False
             else:
                 self._unloaded_started_at = None
@@ -573,6 +612,18 @@ class PotentiometerReleaseDetector:
                 if self._pre_release_force_n is None
                 else float(self._pre_release_force_n)
             ),
+            unloaded_started_at_s=(
+                None
+                if self._unloaded_started_at is None
+                else float(self._unloaded_started_at)
+            ),
+            release_confirmed_at_s=(
+                None
+                if self._release_confirmed_at is None
+                else float(self._release_confirmed_at)
+            ),
+            unloaded_started_sample_id=self._unloaded_started_sample_id,
+            release_confirmed_sample_id=self._release_confirmed_sample_id,
         )
 
 
