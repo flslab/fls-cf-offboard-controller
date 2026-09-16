@@ -3886,10 +3886,12 @@ class ContactAttitudeShadow:
             'source_time_s': data.get('time'),
             'source_time_scope': timing.get('frame_time_scope'),
             'position_event_time_basis': (
-                timing.get('position_event_time_basis')
+                'pi_mocap_wait_return_monotonic'
+                if timing.get('wait_return_monotonic_s') is not None
+                else None
             ),
             'position_event_pi_receive_monotonic_s': (
-                timing.get('position_event_pi_receive_monotonic_s')
+                timing.get('wait_return_monotonic_s')
             ),
             'source_capture_time_available': capture_time_available,
             'source_capture_time_s': (

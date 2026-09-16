@@ -2572,6 +2572,14 @@ class ContactAttitudeShadowTests(unittest.TestCase):
         self.assertFalse(comparison['vicon_capture_timestamp_available'])
         self.assertFalse(comparison['comparison_time_aligned'])
         self.assertFalse(comparison['comparison_scientifically_valid'])
+        mocap = shadow._mocap_snapshot()
+        self.assertEqual(
+            mocap['position_event_time_basis'],
+            'pi_mocap_wait_return_monotonic',
+        )
+        self.assertEqual(
+            mocap['position_event_pi_receive_monotonic_s'], 1000.02,
+        )
 
     def test_comparison_rejects_onboard_state_from_untrusted_clock_basis(self):
         shadow = self.make_shadow()
