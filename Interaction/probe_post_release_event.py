@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import secrets
+import sys
 import threading
 import time
 
@@ -167,16 +168,53 @@ def main():
     parser.add_argument("--force-drop-n", type=float, default=0.04)
     parser.add_argument("--decrease-rate-n-s", type=float, default=0.05)
     parser.add_argument("--unloaded-dwell-s", type=float, default=0.05)
+    parser.add_argument("--repeats", type=int, default=1,
+                        help="manual prop-off release cycles; default preserves one-shot output")
+    parser.add_argument("--maximum-uncertainty-ms", type=float)
     args = parser.parse_args()
-    print(json.dumps(probe(
-        args.uri, args.port, timeout_s=args.timeout_s,
-        ack_timeout_s=args.ack_timeout_s,
-        contact_force_n=args.contact_force_n,
-        unloaded_force_n=args.unloaded_force_n,
-        force_drop_n=args.force_drop_n,
-        decrease_rate_n_s=args.decrease_rate_n_s,
-        unloaded_dwell_s=args.unloaded_dwell_s,
-    ), indent=2))
+    if not 1 <= args.repeats <= 100:
+        parser.error("--repeats must be between 1 and 100")
+    records = []
+    for index in range(args.repeats):
+        if args.repeats > 1:
+            print(f"Prop-off manual press/release {index + 1}/{args.repeats}",
+                  file=sys.stderr, flush=True)
+        try:
+            records.append(probe(
+                args.uri, args.port, timeout_s=args.timeout_s,
+                ack_timeout_s=args.ack_timeout_s,
+                contact_force_n=args.contact_force_n,
+                unloaded_force_n=args.unloaded_force_n,
+                force_drop_n=args.force_drop_n,
+                decrease_rate_n_s=args.decrease_rate_n_s,
+                unloaded_dwell_s=args.unloaded_dwell_s,
+            ))
+        except (RuntimeError, TimeoutError, OSError) as error:
+            if args.repeats == 1:
+                raise
+            print(json.dumps({
+                "schema": "post_release_prop_off_calibration_batch_v1",
+                "records": records,
+                "calibration": None,
+                "incomplete_error": str(error),
+                "command_authority": False,
+            }, indent=2))
+            raise SystemExit(1) from error
+    if args.repeats == 1:
+        result = records[0]
+    else:
+        from Interaction.calibrate_release_transport_delay import (
+            fit_release_transport_delay,
+        )
+        result = {
+            "schema": "post_release_prop_off_calibration_batch_v1",
+            "records": records,
+            "calibration": fit_release_transport_delay(
+                records, maximum_uncertainty_ms=args.maximum_uncertainty_ms,
+            ) if len(records) >= 20 else None,
+            "command_authority": False,
+        }
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
