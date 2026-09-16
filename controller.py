@@ -315,7 +315,13 @@ class Controller:
         )
         # The launch's private calibration mission enables this plan later;
         # validate the timing here before any flight command is possible.
-        PlanarBrakingCalibration(braking, start_after_s=0.0)
+        plan = PlanarBrakingCalibration(braking, start_after_s=0.0)
+        minimum_trials = int(braking.get('minimum_trials_per_direction', 2))
+        if plan.repetitions < minimum_trials:
+            raise ValueError(
+                'planar-only pulse count is below the unchanged minimum '
+                'trials per direction required by the fit'
+            )
         readiness = CalibrationTrialReadinessGate(braking)
         if readiness.trial_start_dwell_s < 2.0:
             raise ValueError(

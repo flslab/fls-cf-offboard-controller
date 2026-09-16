@@ -94,14 +94,17 @@ class PlanarBrakingCalibrationTests(unittest.TestCase):
             'enabled': True,
             'tilt_levels_deg': [20],
             'accelerate_durations_s': [.16, .24, .32, .45],
+            'planar_only_accelerate_durations_s': [.16, .32, .45],
             'planar_only_accelerate_durations_s_by_direction': [
-                [.16, .16], [.24, .24], [.32, .32], [.45, .32],
+                [.16, .16], [.32, .32], [.45, .32],
             ],
         }
         ordinary = PlanarBrakingCalibration(braking_config_for_mode(config))
         dedicated = PlanarBrakingCalibration(braking_config_for_mode(
             config, planar_only=True,
         ))
+        self.assertEqual(len(ordinary.trial_directions), 8)
+        self.assertEqual(len(dedicated.trial_directions), 6)
         self.assertAlmostEqual(ordinary.trial_accelerate_s[-1], .45)
         self.assertAlmostEqual(dedicated.trial_accelerate_s[-1], .32)
         self.assertAlmostEqual(dedicated.trial_brake_s[-1], .32)

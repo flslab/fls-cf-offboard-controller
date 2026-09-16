@@ -31,10 +31,15 @@ class BrakingCalibrationCommand:
 def braking_config_for_mode(config, *, planar_only=False):
     """Apply a directional sweep only to the dedicated planar-only flight."""
     resolved = dict(config or {})
-    if planar_only and "planar_only_accelerate_durations_s_by_direction" in resolved:
-        resolved["accelerate_durations_s_by_direction"] = resolved[
-            "planar_only_accelerate_durations_s_by_direction"
-        ]
+    if planar_only:
+        if "planar_only_accelerate_durations_s" in resolved:
+            resolved["accelerate_durations_s"] = resolved[
+                "planar_only_accelerate_durations_s"
+            ]
+        if "planar_only_accelerate_durations_s_by_direction" in resolved:
+            resolved["accelerate_durations_s_by_direction"] = resolved[
+                "planar_only_accelerate_durations_s_by_direction"
+            ]
     return resolved
 
 
