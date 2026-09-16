@@ -210,6 +210,8 @@ class AdaptiveCalibrationCliTests(unittest.TestCase):
             'accelerate_durations_s'], [.16, .24, .32, .45])
         self.assertFalse(wrench['adaptive_braking_calibration']['enabled'])
         self.assertFalse(wrench['online_prediction_calibration']['enabled'])
+        self.assertFalse(wrench['calibration_excitation']['enabled'])
+        self.assertTrue(wrench['planar_braking_only_calibration'])
         self.assertEqual(mission, before)
         factory.return_value.run_calibration.assert_called_once()
 

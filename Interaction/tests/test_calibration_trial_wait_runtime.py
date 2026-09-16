@@ -1,12 +1,15 @@
 """Fake-clock flight-loop checks for bounded position-held trial readiness."""
 
 from contextlib import ExitStack
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from Interaction.braking_response_calibration import PlanarBrakingCalibration
 from Interaction.position_capture_calibration import PositionCaptureCalibration
 from Interaction.interactions import InteractionsControl, StaleLocalizationError
+from Interaction.wrench_model_calibration import save_drone_calibration
 from Interaction.tests.test_wrench_interactions_integration import (
     FakeCommander, FakeOnboardLogManager, FakeHandoffCF,
 )
@@ -17,6 +20,89 @@ class ProtocolFinished(Exception):
 
 
 class CalibrationTrialWaitRuntimeTests(unittest.TestCase):
+    def test_planar_only_starts_without_xyz_excitation_or_refitting(self):
+        controller, logs, clock, _times, config, _duration = self.make_runtime()
+        config['planar_braking_only_calibration'] = True
+        plan = PlanarBrakingCalibration(
+            config['planar_braking_calibration'], start_after_s=0.0,
+        )
+        prior_fit = {
+            'model_delay_s': [0.0, 0.0, 0.025],
+            'model_time_constant_s': [0.0, 0.0, 0.0],
+            'model_acceleration_scale': [0.78, 0.80, 0.67],
+            'sample_count': 2150,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'calibration.json'
+            save_drone_calibration('test', prior_fit,
+                                   {'hover_pwm': 30000}, path)
+            with ExitStack() as stack:
+                stack.enter_context(patch('Interaction.interactions.time.time',
+                                          lambda: clock[0]))
+                identify_xyz = stack.enter_context(patch(
+                    'Interaction.interactions.identify_xyz_alignment',
+                ))
+                identify_planar = stack.enter_context(patch(
+                    'Interaction.interactions.identify_planar_braking_response',
+                    side_effect=ProtocolFinished,
+                ))
+                with self.assertRaises(ProtocolFinished):
+                    controller.interaction_onboard_wrench_admittance(
+                        duration=plan.end_s + .04,
+                        nominal_position=[0, 0, 1], config=config,
+                        calibration_mode=True, calibration_path=path,
+                    )
+                identify_xyz.assert_not_called()
+                identify_planar.assert_called_once()
+        self.assertFalse(self.events(logs, 'Wrench Calibration Excitation Started'))
+        starts = self.events(logs, 'Planar Braking Calibration Trial Wait Started')
+        self.assertEqual(len(starts), 2)
+        self.assertAlmostEqual(starts[0]['protocol_elapsed_s'],
+                               plan.trial_start_s[0])
+
+    def test_planar_only_save_reuses_original_xyz_fit_and_motor_model(self):
+        controller, _logs, clock, _times, config, _duration = self.make_runtime()
+        config['planar_braking_only_calibration'] = True
+        plan = PlanarBrakingCalibration(
+            config['planar_braking_calibration'], start_after_s=0.0,
+        )
+        old_fit = {
+            'model_delay_s': [0.0, 0.0, 0.025],
+            'model_time_constant_s': [0.0, 0.0, 0.0],
+            'model_acceleration_scale': [0.78, 0.80, 0.67],
+            'sample_count': 2150,
+        }
+        old_motor = {'hover_pwm': 31900}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'calibration.json'
+            save_drone_calibration('test', old_fit, old_motor, path)
+            with ExitStack() as stack:
+                stack.enter_context(patch('Interaction.interactions.time.time',
+                                          lambda: clock[0]))
+                identify_xyz = stack.enter_context(patch(
+                    'Interaction.interactions.identify_xyz_alignment',
+                ))
+                stack.enter_context(patch(
+                    'Interaction.interactions.identify_planar_braking_response',
+                    return_value={'usable': True},
+                ))
+                save = stack.enter_context(patch(
+                    'Interaction.interactions.save_drone_calibration',
+                    return_value=(path, {
+                        'impulse_estimator': old_fit,
+                        'planar_braking_fit': {'usable': True},
+                    }),
+                ))
+                controller.interaction_onboard_wrench_admittance(
+                    duration=plan.end_s + .04,
+                    nominal_position=[0, 0, 1], config=config,
+                    calibration_mode=True, calibration_path=path,
+                )
+                identify_xyz.assert_not_called()
+                save.assert_called_once()
+                self.assertEqual(save.call_args.args[1], old_fit)
+                self.assertEqual(save.call_args.args[2], old_motor)
+
     def make_runtime(self, *, wait_behavior=None):
         clock = [1000.0]
         logs = FakeOnboardLogManager(clock[0])

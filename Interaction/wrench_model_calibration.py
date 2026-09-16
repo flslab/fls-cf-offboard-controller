@@ -1451,6 +1451,43 @@ def load_drone_calibration(drone_id, path=DEFAULT_CALIBRATION_PATH):
     return document.get("drones", {}).get(str(drone_id))
 
 
+def load_required_xyz_calibration(drone_id, path=DEFAULT_CALIBRATION_PATH):
+    """Require a finite saved XYZ fit before a planar-only calibration flight."""
+    entry = load_drone_calibration(drone_id, path)
+    if not isinstance(entry, dict):
+        raise ValueError(
+            'planar-only braking calibration requires an existing XYZ fit; '
+            'run plain --calibrate first'
+        )
+    fit = entry.get('fit')
+    impulse = entry.get('impulse_estimator')
+    motor = entry.get('motor_model')
+    try:
+        if not isinstance(fit, dict) or not isinstance(impulse, dict):
+            raise ValueError('missing fit')
+        if not isinstance(motor, dict) or not motor:
+            raise ValueError('missing motor model')
+        if int(fit['sample_count']) <= 0:
+            raise ValueError('empty XYZ fit')
+        for name in ('model_delay_s', 'model_time_constant_s',
+                     'model_acceleration_scale'):
+            fitted = np.asarray(fit[name], dtype=float)
+            saved = np.asarray(impulse[name], dtype=float)
+            if (fitted.shape != (3,) or saved.shape != (3,)
+                    or not np.all(np.isfinite(fitted))
+                    or not np.array_equal(fitted, saved)
+                    or np.any(fitted < 0.0)
+                    or (name == 'model_acceleration_scale'
+                        and np.any(fitted <= 0.0))):
+                raise ValueError(f'invalid saved {name}')
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            'planar-only braking calibration requires a usable saved XYZ '
+            'fit; run plain --calibrate first'
+        ) from exc
+    return entry
+
+
 def apply_drone_calibration(
         config,
         drone_id,

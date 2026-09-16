@@ -235,6 +235,7 @@ class Controller:
         self.prepare_mpc_mission()
         self.prepare_contact_attitude_experiment_mission()
         self.prepare_active_septic_brake_test()
+        self.prepare_planar_only_braking_calibration()
         self.setup_logging()
         self.setup_contact_attitude_shadow()
         self.setup_force_sensor()
@@ -282,6 +283,29 @@ class Controller:
             sense_sign=self.args.sense_sign,
         )
         logger.info('Active septic brake test pre-arm gate passed: %s', evidence)
+
+    def prepare_planar_only_braking_calibration(self):
+        """Fail before arming if the skipped XYZ stage has no saved result."""
+        if not getattr(self.args, 'planar_braking_calibration', False):
+            return
+        from Interaction.wrench_model_calibration import (
+            DEFAULT_CALIBRATION_PATH, load_required_xyz_calibration,
+        )
+        config = self.mission.get('Interaction', {}).get('config', {})
+        wrench = config.get('wrench_interaction', {})
+        if (self.mission.get('Interaction', {}).get('action') != 'translation'
+                or wrench.get('state_source') != 'onboard'
+                or not isinstance(wrench.get('planar_braking_calibration'), dict)):
+            raise ValueError(
+                'planar-only braking calibration requires the onboard '
+                'translation mission with a configured planar sweep'
+            )
+        path = config.get('wrench_calibration_file', DEFAULT_CALIBRATION_PATH)
+        entry = load_required_xyz_calibration(self.args.drone_id, path)
+        logger.info(
+            'Planar-only calibration reusing saved XYZ fit (%s samples) from %s',
+            entry['fit']['sample_count'], path,
+        )
 
     def prepare_mpc_mission(self):
         """Validate and freeze the private LMPC bootstrap mission pre-arm."""
@@ -2086,6 +2110,11 @@ class Controller:
                 wrench_config.setdefault('planar_braking_calibration', {})[
                     'enabled'
                 ] = adaptive_braking or planar_braking
+                if planar_braking:
+                    wrench_config['planar_braking_only_calibration'] = True
+                    wrench_config.setdefault('calibration_excitation', {})[
+                        'enabled'
+                    ] = False
                 if targeted_braking:
                     # The targeted protocol is deliberately deterministic: it
                     # collects controlled high-speed +/-Y data at three brake
@@ -3039,8 +3068,8 @@ if __name__ == '__main__':
     )
     ap.add_argument(
         '--planar-braking-calibration', action='store_true',
-        help=('during --calibrate, collect the mission-configured fixed-pulse '
-              'planar braking sweep and save only a quality-passing fit'),
+        help=('during --calibrate, reuse a saved XYZ fit, skip XYZ excitation, '
+              'then collect the mission-configured fixed-pulse planar sweep'),
     )
     ap.add_argument(
         "--targeted-braking-calibration", action="store_true",

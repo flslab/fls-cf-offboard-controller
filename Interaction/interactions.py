@@ -110,6 +110,7 @@ from Interaction.wrench_model_calibration import (
     identify_planar_braking_response,
     identify_xyz_alignment,
     load_drone_calibration,
+    load_required_xyz_calibration,
     planar_braking_fit_is_current,
     save_drone_calibration,
 )
@@ -15767,6 +15768,9 @@ class InteractionsControl:
                             'sensor axis'
                         )
                 if calibration_mode:
+                    planar_only_calibration = bool(
+                        wrench_config.get('planar_braking_only_calibration', False)
+                    )
                     wrench_config = (
                         repeat_test_config(
                             wrench_config, direction=braking_test_direction,
@@ -15778,13 +15782,13 @@ class InteractionsControl:
                     wrench_config['startup_bias_calibration_enabled'] = True
                     wrench_config.setdefault('calibration_excitation', {})[
                         'enabled'
-                    ] = not braking_test_mode
+                    ] = not (braking_test_mode or planar_only_calibration)
                     excitation = wrench_config['calibration_excitation']
                     excitation_end_s = (
                         float(excitation.get('start_delay_s', 1.0))
                         + float(excitation.get('duration_s', 30.0))
                     )
-                    if braking_test_mode:
+                    if braking_test_mode or planar_only_calibration:
                         excitation_end_s = 0.0
                     braking_config = wrench_config.setdefault(
                         'planar_braking_calibration', {}
@@ -19082,11 +19086,15 @@ class InteractionsControl:
             return True
 
         excitation_config = config['calibration_excitation']
+        planar_only_calibration = bool(
+            calibration_mode and not braking_test_mode
+            and config.get('planar_braking_only_calibration', False)
+        )
         excitation_end_s = (
             float(excitation_config['start_delay_s'])
             + float(excitation_config['duration_s'])
         )
-        if braking_test_mode:
+        if braking_test_mode or planar_only_calibration:
             excitation_end_s = 0.0
         planar_braking_config = config['planar_braking_calibration']
         planar_braking_plan = PlanarBrakingCalibration(
@@ -19111,6 +19119,15 @@ class InteractionsControl:
                         len(planar_braking_plan.trial_directions),
                         planar_braking_plan.directions.tolist(),
                         planar_braking_plan.repetitions_per_duration)
+        planar_only_reference = None
+        if planar_only_calibration:
+            if excitation_config['enabled'] or not planar_braking_plan.enabled:
+                raise ValueError(
+                    'planar-only calibration requires no XYZ excitation and '
+                    'an enabled planar braking sweep'
+                )
+            load_required_xyz_calibration(self.drone_id, calibration_path)
+            planar_only_reference = calibration_reference(calibration_path)
         # Keep historical report support, but remove this experiment from all
         # live calibration paths, including callers with an older mission.
         position_capture_config = {}
@@ -27985,10 +28002,20 @@ class InteractionsControl:
                         'calibration unchanged. Analyze the flight log offline.',
                         result['maneuver_count'], result['sample_count'])
         elif calibration_mode:
-            fit = identify_xyz_alignment(
-                model_calibration_samples,
-                window_s=float(config['impulse_estimator']['window_s']),
-            )
+            if planar_only_calibration:
+                if calibration_reference(calibration_path) != planar_only_reference:
+                    raise RuntimeError(
+                        'saved XYZ calibration changed during planar-only flight'
+                    )
+                previous_xyz = load_required_xyz_calibration(
+                    self.drone_id, calibration_path,
+                )
+                fit = previous_xyz['fit']
+            else:
+                fit = identify_xyz_alignment(
+                    model_calibration_samples,
+                    window_s=float(config['impulse_estimator']['window_s']),
+                )
             planar_braking_fit = None
             planar_braking_fit_source = None
             if planar_braking_plan.enabled:
@@ -28216,7 +28243,8 @@ class InteractionsControl:
             saved_path, saved_entry = save_drone_calibration(
                 self.drone_id,
                 fit,
-                config['motor_model'],
+                (previous_xyz['motor_model'] if planar_only_calibration
+                 else config['motor_model']),
                 calibration_path,
                 planar_braking_fit=planar_braking_fit,
                 position_capture_fit=position_capture_fit,

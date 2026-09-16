@@ -11,12 +11,33 @@ from Interaction.wrench_model_calibration import (
     apply_drone_calibration,
     identify_axis_alignment,
     identify_planar_braking_response,
+    load_required_xyz_calibration,
     planar_braking_fit_is_current,
     save_drone_calibration,
 )
 
 
 class WrenchModelCalibrationTests(unittest.TestCase):
+    def test_planar_only_requires_saved_finite_xyz_fit(self):
+        fit = {
+            'model_delay_s': [0.0, 0.0, 0.025],
+            'model_time_constant_s': [0.0, 0.0, 0.0],
+            'model_acceleration_scale': [0.78, 0.80, 0.67],
+            'sample_count': 2150,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'calibration.json'
+            with self.assertRaisesRegex(ValueError, 'plain --calibrate first'):
+                load_required_xyz_calibration('lb11', path)
+            save_drone_calibration('lb11', fit, {'hover_pwm': 31900}, path)
+            entry = load_required_xyz_calibration('lb11', path)
+            self.assertEqual(entry['fit'], fit)
+            broken = json.loads(path.read_text())
+            broken['drones']['lb11']['fit']['model_acceleration_scale'][1] = -1
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(ValueError, 'usable saved XYZ'):
+                load_required_xyz_calibration('lb11', path)
+
     def test_capture_evidence_saved_separately_and_preserved_by_old_callers(self):
         fit = {
             'model_delay_s': [0.0, 0.0, 0.0],
