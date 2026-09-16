@@ -16157,30 +16157,19 @@ class InteractionsControl:
                 'coast_max_tilt_handoff_waypoint_count must be 1 or 3'
             )
         final_position = np.asarray(position, dtype=float)
-        origin = getattr(self, '_translation_handoff_origin', None)
-        if waypoint_count == 3 and origin is not None:
-            origin = np.asarray(origin, dtype=float)
-            waypoint_positions = [
-                origin + fraction * (final_position - origin)
-                for fraction in (1.0 / 3.0, 2.0 / 3.0, 1.0)
-            ]
-            first_duration_s = min(0.8, handoff_duration_s)
-        else:
-            waypoint_positions = [final_position]
-            first_duration_s = handoff_duration_s
         verified_velocity_handoff = bool(
             getattr(self, 'pid_attitude_source', 'standard')
             == 'post-release-15state'
         )
         if verified_velocity_handoff:
             # Open the verified source only after the terminal brake earns
-            # this handoff. Keep it enabled for all fixed-position refreshes.
+            # this one-shot handoff.
             self.cf.param.set_value('hlCommander.pRelVel', '1')
             self._safe_sleep(0.05)
         try:
             result = handoff_to_high_level(
-                low, high, 'go_to', *waypoint_positions[0],
-                float(np.radians(yaw_deg)), first_duration_s, relative=False,
+                low, high, 'go_to', *final_position,
+                float(np.radians(yaw_deg)), handoff_duration_s, relative=False,
                 dry_run=all(isinstance(c, CommandWrapper) and c.execution is False
                             for c in (low, high)),
             )
@@ -16194,42 +16183,18 @@ class InteractionsControl:
             if verified_velocity_handoff:
                 self.cf.param.set_value('hlCommander.pRelVel', '0')
             raise
-        # Keep the opt-in verified source enabled throughout the HLC hold.
-        # Each refresh must get a fresh, continuity-proven snapshot; firmware
-        # rejects the command instead of falling back to ordinary velocity.
+        # Firmware owns the single trajectory and its terminal position hold.
+        # Do not replan it with waypoint or keepalive go_to commands.
         self._translation_high_level_active = True
-        last_segment_duration_s = first_duration_s
-        if len(waypoint_positions) > 1:
-            for index, waypoint in enumerate(waypoint_positions[1:], start=2):
-                # Replan before the preceding short segment reaches its
-                # zero-velocity endpoint. Firmware therefore initializes the
-                # next seventh-order segment from the current planned
-                # position/velocity/acceleration instead of repeatedly
-                # stopping and restarting at each waypoint.
-                self._safe_sleep(0.45)
-                segment_duration_s = (
-                    handoff_duration_s
-                    if index == len(waypoint_positions) else first_duration_s
-                )
-                high.go_to(
-                    *waypoint, float(np.radians(yaw_deg)),
-                    segment_duration_s, relative=False,
-                )
-                last_segment_duration_s = segment_duration_s
-                self._log_event('Translation Handoff Waypoint Advanced', {
-                    'waypoint_index': index,
-                    'waypoint_count': len(waypoint_positions),
-                    'position_m': waypoint.tolist(),
-                    'duration_s': segment_duration_s,
-                    'controller_owner': 'firmware_high_level_commander',
-                })
         # Ownership is already safe even if writing this event fails.
         self._log_event('Translation High Level Hold Acquired', {
             'position_m': list(position), 'yaw_deg': float(yaw_deg),
             'handoff': result,
-            'waypoint_count': len(waypoint_positions),
+            'waypoint_count': 1,
+            'requested_waypoint_count': waypoint_count,
             'planned_segment_duration_s': handoff_duration_s,
-            'first_segment_duration_s': first_duration_s,
+            'first_segment_duration_s': handoff_duration_s,
+            'go_to_count': 1,
         })
         hold_s = float(
             wrench_config.get(
@@ -16248,40 +16213,11 @@ class InteractionsControl:
                 'finite and non-negative'
             )
         if hold_s:
-            # The first finite HLC segment already owns the setpoint. Do not
-            # replan it before completion; then reassert the same fixed hold
-            # point at HLC level until the mission intentionally lands.
-            observation_ends_at = time.monotonic() + hold_s
-            next_refresh_at = (
-                time.monotonic() + last_segment_duration_s + 0.15
-            )
-            refresh_count = 0
-            while time.monotonic() < observation_ends_at:
-                deadline = (
-                    min(next_refresh_at, observation_ends_at)
-                    if refresh_s > 0.0 else observation_ends_at
-                )
-                self._safe_sleep(max(0.0, deadline - time.monotonic()))
-                if refresh_s <= 0.0 or time.monotonic() >= observation_ends_at:
-                    break
-                high.go_to(
-                    *final_position, float(np.radians(yaw_deg)),
-                    refresh_s, relative=False,
-                )
-                refresh_count += 1
-                next_refresh_at = max(
-                    next_refresh_at + refresh_s,
-                    time.monotonic() + refresh_s,
-                )
-            if refresh_s > 0.0:
-                self._log_event('Translation HLC Hold Refreshed', {
-                    'count': refresh_count,
-                    'period_s': refresh_s,
-                    'position_m': final_position.tolist(),
-                    'controller_owner': 'firmware_high_level_commander',
-                })
+            self._safe_sleep(hold_s)
             self._log_event('Translation Post-Handoff Observation Complete', {
                 'duration_s': hold_s,
+                'go_to_count': 1,
+                'suppressed_refresh_period_s': refresh_s,
                 'controller_owner': 'firmware_high_level_commander',
             })
 

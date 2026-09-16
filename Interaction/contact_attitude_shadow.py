@@ -3885,6 +3885,12 @@ class ContactAttitudeShadow:
             'frame_sequence': packet.sequence,
             'source_time_s': data.get('time'),
             'source_time_scope': timing.get('frame_time_scope'),
+            'position_event_time_basis': (
+                timing.get('position_event_time_basis')
+            ),
+            'position_event_pi_receive_monotonic_s': (
+                timing.get('position_event_pi_receive_monotonic_s')
+            ),
             'source_capture_time_available': capture_time_available,
             'source_capture_time_s': (
                 capture_time_s if capture_time_available else None

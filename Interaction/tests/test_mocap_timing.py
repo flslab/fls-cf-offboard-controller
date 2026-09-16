@@ -69,6 +69,14 @@ class MocapTimingTests(unittest.TestCase):
             self.assertEqual(frame['mocap_timing']['frame_id_scope'], 'local_loop')
             self.assertFalse(frame['mocap_timing']['source_capture_time_available'])
             self.assertEqual(frame['mocap_timing']['frame_time_scope'], 'host_after_wait')
+            self.assertEqual(
+                frame['mocap_timing']['position_event_time_basis'],
+                'pi_mocap_wait_return_monotonic',
+            )
+            self.assertEqual(
+                frame['mocap_timing']['position_event_pi_receive_monotonic_s'],
+                diagnostic['wait_return_monotonic_s'],
+            )
             self.assertAlmostEqual(diagnostic['processing_excluding_callbacks_s'], 0)
         self.assertAlmostEqual(frames[0]['time'], 1010.01)
 

@@ -47,6 +47,10 @@ class Mocap(threading.Thread):
         frame['mocap_timing'] = dict(
             frame_id_scope='local_loop', frame_time_scope='host_after_wait',
             source_capture_time_available=False,
+            position_event_time_basis='pi_mocap_wait_return_monotonic',
+            position_event_pi_receive_monotonic_s=(
+                timing['wait_return_monotonic_s']
+            ),
             wait_return_monotonic_s=timing['wait_return_monotonic_s'],
             wait_duration_s=timing['wait_duration_s'],
             callback_entry_monotonic_s=started,
@@ -268,8 +272,10 @@ class Mocap(threading.Thread):
                 logger.warning(f"Frame wait error: {e}")
                 continue
 
-            now = time.time()
             wait_returned = time.monotonic()
+            # Use Pi availability time for the position event. This is not
+            # the Vicon camera capture time and carries unknown upstream age.
+            now = time.time()
             if self.timing_callback is not None:
                 self._frame_timing = dict(
                     frame_id=frame_count, time=now,
