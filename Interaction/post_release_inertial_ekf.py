@@ -259,6 +259,9 @@ class PostReleaseInertialEkf:
 
     def update_extpos(
             self, position_m: Sequence[float], std_m: float | None = None,
+            *, delay_s: float = 0.0, timing_uncertainty_s: float = 0.0,
+            velocity_bound_m_s: float | None = None,
+            acceleration_bound_m_s2: float | None = None,
     ) -> PostReleaseEkfEstimate:
         """Fuse a position-only localization observation.
 
@@ -271,9 +274,37 @@ class PostReleaseInertialEkf:
         std = self.config.extpos_std_m if std_m is None else float(std_m)
         if not math.isfinite(std) or std <= 0.0:
             raise ValueError("extpos std_m must be finite and positive")
+        if (not math.isfinite(delay_s) or delay_s < 0.0
+                or not math.isfinite(timing_uncertainty_s)
+                or not 0.0 <= timing_uncertainty_s <= delay_s):
+            raise ValueError("position delay/uncertainty must be finite, nonnegative, and causal")
         observation = np.zeros((3, 15))
         observation[:, 0:3] = np.eye(3)
-        innovation = measurement - self.position
+        predicted_measurement = self.position
+        if delay_s > 0.0:
+            if (velocity_bound_m_s is None or acceleration_bound_m_s2 is None
+                    or not math.isfinite(velocity_bound_m_s)
+                    or not math.isfinite(acceleration_bound_m_s2)
+                    or velocity_bound_m_s < 0.0
+                    or acceleration_bound_m_s2 < 0.0):
+                raise ValueError("delayed position update requires finite motion bounds")
+            # First-order delayed observation model at the *current* EKF
+            # state. This is a shadow-only approximation, not replay of the
+            # full IMU history or an authority-grade timing contract.
+            observation[:, 3:6] = -np.eye(3) * delay_s
+            predicted_measurement = (
+                self.position - self.velocity * delay_s
+                + 0.5 * self._world_acceleration * delay_s * delay_s
+            )
+            timing_error_bound_m = (
+                velocity_bound_m_s * timing_uncertainty_s
+                + 0.5 * acceleration_bound_m_s2
+                * (delay_s + timing_uncertainty_s) ** 2
+            )
+            std = math.hypot(std, timing_error_bound_m)
+        elif timing_uncertainty_s:
+            raise ValueError("timing uncertainty requires a positive nominal delay")
+        innovation = measurement - predicted_measurement
         innovation_covariance = np.einsum(
             "ij,jk,lk->il", observation, self.covariance, observation
         ) + np.eye(3) * std * std

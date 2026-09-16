@@ -40,6 +40,11 @@ def evaluate_timing_shadow(calibration_batch, *, position_delay_ms=(0, 1, 2, 3, 
         base,
         position_delay_s=assumed_fixed_position_delay_ms / 1000.0,
         position_delay_compensation_enabled=True,
+        position_timing_uncertainty_s=min(
+            assumed_fixed_position_delay_ms,
+            max(abs(assumed_fixed_position_delay_ms - item)
+                for item in position_delay_ms),
+        ) / 1000.0,
     )
     for delay_ms in position_delay_ms:
         if isinstance(delay_ms, bool) or not isinstance(delay_ms, (float, int)) or delay_ms < 0:

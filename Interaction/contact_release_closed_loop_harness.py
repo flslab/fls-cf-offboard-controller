@@ -54,6 +54,7 @@ class ClosedLoopHarnessConfig:
     # estimator-now using the EKF velocity and an assumed fixed delay. The
     # default false path is byte-for-byte equivalent to the prior harness.
     position_delay_compensation_enabled: bool = False
+    position_timing_uncertainty_s: float = 0.0
     maximum_position_age_s: float = 0.035
     maximum_position_gap_s: float = 0.055
     contact_start_s: float = 0.050
@@ -111,6 +112,7 @@ class ClosedLoopHarnessConfig:
         nonnegative = (
             self.transport_delay_s,
             self.position_delay_s,
+            self.position_timing_uncertainty_s,
             self.contact_start_s,
             self.terminal_velocity_reserve_m_s,
             self.reverse_velocity_tolerance_m_s,
@@ -121,6 +123,7 @@ class ClosedLoopHarnessConfig:
             any(not math.isfinite(value) or value < 0.0
                 for value in nonnegative)
             or type(self.position_delay_compensation_enabled) is not bool
+            or self.position_timing_uncertainty_s > self.position_delay_s
             or self.integration_step_s > min(
                 self.detector_period_s,
                 self.command_period_s,
@@ -681,22 +684,19 @@ def run_contact_release_closed_loop_harness(
                 if ekf is not None and estimate is not None and estimate.valid:
                     if config.position_delay_compensation_enabled:
                         # Never use plant truth or the simulator's exact
-                        # capture-to-arrival age as the correction. This is
-                        # only the configured fixed-delay hypothesis.
-                        delay = config.position_delay_s
-                        corrected_position = (
-                            np.asarray(measured_position)
-                            + np.asarray(estimate.velocity_m_s) * delay
-                        )
-                        velocity_uncertainty = max(
-                            config.velocity_uncertainty_m_s
-                        )
-                        std = math.hypot(
-                            ekf.config.extpos_std_m,
-                            velocity_uncertainty * delay,
+                        # capture-to-arrival age as the correction.
+                        velocity_bound = (
+                            np.linalg.norm(estimate.velocity_m_s)
+                            + np.linalg.norm(config.velocity_uncertainty_m_s)
                         )
                         estimate = ekf.update_extpos(
-                            corrected_position, std_m=std,
+                            measured_position,
+                            delay_s=config.position_delay_s,
+                            timing_uncertainty_s=(
+                                config.position_timing_uncertainty_s
+                            ),
+                            velocity_bound_m_s=velocity_bound,
+                            acceleration_bound_m_s2=4.0,
                         )
                     else:
                         estimate = ekf.update_extpos(measured_position)

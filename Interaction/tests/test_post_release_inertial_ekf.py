@@ -143,6 +143,30 @@ class PostReleaseInertialEkfTests(unittest.TestCase):
         self.assertEqual(after.reason, "extpos_fused")
         self.assertEqual(before.cf_timestamp_ms, after.cf_timestamp_ms)
 
+    def test_shadow_delayed_position_model_uses_current_velocity_and_bounds(self):
+        ekf = self.make_filter(velocity_m_s=[0.5, 0.0, 0.0])
+        before = ekf.snapshot()
+        after = ekf.update_extpos(
+            [-0.0025, 0.0, 1.0],
+            delay_s=0.005, timing_uncertainty_s=0.002,
+            velocity_bound_m_s=0.6,
+            acceleration_bound_m_s2=4.0,
+        )
+        self.assertEqual(after.position_update_count, 1)
+        self.assertAlmostEqual(after.position_m[0], before.position_m[0])
+        self.assertAlmostEqual(after.velocity_m_s[0], before.velocity_m_s[0])
+        self.assertGreaterEqual(
+            float(np.min(np.linalg.eigvalsh(ekf.covariance))), -1e-15
+        )
+
+    def test_shadow_delayed_position_requires_explicit_motion_bounds(self):
+        ekf = self.make_filter()
+        with self.assertRaisesRegex(ValueError, "motion bounds"):
+            ekf.update_extpos([0.0, 0.0, 1.0], delay_s=0.003)
+        with self.assertRaisesRegex(ValueError, "causal"):
+            ekf.update_extpos([0.0, 0.0, 1.0],
+                              delay_s=0.003, timing_uncertainty_s=0.004)
+
     def test_duplicate_is_noop_and_gap_invalidates(self):
         ekf = self.make_filter()
         first = ekf.propagate(101, [0, 0, 0], [0, 0, 1])
