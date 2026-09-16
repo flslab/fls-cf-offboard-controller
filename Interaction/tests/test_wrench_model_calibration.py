@@ -15,9 +15,78 @@ from Interaction.wrench_model_calibration import (
     planar_braking_fit_is_current,
     save_drone_calibration,
 )
+from Interaction.braking_response_calibration import PlanarBrakingCalibration
 
 
 class WrenchModelCalibrationTests(unittest.TestCase):
+    def test_interaction_accepts_exact_quality_gated_planar_only_six_pulse_fit(self):
+        baseline = [.16, .24, .32, .32, .45, .45, .45]
+        dedicated = [.16, .32, .45]
+        directional = [[.16, .16], [.32, .32], [.45, .32]]
+        braking_config = {
+            'directions_xy': [[0.0, 1.0], [0.0, -1.0]],
+            'tilt_levels_deg': [8.0],
+            'accelerate_durations_s': baseline,
+            'planar_only_accelerate_durations_s': dedicated,
+            'planar_only_accelerate_durations_s_by_direction': directional,
+            'repetitions_per_duration': 1,
+            'minimum_trials_per_direction': 3,
+        }
+        plan = PlanarBrakingCalibration({
+            **braking_config,
+            'accelerate_durations_s': dedicated,
+            'accelerate_durations_s_by_direction': directional,
+        })
+        fit = self._current_planar_fit()
+        fit['protocol'].update({
+            **plan.timing_protocol(),
+            'tilt_levels_deg': [8.0],
+            'repetitions': 3,
+            'repetitions_per_tilt': 3,
+        })
+        fit['maneuver_count'] = 6
+        for label, ids in (('positive', [0, 2, 4]),
+                           ('negative', [1, 3, 5])):
+            evidence = fit['direction_quality']['directions'][label]
+            evidence['trial_ids'] = ids
+            evidence['trial_count'] = 3
+            evidence['trial_gains'] = [evidence['gain']] * 3
+            evidence['train_window_count'] = 36
+            evidence['validation_window_count'] = 36
+        self.assertTrue(planar_braking_fit_is_current(fit))
+        xyz = {
+            'model_delay_s': [0.01, 0.02, 0.03],
+            'model_time_constant_s': [0.04, 0.05, 0.06],
+            'model_acceleration_scale': [1.1, 1.2, 1.3],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'wrench_calibration.json'
+            save_drone_calibration(
+                'lb11', xyz, {'hover_pwm': 31900}, path,
+                planar_braking_fit=fit,
+            )
+            config = {
+                'impulse_estimator': {},
+                'planar_braking_calibration': braking_config,
+                'control_handoff': {'coast_max_acceleration_m_s2': 5.0},
+            }
+            applied, _ = apply_drone_calibration(config, 'lb11', path)
+            self.assertEqual(
+                applied['control_handoff']['coast_attitude_response_delay_s'],
+                fit['command_delay_s'],
+            )
+            self.assertEqual(
+                applied['control_handoff']['coast_attitude_acceleration_scale'],
+                fit['horizontal_acceleration_scale'],
+            )
+            broken = json.loads(json.dumps(fit))
+            broken['protocol']['trial_brake_s'][-1] = .45
+            with patch('Interaction.wrench_model_calibration.load_drone_calibration',
+                       return_value={**json.loads(path.read_text())['drones']['lb11'],
+                                     'planar_braking_fit': broken}):
+                with self.assertRaisesRegex(ValueError, 'pulse durations'):
+                    apply_drone_calibration(config, 'lb11', path)
+
     def test_planar_only_requires_saved_finite_xyz_fit(self):
         fit = {
             'model_delay_s': [0.0, 0.0, 0.025],

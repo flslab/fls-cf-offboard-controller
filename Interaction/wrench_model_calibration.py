@@ -11,6 +11,9 @@ import tempfile
 
 import numpy as np
 
+from Interaction.braking_response_calibration import (
+    PlanarBrakingCalibration, braking_config_for_mode,
+)
 from Interaction.position_capture_calibration import position_capture_fit_is_current
 
 
@@ -1556,18 +1559,61 @@ def apply_drone_calibration(
                 )
             )
             if "accelerate_durations_s" in configured_planar_calibration:
-                durations = configured_planar_calibration["accelerate_durations_s"]
-                repeats = configured_planar_calibration.get("repetitions_per_duration", 1)
+                saved_protocol = braking["protocol"]
+                saved_durations = saved_protocol.get("accelerate_durations_s")
+                # A dedicated planar-only flight may use a shorter, explicit
+                # schedule than other calibration modes. Accept that exact
+                # saved schedule for interaction; never pretend it followed
+                # the ordinary sweep or waive the fit-quality checks above.
+                dedicated_config = braking_config_for_mode(
+                    configured_planar_calibration, planar_only=True,
+                )
+                dedicated_durations = dedicated_config.get(
+                    "accelerate_durations_s"
+                )
+                dedicated_match = bool(
+                    "planar_only_accelerate_durations_s"
+                    in configured_planar_calibration
+                    and isinstance(saved_durations, list)
+                    and len(saved_durations) == len(dedicated_durations)
+                    and np.allclose(
+                        saved_durations, dedicated_durations,
+                        rtol=0.0, atol=1e-9,
+                    )
+                )
+                effective_config = (
+                    dedicated_config if dedicated_match
+                    else configured_planar_calibration
+                )
+                durations = effective_config["accelerate_durations_s"]
+                repeats = effective_config.get("repetitions_per_duration", 1)
                 configured_repetitions_per_tilt = len(durations) * int(repeats)
-                saved_durations = braking["protocol"].get("accelerate_durations_s")
                 if (saved_durations is None
                         or len(saved_durations) != len(durations)
                         or not np.allclose(saved_durations, durations, rtol=0, atol=1e-9)
-                        or braking["protocol"].get("repetitions_per_duration") != repeats):
+                        or saved_protocol.get("repetitions_per_duration") != repeats):
                     raise ValueError(
                         "saved planar braking pulse durations do not match this "
                         "mission; rerun --calibrate"
                     )
+                if dedicated_match:
+                    expected_plan = PlanarBrakingCalibration(effective_config)
+                    expected = expected_plan.timing_protocol()
+                    for field in (
+                        "accelerate_durations_s_by_direction",
+                        "trial_accelerate_s", "trial_brake_s",
+                    ):
+                        recorded = saved_protocol.get(field)
+                        planned = expected[field]
+                        if (recorded is None or planned is None
+                                or np.shape(recorded) != np.shape(planned)
+                                or not np.allclose(
+                                    recorded, planned, rtol=0.0, atol=1e-9,
+                                )):
+                            raise ValueError(
+                                "saved planar braking pulse durations do not "
+                                "match this mission; rerun --calibrate"
+                            )
             saved_repetitions_per_tilt = int(
                 braking["protocol"].get(
                     "repetitions_per_tilt",
