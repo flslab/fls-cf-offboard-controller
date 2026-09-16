@@ -24,6 +24,7 @@ from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.adaptive_braking_calibration import AdaptiveBrakingCalibration
 from Interaction.braking_response_calibration import (
     PlanarBrakingCalibration,
+    braking_config_for_mode,
 )
 from Interaction.braking_swept_envelope import (
     WorldTrajectorySample,
@@ -15798,6 +15799,11 @@ class InteractionsControl:
                         braking_test_mode
                         or braking_config.get('enabled', False)
                     )
+                    braking_config = braking_config_for_mode(
+                        braking_config,
+                        planar_only=planar_only_calibration,
+                    )
+                    wrench_config['planar_braking_calibration'] = braking_config
                     braking_plan = PlanarBrakingCalibration(
                         braking_config,
                         start_after_s=excitation_end_s,
@@ -19097,7 +19103,10 @@ class InteractionsControl:
         )
         if braking_test_mode or planar_only_calibration:
             excitation_end_s = 0.0
-        planar_braking_config = config['planar_braking_calibration']
+        planar_braking_config = braking_config_for_mode(
+            config['planar_braking_calibration'],
+            planar_only=planar_only_calibration,
+        )
         planar_braking_plan = PlanarBrakingCalibration(
             planar_braking_config,
             start_after_s=excitation_end_s,

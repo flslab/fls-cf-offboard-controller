@@ -2,7 +2,9 @@ import unittest
 
 import numpy as np
 
-from Interaction.braking_response_calibration import PlanarBrakingCalibration
+from Interaction.braking_response_calibration import (
+    PlanarBrakingCalibration, braking_config_for_mode,
+)
 
 
 class PlanarBrakingCalibrationTests(unittest.TestCase):
@@ -56,6 +58,82 @@ class PlanarBrakingCalibrationTests(unittest.TestCase):
             plan.timing_protocol()['accelerate_durations_s'],
             [.16, .24, .32, .32, .45, .45, .45],
         )
+
+    def test_directional_high_tier_shortens_only_opposed_trials(self):
+        directional = [
+            [.16, .16], [.24, .24], [.32, .32], [.32, .32],
+            [.45, .32], [.45, .32], [.45, .32],
+        ]
+        plan = PlanarBrakingCalibration({
+            'enabled': True,
+            'tilt_levels_deg': [20],
+            'accelerate_durations_s': [.16, .24, .32, .32, .45, .45, .45],
+            'accelerate_durations_s_by_direction': directional,
+        })
+        expected = np.asarray(directional).reshape(-1)
+        np.testing.assert_allclose(plan.trial_accelerate_s, expected)
+        np.testing.assert_allclose(plan.trial_brake_s, expected)
+        self.assertEqual(len(plan.trial_directions), 14)
+        self.assertEqual(
+            plan.timing_protocol()['accelerate_durations_s_by_direction'],
+            directional,
+        )
+        for segment_id in (8, 9, 10, 11, 12, 13):
+            brake_start = (
+                plan.trial_start_s[segment_id]
+                + plan.level_before_acceleration_s
+                + plan.trial_accelerate_s[segment_id]
+                + plan.level_before_brake_s
+            )
+            self.assertEqual(
+                plan.command(brake_start + .001, 0).phase, 'brake',
+            )
+
+    def test_planar_only_directional_sweep_does_not_change_other_modes(self):
+        config = {
+            'enabled': True,
+            'tilt_levels_deg': [20],
+            'accelerate_durations_s': [.16, .24, .32, .45],
+            'planar_only_accelerate_durations_s_by_direction': [
+                [.16, .16], [.24, .24], [.32, .32], [.45, .32],
+            ],
+        }
+        ordinary = PlanarBrakingCalibration(braking_config_for_mode(config))
+        dedicated = PlanarBrakingCalibration(braking_config_for_mode(
+            config, planar_only=True,
+        ))
+        self.assertAlmostEqual(ordinary.trial_accelerate_s[-1], .45)
+        self.assertAlmostEqual(dedicated.trial_accelerate_s[-1], .32)
+        self.assertAlmostEqual(dedicated.trial_brake_s[-1], .32)
+        self.assertNotIn('accelerate_durations_s_by_direction', config)
+
+    def test_directional_durations_reject_lengthening_or_shape_errors(self):
+        base = {
+            'tilt_levels_deg': [20],
+            'accelerate_durations_s': [.16, .24, .32],
+        }
+        invalid = (
+            [[.16, .16]],
+            [[.16, .16], [.24, .25], [.32, .32]],
+            [[.16, .16], [.24, .24], [.32, float('nan')]],
+            [[.16, .16], [.24, .24], [.32, .20]],
+        )
+        for directional in invalid:
+            with self.subTest(directional=directional), self.assertRaises(
+                ValueError,
+            ):
+                PlanarBrakingCalibration({
+                    **base,
+                    'accelerate_durations_s_by_direction': directional,
+                })
+        with self.assertRaisesRegex(ValueError, 'separate brake schedule'):
+            PlanarBrakingCalibration({
+                **base,
+                'brake_durations_s': [.16, .24, .32],
+                'accelerate_durations_s_by_direction': [
+                    [.16, .16], [.24, .24], [.32, .32],
+                ],
+            })
 
     def test_duration_sweep_accepts_independent_pairwise_brake_schedule(self):
         plan = PlanarBrakingCalibration({

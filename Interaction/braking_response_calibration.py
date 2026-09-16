@@ -28,6 +28,16 @@ class BrakingCalibrationCommand:
     pitch_deg: float
 
 
+def braking_config_for_mode(config, *, planar_only=False):
+    """Apply a directional sweep only to the dedicated planar-only flight."""
+    resolved = dict(config or {})
+    if planar_only and "planar_only_accelerate_durations_s_by_direction" in resolved:
+        resolved["accelerate_durations_s_by_direction"] = resolved[
+            "planar_only_accelerate_durations_s_by_direction"
+        ]
+    return resolved
+
+
 class PlanarBrakingCalibration:
     """Generate accelerate -> level -> brake -> level calibration trials."""
 
@@ -90,6 +100,7 @@ class PlanarBrakingCalibration:
         self.tilt_deg = float(np.max(self.tilt_levels_deg))
         self.accelerate_durations_s = None
         self.brake_durations_s = None
+        self.accelerate_durations_s_by_direction = None
         if "accelerate_durations_s" in config:
             durations = np.asarray(config["accelerate_durations_s"], dtype=float)
             repeats = config.get("repetitions_per_duration", 1)
@@ -212,6 +223,32 @@ class PlanarBrakingCalibration:
             raise ValueError(
                 "braking calibration requires one pair of opposed directions"
             )
+        if "accelerate_durations_s_by_direction" in config:
+            if self.accelerate_durations_s is None or self.brake_durations_s is not None:
+                raise ValueError(
+                    "direction-specific acceleration durations require a "
+                    "duration sweep without a separate brake schedule"
+                )
+            directional = np.asarray(
+                config["accelerate_durations_s_by_direction"], dtype=float,
+            )
+            if (
+                directional.shape != (
+                    len(self.accelerate_durations_s), len(self.directions)
+                )
+                or not np.all(np.isfinite(directional))
+                or np.any(directional <= 0.0)
+                or np.any(np.diff(directional, axis=0) < -1e-12)
+                or np.any(
+                    directional > self.accelerate_durations_s[:, None] + 1e-12
+                )
+            ):
+                raise ValueError(
+                    "direction-specific acceleration durations must be "
+                    "positive, nondecreasing, and no longer than the "
+                    "corresponding duration sweep"
+                )
+            self.accelerate_durations_s_by_direction = directional.copy()
         repeated_levels = np.tile(
             self.tilt_levels_deg, self.repetitions_per_tilt
         )
@@ -245,6 +282,14 @@ class PlanarBrakingCalibration:
             self.trial_brake_s = np.repeat(np.tile(
                 scheduled_brake_s, self.repetitions_per_duration
             ), len(self.directions))
+            if self.accelerate_durations_s_by_direction is not None:
+                directional_trials = np.tile(
+                    self.accelerate_durations_s_by_direction,
+                    (self.repetitions_per_duration, 1),
+                ).reshape(-1)
+                self.trial_accelerate_s = directional_trials.copy()
+                # This opt-in sweep retains equal-and-opposite pulse times.
+                self.trial_brake_s = directional_trials.copy()
         self.trial_attitude_durations_s = (
             self.level_before_acceleration_s + self.trial_accelerate_s
             + self.level_before_brake_s + self.trial_brake_s
@@ -262,6 +307,10 @@ class PlanarBrakingCalibration:
             "accelerate_durations_s": (
                 None if self.accelerate_durations_s is None
                 else self.accelerate_durations_s.tolist()
+            ),
+            "accelerate_durations_s_by_direction": (
+                None if self.accelerate_durations_s_by_direction is None
+                else self.accelerate_durations_s_by_direction.tolist()
             ),
             "brake_durations_s": (
                 None if self.brake_durations_s is None

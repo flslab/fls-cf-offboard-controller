@@ -307,7 +307,15 @@ class Controller:
         from Interaction.planar_calibration_recovery import (
             BoundedPlanarCalibrationRecovery,
         )
-        braking = wrench['planar_braking_calibration']
+        from Interaction.braking_response_calibration import (
+            PlanarBrakingCalibration, braking_config_for_mode,
+        )
+        braking = braking_config_for_mode(
+            wrench['planar_braking_calibration'], planar_only=True,
+        )
+        # The launch's private calibration mission enables this plan later;
+        # validate the timing here before any flight command is possible.
+        PlanarBrakingCalibration(braking, start_after_s=0.0)
         readiness = CalibrationTrialReadinessGate(braking)
         if readiness.trial_start_dwell_s < 2.0:
             raise ValueError(
