@@ -51,6 +51,10 @@ from Interaction.post_release_runtime_evidence import (
 from Interaction.post_release_event_diagnostic import (
     send_release_event_diagnostic,
 )
+from Interaction.post_release_fixed_event_diagnostic import (
+    load_fixed_event_calibration,
+    send_fixed_release_event_diagnostic,
+)
 from Interaction.contact_attitude_shadow import (
     shadow_evidence_config_kwargs,
 )
@@ -17148,6 +17152,25 @@ class InteractionsControl:
             raise ValueError(
                 'post_release_event_diagnostic_enabled must be boolean'
             )
+        post_release_event_diagnostic_mode = config.get(
+            'post_release_event_diagnostic_mode', 'elapsed_v1'
+        )
+        if post_release_event_diagnostic_mode not in ('elapsed_v1', 'fixed_v2'):
+            raise ValueError(
+                'post_release_event_diagnostic_mode must be elapsed_v1 or fixed_v2'
+            )
+        fixed_event_calibration = None
+        if post_release_event_diagnostic_mode == 'fixed_v2':
+            if not post_release_event_diagnostic_enabled:
+                raise ValueError('fixed_v2 requires post_release_event_diagnostic_enabled')
+            calibration_path = config.get(
+                'post_release_event_diagnostic_calibration_file'
+            )
+            if not isinstance(calibration_path, str) or not calibration_path:
+                raise ValueError('fixed_v2 requires a calibration file')
+            fixed_event_calibration = load_fixed_event_calibration(
+                calibration_path
+            )
         post_release_gate_overrides = post_release_control_config.get(
             'gate', {}
         )
@@ -21641,8 +21664,20 @@ class InteractionsControl:
                                 raise ValueError(
                                     'Pi monotonic UART receive time unavailable'
                                 )
-                            diagnostic_send = (
-                                send_release_event_diagnostic(
+                            if post_release_event_diagnostic_mode == 'fixed_v2':
+                                diagnostic_send = send_fixed_release_event_diagnostic(
+                                    self.cf,
+                                    session_id=(
+                                        post_release_event_diagnostic_session_id
+                                    ),
+                                    sequence=(
+                                        post_release_event_diagnostic_sequence
+                                    ),
+                                    arduino_sample_ms=release_key[0],
+                                    calibration=fixed_event_calibration,
+                                )
+                            else:
+                                diagnostic_send = send_release_event_diagnostic(
                                     self.cf,
                                     session_id=(
                                         post_release_event_diagnostic_session_id
@@ -21653,7 +21688,6 @@ class InteractionsControl:
                                     arduino_sample_ms=release_key[0],
                                     pi_receive_monotonic_s=release_key[1],
                                 )
-                            )
                             self._log_event(
                                 'Post-Release Event Diagnostic Sent',
                                 diagnostic_send,
