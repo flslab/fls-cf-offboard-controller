@@ -3085,6 +3085,11 @@ if __name__ == '__main__':
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
     ap.add_argument("--vicon-full-pose", action="store_true",
                     help="if passed send both position and orientation otherwise send only position")
+    ap.add_argument(
+        "--vicon-rigidbody-position-only", metavar="RIGID_BODY_NAME",
+        help=("track this Vicon rigid body, log its position and orientation, "
+              "and forward only XYZ to the flight controller; requires --log"),
+    )
     ap.add_argument("--obj-name", type=str,
                     help="object name in mocap system, works with --vicon.")
     ap.add_argument("--vicon-mode", default="mixed", choices=["rigidbody", "pointcloud", "mixed"], help="Tracking mode")
@@ -3123,6 +3128,19 @@ if __name__ == '__main__':
     ap.add_argument("--autotune", action="store_true", help="run automatic pid tuner")
 
     args = ap.parse_args()
+    if args.vicon_rigidbody_position_only is not None:
+        rigid_body_name = args.vicon_rigidbody_position_only.strip()
+        if not rigid_body_name:
+            ap.error('--vicon-rigidbody-position-only requires a nonempty name')
+        if args.vicon_full_pose:
+            ap.error('--vicon-rigidbody-position-only cannot use --vicon-full-pose')
+        if args.save_vicon:
+            ap.error('--vicon-rigidbody-position-only cannot use --save-vicon')
+        if not args.log:
+            ap.error('--vicon-rigidbody-position-only requires --log')
+        args.vicon = True
+        args.vicon_mode = 'rigidbody'
+        args.obj_name = rigid_body_name
     try:
         validate_repeat_test_options(args)
     except ValueError as error:

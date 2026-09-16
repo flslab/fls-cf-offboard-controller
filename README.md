@@ -58,3 +58,10 @@ After installing, run ```lsusb``` in the terminal, check if it shows device with
 Bus 00X Device 00X: ID 1915:7777 Nordic Semiconductor ASA Bitcraze Crazyradio (PA) dongle
 ```
 
+Vicon rigid-body position-only input (opt-in): add
+`--vicon-rigidbody-position-only FLS --log` to the existing controller launch,
+replacing `FLS` with the exact Vicon rigid-body name. This selects rigid-body
+tracking, sends only XYZ through `extpos` to the flight controller, and records
+the rigid-body quaternion in the mocap log. It rejects `--vicon-full-pose` and
+does not enable the separate `--contact-attitude-run 2` shadow experiment.
+Without this option, the existing Vicon route is unchanged.
