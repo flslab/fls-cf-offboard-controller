@@ -7793,7 +7793,8 @@ class TranslationControlHandoff:
         ):
             return self._arm_jerk_hard_safety_abort(
                 'world XYZ swept-envelope veto rejected the history-level '
-                'hold',
+                'hold' if self.coast_swept_envelope_veto_enabled else
+                'world XYZ swept-envelope history-level diagnostic invalid',
                 context='history_level_hold_envelope',
             )
 
@@ -9016,7 +9017,9 @@ class TranslationControlHandoff:
             response_delay_s,
         ):
             self._arm_jerk_hard_safety_abort(
-                'world XYZ braking swept-envelope veto rejected the profile',
+                'world XYZ braking swept-envelope veto rejected the profile'
+                if self.coast_swept_envelope_veto_enabled else
+                'world XYZ braking swept-envelope diagnostic invalid',
                 context='jerk_profile_envelope',
             )
             return False
@@ -13342,7 +13345,9 @@ class TranslationControlHandoff:
             self.coast_tracking_action = 'swept_envelope_position_handoff_veto'
             self._arm_jerk_hard_safety_abort(
                 'world XYZ terminal handoff swept-envelope veto rejected '
-                'position control',
+                'position control' if self.coast_swept_envelope_veto_enabled
+                else 'world XYZ terminal handoff swept-envelope diagnostic '
+                'invalid',
                 context='position_handoff_envelope',
             )
             return False
