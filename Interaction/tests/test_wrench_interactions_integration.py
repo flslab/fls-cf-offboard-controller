@@ -4619,6 +4619,40 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             ]
         )
 
+    def test_forward_y_uncertainty_override_keeps_center_boundary(self):
+        control = self._make_enveloped_jerk_control(y_max=1.0)
+        control.coast_jerk_limited_lateral_max_acceleration_m_s2 = 0.50
+
+        def check(end_y):
+            samples = (
+                WorldTrajectorySample(
+                    0.0, (0.0, 0.0, 1.0), (0.0, 0.8, 0.0),
+                ),
+                WorldTrajectorySample(
+                    1.0, (0.0, end_y, 1.0), (0.0, 0.8, 0.0),
+                ),
+            )
+            return control._certify_swept_trajectory_set(
+                {'nominal': samples}, context='jerk_profile_replan',
+                transport_end_s=0.1, inner_loop_end_s=0.2,
+                fixed_z=True,
+            )
+
+        self.assertFalse(check(0.8))
+        control.coast_swept_envelope_forward_y_uncertainty_enabled = False
+        self.assertTrue(check(0.8))
+        record = control.coast_swept_envelope_last_certificates['nominal']
+        self.assertTrue(record['forward_y_uncertainty_override_applied'])
+        self.assertFalse(record['full_xyz_diagnostic']['feasible'])
+        self.assertFalse(check(0.96))  # Centre plus radius/reserve still fails.
+        control.brake_direction[:2] = (0.0, -1.0)
+        self.assertFalse(check(0.8))
+        self.assertFalse(
+            control.coast_swept_envelope_last_certificates['nominal'][
+                'forward_y_uncertainty_override_applied'
+            ]
+        )
+
     def test_fixed_z_jerk_envelope_does_not_accumulate_vertical_drift(self):
         control = self._make_enveloped_jerk_control(
             z_max=1.10,

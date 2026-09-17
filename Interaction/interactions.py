@@ -3586,6 +3586,7 @@ class TranslationControlHandoff:
             coast_swept_envelope_velocity_uncertainty_m_s=(0.10, 0.10, 0.10),
             coast_swept_envelope_uncertainty_sigma=3.0,
             coast_swept_envelope_lateral_x_uncertainty_enabled=True,
+            coast_swept_envelope_forward_y_uncertainty_enabled=True,
             coast_jerk_limited_state_sync_required=False,
             coast_jerk_runtime_authority_gates_required=False,
             coast_jerk_planar_calibration_verified=False,
@@ -3840,6 +3841,14 @@ class TranslationControlHandoff:
             )
         self.coast_swept_envelope_lateral_x_uncertainty_enabled = (
             coast_swept_envelope_lateral_x_uncertainty_enabled
+        )
+        if type(coast_swept_envelope_forward_y_uncertainty_enabled) is not bool:
+            raise ValueError(
+                'coast_swept_envelope_forward_y_uncertainty_enabled '
+                'must be boolean'
+            )
+        self.coast_swept_envelope_forward_y_uncertainty_enabled = (
+            coast_swept_envelope_forward_y_uncertainty_enabled
         )
         if type(coast_max_tilt_predictive_brake_enabled) is not bool:
             raise ValueError(
@@ -5124,15 +5133,28 @@ class TranslationControlHandoff:
                 and abs(float(self.brake_direction[0])) <= 0.10
                 and abs(float(self.brake_direction[1])) >= 0.99
             )
+            forward_y_override = bool(
+                # Experimental +Y release: omit forecast uncertainty only.
+                # The predicted centre, vehicle radius and reserve still
+                # must fit; measured XYZ boundary checks are unchanged.
+                not self.coast_swept_envelope_forward_y_uncertainty_enabled
+                and self.coast_jerk_limited_attitude_enabled
+                and abs(float(self.brake_direction[0])) <= 0.10
+                and float(self.brake_direction[1]) >= 0.99
+            )
             certificate = full_certificate
-            if lateral_x_override:
+            if lateral_x_override or forward_y_override:
                 position_uncertainty = (
                     self.coast_swept_envelope_active_position_uncertainty_m
                     .copy()
                 )
                 velocity_uncertainty = velocity_uncertainty.copy()
-                position_uncertainty[0] = 0.0
-                velocity_uncertainty[0] = 0.0
+                if lateral_x_override:
+                    position_uncertainty[0] = 0.0
+                    velocity_uncertainty[0] = 0.0
+                if forward_y_override:
+                    position_uncertainty[1] = 0.0
+                    velocity_uncertainty[1] = 0.0
                 certificate = certify_braking_swept_envelope(
                     **{
                         **certificate_kwargs,
@@ -5141,9 +5163,15 @@ class TranslationControlHandoff:
                     }
                 )
             record = self._swept_envelope_certificate_record(certificate)
-            if not self.coast_swept_envelope_lateral_x_uncertainty_enabled:
+            if (
+                not self.coast_swept_envelope_lateral_x_uncertainty_enabled
+                or not self.coast_swept_envelope_forward_y_uncertainty_enabled
+            ):
                 record['lateral_x_uncertainty_override_applied'] = (
                     lateral_x_override
+                )
+                record['forward_y_uncertainty_override_applied'] = (
+                    forward_y_override
                 )
                 record['full_xyz_diagnostic'] = (
                     self._swept_envelope_certificate_record(
