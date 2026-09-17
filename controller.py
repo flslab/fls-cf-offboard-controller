@@ -1265,11 +1265,14 @@ class Controller:
                     self.cf, select_log_vars(self.mission),
                     self.args.cf_log_period,
                 )
-            # Legacy interactions still receive Vicon-derived velocity.  The
-            # onboard wrench path consumes stateEstimate velocity directly and
-            # must not run a redundant external position Kalman filter.
+            # Legacy interactions use Vicon-derived velocity. The onboard
+            # wrench path enables that same filter only when its opt-in
+            # seventh-order free stop explicitly selects Vicon velocity.
             self.log_manager.add_log_group(
-                "frames", kf=not self._uses_onboard_wrench_state()
+                "frames", kf=(
+                    not self._uses_onboard_wrench_state()
+                    or self._uses_vicon_velocity_for_free_stop()
+                )
             )
             self.log_manager.add_log_group("events")
             self.log_manager.add_log_group("commands")
@@ -1358,6 +1361,21 @@ class Controller:
             wrench_config is not None
             and detection_method == 'momentum_impulse'
             and wrench_config.get('state_source') == 'onboard'
+        )
+
+    def _uses_vicon_velocity_for_free_stop(self):
+        if not self._uses_onboard_wrench_state():
+            return False
+        handoff = (
+            (self.mission or {}).get('Interaction', {})
+            .get('config', {}).get('wrench_interaction', {})
+            .get('control_handoff', {})
+        )
+        return bool(
+            handoff.get('coast_jerk_limited_free_stop_enabled', False)
+            and handoff.get(
+                'coast_jerk_limited_use_vicon_velocity_reference', False
+            )
         )
 
     def verify_onboard_wrench_logging(self):

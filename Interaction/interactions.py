@@ -3564,6 +3564,7 @@ class TranslationControlHandoff:
             coast_jerk_limited_free_stop_replan_error_m_s=0.03,
             coast_jerk_limited_free_stop_replan_acceleration_error_m_s2=0.25,
             coast_jerk_limited_free_stop_max_replans=4,
+            coast_jerk_limited_use_vicon_velocity_reference=False,
             coast_jerk_limited_residual_feedback_enabled=False,
             coast_jerk_limited_residual_velocity_gain_s=1.5,
             coast_jerk_limited_residual_acceleration_gain=0.35,
@@ -3938,6 +3939,21 @@ class TranslationControlHandoff:
         self.coast_jerk_limited_free_stop_enabled = (
             coast_jerk_limited_free_stop_enabled
         )
+        if type(coast_jerk_limited_use_vicon_velocity_reference) is not bool:
+            raise ValueError(
+                'coast_jerk_limited_use_vicon_velocity_reference must be '
+                'boolean'
+            )
+        self.coast_jerk_limited_use_vicon_velocity_reference = (
+            coast_jerk_limited_use_vicon_velocity_reference
+        )
+        if (
+            self.coast_jerk_limited_use_vicon_velocity_reference
+            and not self.coast_jerk_limited_free_stop_enabled
+        ):
+            raise ValueError(
+                'Vicon velocity reference requires seventh-order free stop'
+            )
         if (
             self.coast_jerk_limited_free_stop_enabled
             and not self.coast_jerk_limited_septic_smoothing_enabled
@@ -5483,6 +5499,41 @@ class TranslationControlHandoff:
             <= float(max_age_s) + 1e-12
         ):
             reasons.append('state_stale_at_command_send')
+        if (
+            self.coast_jerk_limited_free_stop_enabled
+            and self.coast_jerk_limited_septic_smoothing_enabled
+            and self.coast_jerk_limited_attitude_active
+            and self.coast_jerk_limited_first_actual_send_at is None
+            and 'state_stale_at_command_send' not in reasons
+        ):
+            # A fresh state does not make a previously solved free-stop
+            # profile fresh. The first-send retry can update command authority
+            # while still promoting the release-time polynomial unchanged.
+            # Reject that stale velocity boundary before sending sample(0).
+            planned_velocity = self._coast_jerk_limited_plan_velocity_m_s
+            current_velocity = self._coast_previous_velocity_xy
+            direction = np.asarray(self.brake_direction[:2], dtype=float)
+            direction_norm = float(np.linalg.norm(direction))
+            if (
+                planned_velocity is None
+                or current_velocity is None
+                or direction_norm <= 1e-9
+            ):
+                reasons.append('free_stop_first_send_velocity_unavailable')
+            else:
+                direction /= direction_norm
+                speed_change = float(
+                    (np.asarray(current_velocity, dtype=float)[:2]
+                     - np.asarray(planned_velocity, dtype=float)[:2])
+                    @ direction
+                )
+                if (
+                    not np.isfinite(speed_change)
+                    or abs(speed_change)
+                    > self.coast_jerk_limited_free_stop_replan_error_m_s
+                    + 1e-9
+                ):
+                    reasons.append('free_stop_first_send_velocity_changed')
         if self.coast_post_release_estimator_authority_required:
             if not self.coast_post_release_estimator_eligible:
                 reasons.append('post_release_estimator_ineligible')
@@ -16967,6 +17018,44 @@ class InteractionsControl:
 
         self._log_event('Wrench Interaction Complete')
 
+    def _vicon_velocity_reference_for_onboard_state(self, state):
+        """Read the existing position-only Vicon KF at a nearby state epoch."""
+        frames = self.log_manager.groups.get(self.pos_group_name, [])
+        if len(frames) < 10:
+            raise StaleLocalizationError(
+                'Vicon velocity filter has fewer than ten frames'
+            )
+        state_time = float(state['time'])
+        candidates = [
+            frame for frame in frames[-16:]
+            if frame.get('vel') is not None
+            and frame.get('time') is not None
+            and np.isfinite(float(frame['time']))
+            and float(frame['time']) <= state_time + 0.02
+        ]
+        if not candidates:
+            raise StaleLocalizationError(
+                'No timestamped Vicon velocity near onboard state'
+            )
+        frame = min(
+            candidates, key=lambda item: abs(float(item['time'])-state_time)
+        )
+        skew_s = float(frame['time'])-state_time
+        velocity = np.asarray(frame['vel'], dtype=float)
+        position = np.asarray(frame['tvec'], dtype=float)
+        if (
+            abs(skew_s) > 0.035
+            or velocity.shape != (3,)
+            or position.shape != (3,)
+            or not np.all(np.isfinite(velocity))
+            or not np.all(np.isfinite(position))
+            or np.linalg.norm(position-np.asarray(state['position'])) > 0.10
+        ):
+            raise StaleLocalizationError(
+                'Vicon velocity is stale, invalid, or disagrees with position'
+            )
+        return velocity, float(frame['time']), skew_s
+
     def _get_synchronized_onboard_wrench_state(self):
         """Return time-aligned Crazyflie state-estimate and actuator packets."""
         state_time = self.log_manager.get_latest_group_log_time('VEL_ORI')
@@ -17222,6 +17311,16 @@ class InteractionsControl:
             raise ValueError(
                 'post_release_estimator_control.enabled must be boolean'
             )
+        if config['control_handoff'].get(
+                'coast_jerk_limited_use_vicon_velocity_reference', False):
+            if post_release_estimator_control_enabled or config[
+                    'control_handoff'].get(
+                        'coast_jerk_limited_use_15state_velocity_reference',
+                        False):
+                raise ValueError(
+                    'Vicon velocity free stop cannot also select another '
+                    'post-release velocity estimator'
+                )
         post_release_event_diagnostic_enabled = config.get(
             'post_release_event_diagnostic_enabled', False
         )
@@ -22068,6 +22167,18 @@ class InteractionsControl:
                     pre_release_force_world = (
                         confirmation_sensor_axis_world * pre_release_force_n
                     )
+                release_brake_velocity = np.asarray(
+                    output.estimate.velocity, dtype=float
+                ).copy()
+                release_brake_velocity_source = 'crazyflie_state_estimate'
+                if (
+                    translation_control
+                    .coast_jerk_limited_use_vicon_velocity_reference
+                ):
+                    release_brake_velocity, _, _ = (
+                        self._vicon_velocity_reference_for_onboard_state(state)
+                    )
+                    release_brake_velocity_source = 'vicon_position_kf'
                 coast_initial_velocity = release_coast_initial_velocity(
                     output.estimate.velocity,
                     pre_release_force_world,
@@ -22119,7 +22230,7 @@ class InteractionsControl:
                 release_started = False
                 if translation_control.end_contact(
                     self._bounded_wrench_reference(position),
-                    output.estimate.velocity,
+                    release_brake_velocity,
                     state_time,
                     coast_direction,
                     brake_reference_orientation,
@@ -22136,7 +22247,7 @@ class InteractionsControl:
                 ):
                     translation_control.confirm_release_candidate(
                         self._bounded_wrench_reference(position),
-                        output.estimate.velocity,
+                        release_brake_velocity,
                         pre_release_force_world,
                         state_time,
                     )
@@ -22608,6 +22719,12 @@ class InteractionsControl:
                             ),
                             'measured_velocity_m_s': (
                                 output.estimate.velocity.tolist()
+                            ),
+                            'brake_velocity_m_s': (
+                                release_brake_velocity.tolist()
+                            ),
+                            'brake_velocity_source': (
+                                release_brake_velocity_source
                             ),
                             'coast_initial_velocity_m_s': (
                                 coast_initial_velocity.tolist()
@@ -24376,6 +24493,24 @@ class InteractionsControl:
                             translation_control.reject_post_release_estimator_authority(
                                 estimator_reason
                             )
+                    if (
+                        control_update_allowed
+                        and translation_control
+                        .coast_jerk_limited_use_vicon_velocity_reference
+                    ):
+                        vicon_velocity, vicon_time, vicon_skew = (
+                            self._vicon_velocity_reference_for_onboard_state(
+                                state
+                            )
+                        )
+                        control_velocity = vicon_velocity
+                        control_state_time = min(state_time, vicon_time)
+                        control_state_group_skew = max(
+                            control_state_group_skew, abs(vicon_skew)
+                        )
+                        control_state_source = (
+                            'crazyflie_position_with_vicon_kf_velocity'
+                        )
                     if control_update_allowed:
                         coast_handoff_completed = bool(
                             translation_control.update_coast_velocity(

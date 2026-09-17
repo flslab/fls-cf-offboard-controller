@@ -1488,6 +1488,36 @@ class VelocityInertiaRenderingTests(unittest.TestCase):
 
 
 class WrenchInteractionLoopTests(unittest.TestCase):
+    def test_vicon_kf_velocity_reference_is_epoch_and_position_checked(self):
+        interaction = InteractionsControl.__new__(InteractionsControl)
+        interaction.pos_group_name = 'frames'
+        frames = [
+            {
+                'time': 0.90 + 0.01 * index,
+                'tvec': [0.0, 0.01 * index, 1.0],
+                'vel': [0.0, 0.85, 0.0],
+            }
+            for index in range(12)
+        ]
+        interaction.log_manager = SimpleNamespace(
+            groups={'frames': frames}
+        )
+        state = {'time': 1.0, 'position': np.array([0.0, 0.10, 1.0])}
+        velocity, frame_time, skew = (
+            interaction._vicon_velocity_reference_for_onboard_state(state)
+        )
+        np.testing.assert_allclose(velocity, [0.0, 0.85, 0.0])
+        self.assertAlmostEqual(frame_time, 1.0)
+        self.assertAlmostEqual(skew, 0.0)
+        with self.assertRaises(StaleLocalizationError):
+            interaction._vicon_velocity_reference_for_onboard_state({
+                'time': 1.10, 'position': state['position'],
+            })
+        with self.assertRaises(StaleLocalizationError):
+            interaction._vicon_velocity_reference_for_onboard_state({
+                'time': 1.0, 'position': np.array([0.0, 0.5, 1.0]),
+            })
+
     def test_second_order_inverse_feedforward_recovers_reference(self):
         wn = 12.0
         zeta = 0.45
@@ -4745,6 +4775,33 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                 defer_stale_first_send=True,
             )
         self.assertEqual(commander.calls, [])
+
+    def test_free_stop_first_send_rejects_fresh_state_with_stale_speed_plan(
+            self):
+        control = self._make_enveloped_jerk_control()
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.0,
+            current_state_group_skew_s=0.0,
+            max_terminal_state_age_s=0.10,
+            max_terminal_state_group_skew_s=0.03,
+        ))
+        # Exercise the direct free-stop first-send authority boundary. The
+        # state is still fresh, but the already-solved velocity boundary no
+        # longer describes the latest measured motion.
+        control.coast_jerk_limited_free_stop_enabled = True
+        control.coast_jerk_limited_septic_smoothing_enabled = True
+        self.assertTrue(control._evaluate_jerk_command_authority(1.01))
+        control._coast_previous_velocity_xy = np.array([0.0, 0.82])
+        with self.assertRaisesRegex(
+                BrakingSafetyAbortError,
+                'free_stop_first_send_velocity_changed'):
+            control._require_jerk_command_authority(1.01)
+        self.assertAlmostEqual(
+            control._coast_jerk_limited_plan_velocity_m_s[1], 0.60
+        )
 
     def test_runtime_jerk_uncertainty_budget_vetoes_before_any_send(self):
         cases = (

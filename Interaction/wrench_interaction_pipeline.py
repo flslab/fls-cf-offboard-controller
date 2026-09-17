@@ -324,6 +324,9 @@ DEFAULT_WRENCH_INTERACTION_CONFIG = {
         # zero jerk at every phase boundary. The legacy profile remains the
         # default for exact rollback compatibility.
         "coast_jerk_limited_septic_smoothing_enabled": False,
+        # Opt-in only for the direct free stop. Other interaction and
+        # calibration paths keep their existing velocity sources.
+        "coast_jerk_limited_use_vicon_velocity_reference": False,
         # The smooth profile has its own single-threaded command clock. State
         # updates may be slower; duplicate-state loop ticks still advance this
         # clock, while the conservative ZOH validator bounds late ticks.
