@@ -4611,7 +4611,9 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertFalse(record['full_xyz_diagnostic']['feasible'])
         self.assertFalse(check((-1.1, 0.0, 1.0)))
         self.assertFalse(check((-0.45, 5.1, 1.0)))
-        control.brake_direction[:2] = (0.5, 0.8660254)
+        control.brake_direction[:2] = (-0.166, 0.986)
+        self.assertTrue(check((-0.45, 0.0, 1.0)))
+        control.brake_direction[:2] = (0.8660254, 0.5)
         self.assertFalse(check((-0.45, 0.0, 1.0)))
         self.assertFalse(
             control.coast_swept_envelope_last_certificates['nominal'][
@@ -4640,12 +4642,13 @@ class WrenchInteractionLoopTests(unittest.TestCase):
 
         self.assertFalse(check(0.8))
         control.coast_swept_envelope_forward_y_uncertainty_enabled = False
+        control.brake_direction[:2] = (-0.166, 0.986)
         self.assertTrue(check(0.8))
         record = control.coast_swept_envelope_last_certificates['nominal']
         self.assertTrue(record['forward_y_uncertainty_override_applied'])
         self.assertFalse(record['full_xyz_diagnostic']['feasible'])
         self.assertFalse(check(0.96))  # Centre plus radius/reserve still fails.
-        control.brake_direction[:2] = (0.0, -1.0)
+        control.brake_direction[:2] = (-0.8660254, 0.5)
         self.assertFalse(check(0.8))
         self.assertFalse(
             control.coast_swept_envelope_last_certificates['nominal'][

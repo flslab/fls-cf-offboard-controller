@@ -5123,15 +5123,16 @@ class TranslationControlHandoff:
             full_certificate = certify_braking_swept_envelope(
                 **certificate_kwargs
             )
-            # Explicit experiment-only switch: for a nearly world-Y brake,
+            # Explicit experiment-only switch: for a Y-dominant brake,
             # omit the *predicted uncertainty inflation* on world X. The
             # centre trajectory is still checked against the X face with
             # vehicle radius/reserve; real XYZ boundary checks are unchanged.
             lateral_x_override = bool(
                 not self.coast_swept_envelope_lateral_x_uncertainty_enabled
                 and self.coast_jerk_limited_attitude_enabled
-                and abs(float(self.brake_direction[0])) <= 0.10
-                and abs(float(self.brake_direction[1])) >= 0.99
+                and abs(float(self.brake_direction[1])) > abs(
+                    float(self.brake_direction[0])
+                )
             )
             forward_y_override = bool(
                 # Experimental +Y release: omit forecast uncertainty only.
@@ -5139,8 +5140,9 @@ class TranslationControlHandoff:
                 # must fit; measured XYZ boundary checks are unchanged.
                 not self.coast_swept_envelope_forward_y_uncertainty_enabled
                 and self.coast_jerk_limited_attitude_enabled
-                and abs(float(self.brake_direction[0])) <= 0.10
-                and float(self.brake_direction[1]) >= 0.99
+                and float(self.brake_direction[1]) > abs(
+                    float(self.brake_direction[0])
+                )
             )
             certificate = full_certificate
             if lateral_x_override or forward_y_override:
