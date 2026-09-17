@@ -4919,6 +4919,55 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control._coast_jerk_limited_plan_velocity_m_s[1], 0.60
         )
 
+    def test_free_stop_first_send_refresh_replans_from_latest_velocity(self):
+        control = self._make_enveloped_jerk_control()
+        control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.0,
+            current_state_group_skew_s=0.0,
+            max_terminal_state_age_s=0.10,
+            max_terminal_state_group_skew_s=0.03,
+        )
+        control.coast_jerk_limited_free_stop_enabled = True
+        control.coast_jerk_limited_septic_smoothing_enabled = True
+        control._coast_previous_velocity_xy = np.array([0.0, 0.82])
+        with self.assertRaises(JerkFirstSendStateRefreshRequired):
+            control._require_jerk_command_authority(
+                1.01, defer_stale_first_send=True,
+            )
+        self.assertTrue(
+            control._coast_jerk_limited_first_send_replan_required
+        )
+        self.assertIsNone(control.coast_jerk_hard_safety_abort_reason)
+
+        # The outer loop obtains another synchronized state before retrying
+        # send(). The unsent 0.60 m/s polynomial must not survive that update.
+        control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.82, 0.0], 1.02,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.02,
+            current_state_group_skew_s=0.0,
+            max_terminal_state_age_s=0.10,
+            max_terminal_state_group_skew_s=0.03,
+        )
+        self.assertFalse(
+            control._coast_jerk_limited_first_send_replan_required
+        )
+        self.assertEqual(control.coast_jerk_limited_free_stop_replan_count, 1)
+        self.assertAlmostEqual(
+            control._coast_jerk_limited_plan_velocity_m_s[1], 0.82
+        )
+        commander = FakeCommander()
+        control.send(
+            commander, command_timestamp=1.03, yaw_deg=0.0,
+            defer_stale_first_send=True,
+        )
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        self.assertIsNone(control.coast_jerk_hard_safety_abort_reason)
+
     def test_runtime_jerk_uncertainty_budget_vetoes_before_any_send(self):
         cases = (
             (

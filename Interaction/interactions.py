@@ -4694,6 +4694,7 @@ class TranslationControlHandoff:
         self.coast_command_hold_s = None
         self._coast_previous_position_xy = None
         self._coast_previous_velocity_xy = None
+        self._coast_jerk_limited_first_send_replan_required = False
         self._coast_previous_timestamp = None
         self._coast_filtered_acceleration_xy = np.zeros(2)
         self._coast_model_acceleration_xy = np.zeros(2)
@@ -4838,6 +4839,7 @@ class TranslationControlHandoff:
         self.coast_jerk_limited_lateral_feedback_target_m_s2 = 0.0
         self._coast_jerk_limited_plan_position_m = None
         self._coast_jerk_limited_plan_velocity_m_s = None
+        self._coast_jerk_limited_first_send_replan_required = False
         self._coast_jerk_limited_plan_orientation_rpy = None
         self._coast_jerk_limited_plan_angular_velocity = None
         self._coast_jerk_limited_plan_state_timestamp = None
@@ -5607,11 +5609,17 @@ class TranslationControlHandoff:
         if (
             defer_stale_first_send
             and self.coast_jerk_limited_first_actual_send_at is None
-            and self.coast_jerk_command_authority_reasons
-            == ('state_stale_at_command_send',)
+            and self.coast_jerk_command_authority_reasons in (
+                ('state_stale_at_command_send',),
+                ('free_stop_first_send_velocity_changed',),
+            )
         ):
+            if self.coast_jerk_command_authority_reasons == (
+                'free_stop_first_send_velocity_changed',
+            ):
+                self._coast_jerk_limited_first_send_replan_required = True
             raise JerkFirstSendStateRefreshRequired(
-                'first jerk send needs a fresh synchronized state'
+                'first jerk send needs a fresh synchronized state and replan'
             )
         reason = (
             'jerk command authority denied: '
@@ -5898,6 +5906,7 @@ class TranslationControlHandoff:
         self.coast_command_hold_s = None
         self._coast_previous_position_xy = None
         self._coast_previous_velocity_xy = None
+        self._coast_jerk_limited_first_send_replan_required = False
         self._coast_previous_timestamp = None
         self._coast_filtered_acceleration_xy.fill(0.0)
         self._coast_model_acceleration_xy.fill(0.0)
@@ -7194,6 +7203,7 @@ class TranslationControlHandoff:
         self.brake_force_feedforward_acceleration_m_s2 = 0.0
         self._coast_previous_position_xy = None
         self._coast_previous_velocity_xy = None
+        self._coast_jerk_limited_first_send_replan_required = False
         self._coast_previous_timestamp = None
         self._coast_filtered_acceleration_xy.fill(0.0)
         self._coast_model_acceleration_xy.fill(0.0)
@@ -10816,6 +10826,27 @@ class TranslationControlHandoff:
                 float(command_timestamp),
                 bool(allow_position_handoff),
             )
+        if self._coast_jerk_limited_first_send_replan_required:
+            # The first command was not sent because its velocity boundary
+            # changed after planning. Replace that unsent polynomial from this
+            # newly synchronized state; never promote the stale profile.
+            self._coast_jerk_limited_first_send_replan_required = False
+            if self.coast_jerk_limited_first_actual_send_at is not None:
+                return self._arm_jerk_hard_safety_abort(
+                    'first-send replan requested after jerk playback began',
+                    context='first_send_velocity_replan',
+                )
+            if not self._begin_septic_free_stop_replan(
+                position, velocity, orientation_rpy, command_timestamp,
+                world_acceleration_xy=world_acceleration_xy,
+                angular_velocity=angular_velocity,
+            ):
+                if self.coast_jerk_hard_safety_abort_reason is None:
+                    self._arm_jerk_hard_safety_abort(
+                        'first-send velocity replan had no valid current '
+                        'state', context='first_send_velocity_replan',
+                    )
+                return False
         if self.coast_velocity_phase in (
                 'jerk_profile_pending', 'jerk_history_level_hold'):
             # Freeze all release-state derivatives from one accepted state
@@ -26189,7 +26220,7 @@ class InteractionsControl:
                         yaw_deg=translation_control.yaw_deg,
                         defer_stale_first_send=True,
                     )
-                except JerkFirstSendStateRefreshRequired:
+                except JerkFirstSendStateRefreshRequired as refresh_error:
                     send_check_at = time.time()
                     if jerk_first_send_refresh_started_at is None:
                         jerk_first_send_refresh_started_at = send_check_at
@@ -26245,6 +26276,24 @@ class InteractionsControl:
                     )
                     self._log_event('Jerk First Send State Refresh', {
                         'attempt': jerk_first_send_refresh_count,
+                        'reason': str(refresh_error),
+                        'authority_reasons': list(
+                            translation_control
+                            .coast_jerk_command_authority_reasons
+                        ),
+                        'planned_velocity_xy_m_s': (
+                            None if translation_control
+                            ._coast_jerk_limited_plan_velocity_m_s is None
+                            else translation_control
+                            ._coast_jerk_limited_plan_velocity_m_s[:2]
+                            .tolist()
+                        ),
+                        'latest_velocity_xy_m_s': (
+                            None if translation_control
+                            ._coast_previous_velocity_xy is None
+                            else translation_control
+                            ._coast_previous_velocity_xy.tolist()
+                        ),
                         'planned_state_time': (
                             translation_control
                             .coast_jerk_command_authority_state_timestamp
