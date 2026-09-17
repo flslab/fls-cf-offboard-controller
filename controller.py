@@ -323,6 +323,7 @@ class Controller:
             if (values.get('hlCommander.pRelReady') == 1 and
                     values.get('hlCommander.pRelAutoSt') == 0 and
                     values.get('hlCommander.pRelAutoEn') == 1 and
+                    values.get('hlCommander.pRelEvtVer') == 1 and
                     values.get('hlCommander.pRelMode') == (
                         1 if self.firmware_auto_brake_mode == 'zero_velocity'
                         else 0) and

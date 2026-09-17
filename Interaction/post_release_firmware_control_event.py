@@ -23,6 +23,72 @@ MAX_PI_EVENT_AGE_US = 250_000
 PACKET = struct.Struct('<BBHIII')
 VICON_POSITION_TYPE = 16
 VICON_POSITION_PACKET = struct.Struct('<BIIfff')
+HOLD_NOTICE_TYPE = 17
+HOLD_ACK_TYPE = 18
+HOLD_NOTICE_PACKET = struct.Struct('<BBHIffffI')
+HOLD_ACK_PACKET = struct.Struct('<BBHI')
+
+
+def parse_post_release_hold_notice(packet, *, session_id, sequence):
+    """Accept only this release's measured, firmware-established HLC hold."""
+    if packet.port != CRTPPort.SETPOINT_HL or packet.channel != 1:
+        return None
+    data = bytes(packet.data)
+    if len(data) != HOLD_NOTICE_PACKET.size:
+        return None
+    (kind, version, observed_sequence, observed_session, x, y, z,
+     yaw_rad, hold_us) = HOLD_NOTICE_PACKET.unpack(data)
+    if (kind != HOLD_NOTICE_TYPE or version != VERSION or
+            observed_session != session_id or observed_sequence != sequence or
+            not all(math.isfinite(value) for value in (x, y, z, yaw_rad))):
+        return None
+    return {
+        'session_id': observed_session,
+        'sequence': observed_sequence,
+        'hold_position_m': [x, y, z],
+        'hold_yaw_rad': yaw_rad,
+        'firmware_hold_us_mod32': hold_us,
+    }
+
+
+class FirmwareHoldNotification:
+    """Listen before release; acknowledge a matching terminal hold once seen."""
+
+    def __init__(self, cf, *, session_id, sequence):
+        self.cf = cf
+        self.session_id = session_id
+        self.sequence = sequence
+        self.received = threading.Event()
+        self.notice = None
+        self._callback = self._on_packet
+
+    def __enter__(self):
+        self.cf.add_port_callback(CRTPPort.SETPOINT_HL, self._callback)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.cf.remove_port_callback(CRTPPort.SETPOINT_HL, self._callback)
+
+    def _on_packet(self, packet):
+        notice = parse_post_release_hold_notice(
+            packet, session_id=self.session_id, sequence=self.sequence,
+        )
+        if notice is not None and not self.received.is_set():
+            self.notice = notice
+            self.received.set()
+
+    def wait(self, timeout_s):
+        return self.notice if self.received.wait(timeout_s) else None
+
+    def acknowledge(self):
+        if self.notice is None:
+            raise RuntimeError('cannot acknowledge an unobserved hold')
+        packet = CRTPPacket()
+        packet.set_header(CRTPPort.SETPOINT_HL, 0)
+        packet.data = HOLD_ACK_PACKET.pack(
+            HOLD_ACK_TYPE, VERSION, self.sequence, self.session_id,
+        )
+        self.cf.send_packet(packet)
 
 
 def send_vicon_position_mirror(cf, position_m, *,
@@ -137,13 +203,14 @@ def parse_pi_release_ack(packet, *, request_payload_hex,
 
 
 def handoff_pi_release_to_firmware(
-        cf, low_level, *, session_id, sequence, arduino_sample_ms,
+        cf, *, session_id, sequence, arduino_sample_ms,
         pi_receive_monotonic_ns, firmware_auto_brake_armed=False,
         ack_timeout_s=0.15, monotonic_ns=time.monotonic_ns):
-    """Transfer LL priority only after the matching firmware event ACK.
+    """Confirm a firmware-owned LL-to-HLC transfer using the matching ACK.
 
     A timeout is ambiguous: this function never retries the release event or
-    sends a new position goal. The caller must use its existing landing path.
+    sends a new position goal. Firmware claims priority before replying; the
+    caller must use its existing landing path if the reply is lost or rejected.
     The ACK proves the event was accepted, not that braking or terminal hold
     has completed.
     """
@@ -187,7 +254,6 @@ def handoff_pi_release_to_firmware(
             raise RuntimeError(
                 f"firmware rejected release event (errno={matched['ack_errno']})"
             )
-        low_level.send_notify_setpoint_stop()
         return {
             'session_id': session_id,
             'sequence': sequence,
@@ -197,6 +263,7 @@ def handoff_pi_release_to_firmware(
             'pi_receive_to_send_elapsed_us': elapsed_us,
             **matched,
             'low_level_priority_released': True,
+            'firmware_priority_claimed': True,
         }
     finally:
         cf.remove_port_callback(CRTPPort.SETPOINT_HL, on_packet)

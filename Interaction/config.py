@@ -871,6 +871,7 @@ FIRMWARE_BRAKE_LOG_VARS = {
     'hlCommander.pRelAutoRej': {'type': 'uint32_t', 'unit': '', 'data': []},
     'hlCommander.pRelAutoTime': {'type': 'uint32_t', 'unit': '', 'data': []},
     'hlCommander.pRelAutoEn': {'type': 'uint8_t', 'unit': '', 'data': []},
+    'hlCommander.pRelEvtVer': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelMode': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelTau': {'type': 'float', 'unit': 's', 'data': []},
 }

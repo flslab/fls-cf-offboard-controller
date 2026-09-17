@@ -22,6 +22,7 @@ from Interaction.contact_attitude_observer import (
 from Interaction.command_wrapper import CommandWrapper
 from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.post_release_firmware_control_event import (
+    FirmwareHoldNotification,
     handoff_pi_release_to_firmware,
 )
 from Interaction.adaptive_braking_calibration import AdaptiveBrakingCalibration
@@ -22011,11 +22012,8 @@ class InteractionsControl:
                         raise RuntimeError(
                             'firmware release requires Pi UART receive time'
                         )
-                    # Neutralize the last contact attitude immediately while
-                    # LL still owns the setpoint. The firmware will take over
-                    # only after the acknowledged event and priority notice;
-                    # this prevents the contact tilt from being latched across
-                    # Pi/radio handoff latency.
+                    # Stop the contact LL stream before the firmware-owned
+                    # atomic priority claim. Clear its last tilt first.
                     self.lo_commander.send_zdistance_setpoint(
                         0.0, 0.0, 0.0, float(nominal_position[2])
                     )
@@ -22026,75 +22024,81 @@ class InteractionsControl:
                         self.log_manager.get_latest_group_log_data(
                             'FIRMWARE_BRAKE').get(
                                 'hlCommander.pRelAutoTime'))
-                    release_sent = handoff_pi_release_to_firmware(
-                        self.cf,
-                        self.lo_commander.for_safety_cleanup(),
-                        session_id=firmware_brake_session_id,
-                        sequence=0,
-                        arduino_sample_ms=int(
-                            potentiometer_release_decision
-                            .unloaded_started_sample_id),
-                        pi_receive_monotonic_ns=int(round(
-                            potentiometer_release_decision
-                            .unloaded_started_at_s * 1_000_000_000)),
-                        firmware_auto_brake_armed=True,
-                    )
-                    self._translation_high_level_active = True
-                    self._log_event(
-                        'Firmware Post-Release Brake Handoff',
-                        {**release_sent, 'brake_mode': firmware_brake_mode},
-                    )
-                    monitor_started = time.monotonic()
-                    deadline = monitor_started + 6.0
-                    missing_observer_since = None
-                    while time.monotonic() < deadline:
-                        brake_log = self.log_manager.get_latest_group_log_data(
-                            'FIRMWARE_BRAKE')
-                        log_time = self.log_manager.get_latest_group_log_time(
-                            'FIRMWARE_BRAKE')
-                        if log_time is None or time.time() - log_time > 0.35:
-                            raise StaleLocalizationError(
-                                'firmware brake status log became stale'
-                            )
-                        brake_timeouts = brake_log.get(
-                            'hlCommander.pRelAutoTime')
-                        if (brake_timeouts is not None and
-                              brake_timeouts != baseline_brake_timeouts):
-                            raise RuntimeError(
-                                'firmware maximum-attitude brake timed out'
-                            )
-                        if brake_log.get('hlCommander.pRelReady') != 1:
-                            if missing_observer_since is None:
-                                missing_observer_since = time.monotonic()
-                            elif time.monotonic() - missing_observer_since > 0.30:
+                    with FirmwareHoldNotification(
+                            self.cf, session_id=firmware_brake_session_id,
+                            sequence=0) as completion:
+                        release_sent = handoff_pi_release_to_firmware(
+                            self.cf,
+                            session_id=firmware_brake_session_id,
+                            sequence=0,
+                            arduino_sample_ms=int(
+                                potentiometer_release_decision
+                                .unloaded_started_sample_id),
+                            pi_receive_monotonic_ns=int(round(
+                                potentiometer_release_decision
+                                .unloaded_started_at_s * 1_000_000_000)),
+                            firmware_auto_brake_armed=True,
+                        )
+                        self._translation_high_level_active = True
+                        self._log_event(
+                            'Firmware Post-Release Brake Handoff',
+                            {**release_sent, 'brake_mode': firmware_brake_mode},
+                        )
+                        monitor_started = time.monotonic()
+                        deadline = monitor_started + 6.0
+                        missing_observer_since = None
+                        while time.monotonic() < deadline:
+                            # The notice is the completion signal. The slower
+                            # log is only a safety heartbeat, not the trigger
+                            # for a Pi-side position command.
+                            notice = completion.wait(0.10)
+                            brake_log = self.log_manager.get_latest_group_log_data(
+                                'FIRMWARE_BRAKE')
+                            log_time = self.log_manager.get_latest_group_log_time(
+                                'FIRMWARE_BRAKE')
+                            if log_time is None or time.time() - log_time > 0.35:
                                 raise StaleLocalizationError(
-                                    'firmware Vicon/15-state observer lost'
+                                    'firmware brake status log became stale'
+                                )
+                            brake_timeouts = brake_log.get(
+                                'hlCommander.pRelAutoTime')
+                            if (brake_timeouts is not None and
+                                  brake_timeouts != baseline_brake_timeouts):
+                                raise RuntimeError(
+                                    'firmware maximum-attitude brake timed out'
+                                )
+                            if brake_log.get('hlCommander.pRelReady') != 1:
+                                if missing_observer_since is None:
+                                    missing_observer_since = time.monotonic()
+                                elif time.monotonic() - missing_observer_since > 0.30:
+                                    raise StaleLocalizationError(
+                                        'firmware Vicon/15-state observer lost'
+                                    )
+                            else:
+                                missing_observer_since = None
+                            if notice is not None:
+                                if brake_log.get('hlCommander.pRelReady') != 1:
+                                    raise StaleLocalizationError(
+                                        'terminal hold lacks fresh Vicon/15-state'
+                                    )
+                                completion.acknowledge()
+                                self._log_event(
+                                    'Firmware Post-Release Hold Acquired',
+                                    {**notice, 'firmware_stage': 4,
+                                     'brake_mode': firmware_brake_mode,
+                                     'one_shot_handoff': True,
+                                     'world_velocity_target_m_s': [0.0, 0.0]},
+                                )
+                                break
+                            if (brake_log.get('hlCommander.pRelAutoSt') == 0 and
+                                    time.monotonic() - monitor_started > 0.35):
+                                raise RuntimeError(
+                                    'firmware brake dropped ownership before hold'
                                 )
                         else:
-                            missing_observer_since = None
-                        if brake_log.get('hlCommander.pRelAutoSt') == 4:
-                            if brake_log.get('hlCommander.pRelReady') != 1:
-                                raise StaleLocalizationError(
-                                    'terminal hold lacks fresh Vicon/15-state'
-                                )
-                            self._log_event(
-                                'Firmware Post-Release Hold Acquired',
-                                {'firmware_stage': 4,
-                                 'brake_mode': firmware_brake_mode,
-                                 'one_shot_handoff': True,
-                                 'world_velocity_target_m_s': [0.0, 0.0]},
-                            )
-                            break
-                        if (brake_log.get('hlCommander.pRelAutoSt') == 0 and
-                                time.monotonic() - monitor_started > 0.35):
                             raise RuntimeError(
-                                'firmware brake dropped ownership before hold'
+                                'firmware brake did not reach stable hold within 6 s'
                             )
-                        self._safe_sleep(0.05)
-                    else:
-                        raise RuntimeError(
-                            'firmware brake did not reach stable hold within 6 s'
-                        )
                     break
                 release_event_clock_evidence = dict(
                     contact_attitude_release_preview_clock_evidence

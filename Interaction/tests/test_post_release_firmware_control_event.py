@@ -2,9 +2,11 @@ import struct
 import unittest
 
 from Interaction.post_release_firmware_control_event import (
+    FirmwareHoldNotification,
     encode_pi_release_command,
     handoff_pi_release_to_firmware,
     parse_pi_release_ack,
+    parse_post_release_hold_notice,
     send_pi_release_command_once,
     send_vicon_position_mirror,
 )
@@ -51,7 +53,7 @@ class PostReleaseFirmwareControlEventTests(unittest.TestCase):
                 monotonic_s=lambda: 11.020,
             )
 
-    def test_acknowledged_release_handoff_notifies_once(self):
+    def test_acknowledged_release_is_already_claimed_by_firmware(self):
         class FakeCf:
             def __init__(self):
                 self.callback = None
@@ -77,24 +79,18 @@ class PostReleaseFirmwareControlEventTests(unittest.TestCase):
                 })()
                 self.callback(ack)
 
-        class FakeLow:
-            def __init__(self, cf):
-                self.cf = cf
-
-            def send_notify_setpoint_stop(self):
-                self.cf.calls.append('notify')
-
         cf = FakeCf()
         ticks = iter((100_080_000_000, 100_080_500_000))
         result = handoff_pi_release_to_firmware(
-            cf, FakeLow(cf), session_id=99, sequence=7,
+            cf, session_id=99, sequence=7,
             arduino_sample_ms=12345,
             pi_receive_monotonic_ns=100_000_000_000,
             firmware_auto_brake_armed=True,
             monotonic_ns=lambda: next(ticks),
         )
-        self.assertEqual(cf.calls, ['register', 'send', 'notify', 'remove'])
+        self.assertEqual(cf.calls, ['register', 'send', 'remove'])
         self.assertTrue(result['low_level_priority_released'])
+        self.assertTrue(result['firmware_priority_claimed'])
 
     def test_rejected_release_does_not_relax_low_level_priority(self):
         class FakeCf:
@@ -110,20 +106,103 @@ class PostReleaseFirmwareControlEventTests(unittest.TestCase):
                     'data': bytes(packet.data) + b'\x16',
                 })())
 
-        class FakeLow:
-            def send_notify_setpoint_stop(self):
-                raise AssertionError('LL priority must remain')
-
         cf = FakeCf()
         ticks = iter((100_080_000_000, 100_080_500_000))
         with self.assertRaisesRegex(RuntimeError, 'rejected'):
             handoff_pi_release_to_firmware(
-                cf, FakeLow(), session_id=99, sequence=7,
+                cf, session_id=99, sequence=7,
                 arduino_sample_ms=12345,
                 pi_receive_monotonic_ns=100_000_000_000,
                 firmware_auto_brake_armed=True,
                 monotonic_ns=lambda: next(ticks),
             )
+
+    def test_hold_notice_matches_release_and_is_acknowledged_without_go_to(self):
+        class FakeCf:
+            def __init__(self):
+                self.callback = None
+                self.sent = []
+
+            def add_port_callback(self, port, callback):
+                self.callback = callback
+
+            def remove_port_callback(self, port, callback):
+                self.assert_callback(callback)
+                self.callback = None
+
+            def assert_callback(self, callback):
+                assert self.callback is callback
+
+            def send_packet(self, packet):
+                self.sent.append(packet)
+
+        def notice(session, sequence, x=1.25):
+            return type('Notice', (), {
+                'port': 8, 'channel': 1,
+                'data': struct.pack('<BBHIffffI', 17, 1, sequence,
+                                    session, x, -0.3, 0.8, 0.2, 123456),
+            })()
+
+        cf = FakeCf()
+        with FirmwareHoldNotification(cf, session_id=99, sequence=7) as waiter:
+            cf.callback(notice(98, 7))
+            cf.callback(notice(99, 6))
+            self.assertIsNone(waiter.wait(0))
+            cf.callback(notice(99, 7))
+            for actual, expected in zip(
+                    waiter.wait(0)['hold_position_m'], (1.25, -0.3, 0.8)):
+                self.assertAlmostEqual(actual, expected)
+            waiter.acknowledge()
+        self.assertEqual(len(cf.sent), 1)
+        self.assertEqual((cf.sent[0].port, cf.sent[0].channel), (8, 0))
+        self.assertEqual(bytes(cf.sent[0].data),
+                         struct.pack('<BBHI', 18, 1, 7, 99))
+        self.assertIsNone(parse_post_release_hold_notice(
+            notice(99, 7, float('nan')), session_id=99, sequence=7))
+
+    def test_listener_is_armed_before_release_ack_and_measured_hold(self):
+        class FakeCf:
+            def __init__(self):
+                self.callbacks = []
+                self.sent_types = []
+
+            def add_port_callback(self, port, callback):
+                self.callbacks.append(callback)
+
+            def remove_port_callback(self, port, callback):
+                self.callbacks.remove(callback)
+
+            def deliver(self, packet):
+                for callback in tuple(self.callbacks):
+                    callback(packet)
+
+            def send_packet(self, packet):
+                self.sent_types.append(bytes(packet.data)[0])
+                if self.sent_types[-1] == 15:
+                    self.deliver(type('Ack', (), {
+                        'port': 8, 'channel': 0,
+                        'data': bytes(packet.data) + b'\x00',
+                    })())
+
+        cf = FakeCf()
+        with FirmwareHoldNotification(cf, session_id=99, sequence=7) as waiter:
+            ticks = iter((100_080_000_000, 100_080_500_000))
+            handoff_pi_release_to_firmware(
+                cf, session_id=99, sequence=7, arduino_sample_ms=12345,
+                pi_receive_monotonic_ns=100_000_000_000,
+                firmware_auto_brake_armed=True,
+                monotonic_ns=lambda: next(ticks),
+            )
+            self.assertEqual(len(cf.callbacks), 1)
+            cf.deliver(type('Notice', (), {
+                'port': 8, 'channel': 1,
+                'data': struct.pack('<BBHIffffI', 17, 1, 7, 99,
+                                    1.0, 2.0, 0.8, 0.1, 123456),
+            })())
+            self.assertIsNotNone(waiter.wait(0))
+            waiter.acknowledge()
+        self.assertEqual(cf.sent_types, [15, 18])
+        self.assertEqual(cf.callbacks, [])
 
     def test_pi_event_is_one_shot_hlc_packet_and_not_a_clock_mapping(self):
         class FakeCf:

@@ -1,6 +1,7 @@
 import unittest
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from controller import Controller
 
@@ -78,6 +79,7 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
                     'hlCommander.pRelReady': 1,
                     'hlCommander.pRelAutoSt': 0,
                     'hlCommander.pRelAutoEn': 1,
+                    'hlCommander.pRelEvtVer': 1,
                     'hlCommander.pRelMode': code,
                     'hlCommander.pRelTau': 0.08,
                 }
@@ -85,6 +87,27 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
             controller._firmware_vicon_last_send_s = time.monotonic()
             controller._firmware_vicon_mirror_error = None
             controller.verify_firmware_auto_brake_ready()
+
+    def test_old_firmware_without_atomic_handoff_protocol_refuses_arm(self):
+        controller = self.controller({
+            'enabled': True, 'response_time_s': 0.08,
+        })
+        controller.prepare_firmware_auto_brake()
+        controller.log_manager = SimpleNamespace(
+            get_latest_group_log_data=lambda _: {
+                'hlCommander.pRelReady': 1,
+                'hlCommander.pRelAutoSt': 0,
+                'hlCommander.pRelAutoEn': 1,
+                'hlCommander.pRelMode': 0,
+                'hlCommander.pRelTau': 0.08,
+            },
+        )
+        controller._firmware_vicon_last_send_s = 0.0
+        controller._firmware_vicon_mirror_error = None
+        with patch('controller.time.monotonic', side_effect=(0.0, 0.0, 5.1)):
+            with patch('controller.time.sleep'):
+                with self.assertRaisesRegex(RuntimeError, 'not ready'):
+                    controller.verify_firmware_auto_brake_ready()
 
 
 if __name__ == '__main__':
