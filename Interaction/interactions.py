@@ -3584,6 +3584,7 @@ class TranslationControlHandoff:
             coast_swept_envelope_position_uncertainty_m=(0.03, 0.03, 0.03),
             coast_swept_envelope_velocity_uncertainty_m_s=(0.10, 0.10, 0.10),
             coast_swept_envelope_uncertainty_sigma=3.0,
+            coast_swept_envelope_lateral_x_uncertainty_enabled=True,
             coast_jerk_limited_state_sync_required=False,
             coast_jerk_runtime_authority_gates_required=False,
             coast_jerk_planar_calibration_verified=False,
@@ -3830,6 +3831,14 @@ class TranslationControlHandoff:
         )
         self.coast_swept_envelope_uncertainty_sigma = float(
             coast_swept_envelope_uncertainty_sigma
+        )
+        if type(coast_swept_envelope_lateral_x_uncertainty_enabled) is not bool:
+            raise ValueError(
+                'coast_swept_envelope_lateral_x_uncertainty_enabled '
+                'must be boolean'
+            )
+        self.coast_swept_envelope_lateral_x_uncertainty_enabled = (
+            coast_swept_envelope_lateral_x_uncertainty_enabled
         )
         if type(coast_max_tilt_predictive_brake_enabled) is not bool:
             raise ValueError(
@@ -5070,7 +5079,7 @@ class TranslationControlHandoff:
                 # not invent an uncommanded vertical random walk over the
                 # complete horizontal stopping horizon.
                 velocity_uncertainty[2] = 0.0
-            certificate = certify_braking_swept_envelope(
+            certificate_kwargs = dict(
                 bounds_m=self.coast_swept_envelope_bounds_m,
                 current_position_m=samples[0].position_m,
                 current_velocity_m_s=samples[0].velocity_m_s,
@@ -5086,9 +5095,46 @@ class TranslationControlHandoff:
                 inner_loop_tail_samples=tuple(inner_loop),
                 candidate_samples=tuple(candidate),
             )
-            records[label] = self._swept_envelope_certificate_record(
-                certificate
+            full_certificate = certify_braking_swept_envelope(
+                **certificate_kwargs
             )
+            # Explicit experiment-only switch: for a nearly world-Y brake,
+            # omit the *predicted uncertainty inflation* on world X. The
+            # centre trajectory is still checked against the X face with
+            # vehicle radius/reserve; real XYZ boundary checks are unchanged.
+            lateral_x_override = bool(
+                not self.coast_swept_envelope_lateral_x_uncertainty_enabled
+                and self.coast_jerk_limited_attitude_enabled
+                and abs(float(self.brake_direction[0])) <= 0.10
+                and abs(float(self.brake_direction[1])) >= 0.99
+            )
+            certificate = full_certificate
+            if lateral_x_override:
+                position_uncertainty = (
+                    self.coast_swept_envelope_active_position_uncertainty_m
+                    .copy()
+                )
+                velocity_uncertainty = velocity_uncertainty.copy()
+                position_uncertainty[0] = 0.0
+                velocity_uncertainty[0] = 0.0
+                certificate = certify_braking_swept_envelope(
+                    **{
+                        **certificate_kwargs,
+                        'position_uncertainty_m': position_uncertainty,
+                        'velocity_uncertainty_m_s': velocity_uncertainty,
+                    }
+                )
+            record = self._swept_envelope_certificate_record(certificate)
+            if not self.coast_swept_envelope_lateral_x_uncertainty_enabled:
+                record['lateral_x_uncertainty_override_applied'] = (
+                    lateral_x_override
+                )
+                record['full_xyz_diagnostic'] = (
+                    self._swept_envelope_certificate_record(
+                        full_certificate
+                    )
+                )
+            records[label] = record
             all_feasible = all_feasible and certificate.feasible
         self.coast_swept_envelope_last_context = str(context)
         self.coast_swept_envelope_last_certificates = records

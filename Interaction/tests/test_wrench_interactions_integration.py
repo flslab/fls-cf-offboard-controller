@@ -7,6 +7,7 @@ from unittest.mock import patch
 import numpy as np
 
 from Interaction.braking_response_calibration import PlanarBrakingCalibration
+from Interaction.braking_swept_envelope import WorldTrajectorySample
 from Interaction.contact_attitude_experiment import (
     ARDUINO_TO_CF_RELEASE_CLOCK_MAPPING_BASIS,
     UNCALIBRATED_ARDUINO_RELEASE_CLOCK_MAPPING_BASIS,
@@ -4549,6 +4550,44 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         with self.assertRaises(BrakingSafetyAbortError):
             control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
         self.assertEqual(commander.calls, [])
+
+    def test_lateral_x_uncertainty_override_keeps_center_and_yz_checks(self):
+        control = self._make_enveloped_jerk_control()
+        control.coast_swept_envelope_bounds_m['x'] = (-1.0, 1.0)
+        control.coast_jerk_limited_lateral_max_acceleration_m_s2 = 0.50
+        control.coast_swept_envelope_active_position_uncertainty_m[:] = 0.03
+        control.coast_swept_envelope_active_velocity_uncertainty_m_s[:] = 0.10
+
+        def check(end_position):
+            samples = (
+                WorldTrajectorySample(
+                    0.0, (0.0, 0.0, 1.0), (-0.30, 0.0, 0.0),
+                ),
+                WorldTrajectorySample(
+                    1.5, end_position, (-0.30, 0.0, 0.0),
+                ),
+            )
+            return control._certify_swept_trajectory_set(
+                {'nominal': samples}, context='jerk_profile_replan',
+                transport_end_s=0.1, inner_loop_end_s=0.2,
+                fixed_z=True,
+            )
+
+        self.assertFalse(check((-0.45, 0.0, 1.0)))
+        control.coast_swept_envelope_lateral_x_uncertainty_enabled = False
+        self.assertTrue(check((-0.45, 0.0, 1.0)))
+        record = control.coast_swept_envelope_last_certificates['nominal']
+        self.assertTrue(record['lateral_x_uncertainty_override_applied'])
+        self.assertFalse(record['full_xyz_diagnostic']['feasible'])
+        self.assertFalse(check((-1.1, 0.0, 1.0)))
+        self.assertFalse(check((-0.45, 5.1, 1.0)))
+        control.brake_direction[:2] = (0.5, 0.8660254)
+        self.assertFalse(check((-0.45, 0.0, 1.0)))
+        self.assertFalse(
+            control.coast_swept_envelope_last_certificates['nominal'][
+                'lateral_x_uncertainty_override_applied'
+            ]
+        )
 
     def test_fixed_z_jerk_envelope_does_not_accumulate_vertical_drift(self):
         control = self._make_enveloped_jerk_control(
