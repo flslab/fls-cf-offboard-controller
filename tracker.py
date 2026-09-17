@@ -116,14 +116,18 @@ class LocalizerOutput:
 
 
 class Tracker:
-    """Own the controller side of the version-1 localizer ABI."""
+    """Own the controller side of the version-2 localizer ABI."""
 
     MAGIC = 0x324C5346
-    ABI_VERSION = 1
-    LAYOUT_SIZE = 256
+    ABI_VERSION = 2
+    LAYOUT_SIZE = 1280
     CONTROLLER_OFFSET = 64
-    LOCALIZER_OFFSET = 128
-    CONTROLLER = struct.Struct("<IId4fiiBB6xII8x")
+    ATTITUDE_OFFSET = 128
+    ATTITUDE_COUNT = 16
+    ATTITUDE_SIZE = 64
+    LOCALIZER_OFFSET = 1152
+    CONTROLLER = struct.Struct("<IIiiB7xII32x")
+    ATTITUDE = struct.Struct("<IIIB3xd4fII16x")
     LOCALIZER = struct.Struct("<IIQd3f4f4fIH4B2xiiII32x")
 
     def __init__(self, controller, shm_name="/fls_localizer_v2", timeout=5.0):
@@ -138,6 +142,9 @@ class Tracker:
         self._latest = None
         self._sent_pose_sequence = 0
         self._mapping, self._file = self._open(shm_name, timeout)
+        self._attitude_sequence, = struct.unpack_from(
+            "<I", self._mapping, self.CONTROLLER_OFFSET + 4
+        )
 
         self._attitude_log = LogConfig(name="LocalizerAttitude", period_in_ms=10)
         for name in ("qx", "qy", "qz", "qw"):
@@ -183,6 +190,7 @@ class Tracker:
                 time.sleep(0.05)
 
     def _on_attitude(self, _timestamp, data, _log_config):
+        received_at = time.monotonic()
         with self._callback_lock:
             if self._closed:
                 return
@@ -192,7 +200,7 @@ class Tracker:
             if not math.isfinite(norm) or norm < 1e-6:
                 return
             quaternion = tuple(value / norm for value in quaternion)
-            self._write_controller(time.monotonic(), quaternion)
+            self._write_controller(received_at, quaternion)
             output = self._read_localizer()
             if output is None or not self._is_fresh(output):
                 return
@@ -220,16 +228,35 @@ class Tracker:
             landing_requested = self._landing_requested
             tile_i, tile_j = self._landing_tile
 
+        sequence = (self._attitude_sequence + 1) & 0xFFFFFFFF
+        if sequence == 0:
+            sequence = 1
+        index = (sequence - 1) % self.ATTITUDE_COUNT
+        offset = self.ATTITUDE_OFFSET + index * self.ATTITUDE_SIZE
+        current, = struct.unpack_from("<I", self._mapping, offset)
+        even = 2 if current == 0 else ((current + 2) & 0xFFFFFFFE)
+        if even == 0:
+            even = 2
+        sample = bytearray(self.ATTITUDE.pack(
+            even - 1, sequence, generation, True, timestamp, *quaternion,
+            even, 0,
+        ))
+        checksum = self._checksum(sample[4:40])
+        struct.pack_into("<I", sample, 44, checksum)
+        struct.pack_into("<I", self._mapping, offset, even - 1)
+        self._mapping[offset + 4:offset + self.ATTITUDE_SIZE] = sample[4:]
+        struct.pack_into("<I", self._mapping, offset, even)
+        self._attitude_sequence = sequence
+
         current, = struct.unpack_from("<I", self._mapping, self.CONTROLLER_OFFSET)
         even = 2 if current == 0 else ((current + 2) & 0xFFFFFFFE)
         if even == 0:
             even = 2
         block = bytearray(self.CONTROLLER.pack(
-            even - 1, generation, timestamp, *quaternion, tile_i, tile_j,
-            True, landing_requested, even, 0,
+            even - 1, sequence, tile_i, tile_j, landing_requested, even, 0,
         ))
-        checksum = self._checksum(block[4:48])
-        struct.pack_into("<I", block, 52, checksum)
+        checksum = self._checksum(block[4:24])
+        struct.pack_into("<I", block, 28, checksum)
         struct.pack_into("<I", self._mapping, self.CONTROLLER_OFFSET, even - 1)
         self._mapping[self.CONTROLLER_OFFSET + 4:self.CONTROLLER_OFFSET + 64] = block[4:]
         struct.pack_into("<I", self._mapping, self.CONTROLLER_OFFSET, even)
