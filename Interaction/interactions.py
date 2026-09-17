@@ -439,7 +439,7 @@ def configure_required_jerk_safety(config, bounds):
         raise ValueError('coast_swept_envelope_enabled must be boolean')
     if not shadow_mode and configured_envelope is False:
         raise ValueError(
-            'active jerk-limited braking cannot disable the swept-envelope veto'
+            'active jerk-limited braking cannot disable swept-envelope evaluation'
         )
     # An explicitly disabled shadow experiment is a compatibility escape hatch;
     # it cannot send commands.  Otherwise new shadow runs exercise the same
@@ -3579,6 +3579,7 @@ class TranslationControlHandoff:
             coast_jerk_limited_angular_inertia_horizon_s=0.12,
             coast_jerk_limited_position_handoff_duration_s=1.0,
             coast_swept_envelope_enabled=False,
+            coast_swept_envelope_veto_enabled=True,
             coast_swept_envelope_bounds_m=None,
             coast_swept_envelope_vehicle_radius_m=0.10,
             coast_swept_envelope_boundary_reserve_m=0.05,
@@ -3820,6 +3821,11 @@ class TranslationControlHandoff:
         self.coast_jerk_command_authority_cycle_available = False
         self.coast_jerk_hard_safety_abort_reason = None
         self.coast_jerk_hard_safety_abort_context = None
+        if type(coast_swept_envelope_veto_enabled) is not bool:
+            raise ValueError('coast_swept_envelope_veto_enabled must be boolean')
+        self.coast_swept_envelope_veto_enabled = (
+            coast_swept_envelope_veto_enabled
+        )
         self.coast_swept_envelope_bounds_m = (
             None
             if coast_swept_envelope_bounds_m is None else
@@ -3928,6 +3934,7 @@ class TranslationControlHandoff:
         self.coast_swept_envelope_last_context = None
         self.coast_swept_envelope_last_certificates = None
         self.coast_swept_envelope_last_feasible = None
+        self.coast_swept_envelope_last_check_valid = None
         self.coast_state_source = None
         self.coast_attitude_source = None
         self.coast_attitude_source_trustworthy = False
@@ -5047,10 +5054,12 @@ class TranslationControlHandoff:
             self.coast_swept_envelope_last_context = context
             self.coast_swept_envelope_last_certificates = None
             self.coast_swept_envelope_last_feasible = None
+            self.coast_swept_envelope_last_check_valid = None
             return True
         self.coast_swept_envelope_check_count += 1
         records = {}
         all_feasible = True
+        all_valid = True
         for label, samples in trajectories.items():
             transport = []
             inner_loop = []
@@ -5182,10 +5191,17 @@ class TranslationControlHandoff:
                 )
             records[label] = record
             all_feasible = all_feasible and certificate.feasible
+            all_valid = all_valid and certificate.reason != 'invalid_input'
         self.coast_swept_envelope_last_context = str(context)
         self.coast_swept_envelope_last_certificates = records
         self.coast_swept_envelope_last_feasible = bool(all_feasible)
-        return bool(all_feasible)
+        self.coast_swept_envelope_last_check_valid = bool(all_valid)
+        # A diagnostic-only boundary miss is still recorded as infeasible;
+        # it simply does not veto a valid braking/hold trajectory.
+        return bool(
+            all_valid
+            and (all_feasible or not self.coast_swept_envelope_veto_enabled)
+        )
 
     def _certify_jerk_rollout_envelope(
             self, rollouts, position, velocity, direction, timestamp,
@@ -5217,6 +5233,7 @@ class TranslationControlHandoff:
             self.coast_swept_envelope_last_context = 'jerk_profile_replan'
             self.coast_swept_envelope_last_certificates = None
             self.coast_swept_envelope_last_feasible = False
+            self.coast_swept_envelope_last_check_valid = False
             return False
 
     def _certify_position_handoff_envelope(
@@ -5271,6 +5288,7 @@ class TranslationControlHandoff:
         ):
             self.coast_swept_envelope_last_context = 'history_level_hold'
             self.coast_swept_envelope_last_feasible = False
+            self.coast_swept_envelope_last_check_valid = False
             self.coast_swept_envelope_last_certificates = None
             return False
         position = np.asarray(position, dtype=float)
@@ -5324,6 +5342,7 @@ class TranslationControlHandoff:
             self.coast_swept_envelope_last_context = 'history_level_hold'
             self.coast_swept_envelope_last_certificates = None
             self.coast_swept_envelope_last_feasible = False
+            self.coast_swept_envelope_last_check_valid = False
             return False
 
     def configure_post_release_estimator_authority(self, required):
@@ -5467,6 +5486,9 @@ class TranslationControlHandoff:
             'swept_envelope_feasible': (
                 self.coast_swept_envelope_last_feasible
             ),
+            'swept_envelope_veto_enabled': (
+                self.coast_swept_envelope_veto_enabled
+            ),
             'swept_envelope_certificates': (
                 self.coast_swept_envelope_last_certificates
             ),
@@ -5490,7 +5512,12 @@ class TranslationControlHandoff:
             reasons.append('planar_braking_calibration_unverified')
         if not self.coast_swept_envelope_enabled:
             reasons.append('swept_envelope_disabled')
-        elif self.coast_swept_envelope_last_feasible is not True:
+        elif self.coast_swept_envelope_last_check_valid is not True:
+            reasons.append('swept_envelope_check_invalid')
+        elif (
+            self.coast_swept_envelope_veto_enabled
+            and self.coast_swept_envelope_last_feasible is not True
+        ):
             reasons.append('swept_envelope_not_feasible')
         if not self.coast_jerk_limited_state_sync_required:
             reasons.append('state_sync_gate_disabled')
@@ -8049,6 +8076,9 @@ class TranslationControlHandoff:
             'swept_envelope_feasible': (
                 self.coast_swept_envelope_last_feasible
             ),
+            'swept_envelope_veto_enabled': (
+                self.coast_swept_envelope_veto_enabled
+            ),
             'swept_envelope_certificates': (
                 self.coast_swept_envelope_last_certificates
             ),
@@ -9159,6 +9189,9 @@ class TranslationControlHandoff:
             'duration_s': profile.duration_s,
             'predicted_stop_distance_m': predicted_stop_distance,
             'swept_envelope_enabled': self.coast_swept_envelope_enabled,
+            'swept_envelope_veto_enabled': (
+                self.coast_swept_envelope_veto_enabled
+            ),
             'swept_envelope_feasible': (
                 self.coast_swept_envelope_last_feasible
             ),

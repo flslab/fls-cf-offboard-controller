@@ -4581,6 +4581,85 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
         self.assertEqual(commander.calls, [])
 
+    def test_swept_envelope_diagnostic_only_records_boundary_miss(self):
+        control = self._make_enveloped_jerk_control(y_max=0.30)
+        samples = (
+            WorldTrajectorySample(
+                0.0, (0.0, 0.0, 1.0), (0.0, 0.6, 0.0),
+            ),
+            WorldTrajectorySample(
+                1.0, (0.0, 0.5, 1.0), (0.0, 0.0, 0.0),
+            ),
+        )
+
+        def check(trajectory):
+            return control._certify_swept_trajectory_set(
+                {'nominal': trajectory}, context='jerk_profile_replan',
+                transport_end_s=0.1, inner_loop_end_s=0.2,
+                fixed_z=True,
+            )
+
+        self.assertFalse(check(samples))
+        control.coast_swept_envelope_veto_enabled = False
+        self.assertTrue(check(samples))
+        self.assertFalse(control.coast_swept_envelope_last_feasible)
+        self.assertTrue(control.coast_swept_envelope_last_check_valid)
+        self.assertIn(
+            'y_max', control.coast_swept_envelope_last_certificates[
+                'nominal'
+            ]['violating_faces'],
+        )
+        control._evaluate_jerk_command_authority(1.0)
+        self.assertNotIn(
+            'swept_envelope_not_feasible',
+            control.coast_jerk_command_authority_reasons,
+        )
+
+        invalid = (
+            samples[0],
+            WorldTrajectorySample(
+                1.0, (0.0, float('nan'), 1.0), (0.0, 0.0, 0.0),
+            ),
+        )
+        self.assertFalse(check(invalid))
+        self.assertFalse(control.coast_swept_envelope_last_check_valid)
+
+    def test_swept_envelope_diagnostic_only_allows_jerk_send(self):
+        control = self._make_enveloped_jerk_control(y_max=0.30)
+        control.coast_swept_envelope_veto_enabled = False
+        control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.0,
+            current_state_group_skew_s=0.0,
+            max_terminal_state_age_s=0.10,
+            max_terminal_state_group_skew_s=0.03,
+        )
+        self.assertFalse(control.coast_swept_envelope_last_feasible)
+        self.assertIsNone(control.coast_jerk_hard_safety_abort_reason)
+        commander = FakeCommander()
+        control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
+        self.assertEqual(commander.calls[-1][0], 'zdistance')
+        self.assertFalse(control.coast_swept_envelope_last_feasible)
+
+    def test_swept_envelope_diagnostic_only_covers_wait_and_handoff(self):
+        control = self._make_enveloped_jerk_control(y_max=0.30)
+        checks = (
+            lambda: control._certify_history_level_hold_envelope(
+                [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0, 1.0,
+            ),
+            lambda: control._certify_position_handoff_envelope(
+                [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], [0.0, 0.5, 1.0],
+            ),
+        )
+        for check in checks:
+            self.assertFalse(check())
+            control.coast_swept_envelope_veto_enabled = False
+            self.assertTrue(check())
+            self.assertFalse(control.coast_swept_envelope_last_feasible)
+            control.coast_swept_envelope_veto_enabled = True
+
     def test_lateral_x_uncertainty_override_keeps_center_and_yz_checks(self):
         control = self._make_enveloped_jerk_control()
         control.coast_swept_envelope_bounds_m['x'] = (-1.0, 1.0)
