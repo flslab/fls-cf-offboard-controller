@@ -4,11 +4,11 @@ The current Arduino sketch emits CSV rows with the following columns::
 
     time_ms,raw,filtered,voltage,compression_mm[,supply_voltage]
 
-Firmware with the legacy ``distance_mm`` header remains positionally compatible;
-its fifth value is also interpreted as compression.  The spring length is
-``max_extension_mm - compression_mm`` and force follows Hooke's law.  The
-reader owns the serial port and exposes the latest immutable sample so the
-flight-control loop never blocks on UART I/O.
+Only the raw ADC column determines compression; Arduino's filtered and voltage
+columns remain diagnostics, while its compression column is ignored. The
+spring length is ``max_extension_mm - compression_mm`` and force follows
+Hooke's law. The reader owns the serial port and exposes the latest immutable
+sample so the flight-control loop never blocks on UART I/O.
 """
 
 from __future__ import annotations
@@ -24,6 +24,45 @@ import serial
 
 
 logger = logging.getLogger(__name__)
+
+
+# Bench measurements, 2026-09-17: (10-bit Arduino ADC raw, compression mm).
+# Keep the measured nonlinear response rather than fitting a single slope.
+# Values outside this measured range are invalid; never extrapolate a force.
+RAW_COMPRESSION_CALIBRATION = (
+    (1001, 0.0),
+    (951, 1.4),
+    (935, 2.1),
+    (926, 3.1),
+    (919, 3.9),
+    (909, 5.0),
+    (880, 6.4),
+    (774, 7.9),
+    (760, 8.2),
+    (655, 9.3),
+    (571, 10.2),
+    (394, 11.0),
+)
+
+
+def compression_mm_from_raw(raw: int) -> float | None:
+    """Piecewise-linear bench calibration; return None beyond measured ADCs."""
+    # The installed Arduino alternates between 1001 and 1002 while unloaded.
+    # Accept only that observed one-count zero-force jitter, not a wider
+    # extrapolation that could hide a disconnected or saturated sensor.
+    if raw == RAW_COMPRESSION_CALIBRATION[0][0] + 1:
+        return 0.0
+    if not (
+        RAW_COMPRESSION_CALIBRATION[-1][0]
+        <= raw
+        <= RAW_COMPRESSION_CALIBRATION[0][0]
+    ):
+        return None
+    for (raw_hi, mm_lo), (raw_lo, mm_hi) in zip(
+            RAW_COMPRESSION_CALIBRATION, RAW_COMPRESSION_CALIBRATION[1:]):
+        if raw_lo <= raw <= raw_hi:
+            return mm_lo + (raw_hi - raw) * (mm_hi - mm_lo) / (raw_hi - raw_lo)
+    return None
 
 
 @dataclass(frozen=True)
@@ -650,7 +689,6 @@ def parse_potentiometer_line(
         raw = int(parts[1])
         filtered_raw = float(parts[2])
         voltage_v = float(parts[3])
-        compression_mm = float(parts[4])
         supply_voltage_v = float(parts[5]) if len(parts) == 6 else None
         spring_constant = float(spring_constant_n_per_mm)
         max_extension = float(max_extension_mm)
@@ -658,13 +696,12 @@ def parse_potentiometer_line(
         return None
 
     values = (
-        filtered_raw, voltage_v, compression_mm, spring_constant, max_extension,
+        filtered_raw, voltage_v, spring_constant, max_extension,
     )
     if (
         arduino_time_ms < 0
         or not 0 <= raw <= 1023
         or not all(math.isfinite(value) for value in values)
-        or not 0.0 <= compression_mm <= max_extension
         or spring_constant <= 0.0
         or max_extension <= 0.0
         or (
@@ -675,6 +712,10 @@ def parse_potentiometer_line(
             )
         )
     ):
+        return None
+
+    compression_mm = compression_mm_from_raw(raw)
+    if compression_mm is None:
         return None
 
     length_mm = max(max_extension - compression_mm, 0.0)

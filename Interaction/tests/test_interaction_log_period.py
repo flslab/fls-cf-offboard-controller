@@ -63,6 +63,25 @@ class InteractionLogPeriodTests(unittest.TestCase):
         )
         self.assertTrue(blocks[0].started)
 
+    def test_firmware_brake_uses_small_status_log_without_pi_imu_stream(self):
+        mission = {'Interaction': {'config': {'wrench_interaction': {
+            'firmware_auto_brake': {'enabled': True},
+        }}}}
+        selected = interaction_config.log_vars_for_mission(mission)
+        self.assertIn('FIRMWARE_BRAKE', selected)
+        self.assertNotIn('GYRO_1KHZ', selected)
+        blocks = self.initialize(selected)
+        by_name = {block.name: block for block in blocks}
+        self.assertEqual(by_name['FIRMWARE_BRAKE'].period_in_ms, 1000)
+        self.assertIn(
+            ('hlCommander.pRelAutoSt', 'uint8_t'),
+            by_name['FIRMWARE_BRAKE'].variables,
+        )
+        self.assertIn(
+            ('hlCommander.pRelAutoTime', 'uint32_t'),
+            by_name['FIRMWARE_BRAKE'].variables,
+        )
+
     def test_installed_cflib_encodes_compensated_period_as_legacy_byte(self):
         self.assertEqual(LogConfig('STATE', period_in_ms=100).period, 10)
 
@@ -124,7 +143,9 @@ class InteractionLogPeriodTests(unittest.TestCase):
         )
 
     def test_gyro_diagnostic_group_requests_one_millisecond_period(self):
-        blocks = self.initialize(interaction_config.LOG_VARS)
+        blocks = self.initialize({
+            'GYRO_1KHZ': interaction_config.GYRO_1KHZ,
+        })
         gyro = next(block for block in blocks if block.name == 'GYRO_1KHZ')
 
         # InteractionLogger compensates for the deployed firmware's 1 ms
@@ -141,8 +162,15 @@ class InteractionLogPeriodTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            interaction_config.LOG_VARS['GYRO_1KHZ']['log_period_ms'], 1
+            interaction_config.GYRO_1KHZ['log_period_ms'], 1
         )
+
+    def test_ordinary_interaction_opens_no_one_kilohertz_log(self):
+        blocks = self.initialize(interaction_config.log_vars_for_mission({
+            'Interaction': {'config': {'wrench_interaction': {}}},
+        }))
+        self.assertNotIn('GYRO_1KHZ', {block.name for block in blocks})
+        self.assertTrue(all(block.period_in_ms >= 100 for block in blocks))
 
     def test_packed_contact_imu_requests_one_millisecond_period(self):
         blocks = self.initialize(interaction_config.log_vars_for_mission({
@@ -182,7 +210,7 @@ class InteractionLogPeriodTests(unittest.TestCase):
         disabled = interaction_config.log_vars_for_mission({
             'Interaction': {'config': {}}
         })
-        self.assertIn('GYRO_1KHZ', disabled)
+        self.assertNotIn('GYRO_1KHZ', disabled)
         self.assertNotIn('ACC_ALIGN', disabled)
         enabled = interaction_config.log_vars_for_mission({
             'Interaction': {'config': {'wrench_interaction': {
@@ -223,6 +251,7 @@ class InteractionLogPeriodTests(unittest.TestCase):
             }}}
         })
         self.assertIs(mirror, interaction_config.LOG_VARS)
+        self.assertNotIn('GYRO_1KHZ', mirror)
         self.assertNotIn('ACC_ALIGN', mirror)
         self.assertNotIn('ACC_ALIGN', inertial)
         self.assertNotIn('CONTACT_STATE_SEED', inertial)

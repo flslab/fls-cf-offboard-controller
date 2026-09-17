@@ -80,6 +80,31 @@ class LoggingCleanupTests(unittest.TestCase):
         self.assertFalse(controller.flying)
         controller._send_landing_confirmation.assert_called_once_with(4.2)
 
+    def test_firmware_release_rejection_lands_without_return_goto(self):
+        handoff = Mock()
+        namespace = methods({'land'}, time=Mock(), math=math, logger=Mock(),
+                            CommandWrapper=CommandWrapper, HandoffError=HandoffError,
+                            handoff_to_high_level=handoff)
+        logs = Mock()
+        logs.get_latest_cf_log_data.side_effect = [0.1, -0.2, 1.0]
+        controller = SimpleNamespace(
+            args=SimpleNamespace(skip_landing=False, takeoff_altitude=1.,
+                                 init_yaw=0., vicon=True, crazysim=False),
+            hl_commander=Mock(), ll_commander=Mock(), cf=Mock(), log_manager=logs,
+            voltage=7.4, init_coord=[0., 0., 0.], flying=True,
+            mission={'takeoff_speed': .5}, use_flowdeck=False,
+            firmware_auto_brake_enabled=True,
+            _interaction_high_level_active=False,
+            _land_with_low_level=Mock(),
+            _send_landing_confirmation=Mock(),
+        )
+        namespace['land'](controller)
+        handoff.assert_not_called()
+        controller._land_with_low_level.assert_called_once_with(
+            controller.ll_commander, 0.1, -0.2, 1.0, 0.1, 2.0)
+        controller.hl_commander.go_to.assert_not_called()
+        self.assertFalse(controller.flying)
+
     def test_emergency_prepare_never_touches_peripherals_or_flight_control(self):
         namespace = methods({'_prepare_for_emergency_landing'})
         controller = SimpleNamespace(

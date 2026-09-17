@@ -854,7 +854,8 @@ LOG_VARS = {
     'VEL_ORI': VEL_ORI,
     'POS_ACC': POS_ACC,
     'RATE_EST': RATE_EST,
-    'GYRO_1KHZ': GYRO_1KHZ,
+    # Retained above for explicit diagnostic tools; the ordinary interaction
+    # path no longer subscribes to a 1 kHz stream that it does not consume.
     'YAW_CTL': YAW_CTL,
     'MOT_BAT': MOT_BAT,
     'POS_CTL_I_D': CTL_I_D,
@@ -862,15 +863,26 @@ LOG_VARS = {
     'ATT_RATE_CTL': ATT_RATE_CTL,
 }
 
+FIRMWARE_BRAKE_LOG_VARS = {
+    'log_period_ms': 100,
+    'hlCommander.pRelReady': {'type': 'uint8_t', 'unit': '', 'data': []},
+    'hlCommander.pRelAutoSt': {'type': 'uint8_t', 'unit': '', 'data': []},
+    'hlCommander.pRelAutoN': {'type': 'uint32_t', 'unit': '', 'data': []},
+    'hlCommander.pRelAutoRej': {'type': 'uint32_t', 'unit': '', 'data': []},
+    'hlCommander.pRelAutoTime': {'type': 'uint32_t', 'unit': '', 'data': []},
+    'hlCommander.pRelAutoEn': {'type': 'uint8_t', 'unit': '', 'data': []},
+    'hlCommander.pRelMode': {'type': 'uint8_t', 'unit': '', 'data': []},
+    'hlCommander.pRelTau': {'type': 'float', 'unit': 's', 'data': []},
+}
+
 
 def log_vars_for_mission(mission):
-    """Return interaction log groups with new shadow streams opt-in only.
+    """Return interaction logs; the offboard inertial shadow is opt-in only.
 
-    ``GYRO_1KHZ`` predates the contact-attitude shadow and remains enabled in
-    the default path. The inertial shadow replaces its variables with one
-    firmware-latched contactImu packet containing gyro, accelerometer, and the
-    release state from one epoch. Disabling the shadow preserves the legacy
-    logging contract.
+    The ordinary path and onboard-mirror comparison do not need IMU samples
+    at 1 kHz. Only an explicitly selected offboard inertial shadow requests
+    the firmware-latched contactImu packet. The diagnostic definition remains
+    available to standalone tools and legacy comparison runs.
     """
     try:
         wrench_config = mission['Interaction']['config'].get(
@@ -882,13 +894,23 @@ def log_vars_for_mission(mission):
         mode = wrench_config.get(
             'contact_attitude_shadow_mode', 'inertial_position'
         )
+        firmware_brake = (
+            wrench_config.get('firmware_auto_brake') or {}
+        ).get('enabled', False)
     except (AttributeError, KeyError, TypeError):
         enabled = False
         mode = 'inertial_position'
+        firmware_brake = False
     if not isinstance(enabled, bool):
         raise ValueError(
             'contact_attitude_shadow_enabled must be boolean'
         )
+    if type(firmware_brake) is not bool:
+        raise ValueError('firmware_auto_brake.enabled must be boolean')
+    if firmware_brake:
+        if enabled:
+            raise ValueError('firmware auto brake cannot use offboard shadow')
+        return {**LOG_VARS, 'FIRMWARE_BRAKE': FIRMWARE_BRAKE_LOG_VARS}
     # A dormant diagnostic must not make a legacy mission fail because it
     # happens to carry an old or misspelled shadow-mode value.  Mode validation
     # belongs exclusively to the explicitly enabled path.

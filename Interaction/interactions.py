@@ -21,6 +21,9 @@ from Interaction.contact_attitude_observer import (
 
 from Interaction.command_wrapper import CommandWrapper
 from Interaction.commander_handoff import HandoffError, handoff_to_high_level
+from Interaction.post_release_firmware_control_event import (
+    handoff_pi_release_to_firmware,
+)
 from Interaction.adaptive_braking_calibration import AdaptiveBrakingCalibration
 from Interaction.braking_response_calibration import (
     PlanarBrakingCalibration,
@@ -5614,9 +5617,10 @@ class TranslationControlHandoff:
                 ('free_stop_first_send_velocity_changed',),
             )
         ):
-            if self.coast_jerk_command_authority_reasons == (
-                'free_stop_first_send_velocity_changed',
-            ):
+            if self.coast_jerk_limited_free_stop_enabled:
+                # A stale first-send state invalidates the unsent velocity
+                # boundary too. Refreshing authority alone would promote the
+                # release-time profile against a newer Vicon measurement.
                 self._coast_jerk_limited_first_send_replan_required = True
             raise JerkFirstSendStateRefreshRequired(
                 'first jerk send needs a fresh synchronized state and replan'
@@ -10827,9 +10831,9 @@ class TranslationControlHandoff:
                 bool(allow_position_handoff),
             )
         if self._coast_jerk_limited_first_send_replan_required:
-            # The first command was not sent because its velocity boundary
-            # changed after planning. Replace that unsent polynomial from this
-            # newly synchronized state; never promote the stale profile.
+            # The first command was not sent because its state went stale or
+            # its velocity boundary changed after planning. Replace that
+            # unsent polynomial from this newly synchronized state.
             self._coast_jerk_limited_first_send_replan_required = False
             if self.coast_jerk_limited_first_actual_send_at is not None:
                 return self._arm_jerk_hard_safety_abort(
@@ -15881,6 +15885,7 @@ class InteractionsControl:
         self._translation_exit_target = None
         self._translation_handoff_origin = None
         self._translation_high_level_active = False
+        self._firmware_brake_active = False
         try:
             if mpc_calibration_mode and (calibration_mode or braking_test_mode):
                 raise ValueError('--mpc is separate from legacy calibration modes')
@@ -15888,6 +15893,10 @@ class InteractionsControl:
                 raise ValueError('braking repeat test requires the calibration control path')
             translation_setting = self.mission['Interaction']['config']
             wrench_config = translation_setting.get('wrench_interaction')
+            self._firmware_brake_active = bool(
+                (wrench_config or {}).get('firmware_auto_brake', {})
+                .get('enabled', False)
+            )
             detection_method = translation_setting.get('detection_method')
             if detection_method is None:
                 # Preserve old missions: a wrench block selected model-based
@@ -16046,37 +16055,56 @@ class InteractionsControl:
                         if braking_plan.enabled else excitation_end_s
                     ) + 0.5
                 else:
-                    wrench_config, saved_calibration = (
-                        apply_required_jerk_braking_calibration(
-                            wrench_config,
-                            self.drone_id,
-                            calibration_path,
-                            runtime_interaction_direction_xy=(
-                                runtime_braking_direction_xy
-                            ),
-                        )
+                    firmware_brake_enabled = bool(
+                        (wrench_config.get('firmware_auto_brake') or {})
+                        .get('enabled', False)
                     )
-                    wrench_config = configure_required_jerk_safety(
-                        wrench_config, getattr(self, 'bounds', None)
-                    )
-                    # A normal interaction starts immediately. The dedicated
-                    # --calibrate flow retains stationary bias collection.
-                    wrench_config['startup_bias_calibration_enabled'] = False
-                    wrench_config.setdefault('calibration_excitation', {})[
-                        'enabled'
-                    ] = False
-                    wrench_config.setdefault('online_prediction_calibration', {})[
-                        'enabled'
-                    ] = False
-                    interaction_duration = translation_setting['duration']
-                    if saved_calibration is None:
-                        logger.warning(
-                            'No saved wrench model calibration for %s at %s; '
-                            'using mission/default alignment parameters.',
-                            self.drone_id, calibration_path,
-                        )
+                    if firmware_brake_enabled:
+                        # The board owns post-release braking. Preserve the
+                        # contact renderer and measured flight boundaries but
+                        # do not demand the old Pi-planned seventh-order fit.
+                        wrench_config = deepcopy(wrench_config)
+                        handoff = wrench_config.setdefault(
+                            'control_handoff', {})
+                        handoff['coast_jerk_limited_attitude_enabled'] = False
+                        handoff['coast_jerk_limited_free_stop_enabled'] = False
+                        handoff['coast_max_tilt_predictive_brake_enabled'] = False
+                        wrench_config['startup_bias_calibration_enabled'] = False
+                        wrench_config.setdefault('calibration_excitation', {})[
+                            'enabled'] = False
+                        interaction_duration = translation_setting['duration']
                     else:
-                        logger.info('Loaded wrench calibration: %s', calibration_path)
+                        wrench_config, saved_calibration = (
+                            apply_required_jerk_braking_calibration(
+                                wrench_config,
+                                self.drone_id,
+                                calibration_path,
+                                runtime_interaction_direction_xy=(
+                                    runtime_braking_direction_xy
+                                ),
+                            )
+                        )
+                        wrench_config = configure_required_jerk_safety(
+                            wrench_config, getattr(self, 'bounds', None)
+                        )
+                        # A normal interaction starts immediately. The dedicated
+                        # --calibrate flow retains stationary bias collection.
+                        wrench_config['startup_bias_calibration_enabled'] = False
+                        wrench_config.setdefault('calibration_excitation', {})[
+                            'enabled'
+                        ] = False
+                        wrench_config.setdefault('online_prediction_calibration', {})[
+                            'enabled'
+                        ] = False
+                        interaction_duration = translation_setting['duration']
+                        if saved_calibration is None:
+                            logger.warning(
+                                'No saved wrench model calibration for %s at %s; '
+                                'using mission/default alignment parameters.',
+                                self.drone_id, calibration_path,
+                            )
+                        else:
+                            logger.info('Loaded wrench calibration: %s', calibration_path)
                 if mpc_calibration_mode:
                     bootstrap_config = MPCBootstrapCalibrationConfig.from_mapping(
                         wrench_config.get('mpc_bootstrap_calibration')
@@ -16309,7 +16337,7 @@ class InteractionsControl:
                 )
             except (AttributeError, KeyError, TypeError):
                 experiment_run = None
-            if (
+            if (self._firmware_brake_active or
                 calibration_mode
                 or mpc_calibration_mode
                 or experiment_run is not None
@@ -16320,7 +16348,7 @@ class InteractionsControl:
                 exit_target = self._translation_exit_target
                 if exit_target is not None:
                     self._handoff_translation_hold(*exit_target)
-                elif not calibration_mode:
+                elif not calibration_mode and not self._firmware_brake_active:
                     # Legacy paths have their own control lifecycle.
                     self.lo_commander.send_notify_setpoint_stop()
             finally:
@@ -17383,6 +17411,19 @@ class InteractionsControl:
             )
         pipeline = OnboardMomentumWrenchPipeline(config)
         config = pipeline.config
+        firmware_brake_config = config.get('firmware_auto_brake') or {}
+        if not isinstance(firmware_brake_config, dict):
+            raise ValueError('firmware_auto_brake must be a mapping')
+        firmware_brake_enabled = firmware_brake_config.get('enabled', False)
+        if type(firmware_brake_enabled) is not bool:
+            raise ValueError('firmware_auto_brake.enabled must be boolean')
+        firmware_brake_mode = firmware_brake_config.get('mode', 'two_phase')
+        if firmware_brake_enabled and firmware_brake_mode not in (
+                'two_phase', 'zero_velocity'):
+            raise ValueError('firmware_auto_brake.mode must be two_phase or '
+                             'zero_velocity')
+        if firmware_brake_enabled and pipeline.shadow_mode:
+            raise ValueError('firmware auto brake requires active contact rendering')
         # Some offline harnesses construct the interaction object without its
         # full runtime initializer. Absence is exactly the legacy/default-off
         # state and must remain equivalent to an explicit ``None``.
@@ -17426,6 +17467,12 @@ class InteractionsControl:
         if type(post_release_event_diagnostic_enabled) is not bool:
             raise ValueError(
                 'post_release_event_diagnostic_enabled must be boolean'
+            )
+        if firmware_brake_enabled and (post_release_event_diagnostic_enabled or
+                post_release_estimator_control_enabled or
+                contact_attitude_shadow_enabled):
+            raise ValueError(
+                'firmware auto brake cannot share a Pi release/EKF path'
             )
         post_release_event_diagnostic_mode = config.get(
             'post_release_event_diagnostic_mode', 'elapsed_v1'
@@ -18116,6 +18163,11 @@ class InteractionsControl:
             force_sensor_available,
             calibration_mode=calibration_mode,
         )
+        if firmware_brake_enabled and (
+                calibration_mode or release_mode != 'potentiometer_coast'):
+            raise ValueError(
+                'firmware auto brake requires confirmed potentiometer release'
+            )
         velocity_coast_braking_enabled = config['control_handoff'].get(
             'coast_velocity_braking_enabled', False
         )
@@ -19172,6 +19224,7 @@ class InteractionsControl:
         post_release_event_diagnostic_last_key = None
         post_release_event_diagnostic_sequence = 0
         post_release_event_diagnostic_session_id = uuid4().int & 0xFFFFFFFF
+        firmware_brake_session_id = uuid4().int & 0xFFFFFFFF
         contact_attitude_release_retry = None
         contact_attitude_release_preview_event = None
         contact_attitude_release_preview_clock_evidence = None
@@ -21953,6 +22006,96 @@ class InteractionsControl:
                     or translation_control.position_interaction_mode
                 )
             ):
+                if firmware_brake_enabled:
+                    if sensor_detector_time_basis != 'host_monotonic_uart_receive':
+                        raise RuntimeError(
+                            'firmware release requires Pi UART receive time'
+                        )
+                    # Neutralize the last contact attitude immediately while
+                    # LL still owns the setpoint. The firmware will take over
+                    # only after the acknowledged event and priority notice;
+                    # this prevents the contact tilt from being latched across
+                    # Pi/radio handoff latency.
+                    self.lo_commander.send_zdistance_setpoint(
+                        0.0, 0.0, 0.0, float(nominal_position[2])
+                    )
+                    # No Pi-side trajectory planning, shadow drain or clock
+                    # fit is allowed ahead of the release-event send.
+                    self._translation_exit_target = None
+                    baseline_brake_timeouts = (
+                        self.log_manager.get_latest_group_log_data(
+                            'FIRMWARE_BRAKE').get(
+                                'hlCommander.pRelAutoTime'))
+                    release_sent = handoff_pi_release_to_firmware(
+                        self.cf,
+                        self.lo_commander.for_safety_cleanup(),
+                        session_id=firmware_brake_session_id,
+                        sequence=0,
+                        arduino_sample_ms=int(
+                            potentiometer_release_decision
+                            .unloaded_started_sample_id),
+                        pi_receive_monotonic_ns=int(round(
+                            potentiometer_release_decision
+                            .unloaded_started_at_s * 1_000_000_000)),
+                        firmware_auto_brake_armed=True,
+                    )
+                    self._translation_high_level_active = True
+                    self._log_event(
+                        'Firmware Post-Release Brake Handoff',
+                        {**release_sent, 'brake_mode': firmware_brake_mode},
+                    )
+                    monitor_started = time.monotonic()
+                    deadline = monitor_started + 6.0
+                    missing_observer_since = None
+                    while time.monotonic() < deadline:
+                        brake_log = self.log_manager.get_latest_group_log_data(
+                            'FIRMWARE_BRAKE')
+                        log_time = self.log_manager.get_latest_group_log_time(
+                            'FIRMWARE_BRAKE')
+                        if log_time is None or time.time() - log_time > 0.35:
+                            raise StaleLocalizationError(
+                                'firmware brake status log became stale'
+                            )
+                        brake_timeouts = brake_log.get(
+                            'hlCommander.pRelAutoTime')
+                        if (brake_timeouts is not None and
+                              brake_timeouts != baseline_brake_timeouts):
+                            raise RuntimeError(
+                                'firmware maximum-attitude brake timed out'
+                            )
+                        if brake_log.get('hlCommander.pRelReady') != 1:
+                            if missing_observer_since is None:
+                                missing_observer_since = time.monotonic()
+                            elif time.monotonic() - missing_observer_since > 0.30:
+                                raise StaleLocalizationError(
+                                    'firmware Vicon/15-state observer lost'
+                                )
+                        else:
+                            missing_observer_since = None
+                        if brake_log.get('hlCommander.pRelAutoSt') == 4:
+                            if brake_log.get('hlCommander.pRelReady') != 1:
+                                raise StaleLocalizationError(
+                                    'terminal hold lacks fresh Vicon/15-state'
+                                )
+                            self._log_event(
+                                'Firmware Post-Release Hold Acquired',
+                                {'firmware_stage': 4,
+                                 'brake_mode': firmware_brake_mode,
+                                 'one_shot_handoff': True,
+                                 'world_velocity_target_m_s': [0.0, 0.0]},
+                            )
+                            break
+                        if (brake_log.get('hlCommander.pRelAutoSt') == 0 and
+                                time.monotonic() - monitor_started > 0.35):
+                            raise RuntimeError(
+                                'firmware brake dropped ownership before hold'
+                            )
+                        self._safe_sleep(0.05)
+                    else:
+                        raise RuntimeError(
+                            'firmware brake did not reach stable hold within 6 s'
+                        )
+                    break
                 release_event_clock_evidence = dict(
                     contact_attitude_release_preview_clock_evidence
                     or release_clock_evidence(

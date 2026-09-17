@@ -32,6 +32,7 @@ from Interaction.interactions import (
 from Interaction.command_wrapper import CommandWrapper
 from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.braking_repeat_test import validate_repeat_test_options
+from Interaction.post_release_firmware_control_event import send_vicon_position_mirror
 
 from smooth_controller import SmoothController
 from tracker import (
@@ -174,6 +175,11 @@ class Controller:
         self.mocap_frames = []
         self.use_flowdeck = self.args.check_deck is not None and self.args.check_deck == "bcFlow2"
         self.send_vicon_to_cf = True
+        self.firmware_auto_brake_enabled = False
+        self.firmware_auto_brake_response_time_s = None
+        self.firmware_auto_brake_mode = 'two_phase'
+        self._firmware_vicon_last_send_s = None
+        self._firmware_vicon_mirror_error = None
 
         self._safe_sleep: Callable[[float], None]
         if self.args.orchestrated:
@@ -236,6 +242,7 @@ class Controller:
         self.prepare_contact_attitude_experiment_mission()
         self.prepare_active_septic_brake_test()
         self.prepare_planar_only_braking_calibration()
+        self.prepare_firmware_auto_brake()
         self.setup_logging()
         self.setup_contact_attitude_shadow()
         self.setup_force_sensor()
@@ -255,6 +262,7 @@ class Controller:
             self.save_init_coord()
             self.verify_contact_attitude_mocap_ready()
             self.setup_params()
+            self.verify_firmware_auto_brake_ready()
             if self.led:
                 self.led.show_single_color(color=(80, 240, 30))
 
@@ -268,6 +276,68 @@ class Controller:
             self.arm()
             self.takeoff()
         self.run_mission()
+
+    def prepare_firmware_auto_brake(self):
+        wrench = ((self.mission or {}).get('Interaction', {})
+                  .get('config', {}).get('wrench_interaction') or {})
+        mode = wrench.get('firmware_auto_brake') or {}
+        if not isinstance(mode, dict):
+            raise ValueError('firmware_auto_brake must be a mapping')
+        enabled = mode.get('enabled', False)
+        if type(enabled) is not bool:
+            raise ValueError('firmware_auto_brake.enabled must be boolean')
+        self.firmware_auto_brake_enabled = enabled
+        if not enabled:
+            return
+        brake_mode = mode.get('mode', 'two_phase')
+        if brake_mode not in ('two_phase', 'zero_velocity'):
+            raise ValueError('firmware_auto_brake.mode must be two_phase or '
+                             'zero_velocity')
+        self.firmware_auto_brake_mode = brake_mode
+        response_time = mode.get('response_time_s')
+        if (isinstance(response_time, bool) or
+                not isinstance(response_time, (int, float)) or
+                not math.isfinite(response_time) or
+                not 0.02 <= response_time <= 0.20):
+            raise ValueError('firmware_auto_brake.response_time_s must be a '
+                             'measured 0.02–0.20 s hardware response fit')
+        self.firmware_auto_brake_response_time_s = float(response_time)
+        if not (self.args.interaction and self.args.sense and self.args.vicon
+                and self.args.vicon_mode == 'rigidbody'
+                and not self.args.vicon_full_pose and self.args.log
+                and not self.args.crazysim and not self.args.ground_test):
+            raise ValueError('firmware auto brake requires hardware --interaction '
+                             '--sense --log and rigidbody position-only Vicon')
+        if (wrench.get('contact_attitude_shadow_enabled', False) or
+                (wrench.get('post_release_estimator_control') or {}).get(
+                    'enabled', False)):
+            raise ValueError('firmware auto brake cannot share offboard EKF authority')
+
+    def verify_firmware_auto_brake_ready(self):
+        if not getattr(self, 'firmware_auto_brake_enabled', False):
+            return
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            values = self.log_manager.get_latest_group_log_data('FIRMWARE_BRAKE')
+            last_send = self._firmware_vicon_last_send_s
+            if (values.get('hlCommander.pRelReady') == 1 and
+                    values.get('hlCommander.pRelAutoSt') == 0 and
+                    values.get('hlCommander.pRelAutoEn') == 1 and
+                    values.get('hlCommander.pRelMode') == (
+                        1 if self.firmware_auto_brake_mode == 'zero_velocity'
+                        else 0) and
+                    isinstance(values.get('hlCommander.pRelTau'), (int, float)) and
+                    abs(values['hlCommander.pRelTau'] -
+                        self.firmware_auto_brake_response_time_s) < 0.001 and
+                    last_send is not None and
+                    time.monotonic() - last_send < 0.05 and
+                    self._firmware_vicon_mirror_error is None):
+                logger.info('Firmware Vicon/15-state brake observer ready')
+                return
+            time.sleep(0.05)
+        raise RuntimeError('firmware auto brake not ready before arm: '
+                           f'mirror={self._firmware_vicon_mirror_error}, '
+                           f'last_send={self._firmware_vicon_last_send_s}')
 
     def prepare_active_septic_brake_test(self):
         """Reject an uncalibrated active profile before arming the vehicle."""
@@ -788,7 +858,10 @@ class Controller:
 
         self._last_extpos_send_monotonic_s = None
         timing_callback = None
-        if self.log_manager is not None:
+        if getattr(self, 'firmware_auto_brake_enabled', False):
+            # Populate wait-return timing without adding an offboard EKF log.
+            timing_callback = lambda _timing: None
+        elif self.log_manager is not None:
             self.log_manager.add_log_group('mocap_timing')
             timing_callback = self._log_mocap_timing
         self.mocap = Mocap(mode=self.args.vicon_mode,
@@ -1054,10 +1127,9 @@ class Controller:
                 self.flying = False
                 self._send_landing_confirmation(voltage)
                 return
-            if (
-                getattr(self.args, 'crazysim', False)
-                and getattr(self, '_interaction_high_level_active', False)
-            ):
+            if (getattr(self, '_interaction_high_level_active', False) and
+                    (getattr(self.args, 'crazysim', False) or
+                     getattr(self, 'firmware_auto_brake_enabled', False))):
                 # This simulation has already transferred ownership to HLC
                 # and refreshed its fixed hold target. An acknowledged LL->HL
                 # transfer here is a second, unnecessary handoff; if its ACK
@@ -1067,7 +1139,23 @@ class Controller:
                 logger.info(f"Landing duration: {dt} seconds")
                 time.sleep(dt + 1)
                 commander.stop()
-                self.cf.param.set_value('hlCommander.pRelVel', '0')
+                if getattr(self.args, 'crazysim', False):
+                    self.cf.param.set_value('hlCommander.pRelVel', '0')
+                if getattr(self, 'firmware_auto_brake_enabled', False):
+                    self.cf.param.set_value('hlCommander.pRelAuto', '0')
+                self.flying = False
+                self._send_landing_confirmation(voltage)
+                return
+            if getattr(self, 'firmware_auto_brake_enabled', False):
+                # An unconfirmed release leaves LL as the known owner. The
+                # HLC planner may still be anchored at the pre-contact hover
+                # point, so even a direct HLC land could pull XY backward.
+                # Keep LL priority and descend at the current measured XY.
+                self._land_with_low_level(
+                    low_level, current_x, current_y, current_z,
+                    height, dt,
+                )
+                self.cf.param.set_value('hlCommander.pRelAuto', '0')
                 self.flying = False
                 self._send_landing_confirmation(voltage)
                 return
@@ -1499,6 +1587,29 @@ class Controller:
                 'hlCommander.pRelVel',
                 '0',
             )
+        if getattr(self, 'firmware_auto_brake_enabled', False):
+            required = {
+                'kalmanPRel': ('enable',),
+                'hlCommander': ('pRelAuto', 'pRelMode', 'pRelTau'),
+            }
+            toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
+            if any(name not in toc.get(group, {})
+                   for group, names in required.items() for name in names):
+                raise RuntimeError('connected Bolt lacks firmware auto-brake parameters')
+            # Keep the 15-state observer and Vicon position-KF continuously
+            # warm while ordinary Kalman controls takeoff and contact. The
+            # accepted Pi release atomically selects the verified Vicon15
+            # view in firmware without restarting its Kalman task.
+            self.cf.param.set_value('kalmanPRel.enable', '1')
+            self.cf.param.set_value(
+                'hlCommander.pRelTau',
+                str(self.firmware_auto_brake_response_time_s),
+            )
+            self.cf.param.set_value(
+                'hlCommander.pRelMode',
+                '1' if self.firmware_auto_brake_mode == 'zero_velocity' else '0',
+            )
+            self.cf.param.set_value('hlCommander.pRelAuto', '1')
 
     def arm(self):
         if self.args.ground_test or self.args.skip_arm:
@@ -2081,7 +2192,8 @@ class Controller:
 
         except Exception as e:
             logging.error(f"Interaction Error: {e}\n")
-            if getattr(self.args, 'contact_attitude_run', None) is not None:
+            if (getattr(self, 'firmware_auto_brake_enabled', False) or
+                    getattr(self.args, 'contact_attitude_run', None) is not None):
                 raise
         finally:
             if (
@@ -2090,7 +2202,8 @@ class Controller:
                 == 'post-release-15state'
             ):
                 self.cf.param.set_value('kalmanPRel.controlRp', '0')
-            self.ll_commander.send_notify_setpoint_stop()
+            if not getattr(self, 'firmware_auto_brake_enabled', False):
+                self.ll_commander.send_notify_setpoint_stop()
 
     def calibration_switch(self):
         """Run one isolated calibration/data-collection flight mode."""
@@ -2931,6 +3044,20 @@ class Controller:
             started = time.monotonic()
             self.cf.extpos.send_extpos(*frame['tvec'])
             self._finish_mocap_forward_timing(frame, started)
+            if getattr(self, 'firmware_auto_brake_enabled', False):
+                receive_s = (frame.get('mocap_timing') or {}).get(
+                    'wait_return_monotonic_s')
+                try:
+                    if receive_s is None:
+                        raise ValueError('Pi Vicon receive timestamp unavailable')
+                    send_vicon_position_mirror(
+                        self.cf, frame['tvec'],
+                        pi_receive_monotonic_s=receive_s,
+                    )
+                    self._firmware_vicon_last_send_s = time.monotonic()
+                    self._firmware_vicon_mirror_error = None
+                except (ValueError, OverflowError, OSError) as error:
+                    self._firmware_vicon_mirror_error = str(error)
         self._log_mocap(frame)
 
     def _send_position_orientation(self, frame):
