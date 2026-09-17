@@ -3342,6 +3342,10 @@ class BrakingSafetyAbortError(RuntimeError):
     """Abort an active brake before any uncertified command is dispatched."""
 
 
+class JerkFirstSendStateRefreshRequired(RuntimeError):
+    """Replan an unsent first jerk command from a new onboard state."""
+
+
 class GuidedTouchProtocol:
     """Generate one-shot terminal/log prompts for repeatable touch trials."""
 
@@ -5442,9 +5446,19 @@ class TranslationControlHandoff:
         self.coast_jerk_command_authority_reasons = tuple(reasons)
         return not reasons
 
-    def _require_jerk_command_authority(self, command_timestamp):
+    def _require_jerk_command_authority(
+            self, command_timestamp, *, defer_stale_first_send=False):
         if self._evaluate_jerk_command_authority(command_timestamp):
             return
+        if (
+            defer_stale_first_send
+            and self.coast_jerk_limited_first_actual_send_at is None
+            and self.coast_jerk_command_authority_reasons
+            == ('state_stale_at_command_send',)
+        ):
+            raise JerkFirstSendStateRefreshRequired(
+                'first jerk send needs a fresh synchronized state'
+            )
         reason = (
             'jerk command authority denied: '
             + ', '.join(self.coast_jerk_command_authority_reasons)
@@ -14410,7 +14424,7 @@ class TranslationControlHandoff:
 
     def send(
             self, commander, command_timestamp=None, yaw_deg=None,
-            high_level_commander=None):
+            high_level_commander=None, defer_stale_first_send=False):
         if self.coast_jerk_hard_safety_abort_reason is not None:
             raise BrakingSafetyAbortError(
                 self.coast_jerk_hard_safety_abort_reason
@@ -14518,7 +14532,10 @@ class TranslationControlHandoff:
                 time.time()
                 if command_timestamp is None else command_timestamp
             )
-            self._require_jerk_command_authority(history_wait_send_at)
+            self._require_jerk_command_authority(
+                history_wait_send_at,
+                defer_stale_first_send=defer_stale_first_send,
+            )
         prepared_first_send_at = None
         fallback_bridge_source_rp = None
         fallback_bridge_source_sent_at = None
@@ -14693,7 +14710,10 @@ class TranslationControlHandoff:
                 self.coast_jerk_limited_attitude_active
                 and not self.coast_max_tilt_predictive_brake_enabled
             ):
-                self._require_jerk_command_authority(candidate_send_at)
+                self._require_jerk_command_authority(
+                    candidate_send_at,
+                    defer_stale_first_send=defer_stale_first_send,
+                )
         if self.uses_position_setpoint:
             first_jerk_handoff_send = bool(
                 self.coast_jerk_limited_handoff_state_timestamp is not None
@@ -19281,6 +19301,8 @@ class InteractionsControl:
                 })
                 raise
 
+        jerk_first_send_refresh_count = 0
+        jerk_first_send_refresh_started_at = None
         while True:
             now = time.time()
             if (
@@ -25906,10 +25928,137 @@ class InteractionsControl:
             elif not translation_control.uses_position_setpoint:
                 command_position = None
                 command_yaw = translation_control.yaw_deg
-                attitude_sent_at = translation_control.send(
-                    self.lo_commander,
-                    yaw_deg=translation_control.yaw_deg,
+                first_jerk_send_attempt = bool(
+                    translation_control.coast_jerk_runtime_authority_gates_required
+                    and translation_control.coast_jerk_limited_attitude_active
+                    and translation_control.coast_jerk_limited_first_actual_send_at
+                    is None
                 )
+                try:
+                    attitude_sent_at = translation_control.send(
+                        self.lo_commander,
+                        yaw_deg=translation_control.yaw_deg,
+                        defer_stale_first_send=True,
+                    )
+                except JerkFirstSendStateRefreshRequired:
+                    send_check_at = time.time()
+                    if jerk_first_send_refresh_started_at is None:
+                        jerk_first_send_refresh_started_at = send_check_at
+                    jerk_first_send_refresh_count += 1
+                    previous_command = (
+                        translation_control.sent_command_snapshot()
+                    )
+                    previous_level = bool(
+                        previous_command is not None
+                        and previous_command.get('kind')
+                        == 'attitude_zdistance'
+                        and abs(float(previous_command['roll_deg'])) <= 1e-6
+                        and abs(float(previous_command['pitch_deg'])) <= 1e-6
+                    )
+                    if (
+                        not previous_level
+                        or jerk_first_send_refresh_count > 2
+                        or send_check_at - jerk_first_send_refresh_started_at
+                        > 0.05
+                    ):
+                        translation_control._arm_jerk_hard_safety_abort(
+                            'first jerk send could not obtain a fresh state '
+                            'within the bounded level-hold retry',
+                            context='first_send_state_refresh',
+                        )
+                        raise BrakingSafetyAbortError(
+                            translation_control
+                            .coast_jerk_hard_safety_abort_reason
+                        )
+                    # Only a previously dispatched level command may be held
+                    # while a new full state is sampled and the entire brake
+                    # decision is recomputed in the next control iteration.
+                    self.lo_commander.send_zdistance_setpoint(
+                        0.0, 0.0, 0.0,
+                        translation_control.velocity_coast_fixed_zdistance_m,
+                    )
+                    guard_sent_at = time.time()
+                    translation_control._record_attitude_command(
+                        guard_sent_at, translation_control.yaw_deg
+                    )
+                    translation_control._record_sent_command(
+                        'attitude_zdistance', guard_sent_at,
+                        roll_deg=0.0, pitch_deg=0.0, yaw_rate_deg_s=0.0,
+                        zdistance_m=float(
+                            translation_control
+                            .velocity_coast_fixed_zdistance_m
+                        ),
+                        yaw_deg=float(translation_control.yaw_deg),
+                        first_send_state_refresh_guard=True,
+                    )
+                    latest_state = (
+                        self._get_synchronized_onboard_wrench_state()
+                    )
+                    self._log_event('Jerk First Send State Refresh', {
+                        'attempt': jerk_first_send_refresh_count,
+                        'planned_state_time': (
+                            translation_control
+                            .coast_jerk_command_authority_state_timestamp
+                        ),
+                        'loop_state_observed_at': state_observed_at,
+                        'command_planned_at': attitude_command_planned_at,
+                        'send_check_at': send_check_at,
+                        'state_age_at_send_check_s': (
+                            None if translation_control
+                            .coast_jerk_command_authority_state_timestamp
+                            is None else send_check_at - translation_control
+                            .coast_jerk_command_authority_state_timestamp
+                        ),
+                        'maximum_state_age_s': max_state_age_s,
+                        'latest_state_time': (
+                            None if latest_state is None
+                            else latest_state['time']
+                        ),
+                        'latest_state_age_s': (
+                            None if latest_state is None
+                            else send_check_at - latest_state['time']
+                        ),
+                        'latest_state_group_skew_s': (
+                            None if latest_state is None else max(
+                                latest_state['position_skew_s'],
+                                latest_state['angular_rate_skew_s'],
+                                latest_state['yaw_control_skew_s'],
+                            )
+                        ),
+                        'command_sent': 'level_attitude_fixed_z',
+                        'jerk_command_sent': False,
+                    })
+                    self._safe_sleep(dt)
+                    continue
+                if first_jerk_send_attempt and attitude_sent_at is not None:
+                    planned_state_time = (
+                        translation_control
+                        .coast_jerk_command_authority_state_timestamp
+                    )
+                    self._log_event('Jerk First Send Timing', {
+                        'state_time': planned_state_time,
+                        'loop_state_observed_at': state_observed_at,
+                        'command_planned_at': attitude_command_planned_at,
+                        'actual_send_at': attitude_sent_at,
+                        'snapshot_to_plan_s': (
+                            None if attitude_command_planned_at is None
+                            else attitude_command_planned_at
+                            - state_observed_at
+                        ),
+                        'plan_to_send_s': (
+                            None if attitude_command_planned_at is None
+                            else attitude_sent_at
+                            - attitude_command_planned_at
+                        ),
+                        'state_age_at_send_s': (
+                            None if planned_state_time is None
+                            else attitude_sent_at - planned_state_time
+                        ),
+                        'maximum_state_age_s': max_state_age_s,
+                        'refresh_attempts': jerk_first_send_refresh_count,
+                    })
+                    jerk_first_send_refresh_count = 0
+                    jerk_first_send_refresh_started_at = None
                 if velocity_mpc_shadow_episode is not None:
                     try:
                         sent_attitude_history = (

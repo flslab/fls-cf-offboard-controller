@@ -25,6 +25,7 @@ from Interaction.interactions import (
     InitialContactArmingGate,
     InteractionsControl,
     BrakingSafetyAbortError,
+    JerkFirstSendStateRefreshRequired,
     StaleLocalizationError,
     TranslationControlHandoff,
     VirtualObjectPlanarMotion,
@@ -4648,11 +4649,63 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         ))
         control.send(commander, command_timestamp=1.01, yaw_deg=0.0)
         self.assertEqual(len(commander.calls), 1)
-
         with self.assertRaisesRegex(
                 BrakingSafetyAbortError, 'no_current_state_update_for_command'):
             control.send(commander, command_timestamp=1.02, yaw_deg=0.0)
         self.assertEqual(len(commander.calls), 1)
+
+    def test_first_jerk_send_can_defer_only_stale_state_and_replan(self):
+        commander = FakeCommander()
+        control = self._make_enveloped_jerk_control()
+        quality = {
+            'current_orientation_rpy': np.zeros(3),
+            'current_angular_velocity': np.zeros(3),
+            'current_state_group_skew_s': 0.0,
+            'max_terminal_state_age_s': 0.10,
+            'max_terminal_state_group_skew_s': 0.03,
+        }
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            command_timestamp=1.0, **quality,
+        ))
+        with self.assertRaises(JerkFirstSendStateRefreshRequired):
+            control.send(
+                commander, command_timestamp=1.12, yaw_deg=0.0,
+                defer_stale_first_send=True,
+            )
+        self.assertEqual(commander.calls, [])
+        self.assertIsNone(control.coast_jerk_hard_safety_abort_reason)
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.01, 1.0], [0.0, 0.55, 0.0], 1.11,
+            command_timestamp=1.11, **quality,
+        ))
+        control.send(
+            commander, command_timestamp=1.12, yaw_deg=0.0,
+            defer_stale_first_send=True,
+        )
+        self.assertEqual(len(commander.calls), 1)
+
+    def test_first_send_refresh_never_defers_other_authority_failures(self):
+        commander = FakeCommander()
+        control = self._make_enveloped_jerk_control()
+        self.assertFalse(control.update_coast_velocity(
+            [0.0, 0.0, 1.0], [0.0, 0.60, 0.0], 1.0,
+            current_orientation_rpy=np.zeros(3),
+            current_angular_velocity=np.zeros(3),
+            command_timestamp=1.0,
+            current_state_group_skew_s=0.0,
+            max_terminal_state_age_s=0.10,
+            max_terminal_state_group_skew_s=0.03,
+        ))
+        control.coast_jerk_planar_calibration_verified = False
+        with self.assertRaisesRegex(
+                BrakingSafetyAbortError,
+                'planar_braking_calibration_unverified'):
+            control.send(
+                commander, command_timestamp=1.12, yaw_deg=0.0,
+                defer_stale_first_send=True,
+            )
+        self.assertEqual(commander.calls, [])
 
     def test_runtime_jerk_uncertainty_budget_vetoes_before_any_send(self):
         cases = (
