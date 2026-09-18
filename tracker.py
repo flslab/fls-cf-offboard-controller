@@ -12,6 +12,8 @@ import time
 
 from cflib.crazyflie.log import LogConfig
 
+from yaw_error import YawCorrectionConfig, YawCorrectionGate
+
 
 def reset_estimator_and_acknowledge(cf, generation, acknowledge):
     """Reset the EKF, then allow localizer positions to reach it."""
@@ -113,13 +115,17 @@ class LocalizerOutput:
     mygrid_request: MyGridRequest
     pose_valid: bool
     tile: tuple
+    yaw_error: float
+    pnp_reprojection_rms: float
+    pnp_image_span_px: float
+    yaw_error_valid: bool
 
 
 class Tracker:
-    """Own the controller side of the version-2 localizer ABI."""
+    """Own the controller side of the version-3 localizer ABI."""
 
-    MAGIC = 0x324C5346
-    ABI_VERSION = 2
+    MAGIC = 0x334C5346
+    ABI_VERSION = 3
     LAYOUT_SIZE = 1280
     CONTROLLER_OFFSET = 64
     ATTITUDE_OFFSET = 128
@@ -128,9 +134,10 @@ class Tracker:
     LOCALIZER_OFFSET = 1152
     CONTROLLER = struct.Struct("<IIiiB7xII32x")
     ATTITUDE = struct.Struct("<IIIB3xd4fII16x")
-    LOCALIZER = struct.Struct("<IIQd3f4f4fIH4B2xiiII32x")
+    LOCALIZER = struct.Struct("<IIQd3f4f4fIH4B2xii3fB3xII16x")
 
-    def __init__(self, controller, shm_name="/fls_localizer_v2", timeout=5.0):
+    def __init__(self, controller, shm_name="/fls_localizer_v3", timeout=5.0,
+                 yaw_correction=None):
         self.controller = controller
         self._lock = Lock()
         self._callback_lock = Lock()
@@ -141,6 +148,9 @@ class Tracker:
         self._landing_tile = (0, 0)
         self._latest = None
         self._sent_pose_sequence = 0
+        self._yaw_correction_gate = YawCorrectionGate(
+            YawCorrectionConfig.from_mapping(yaw_correction)
+        )
         self._mapping, self._file = self._open(shm_name, timeout)
         self._attitude_sequence, = struct.unpack_from(
             "<I", self._mapping, self.CONTROLLER_OFFSET + 4
@@ -218,9 +228,17 @@ class Tracker:
                 )
                 if send_position:
                     self._sent_pose_sequence = output.pose_sequence
+                yaw_correction = self._yaw_correction_gate.consider(
+                    output=output,
+                    acknowledged=acknowledged,
+                    tracking=(output.state == LocalizerState.HYPERGRID_TRACKING),
+                    now=received_at,
+                )
                 self._changed.notify_all()
             if send_position:
                 self.controller._send_position_no_log({"tvec": output.position})
+            if yaw_correction is not None:
+                self.controller._send_yaw_error(yaw_correction)
 
     def _write_controller(self, timestamp, quaternion):
         with self._lock:
@@ -270,7 +288,7 @@ class Tracker:
             after, = struct.unpack_from("<I", self._mapping, self.LOCALIZER_OFFSET)
             values = self.LOCALIZER.unpack(data)
             if (begin != after or begin != values[-2]
-                    or values[-1] != self._checksum(data[4:88])):
+                    or values[-1] != self._checksum(data[4:104])):
                 continue
             try:
                 return LocalizerOutput(
@@ -282,6 +300,10 @@ class Tracker:
                     state=LocalizerState(values[17]), pose_source=values[18],
                     mygrid_request=MyGridRequest(values[19]), pose_valid=bool(values[20]),
                     tile=(values[21], values[22]),
+                    yaw_error=values[23],
+                    pnp_reprojection_rms=values[24],
+                    pnp_image_span_px=values[25],
+                    yaw_error_valid=bool(values[26]),
                 )
             except ValueError:
                 return None

@@ -65,3 +65,10 @@ tracking, sends only XYZ through `extpos` to the flight controller, and records
 the rigid-body quaternion in the mocap log. It rejects `--vicon-full-pose` and
 does not enable the separate `--contact-attitude-run 2` shadow experiment.
 Without this option, the existing Vicon route is unchanged.
+
+The high-rate localizer can also send a dedicated yaw-error measurement to a
+compatible Crazyflie firmware build. Configure the `yaw_correction` object in
+the localizer JSON. The controller accepts only synchronized HyperGrid PnP
+solutions that pass the configured reprojection, feature-count, image-span,
+innovation, and temporal gates. The packet carries `FC EKF yaw - PnP yaw` in
+radians and never forwards PnP roll or pitch.

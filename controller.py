@@ -43,6 +43,7 @@ from tracker import (
     reset_estimator_and_acknowledge,
     wait_for_position_estimator,
 )
+from yaw_error import send_yaw_error
 from logger import setup_logging
 from pid_autotuner import PIDAutotuner
 
@@ -906,10 +907,15 @@ class Controller:
                 ) or localizer_config.get("landing_tile", [0, 0])
             self._start_tracker_process()
             try:
+                yaw_correction = localizer_config.get("yaw_correction", {})
+                if (self.log_manager is not None
+                        and yaw_correction.get("enabled", False)):
+                    self.log_manager.add_log_group("yaw_correction")
                 self.tracker = Tracker(
                     self,
                     shm_name=shm_name,
                     timeout=self.args.localizer_timeout,
+                    yaw_correction=yaw_correction,
                 )
             except Exception:
                 self.tracker_process.terminate()
@@ -3030,6 +3036,25 @@ class Controller:
 
     def _send_position_no_log(self, frame):
         self.cf.extpos.send_extpos(*frame['tvec'])
+
+    def _send_yaw_error(self, correction):
+        send_yaw_error(
+            self.cf, correction.yaw_error_rad, correction.stddev_rad
+        )
+        if self.log_manager is not None:
+            self.log_manager.add_log_entry("yaw_correction", {
+                "time": time.time(),
+                "frame_id": correction.frame_id,
+                "capture_timestamp": correction.capture_timestamp,
+                "yaw_error_rad": correction.yaw_error_rad,
+                "stddev_rad": correction.stddev_rad,
+                "pnp_reprojection_rms_px": (
+                    correction.pnp_reprojection_rms_px
+                ),
+                "feature_count": correction.feature_count,
+                "image_span_px": correction.image_span_px,
+                "valid_streak": correction.valid_streak,
+            })
 
     def _send_position(self, frame):
         frame = self._prepare_mocap_forward_timing(frame)
