@@ -407,6 +407,8 @@ VEL_ACC = {
 
 
 MOT_BAT = {
+    'log_period_ms': 10,
+
     "motor.m1": {
         "type": "uint16_t",
         "unit": "None",
@@ -436,6 +438,7 @@ MOT_BAT = {
 
 
 VEL_ORI = {
+    'log_period_ms': 10,
     "stateEstimate.vx": {
         "type": "float",
         "unit": "m/s",
@@ -473,6 +476,8 @@ VEL_ORI = {
 # the Crazyflie firmware and are converted to radians/second by the onboard
 # interaction path.
 RATE_EST = {
+
+    'log_period_ms': 10,
     "stateEstimateZ.rateRoll": {
         "type": "int16_t",
         "unit": "mrad/s",
@@ -682,6 +687,8 @@ ATT_DES = {
 
 # Controller loop stage 1: Position → Velocity output, Velocity → Attitude output
 POS_VEL_CTL = {
+    'log_period_ms': 10,
+
     "posCtl.targetVX": {
         "type": "float",
         "unit": "m/s",
@@ -716,6 +723,7 @@ POS_VEL_CTL = {
 
 # Controller loop stage 2: Attitude → Rate output, Rate → Actuator output
 ATT_RATE_CTL = {
+    'log_period_ms': 100,
     "controller.rollRate": {
         "type": "float",
         "unit": "deg/s",
@@ -853,11 +861,11 @@ CTL_I_D = {
 LOG_VARS = {
     'VEL_ORI': VEL_ORI,
     'POS_ACC': POS_ACC,
-    # 'RATE_EST': RATE_EST,
+    'RATE_EST': RATE_EST,
     # Retained above for explicit diagnostic tools; the ordinary interaction
     # path no longer subscribes to a 1 kHz stream that it does not consume.
-    'YAW_CTL': YAW_CTL,
-    # 'MOT_BAT': MOT_BAT,
+    # 'YAW_CTL': YAW_CTL,
+    'MOT_BAT': MOT_BAT,
     # 'POS_CTL_I_D': CTL_I_D,
     'POS_VEL_CTL': POS_VEL_CTL,
     'ATT_RATE_CTL': ATT_RATE_CTL,
