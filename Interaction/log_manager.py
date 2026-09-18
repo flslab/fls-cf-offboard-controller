@@ -1,4 +1,5 @@
 import copy
+from bisect import bisect_left
 import collections
 import json
 import os
@@ -416,6 +417,62 @@ class InteractionLogger(LogManager):
             return None, None
         skew_ms, packet = min(candidates, key=lambda item: item[0])
         return packet.copy(), 0.001 * float(skew_ms)
+
+    def get_latest_paired_group_log_data(
+            self, log_group, paired_group, *, max_skew_s):
+        """Atomically select the newest complete device-clock packet pair.
+
+        Independent callbacks may have published only half of the newest
+        pair. Search retained history instead of combining that half with a
+        different cycle. Preserve the reference packet's ORIGINAL host time:
+        callers must still apply their existing age limits, even when newer
+        unmatched packets keep arriving. This method does not refresh age.
+        """
+        if not math.isfinite(max_skew_s) or max_skew_s < 0:
+            raise ValueError('invalid packet-pair skew limit')
+        with self.cf_log_packet_lock:
+            metadata = getattr(self, 'cf_log_group_packet_metadata', {})
+            reference = list(self.cf_log_group_packets.get(log_group, ()))
+            reference_meta = list(metadata.get(log_group, ()))
+            paired = list(self.cf_log_group_packets.get(paired_group, ()))
+            paired_meta = list(metadata.get(paired_group, ()))
+        if (not reference or not paired
+                or len(reference) != len(reference_meta)
+                or len(paired) != len(paired_meta)):
+            return None
+        anchor = reference_meta[-1].get('cf_timestamp_ms')
+        if anchor is None:
+            return None
+
+        def epoch_offset(timing):
+            epoch = timing.get('cf_timestamp_ms')
+            if epoch is None:
+                return None
+            return ((int(epoch) - int(anchor) + 0x800000) & 0xFFFFFF) - 0x800000
+
+        # Sort once, then use binary search rather than scanning both history
+        # buffers for every candidate. Epochs are unwrapped around the latest
+        # reference so pairing also works across the CRTP 24-bit clock wrap.
+        candidates = []
+        for data, timing in zip(paired, paired_meta):
+            offset = epoch_offset(timing)
+            if offset is not None:
+                candidates.append((offset, data))
+        candidates.sort(key=lambda item: item[0])
+        if not candidates:
+            return None
+        epochs = [item[0] for item in candidates]
+        for data, timing in zip(reversed(reference), reversed(reference_meta)):
+            epoch = epoch_offset(timing)
+            if epoch is None:
+                continue
+            index = bisect_left(epochs, epoch)
+            neighbors = candidates[max(0, index - 1):index + 1]
+            nearest_epoch, nearest = min(neighbors, key=lambda item: abs(item[0] - epoch))
+            skew_s = .001 * abs(nearest_epoch - epoch)
+            if skew_s <= max_skew_s:
+                return data.copy(), timing.copy(), nearest.copy(), skew_s
+        return None
 
     def get_latest_cf_log_data(self, group_name, param_name):
         if self.cf_log_data is None:

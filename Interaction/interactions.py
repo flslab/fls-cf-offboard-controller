@@ -17281,19 +17281,32 @@ class InteractionsControl:
         subscribed = getattr(self.log_manager, 'cf_log_data', None) or {}
         compressed = 'FIRMWARE_KIN' in subscribed
         state_group = 'FIRMWARE_KIN' if compressed else 'VEL_ORI'
-        state_time = self.log_manager.get_latest_group_log_time(state_group)
-        if state_time is None:
-            return None
-
-        velocity_attitude, _ = self.log_manager.get_nearest_group_log_data(
-            state_group, state_time
-        )
-        metadata_lookup = getattr(
-            self.log_manager, 'get_nearest_group_log_metadata', None
-        )
-        velocity_metadata = None
-        if metadata_lookup is not None:
-            velocity_metadata, _ = metadata_lookup(state_group, state_time)
+        paired_lookup = getattr(
+            self.log_manager, 'get_latest_paired_group_log_data', None)
+        paired_state = None
+        if compressed and paired_lookup is not None:
+            paired_state = paired_lookup(
+                'FIRMWARE_KIN', 'FIRMWARE_ACT', max_skew_s=MAX_PAIR_SKEW_S)
+            if paired_state is None:
+                return None
+            velocity_attitude, velocity_metadata, motor_state, motor_skew = paired_state
+            # Keep the chosen complete pair's timestamp, not the receipt time
+            # of a newer unmatched KIN. Existing age/duplicate checks below
+            # therefore still reject stale data and skip repeated samples.
+            state_time = velocity_attitude.get('time')
+            if state_time is None:
+                return None
+        else:
+            state_time = self.log_manager.get_latest_group_log_time(state_group)
+            if state_time is None:
+                return None
+            velocity_attitude, _ = self.log_manager.get_nearest_group_log_data(
+                state_group, state_time)
+            metadata_lookup = getattr(
+                self.log_manager, 'get_nearest_group_log_metadata', None)
+            velocity_metadata = None
+            if metadata_lookup is not None:
+                velocity_metadata, _ = metadata_lookup(state_group, state_time)
         device_lookup = getattr(
             self.log_manager,
             'get_nearest_group_log_data_by_cf_timestamp',
@@ -17330,8 +17343,9 @@ class InteractionsControl:
             if (velocity_metadata is None or velocity_cf_timestamp is None
                     or device_lookup is None or not velocity_attitude):
                 return None
-            motor_state, motor_skew = device_lookup(
-                'FIRMWARE_ACT', velocity_cf_timestamp)
+            if paired_state is None:
+                motor_state, motor_skew = device_lookup(
+                    'FIRMWARE_ACT', velocity_cf_timestamp)
             if (motor_state is None or motor_skew is None
                     or not np.isfinite(motor_skew)
                     or motor_skew < 0.0
