@@ -10,14 +10,17 @@ logger = logging.getLogger(__name__)
 
 class Mocap(threading.Thread):
     def __init__(self, mocap_system_type="vicon", host_name="192.168.1.39", mode="mixed",
-                 *, timing_callback=None):
+                 *, timing_callback=None, source_metadata=False):
         """
         Args:
             mocap_system_type (str): Type of system (vicon, optitrack, etc).
             host_name (str): Hostname or IP of the mocap server.
             mode (str): 'rigidbody', 'pointcloud', 'shape', or 'mixed'.
             timing_callback: Optional host-side per-loop diagnostics. These are
-                NOT camera capture timestamps or source frame sequence numbers.
+                NOT camera capture timestamps. Source frame sequence is only
+                included when source_metadata is explicitly enabled.
+            source_metadata: Opt in to source frame diagnostics from the patched
+                motioncapture package. Does not change frame timestamps or poses.
         """
         threading.Thread.__init__(self)
 
@@ -26,6 +29,15 @@ class Mocap(threading.Thread):
         self.host_name = host_name
         self.mode = mode.lower()
         self.timing_callback = timing_callback
+        self.source_metadata = source_metadata
+        if source_metadata and timing_callback is None:
+            raise ValueError('Vicon source metadata requires a timing_callback')
+        if source_metadata and not callable(getattr(
+                getattr(motioncapture, 'MotionCapture', None), 'frameMetadata', None)):
+            raise RuntimeError(
+                'Vicon source metadata requires a motioncapture build with '
+                'MotionCapture.frameMetadata(); reinstall the patched package'
+            )
         self._frame_timing = None
 
         # Shared state
@@ -52,6 +64,11 @@ class Mocap(threading.Thread):
             callback_entry_monotonic_s=started,
             wait_return_to_callback_s=started-timing['wait_return_monotonic_s'],
         )
+        if 'source_metadata' in timing:
+            frame['mocap_timing']['source_metadata'] = timing['source_metadata']
+            frame['mocap_timing']['source_frame_delta'] = timing['source_frame_delta']
+        if 'source_metadata_error' in timing:
+            frame['mocap_timing']['source_metadata_error'] = timing['source_metadata_error']
         try:
             callback(frame)
         finally:
@@ -260,6 +277,7 @@ class Mocap(threading.Thread):
         frame_count = 0
         previous_return = None
         previous_processing_end = None
+        previous_source_frame = None
         while self.running:
             wait_started = time.monotonic()
             try:
@@ -284,6 +302,24 @@ class Mocap(threading.Thread):
                     callback_count=0, callback_duration_s=0.0,
                     max_callback_duration_s=0.0,
                 )
+            if self.source_metadata:
+                metadata_started = time.monotonic()
+                try:
+                    metadata = dict(mc.frameMetadata())
+                    source_frame = metadata.get('frame_number')
+                    delta = None
+                    if isinstance(source_frame, int):
+                        if previous_source_frame is not None:
+                            delta = (source_frame-previous_source_frame) & 0xffffffff
+                        previous_source_frame = source_frame
+                    self._frame_timing['source_metadata'] = metadata
+                    self._frame_timing['source_frame_delta'] = delta
+                except Exception as error:
+                    # Optional diagnostics must not interrupt pose forwarding.
+                    self._frame_timing['source_metadata_error'] = str(error)
+                finally:
+                    self._frame_timing['source_metadata_read_duration_s'] = (
+                        time.monotonic()-metadata_started)
 
             # Grab references once per frame
             with self._write_lock:

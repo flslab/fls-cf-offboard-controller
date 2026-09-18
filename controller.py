@@ -861,14 +861,18 @@ class Controller:
 
         self._last_extpos_send_monotonic_s = None
         timing_callback = None
-        if getattr(self, 'firmware_auto_brake_enabled', False):
+        if getattr(self.args, 'vicon_source_metadata', False):
+            self.log_manager.add_log_group('mocap_timing')
+            timing_callback = self._log_mocap_timing
+        elif getattr(self, 'firmware_auto_brake_enabled', False):
             # Populate wait-return timing without adding an offboard EKF log.
             timing_callback = lambda _timing: None
         elif self.log_manager is not None:
             self.log_manager.add_log_group('mocap_timing')
             timing_callback = self._log_mocap_timing
         self.mocap = Mocap(mode=self.args.vicon_mode,
-                           timing_callback=timing_callback)
+                           timing_callback=timing_callback,
+                           source_metadata=getattr(self.args, 'vicon_source_metadata', False))
 
         if self.args.vicon_mode == "rigidbody":
             logger.info(f"Subscribing to RigidBody: {self.args.obj_name}")
@@ -3351,6 +3355,10 @@ if __name__ == '__main__':
     ap.add_argument("--payload-size", type=int, default=4, help="size of the payload")
     ap.add_argument("--velocity-p", type=float, default=1.0, help="velocity gain for tracker-based velocity control")
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
+    ap.add_argument("--vicon-source-metadata", action="store_true",
+                    help=("opt-in Vicon frame number, timecode and pipeline latency "
+                          "diagnostics in mocap_timing; requires --log and a "
+                          "patched motioncapture package"))
     ap.add_argument("--vicon-full-pose", action="store_true",
                     help="if passed send both position and orientation otherwise send only position")
     ap.add_argument(
@@ -3427,6 +3435,10 @@ if __name__ == '__main__':
         args.vicon = True
         args.vicon_mode = 'rigidbody'
         args.obj_name = rigid_body_name
+    if args.vicon_source_metadata and not args.log:
+        ap.error('--vicon-source-metadata requires --log')
+    if args.vicon_source_metadata and not (args.vicon or args.save_vicon):
+        ap.error('--vicon-source-metadata requires Vicon capture')
     try:
         validate_repeat_test_options(args)
     except ValueError as error:
