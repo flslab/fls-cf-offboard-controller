@@ -34,6 +34,11 @@ from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.braking_repeat_test import validate_repeat_test_options
 from Interaction.post_release_firmware_control_event import send_vicon_position_mirror
 from Interaction.config import onboard_yaw_log_required
+from Interaction.compressed_state_logs import (
+    MAX_PAIR_SKEW_S,
+    decode_kinematic_packet,
+    validate_actuator_packet,
+)
 
 from smooth_controller import SmoothController
 from tracker import (
@@ -231,6 +236,15 @@ class Controller:
 
     def disconnect(self):
         logger.info("Disconnecting...")
+        planner = getattr(getattr(self, 'cf', None),
+                          '_post_release_pi_planner', None)
+        if planner is not None:
+            try:
+                planner.close()
+            except Exception:
+                logger.exception('Failed to close Pi event planner')
+            finally:
+                self.cf._post_release_pi_planner = None
         if self.scf:
             self.scf.close_link()
         logger.info("Disconnected.")
@@ -292,9 +306,9 @@ class Controller:
         if not enabled:
             return
         brake_mode = mode.get('mode', 'two_phase')
-        if brake_mode not in ('two_phase', 'zero_velocity'):
-            raise ValueError('firmware_auto_brake.mode must be two_phase or '
-                             'zero_velocity')
+        if brake_mode not in ('two_phase', 'zero_velocity', 'pi_joint'):
+            raise ValueError('firmware_auto_brake.mode must be two_phase, '
+                             'zero_velocity or pi_joint')
         self.firmware_auto_brake_mode = brake_mode
         response_time = mode.get('response_time_s')
         if (isinstance(response_time, bool) or
@@ -319,13 +333,21 @@ class Controller:
     def verify_firmware_auto_brake_ready(self):
         if not getattr(self, 'firmware_auto_brake_enabled', False):
             return
+        if self.firmware_auto_brake_mode == 'pi_joint':
+            planner = getattr(self.cf, '_post_release_pi_planner', None)
+            if planner is None or not planner.status().get('ready', False):
+                raise RuntimeError('Pi event planner is not prewarmed before arm')
+            for name in ('pRelJoint', 'pRelHost'):
+                if int(self.cf.param.get_value('hlCommander.' + name)) != 1:
+                    raise RuntimeError('Pi event planner firmware mode not '
+                                       'confirmed before arm: ' + name)
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             values = self.log_manager.get_latest_group_log_data('FIRMWARE_BRAKE')
             last_send = self._firmware_vicon_last_send_s
             if (values.get('hlCommander.pRelReady') == 1 and
                     values.get('hlCommander.pRelAutoSt') == 0 and
-                    values.get('hlCommander.pRelAutoEn') == 1 and
+                    # Firmware pRelReady is already false when pRelAuto is off.
                     values.get('hlCommander.pRelEvtVer') == 1 and
                     values.get('hlCommander.pRelMode') == (
                         1 if self.firmware_auto_brake_mode == 'zero_velocity'
@@ -342,6 +364,54 @@ class Controller:
         raise RuntimeError('firmware auto brake not ready before arm: '
                            f'mirror={self._firmware_vicon_mirror_error}, '
                            f'last_send={self._firmware_vicon_last_send_s}')
+
+    def _setup_firmware_auto_brake_params(self):
+        """Opt-in event planner; never modify the shared position PID gains."""
+        required = {
+            'kalmanPRel': ('enable',),
+            'hlCommander': ('pRelAuto', 'pRelMode', 'pRelTau'),
+        }
+        host_mode = self.firmware_auto_brake_mode == 'pi_joint'
+        if host_mode:
+            required['hlCommander'] += ('pRelJoint', 'pRelHost', 'pRelJVer')
+        toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
+        if any(name not in toc.get(group, {})
+               for group, names in required.items() for name in names):
+            raise RuntimeError('connected Bolt lacks firmware auto-brake parameters')
+        if host_mode and int(self.cf.param.get_value(
+                'hlCommander.pRelJVer')) < 26091805:
+            raise RuntimeError('pi_joint requires firmware pRelJVer >= 26091805')
+        # Preparation happens before arming, never on the release critical path.
+        # If startup fails, do not enable the firmware host-planning mode.
+        planner = getattr(self.cf, '_post_release_pi_planner', None)
+        if planner is not None:
+            planner.close()
+            self.cf._post_release_pi_planner = None
+        if host_mode:
+            from Interaction.post_release_pi_planner import PiEventPlanner
+            planner = PiEventPlanner(self.cf)
+            try:
+                planner.start()
+            except Exception:
+                planner.close()
+                raise
+            self.cf._post_release_pi_planner = planner
+            logger.info('Pi event planner prewarmed: %s', planner.status())
+        # Continuously warm the Vicon KF / 15-state observer. An accepted
+        # release selects it in firmware without restarting its Kalman task.
+        self.cf.param.set_value('kalmanPRel.enable', '1')
+        self.cf.param.set_value('hlCommander.pRelTau',
+                                str(self.firmware_auto_brake_response_time_s))
+        self.cf.param.set_value('hlCommander.pRelMode',
+                                '1' if self.firmware_auto_brake_mode ==
+                                'zero_velocity' else '0')
+        # Clear stale experimental switches when selecting either legacy mode.
+        # Old firmware without these optional parameters remains supported.
+        for name in ('pRelJoint', 'pRelHost'):
+            if name in toc.get('hlCommander', {}):
+                self.cf.param.set_value('hlCommander.' + name,
+                                        '1' if host_mode else '0')
+        self.cf.param.set_value('hlCommander.pRelAuto', '1')
 
     def prepare_active_septic_brake_test(self):
         """Reject an uncalibrated active profile before arming the vehicle."""
@@ -1373,7 +1443,12 @@ class Controller:
                 "frames", kf=(
                     not self._uses_onboard_wrench_state()
                     or self._uses_vicon_velocity_for_free_stop()
-                )
+                ),
+                # Only firmware-owned interaction opts into the same Pi
+                # receipt-time basis as its onboard Vicon mirror. Preserve
+                # other missions' existing fixed-step velocity behavior.
+                kf_use_mocap_elapsed_dt=getattr(
+                    self, 'firmware_auto_brake_enabled', False),
             )
             self.log_manager.add_log_group("events")
             self.log_manager.add_log_group("commands")
@@ -1483,23 +1558,38 @@ class Controller:
         """Fail before arming if required onboard-state logs are unavailable."""
         if not self._uses_onboard_wrench_state():
             return
-        required = {
-            'VEL_ORI': (
-                'stateEstimate.vx', 'stateEstimate.vy', 'stateEstimate.vz',
-                'stateEstimate.roll', 'stateEstimate.pitch', 'stateEstimate.yaw',
-            ),
-            'POS_ACC': (
-                'stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
-            ),
-            'RATE_EST': (
-                'stateEstimateZ.rateRoll',
-                'stateEstimateZ.ratePitch',
-                'stateEstimateZ.rateYaw',
-            ),
-            'MOT_BAT': (
-                'motor.m1', 'motor.m2', 'motor.m3', 'motor.m4', 'pm.vbat',
-            ),
-        }
+        subscribed = getattr(self.log_manager, 'cf_log_data', None) or {}
+        compressed = 'FIRMWARE_KIN' in subscribed
+        if compressed:
+            required = {
+                'FIRMWARE_KIN': tuple(
+                    f'stateEstimateZ.{field}' for field in (
+                        'x', 'y', 'z', 'vx', 'vy', 'vz', 'quat',
+                        'rateRoll', 'ratePitch', 'rateYaw')),
+                'FIRMWARE_ACT': (
+                    'stateEstimateZ.ax', 'stateEstimateZ.ay',
+                    'stateEstimateZ.az', 'motor.m1', 'motor.m2',
+                    'motor.m3', 'motor.m4', 'pm.vbat',
+                ),
+            }
+        else:
+            required = {
+                'VEL_ORI': (
+                    'stateEstimate.vx', 'stateEstimate.vy', 'stateEstimate.vz',
+                    'stateEstimate.roll', 'stateEstimate.pitch', 'stateEstimate.yaw',
+                ),
+                'POS_ACC': (
+                    'stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
+                ),
+                'RATE_EST': (
+                    'stateEstimateZ.rateRoll',
+                    'stateEstimateZ.ratePitch',
+                    'stateEstimateZ.rateYaw',
+                ),
+                'MOT_BAT': (
+                    'motor.m1', 'motor.m2', 'motor.m3', 'motor.m4', 'pm.vbat',
+                ),
+            }
         if onboard_yaw_log_required(self.mission):
             required['YAW_CTL'] = (
                 'controller.cmd_yaw', 'controller.r_yaw',
@@ -1529,6 +1619,27 @@ class Controller:
                     value = values.get(variable_name)
                     if not isinstance(value, (int, float)) or not np.isfinite(value):
                         missing.append(f'{group_name}.{variable_name}')
+            if compressed and not missing:
+                try:
+                    kin_time = self.log_manager.get_latest_group_log_time(
+                        'FIRMWARE_KIN')
+                    kin, _ = self.log_manager.get_nearest_group_log_data(
+                        'FIRMWARE_KIN', kin_time)
+                    kin_timing, _ = (
+                        self.log_manager.get_nearest_group_log_metadata(
+                            'FIRMWARE_KIN', kin_time))
+                    actuator, pair_skew = (
+                        self.log_manager.get_nearest_group_log_data_by_cf_timestamp(
+                            'FIRMWARE_ACT', kin_timing['cf_timestamp_ms']))
+                    decode_kinematic_packet(kin)
+                    validate_actuator_packet(actuator)
+                    if (pair_skew is None or not np.isfinite(pair_skew)
+                            or pair_skew < 0.0
+                            or pair_skew > MAX_PAIR_SKEW_S):
+                        missing.append('FIRMWARE_KIN/FIRMWARE_ACT pair skew')
+                except (AttributeError, KeyError, TypeError, ValueError,
+                        OverflowError):
+                    missing.append('FIRMWARE_KIN/FIRMWARE_ACT decoded pair')
             handle = getattr(self, '_contact_attitude_shadow_prearm', None)
             if handle is not None:
                 missing.extend(
@@ -1601,34 +1712,18 @@ class Controller:
                 '0',
             )
         if getattr(self, 'firmware_auto_brake_enabled', False):
-            required = {
-                'kalmanPRel': ('enable',),
-                'hlCommander': ('pRelAuto', 'pRelMode', 'pRelTau'),
-            }
-            toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
-            if any(name not in toc.get(group, {})
-                   for group, names in required.items() for name in names):
-                raise RuntimeError('connected Bolt lacks firmware auto-brake parameters')
-            # Keep the 15-state observer and Vicon position-KF continuously
-            # warm while ordinary Kalman controls takeoff and contact. The
-            # accepted Pi release atomically selects the verified Vicon15
-            # view in firmware without restarting its Kalman task.
-            self.cf.param.set_value('kalmanPRel.enable', '1')
-            self.cf.param.set_value(
-                'hlCommander.pRelTau',
-                str(self.firmware_auto_brake_response_time_s),
-            )
-            self.cf.param.set_value(
-                'hlCommander.pRelMode',
-                '1' if self.firmware_auto_brake_mode == 'zero_velocity' else '0',
-            )
-            self.cf.param.set_value('hlCommander.pRelAuto', '1')
+            self._setup_firmware_auto_brake_params()
 
     def arm(self):
         if self.args.ground_test or self.args.skip_arm:
             return
 
         self.verify_contact_attitude_final_prearm_ready()
+        if (getattr(self, 'firmware_auto_brake_enabled', False) and
+                self.firmware_auto_brake_mode == 'pi_joint'):
+            # The orchestrator handshake may take time after setup_params.
+            # Refuse arming if the prewarmed worker died while waiting.
+            self.verify_firmware_auto_brake_ready()
         logger.info("Arming...")
         self.cf.platform.send_arming_request(True)
         time.sleep(1.0)

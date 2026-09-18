@@ -1,0 +1,5 @@
+{"scope": "synthetic single-snapshot kernel, not flight", "speed_mps": 1.0, "actual_pitch_cf_deg": 10.0, "reference_pitch_cf_deg": 22.18, "rate_deg_s": 0, "feasible": true, "duration_s": 0.800000011920929}
+{"scope": "synthetic single-snapshot kernel, not flight", "speed_mps": 2.7, "actual_pitch_cf_deg": 0.0, "reference_pitch_cf_deg": 22.18, "rate_deg_s": 0, "feasible": false, "error": "no feasible joint plan from event snapshot"}
+{"scope": "synthetic single-snapshot kernel, not flight", "speed_mps": 2.7, "actual_pitch_cf_deg": -20.0, "reference_pitch_cf_deg": 22.18, "rate_deg_s": 0, "feasible": false, "error": "no feasible joint plan from event snapshot"}
+{"scope": "synthetic single-snapshot kernel, not flight", "speed_mps": 2.7, "actual_pitch_cf_deg": 20.0, "reference_pitch_cf_deg": 22.18, "rate_deg_s": 0, "feasible": true, "duration_s": 1.600000023841858}
+{"scope": "synthetic single-snapshot kernel, not flight", "speed_mps": 0.5, "actual_pitch_cf_deg": 20.0, "reference_pitch_cf_deg": 22.18, "rate_deg_s": 0, "feasible": false, "error": "no feasible joint plan from event snapshot"}

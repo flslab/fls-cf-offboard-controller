@@ -15,6 +15,7 @@ from log_manager_abs import LogManager
 from cflib.crazyflie.log import LogConfig
 import time
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -224,8 +225,15 @@ class InteractionLogger(LogManager):
 
         logger.debug("logging activated")
 
-    def add_log_group(self, name, *args, kf=False, **kwargs):
+    def add_log_group(self, name, *args, kf=False,
+                      kf_use_mocap_elapsed_dt=False, **kwargs):
         self.groups[name] = []
+        elapsed_groups = getattr(self, '_kf_mocap_elapsed_groups', None)
+        if elapsed_groups is None:
+            elapsed_groups = self._kf_mocap_elapsed_groups = set()
+            self._kf_mocap_last_epoch_s = {}
+        elapsed_groups.discard(name)
+        self._kf_mocap_last_epoch_s.pop(name, None)
         if kf:
             # controller.py renamed --fps to --tracker-camera-rate; the follow/test
             # controllers still pass --fps
@@ -236,6 +244,8 @@ class InteractionLogger(LogManager):
                 'y': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
                 'z': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
             }
+            if name == 'frames' and kf_use_mocap_elapsed_dt:
+                elapsed_groups.add(name)
 
     def add_log_entry(self, group_name, entry, *args, **kwargs):
         # Preserve the legacy/default-disabled timing path. The additional
@@ -304,7 +314,11 @@ class InteractionLogger(LogManager):
             kf is not None and entry is not None
             and entry.get('tvec', None) is not None
         ):
-            entry['vel'] = self._update_kf(entry['tvec'], kf)
+            if group_name in getattr(self, '_kf_mocap_elapsed_groups', ()):
+                entry['vel'] = self._update_mocap_elapsed_kf(
+                    group_name, entry, kf)
+            else:
+                entry['vel'] = self._update_kf(entry['tvec'], kf)
 
         self.groups[group_name].append(entry)
 
@@ -406,6 +420,20 @@ class InteractionLogger(LogManager):
     def get_latest_cf_log_data(self, group_name, param_name):
         if self.cf_log_data is None:
             return None
+        # Landing still asks for legacy stateEstimate XYZ. In the opt-in
+        # firmware-auto-brake subscription those coordinates arrive as
+        # stateEstimateZ millimetres instead of a third position log block.
+        if (
+            group_name == 'VEL_POS'
+            and param_name in (
+                'stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z'
+            )
+            and 'FIRMWARE_KIN' in self.cf_log_data
+        ):
+            axis = param_name.rsplit('.', 1)[1]
+            values = self.cf_log_data['FIRMWARE_KIN'][
+                f'stateEstimateZ.{axis}']['data']
+            return 0.001 * values[-1] if values else None
         group = self.cf_log_data.get(group_name)
         if group is None:
             # interaction config names this group POS_ACC, not VEL_POS
@@ -580,6 +608,40 @@ class InteractionLogger(LogManager):
 
     def _update_kf(self, pos, kf):
         return [axis_kf.update(p) for p, axis_kf in zip(pos, kf.values())]
+
+    def _update_mocap_elapsed_kf(self, group_name, entry, kf):
+        """Match firmware mirror epochs without changing frame timestamps.
+
+        This is an opt-in host diagnostic, not firmware command authority.
+        Preserve filter history across gaps; reject missing/nonmonotonic epochs
+        rather than inventing a dt from logger scheduling or wall-clock time.
+        """
+        epoch = (entry.get('mocap_timing') or {}).get(
+            'wait_return_monotonic_s')
+        previous = self._kf_mocap_last_epoch_s.get(group_name)
+        status = None
+        if (isinstance(epoch, bool) or not isinstance(epoch, (int, float))
+                or not math.isfinite(epoch)):
+            status = 'missing_or_invalid_epoch'
+        elif previous is not None and epoch <= previous:
+            status = 'nonmonotonic_epoch'
+        if status is not None:
+            entry['velocity_kf_timing'] = {
+                'basis': 'pi_mocap_wait_return_monotonic',
+                'update_applied': False, 'status': status, 'dt_s': None,
+            }
+            return [float(axis.x[1, 0]) for axis in kf.values()]
+        dt = None if previous is None else epoch - previous
+        velocity = [axis.update(position, dt=dt)
+                    for position, axis in zip(entry['tvec'], kf.values())]
+        self._kf_mocap_last_epoch_s[group_name] = float(epoch)
+        entry['velocity_kf_timing'] = {
+            'basis': 'pi_mocap_wait_return_monotonic',
+            'update_applied': True,
+            'status': 'initial_nominal_step' if dt is None else 'elapsed_step',
+            'dt_s': next(iter(kf.values())).dt,
+        }
+        return velocity
 
     import subprocess
 

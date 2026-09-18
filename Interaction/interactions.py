@@ -18,12 +18,20 @@ from Interaction.contact_attitude_observer import (
     legacy_rpy_from_quaternion,
     quaternion_from_native_rpy,
 )
+from Interaction.compressed_state_logs import (
+    MAX_PAIR_SKEW_S,
+    decode_kinematic_packet,
+    validate_actuator_packet,
+)
 
 from Interaction.command_wrapper import CommandWrapper
 from Interaction.config import onboard_yaw_log_required
 from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.post_release_firmware_control_event import (
+    FirmwareBrakeMonitor,
+    FirmwareBrakeMonitorError,
     FirmwareHoldNotification,
+    firmware_brake_abort_message,
     handoff_pi_release_to_firmware,
 )
 from Interaction.adaptive_braking_calibration import AdaptiveBrakingCalibration
@@ -15484,6 +15492,82 @@ class InteractionsControl:
         self._safe_sleep = sleep_function
         self.bounds = self.mission.get('boundary_limits', None)
 
+    def _check_firmware_brake_monitor_safety(self, brake_log=None):
+        # Reuse the Controller's existing sticky battery and orchestrator
+        # emergency checks even while waiting on the firmware notice.
+        self._safe_sleep(0.0)
+        if (brake_log is not None and
+                brake_log.get('hlCommander.pRelAutoSt') == 6):
+            raise RuntimeError(firmware_brake_abort_message(brake_log))
+
+    def _firmware_brake_status_snapshot(self):
+        # Use one recorded packet, not independently read per-variable lists
+        # and a receipt time that can advance on the USB callback thread.
+        receipt_s = self.log_manager.get_latest_group_log_time('FIRMWARE_BRAKE')
+        if receipt_s is None:
+            return {}, None
+        packet, _ = self.log_manager.get_nearest_group_log_data(
+            'FIRMWARE_BRAKE', receipt_s)
+        return (packet, packet['time']) if packet is not None else ({}, None)
+
+    def _wait_for_firmware_brake_hold(self, completion, *, brake_mode,
+                                     baseline_receipt_s, baseline_timeouts):
+        monitor_started = time.monotonic()
+        monitor = FirmwareBrakeMonitor(
+            started_monotonic_s=monitor_started,
+            baseline_receipt_time_s=baseline_receipt_s,
+            baseline_timeouts=baseline_timeouts,
+        )
+        pi_planner = (getattr(self.cf, '_post_release_pi_planner', None)
+                      if brake_mode == 'pi_joint' else None)
+        planner_phase = None
+        while time.monotonic() - monitor_started < 6.0:
+            self._check_firmware_brake_monitor_safety()
+            if pi_planner is not None:
+                planner_status = pi_planner.status()
+                # Local bookkeeping only: no new telemetry subscription and
+                # no waiting for Pi compute on the USB receive thread.
+                phase = (planner_status.get('phase'),
+                         planner_status.get('error'))
+                if phase != planner_phase:
+                    self._log_event('Pi Release Planner State', planner_status)
+                    planner_phase = phase
+            notice = completion.wait(0.0)
+            brake_log, receipt_s = self._firmware_brake_status_snapshot()
+            try:
+                update = monitor.observe(
+                    brake_log, receipt_time_s=receipt_s, now_wall_s=time.time(),
+                    now_monotonic_s=time.monotonic(), notice=notice)
+            except FirmwareBrakeMonitorError as exc:
+                self._log_event('Firmware Brake Monitor Fault', {
+                    'code': exc.code, 'detail': str(exc),
+                    'firmware_stage': brake_log.get('hlCommander.pRelAutoSt'),
+                    'firmware_abort_reason': brake_log.get('hlCommander.pRelAbort'),
+                })
+                if exc.code in ('status_expired', 'readiness_lost'):
+                    raise StaleLocalizationError(str(exc)) from exc
+                raise
+            for event_name, evidence in update['events']:
+                if event_name.endswith(('Delayed', 'Warning')):
+                    logger.warning('%s: %s', event_name, evidence)
+                self._log_event(event_name, evidence)
+            if update['hold_confirmed']:
+                self._check_firmware_brake_monitor_safety()
+                completion.acknowledge()
+                self._log_event('Firmware Post-Release Hold Acquired', {
+                    **notice, 'firmware_stage': 4, 'brake_mode': brake_mode,
+                    'one_shot_handoff': True,
+                    'world_velocity_target_m_s': [0.0, 0.0],
+                    **({'pi_planner': pi_planner.status()}
+                       if pi_planner is not None else {}),
+                })
+                return
+            # The notice becomes permanently ready after receipt. A safety-
+            # aware wait also prevents a pending notice from busy-spinning.
+            # Polling cached status here adds no packets to the flight link.
+            self._safe_sleep(0.05)
+        raise RuntimeError('firmware brake did not reach stable hold within 6 s')
+
     def _set_contact_pid_attitude_authority(self, enabled):
         """Open 15-state roll/pitch feedback only during contact braking."""
         requested = bool(
@@ -17194,19 +17278,22 @@ class InteractionsControl:
 
     def _get_synchronized_onboard_wrench_state(self):
         """Return time-aligned Crazyflie state-estimate and actuator packets."""
-        state_time = self.log_manager.get_latest_group_log_time('VEL_ORI')
+        subscribed = getattr(self.log_manager, 'cf_log_data', None) or {}
+        compressed = 'FIRMWARE_KIN' in subscribed
+        state_group = 'FIRMWARE_KIN' if compressed else 'VEL_ORI'
+        state_time = self.log_manager.get_latest_group_log_time(state_group)
         if state_time is None:
             return None
 
         velocity_attitude, _ = self.log_manager.get_nearest_group_log_data(
-            'VEL_ORI', state_time
+            state_group, state_time
         )
         metadata_lookup = getattr(
             self.log_manager, 'get_nearest_group_log_metadata', None
         )
         velocity_metadata = None
         if metadata_lookup is not None:
-            velocity_metadata, _ = metadata_lookup('VEL_ORI', state_time)
+            velocity_metadata, _ = metadata_lookup(state_group, state_time)
         device_lookup = getattr(
             self.log_manager,
             'get_nearest_group_log_data_by_cf_timestamp',
@@ -17228,44 +17315,71 @@ class InteractionsControl:
                 group_name, state_time
             )
 
-        position_acceleration, position_skew = synchronized_group('POS_ACC')
-        angular_rate, angular_rate_skew = synchronized_group('RATE_EST')
         mission = getattr(self, 'mission', None)
         yaw_required = (mission is None or onboard_yaw_log_required(mission))
         yaw_control, yaw_control_skew = (
             synchronized_group('YAW_CTL') if yaw_required else (None, None)
         )
-        motor_state, motor_skew = synchronized_group('MOT_BAT')
-        if not all((
-                velocity_attitude, position_acceleration, angular_rate,
-                motor_state,
-        )):
-            return None
         if yaw_required and not yaw_control:
             return None
 
+        if compressed:
+            # Only the firmware clock can pair the independently delivered
+            # blocks. A 10 ms-old actuator packet is the previous cycle, not
+            # a complete state snapshot, even if host receipt times coincide.
+            if (velocity_metadata is None or velocity_cf_timestamp is None
+                    or device_lookup is None or not velocity_attitude):
+                return None
+            motor_state, motor_skew = device_lookup(
+                'FIRMWARE_ACT', velocity_cf_timestamp)
+            if (motor_state is None or motor_skew is None
+                    or not np.isfinite(motor_skew)
+                    or motor_skew < 0.0
+                    or motor_skew > MAX_PAIR_SKEW_S):
+                return None
+            try:
+                position, velocity, attitude_rpy, angular_velocity = (
+                    decode_kinematic_packet(velocity_attitude))
+                validate_actuator_packet(motor_state)
+            except (KeyError, TypeError, ValueError, OverflowError):
+                return None
+            position_skew = 0.0
+            angular_rate_skew = 0.0
+        else:
+            position_acceleration, position_skew = synchronized_group('POS_ACC')
+            angular_rate, angular_rate_skew = synchronized_group('RATE_EST')
+            motor_state, motor_skew = synchronized_group('MOT_BAT')
+            if not all((
+                    velocity_attitude, position_acceleration, angular_rate,
+                    motor_state,
+            )):
+                return None
+            try:
+                position = np.asarray([
+                    position_acceleration['stateEstimate.x'],
+                    position_acceleration['stateEstimate.y'],
+                    position_acceleration['stateEstimate.z'],
+                ], dtype=float)
+                velocity = np.asarray([
+                    velocity_attitude['stateEstimate.vx'],
+                    velocity_attitude['stateEstimate.vy'],
+                    velocity_attitude['stateEstimate.vz'],
+                ], dtype=float)
+                attitude_rpy = np.radians(np.asarray([
+                    velocity_attitude['stateEstimate.roll'],
+                    velocity_attitude['stateEstimate.pitch'],
+                    velocity_attitude['stateEstimate.yaw'],
+                ], dtype=float))
+                # stateEstimateZ angular rates are milliradians/second.
+                angular_velocity = 0.001 * np.asarray([
+                    angular_rate['stateEstimateZ.rateRoll'],
+                    angular_rate['stateEstimateZ.ratePitch'],
+                    angular_rate['stateEstimateZ.rateYaw'],
+                ], dtype=float)
+            except (KeyError, TypeError, ValueError):
+                return None
+
         try:
-            position = np.asarray([
-                position_acceleration['stateEstimate.x'],
-                position_acceleration['stateEstimate.y'],
-                position_acceleration['stateEstimate.z'],
-            ], dtype=float)
-            velocity = np.asarray([
-                velocity_attitude['stateEstimate.vx'],
-                velocity_attitude['stateEstimate.vy'],
-                velocity_attitude['stateEstimate.vz'],
-            ], dtype=float)
-            attitude_rpy = np.radians(np.asarray([
-                velocity_attitude['stateEstimate.roll'],
-                velocity_attitude['stateEstimate.pitch'],
-                velocity_attitude['stateEstimate.yaw'],
-            ], dtype=float))
-            # stateEstimateZ angular rates are compressed milliradians/second.
-            angular_velocity = 0.001 * np.asarray([
-                angular_rate['stateEstimateZ.rateRoll'],
-                angular_rate['stateEstimateZ.ratePitch'],
-                angular_rate['stateEstimateZ.rateYaw'],
-            ], dtype=float)
             yaw_control_command = (
                 float(yaw_control['controller.cmd_yaw'])
                 if yaw_required else None
@@ -17442,9 +17556,9 @@ class InteractionsControl:
             raise ValueError('firmware_auto_brake.enabled must be boolean')
         firmware_brake_mode = firmware_brake_config.get('mode', 'two_phase')
         if firmware_brake_enabled and firmware_brake_mode not in (
-                'two_phase', 'zero_velocity'):
-            raise ValueError('firmware_auto_brake.mode must be two_phase or '
-                             'zero_velocity')
+                'two_phase', 'zero_velocity', 'pi_joint'):
+            raise ValueError('firmware_auto_brake.mode must be two_phase, '
+                             'zero_velocity or pi_joint')
         if firmware_brake_enabled and pipeline.shadow_mode:
             raise ValueError('firmware auto brake requires active contact rendering')
         # Some offline harnesses construct the interaction object without its
@@ -19144,9 +19258,15 @@ class InteractionsControl:
                 ):
                     break
             if now >= startup_deadline:
+                required_state_logs = (
+                    'FIRMWARE_KIN, FIRMWARE_ACT'
+                    if 'FIRMWARE_KIN' in (
+                        getattr(self.log_manager, 'cf_log_data', None) or {})
+                    else 'VEL_ORI, POS_ACC, RATE_EST, MOT_BAT'
+                )
                 raise StaleLocalizationError(
                     'No fresh synchronized onboard state received from '
-                    'required VEL_ORI, POS_ACC, RATE_EST, MOT_BAT'
+                    'required ' + required_state_logs
                     + (', and YAW_CTL' if (
                         getattr(self, 'mission', None) is None
                         or onboard_yaw_log_required(self.mission))
@@ -22050,13 +22170,21 @@ class InteractionsControl:
                     # No Pi-side trajectory planning, shadow drain or clock
                     # fit is allowed ahead of the release-event send.
                     self._translation_exit_target = None
-                    baseline_brake_timeouts = (
-                        self.log_manager.get_latest_group_log_data(
-                            'FIRMWARE_BRAKE').get(
-                                'hlCommander.pRelAutoTime'))
+                    baseline_brake_log, baseline_brake_receipt_s = (
+                        self._firmware_brake_status_snapshot())
+                    baseline_brake_timeouts = baseline_brake_log.get(
+                        'hlCommander.pRelAutoTime')
                     with FirmwareHoldNotification(
                             self.cf, session_id=firmware_brake_session_id,
                             sequence=0) as completion:
+                        if firmware_brake_mode == 'pi_joint':
+                            pi_planner = getattr(
+                                self.cf, '_post_release_pi_planner', None)
+                            if pi_planner is None:
+                                raise RuntimeError('Pi event planner was not '
+                                                   'prepared before arm')
+                            pi_planner.begin_release(
+                                firmware_brake_session_id, 0)
                         release_sent = handoff_pi_release_to_firmware(
                             self.cf,
                             session_id=firmware_brake_session_id,
@@ -22074,61 +22202,11 @@ class InteractionsControl:
                             'Firmware Post-Release Brake Handoff',
                             {**release_sent, 'brake_mode': firmware_brake_mode},
                         )
-                        monitor_started = time.monotonic()
-                        deadline = monitor_started + 6.0
-                        missing_observer_since = None
-                        while time.monotonic() < deadline:
-                            # The notice is the completion signal. The slower
-                            # log is only a safety heartbeat, not the trigger
-                            # for a Pi-side position command.
-                            notice = completion.wait(0.10)
-                            brake_log = self.log_manager.get_latest_group_log_data(
-                                'FIRMWARE_BRAKE')
-                            log_time = self.log_manager.get_latest_group_log_time(
-                                'FIRMWARE_BRAKE')
-                            if log_time is None or time.time() - log_time > 0.35:
-                                raise StaleLocalizationError(
-                                    'firmware brake status log became stale'
-                                )
-                            brake_timeouts = brake_log.get(
-                                'hlCommander.pRelAutoTime')
-                            if (brake_timeouts is not None and
-                                  brake_timeouts != baseline_brake_timeouts):
-                                raise RuntimeError(
-                                    'firmware maximum-attitude brake timed out'
-                                )
-                            if brake_log.get('hlCommander.pRelReady') != 1:
-                                if missing_observer_since is None:
-                                    missing_observer_since = time.monotonic()
-                                elif time.monotonic() - missing_observer_since > 0.30:
-                                    raise StaleLocalizationError(
-                                        'firmware Vicon/15-state observer lost'
-                                    )
-                            else:
-                                missing_observer_since = None
-                            if notice is not None:
-                                if brake_log.get('hlCommander.pRelReady') != 1:
-                                    raise StaleLocalizationError(
-                                        'terminal hold lacks fresh Vicon/15-state'
-                                    )
-                                completion.acknowledge()
-                                self._log_event(
-                                    'Firmware Post-Release Hold Acquired',
-                                    {**notice, 'firmware_stage': 4,
-                                     'brake_mode': firmware_brake_mode,
-                                     'one_shot_handoff': True,
-                                     'world_velocity_target_m_s': [0.0, 0.0]},
-                                )
-                                break
-                            if (brake_log.get('hlCommander.pRelAutoSt') == 0 and
-                                    time.monotonic() - monitor_started > 0.35):
-                                raise RuntimeError(
-                                    'firmware brake dropped ownership before hold'
-                                )
-                        else:
-                            raise RuntimeError(
-                                'firmware brake did not reach stable hold within 6 s'
-                            )
+                        self._wait_for_firmware_brake_hold(
+                            completion, brake_mode=firmware_brake_mode,
+                            baseline_receipt_s=baseline_brake_receipt_s,
+                            baseline_timeouts=baseline_brake_timeouts,
+                        )
                     break
                 release_event_clock_evidence = dict(
                     contact_attitude_release_preview_clock_evidence

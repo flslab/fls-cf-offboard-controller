@@ -5,6 +5,7 @@ class VelocityKalmanFilter:
     def __init__(self, dt, process_noise=10, measurement_noise=0.001**2):
         # Time step
         self.dt = dt
+        self.process_noise = process_noise
 
         # State vector [position, velocity]
         self.x = np.zeros((2, 1))
@@ -29,7 +30,16 @@ class VelocityKalmanFilter:
         # Measurement noise covariance (R) - How noisy is the mocap? vicon is sub-mm accurate, so 0.001
         self.R = np.array([[measurement_noise]])
 
-    def update(self, measurement, return_pos=False):
+    def update(self, measurement, return_pos=False, *, dt=None):
+        # Existing callers retain their configured fixed step. The interaction
+        # firmware-brake diagnostic opts in using the Pi frame-receipt interval.
+        if dt is not None:
+            if not np.isfinite(dt) or dt <= 0:
+                raise ValueError('velocity KF elapsed dt must be finite and positive')
+            self.dt = float(dt)
+            self.F = np.array([[1, self.dt], [0, 1]])
+            G = np.array([[0.5 * self.dt ** 2], [self.dt]])
+            self.Q = G @ G.T * self.process_noise
         # Predict the next state
         self.x = self.F @ self.x
         # Predict the next covariance
