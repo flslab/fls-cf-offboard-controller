@@ -70,6 +70,12 @@ class InteractionLogPeriodTests(unittest.TestCase):
         selected = interaction_config.log_vars_for_mission(mission)
         self.assertIn('FIRMWARE_BRAKE', selected)
         self.assertNotIn('GYRO_1KHZ', selected)
+        for optional in ('YAW_CTL', 'POS_CTL_I_D', 'POS_VEL_CTL',
+                         'ATT_RATE_CTL'):
+            self.assertNotIn(optional, selected)
+        self.assertEqual(set(selected), {
+            'VEL_ORI', 'POS_ACC', 'RATE_EST', 'MOT_BAT', 'FIRMWARE_BRAKE',
+        })
         blocks = self.initialize(selected)
         by_name = {block.name: block for block in blocks}
         self.assertEqual(by_name['FIRMWARE_BRAKE'].period_in_ms, 1000)
@@ -81,6 +87,32 @@ class InteractionLogPeriodTests(unittest.TestCase):
             ('hlCommander.pRelAutoTime', 'uint32_t'),
             by_name['FIRMWARE_BRAKE'].variables,
         )
+
+    def test_firmware_optional_logs_can_be_enabled_without_changing_legacy(self):
+        wrench = {
+            'firmware_auto_brake': {
+                'enabled': True, 'include_optional_log_groups': True,
+            },
+        }
+        mission = {'Interaction': {'config': {'wrench_interaction': wrench}}}
+        selected = interaction_config.log_vars_for_mission(mission)
+        for optional in ('YAW_CTL', 'POS_CTL_I_D', 'POS_VEL_CTL',
+                         'ATT_RATE_CTL'):
+            self.assertIn(optional, selected)
+        self.assertIn('FIRMWARE_BRAKE', selected)
+
+        wrench['firmware_auto_brake']['include_optional_log_groups'] = 'yes'
+        with self.assertRaisesRegex(ValueError, 'include_optional_log_groups'):
+            interaction_config.log_vars_for_mission(mission)
+
+    def test_enabled_yaw_command_model_keeps_yaw_log_required(self):
+        mission = {'Interaction': {'config': {'wrench_interaction': {
+            'firmware_auto_brake': {'enabled': True},
+            'motor_model': {'yaw_command_model': {'enabled': True}},
+        }}}}
+        selected = interaction_config.log_vars_for_mission(mission)
+        self.assertIn('YAW_CTL', selected)
+        self.assertTrue(interaction_config.onboard_yaw_log_required(mission))
 
     def test_installed_cflib_encodes_compensated_period_as_legacy_byte(self):
         self.assertEqual(LogConfig('STATE', period_in_ms=100).period, 10)

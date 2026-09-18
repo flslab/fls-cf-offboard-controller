@@ -20,6 +20,7 @@ from Interaction.contact_attitude_observer import (
 )
 
 from Interaction.command_wrapper import CommandWrapper
+from Interaction.config import onboard_yaw_log_required
 from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.post_release_firmware_control_event import (
     FirmwareHoldNotification,
@@ -419,6 +420,20 @@ def apply_required_jerk_braking_calibration(
     # cannot turn an unvalidated delay/tau/scale tuple into authority.
     resolved_handoff['coast_jerk_planar_calibration_verified'] = True
     return resolved, calibration
+
+
+def configure_firmware_owned_brake(config):
+    """Remove only Pi-owned release controls for the firmware brake mode."""
+    resolved = deepcopy(config)
+    handoff = resolved.setdefault('control_handoff', {})
+    handoff['coast_jerk_limited_attitude_enabled'] = False
+    handoff['coast_jerk_limited_septic_smoothing_enabled'] = False
+    handoff['coast_jerk_limited_free_stop_enabled'] = False
+    handoff['coast_jerk_limited_use_vicon_velocity_reference'] = False
+    handoff['coast_max_tilt_predictive_brake_enabled'] = False
+    resolved['startup_bias_calibration_enabled'] = False
+    resolved.setdefault('calibration_excitation', {})['enabled'] = False
+    return resolved
 
 
 def configure_required_jerk_safety(config, bounds):
@@ -16064,15 +16079,8 @@ class InteractionsControl:
                         # The board owns post-release braking. Preserve the
                         # contact renderer and measured flight boundaries but
                         # do not demand the old Pi-planned seventh-order fit.
-                        wrench_config = deepcopy(wrench_config)
-                        handoff = wrench_config.setdefault(
-                            'control_handoff', {})
-                        handoff['coast_jerk_limited_attitude_enabled'] = False
-                        handoff['coast_jerk_limited_free_stop_enabled'] = False
-                        handoff['coast_max_tilt_predictive_brake_enabled'] = False
-                        wrench_config['startup_bias_calibration_enabled'] = False
-                        wrench_config.setdefault('calibration_excitation', {})[
-                            'enabled'] = False
+                        wrench_config = configure_firmware_owned_brake(
+                            wrench_config)
                         interaction_duration = translation_setting['duration']
                     else:
                         wrench_config, saved_calibration = (
@@ -17222,12 +17230,18 @@ class InteractionsControl:
 
         position_acceleration, position_skew = synchronized_group('POS_ACC')
         angular_rate, angular_rate_skew = synchronized_group('RATE_EST')
-        yaw_control, yaw_control_skew = synchronized_group('YAW_CTL')
+        mission = getattr(self, 'mission', None)
+        yaw_required = (mission is None or onboard_yaw_log_required(mission))
+        yaw_control, yaw_control_skew = (
+            synchronized_group('YAW_CTL') if yaw_required else (None, None)
+        )
         motor_state, motor_skew = synchronized_group('MOT_BAT')
         if not all((
                 velocity_attitude, position_acceleration, angular_rate,
-                yaw_control, motor_state,
+                motor_state,
         )):
+            return None
+        if yaw_required and not yaw_control:
             return None
 
         try:
@@ -17252,14 +17266,22 @@ class InteractionsControl:
                 angular_rate['stateEstimateZ.ratePitch'],
                 angular_rate['stateEstimateZ.rateYaw'],
             ], dtype=float)
-            yaw_control_command = float(yaw_control['controller.cmd_yaw'])
-            controller_yaw_rate = float(yaw_control['controller.r_yaw'])
+            yaw_control_command = (
+                float(yaw_control['controller.cmd_yaw'])
+                if yaw_required else None
+            )
+            controller_yaw_rate = (
+                float(yaw_control['controller.r_yaw'])
+                if yaw_required else None
+            )
         except (KeyError, TypeError, ValueError):
             return None
         if not all(np.all(np.isfinite(value)) for value in (
             position, velocity, attitude_rpy, angular_velocity,
-            yaw_control_command, controller_yaw_rate,
         )):
+            return None
+        if yaw_required and not all(np.isfinite(value) for value in (
+                yaw_control_command, controller_yaw_rate)):
             return None
 
         firmware_reference = None
@@ -19106,11 +19128,13 @@ class InteractionsControl:
             now = time.time()
             if state is not None:
                 state_age = now - state['time']
-                state_skew = max(
+                state_skews = [
                     float(state['position_skew_s']),
                     float(state['angular_rate_skew_s']),
-                    float(state['yaw_control_skew_s']),
-                )
+                ]
+                if state['yaw_control_skew_s'] is not None:
+                    state_skews.append(float(state['yaw_control_skew_s']))
+                state_skew = max(state_skews)
                 if (
                     -0.5 <= state_age <= max_state_age_s
                     and (
@@ -19122,7 +19146,11 @@ class InteractionsControl:
             if now >= startup_deadline:
                 raise StaleLocalizationError(
                     'No fresh synchronized onboard state received from '
-                    'VEL_ORI, POS_ACC, RATE_EST, YAW_CTL, and MOT_BAT'
+                    'required VEL_ORI, POS_ACC, RATE_EST, MOT_BAT'
+                    + (', and YAW_CTL' if (
+                        getattr(self, 'mission', None) is None
+                        or onboard_yaw_log_required(self.mission))
+                       else '')
                 )
             self.lo_commander.send_position_setpoint(
                 *nominal_position, nominal_yaw_deg
@@ -19858,8 +19886,10 @@ class InteractionsControl:
             state_group_skews = {
                 'position_skew_s': float(state['position_skew_s']),
                 'angular_rate_skew_s': float(state['angular_rate_skew_s']),
-                'yaw_control_skew_s': float(state['yaw_control_skew_s']),
             }
+            if state['yaw_control_skew_s'] is not None:
+                state_group_skews['yaw_control_skew_s'] = float(
+                    state['yaw_control_skew_s'])
             state_group_skew_values = np.asarray(
                 list(state_group_skews.values()), dtype=float
             )
@@ -26465,9 +26495,11 @@ class InteractionsControl:
                         ),
                         'latest_state_group_skew_s': (
                             None if latest_state is None else max(
-                                latest_state['position_skew_s'],
-                                latest_state['angular_rate_skew_s'],
-                                latest_state['yaw_control_skew_s'],
+                                skew for skew in (
+                                    latest_state['position_skew_s'],
+                                    latest_state['angular_rate_skew_s'],
+                                    latest_state['yaw_control_skew_s'],
+                                ) if skew is not None
                             )
                         ),
                         'command_sent': 'level_attitude_fixed_z',

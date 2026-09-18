@@ -871,6 +871,15 @@ LOG_VARS = {
     'ATT_RATE_CTL': ATT_RATE_CTL,
 }
 
+
+def onboard_yaw_log_required(mission):
+    """Only the enabled yaw command model consumes yaw PID telemetry."""
+    wrench = ((mission.get('Interaction', {}).get('config', {})
+               .get('wrench_interaction')) or {})
+    return bool((wrench.get('motor_model') or {})
+                .get('yaw_command_model', {}).get('enabled', False))
+
+
 FIRMWARE_BRAKE_LOG_VARS = {
     'log_period_ms': 100,
     'hlCommander.pRelReady': {'type': 'uint8_t', 'unit': '', 'data': []},
@@ -919,12 +928,36 @@ def log_vars_for_mission(mission):
     if firmware_brake:
         if enabled:
             raise ValueError('firmware auto brake cannot use offboard shadow')
-        return {**LOG_VARS, 'FIRMWARE_BRAKE': FIRMWARE_BRAKE_LOG_VARS}
+        optional_logs = (wrench_config.get('firmware_auto_brake') or {}).get(
+            'include_optional_log_groups', False)
+        if type(optional_logs) is not bool:
+            raise ValueError(
+                'firmware_auto_brake.include_optional_log_groups must be boolean'
+            )
+        selected = {
+            name: LOG_VARS[name]
+            for name in ('VEL_ORI', 'POS_ACC', 'RATE_EST', 'MOT_BAT')
+        }
+        if optional_logs:
+            selected.update({
+                'YAW_CTL': YAW_CTL,
+                'POS_CTL_I_D': CTL_I_D,
+                'POS_VEL_CTL': POS_VEL_CTL,
+                'ATT_RATE_CTL': ATT_RATE_CTL,
+            })
+        elif onboard_yaw_log_required(mission):
+            selected['YAW_CTL'] = YAW_CTL
+        selected['FIRMWARE_BRAKE'] = FIRMWARE_BRAKE_LOG_VARS
+        return selected
     # A dormant diagnostic must not make a legacy mission fail because it
     # happens to carry an old or misspelled shadow-mode value.  Mode validation
     # belongs exclusively to the explicitly enabled path.
+    ordinary_logs = (
+        {**LOG_VARS, 'YAW_CTL': YAW_CTL}
+        if onboard_yaw_log_required(mission) else LOG_VARS
+    )
     if not enabled:
-        return LOG_VARS
+        return ordinary_logs
     if mode not in ('onboard_mirror', 'inertial_position'):
         raise ValueError(
             'contact_attitude_shadow_mode must be onboard_mirror or '
@@ -932,10 +965,10 @@ def log_vars_for_mission(mission):
         )
     if mode == 'inertial_position':
         return {
-            **LOG_VARS,
+            **ordinary_logs,
             'GYRO_1KHZ': CONTACT_IMU_1KHZ,
         }
-    return LOG_VARS
+    return ordinary_logs
 # PID Configurations
 PID_VALUES_PROP_2_NO_I = {
     # 'quadSysId.armLength': '0.053',

@@ -33,6 +33,7 @@ from Interaction.command_wrapper import CommandWrapper
 from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.braking_repeat_test import validate_repeat_test_options
 from Interaction.post_release_firmware_control_event import send_vicon_position_mirror
+from Interaction.config import onboard_yaw_log_required
 
 from smooth_controller import SmoothController
 from tracker import (
@@ -1484,14 +1485,14 @@ class Controller:
                 'stateEstimateZ.ratePitch',
                 'stateEstimateZ.rateYaw',
             ),
-            'YAW_CTL': (
-                'controller.cmd_yaw',
-                'controller.r_yaw',
-            ),
             'MOT_BAT': (
                 'motor.m1', 'motor.m2', 'motor.m3', 'motor.m4', 'pm.vbat',
             ),
         }
+        if onboard_yaw_log_required(self.mission):
+            required['YAW_CTL'] = (
+                'controller.cmd_yaw', 'controller.r_yaw',
+            )
         run = getattr(self.args, 'contact_attitude_run', None)
         if run in (2, 3):
             required.update({
