@@ -305,11 +305,12 @@ class Controller:
                              'measured 0.02–0.20 s hardware response fit')
         self.firmware_auto_brake_response_time_s = float(response_time)
         if not (self.args.interaction and self.args.sense and self.args.vicon
-                and self.args.vicon_mode == 'rigidbody'
+                and self.args.vicon_mode in ('rigidbody', 'pointcloud')
                 and not self.args.vicon_full_pose and self.args.log
                 and not self.args.crazysim and not self.args.ground_test):
             raise ValueError('firmware auto brake requires hardware --interaction '
-                             '--sense --log and rigidbody position-only Vicon')
+                             '--sense --log and rigidbody or pointcloud '
+                             'position-only Vicon')
         if (wrench.get('contact_attitude_shadow_enabled', False) or
                 (wrench.get('post_release_estimator_control') or {}).get(
                     'enabled', False)):

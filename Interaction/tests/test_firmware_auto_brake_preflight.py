@@ -197,6 +197,23 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'offboard EKF'):
             controller.prepare_firmware_auto_brake()
 
+    def test_single_marker_pointcloud_is_allowed_but_mixed_is_not(self):
+        controller = self.controller({
+            'enabled': True, 'response_time_s': 0.08,
+        })
+        controller.args.vicon_mode = 'pointcloud'
+        controller.prepare_firmware_auto_brake()
+        self.assertTrue(controller.firmware_auto_brake_enabled)
+
+        controller.args.vicon_full_pose = True
+        with self.assertRaisesRegex(ValueError, 'position-only'):
+            controller.prepare_firmware_auto_brake()
+
+        controller.args.vicon_full_pose = False
+        controller.args.vicon_mode = 'mixed'
+        with self.assertRaisesRegex(ValueError, 'position-only'):
+            controller.prepare_firmware_auto_brake()
+
     def test_readiness_requires_selected_firmware_mode(self):
         for name, code in [('two_phase', 0), ('zero_velocity', 1)]:
             controller = self.controller({
