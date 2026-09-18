@@ -1,9 +1,12 @@
 import json
 import hashlib
 import math
+import multiprocessing
+from multiprocessing.connection import wait as connection_wait
 import os
 from pathlib import Path
 import struct
+import socket
 import threading
 import time
 import unittest
@@ -266,6 +269,31 @@ class ServiceTests(unittest.TestCase):
         self.assertFalse(service.status()['ready'])
         self.assertIsNone(cf.callback)
 
+    def test_spawn_pipeline_wakes_without_maintenance_poll(self):
+        # Deliberately make the maintenance timer longer than this test's
+        # deadline: snapshot, worker result and FC result must all wake it.
+        cf = FakeCf()
+        service = PiEventPlanner(cf)
+        def long_wait(objects, timeout):
+            return connection_wait(objects, timeout=5.)
+        with patch('Interaction.post_release_pi_planner.wait', side_effect=long_wait):
+            try:
+                service.start()
+                service.begin_release(99, 7)
+                for chunk in encode_chunks(SNAPSHOT, 99, 7, 4, snapshot()):
+                    cf.callback(packet(chunk))
+                deadline = time.monotonic() + 2.
+                while service.status()['phase'] != 'accepted' and time.monotonic() < deadline:
+                    time.sleep(.001)
+                self.assertEqual(service.status()['phase'], 'accepted', service.status())
+                self.assertEqual(service.status()['commit_send_count'], 1)
+            finally:
+                service.close()
+        self.assertFalse(service._thread.is_alive())
+        self.assertFalse(service._process.is_alive())
+        self.assertIsNone(service._wake_read)
+        self.assertIsNone(service._wake_write)
+
     def test_late_plan_is_never_shifted_or_sent(self):
         service = PiEventPlanner(FakeCf())
         service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
@@ -371,6 +399,73 @@ class ServiceTests(unittest.TestCase):
             service._tick()
         self.assertEqual(service.status()['phase'], 'snapshot_timeout')
         self.assertNotIn('hold', service.status())
+
+
+class WakeupTests(unittest.TestCase):
+    def setUp(self):
+        self.service = PiEventPlanner(FakeCf())
+        self.service._connection, self.peer = multiprocessing.Pipe()
+        self.service._wake_read, self.service._wake_write = socket.socketpair()
+        self.service._wake_read.setblocking(False)
+        self.service._wake_write.setblocking(False)
+
+    def tearDown(self):
+        self.service.close()
+        self.peer.close()
+
+    def assert_wakes(self, action):
+        entered, finished = threading.Event(), threading.Event()
+        failures = []
+        def observed_wait(objects, timeout):
+            entered.set()
+            return connection_wait(objects, timeout)
+        def waiter():
+            try:
+                self.service._wait_for_work(timeout_s=5.)
+            except Exception as exc:
+                failures.append(exc)
+            finally:
+                finished.set()
+        with patch('Interaction.post_release_pi_planner.wait', side_effect=observed_wait):
+            thread = threading.Thread(target=waiter)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(1.))
+                action()
+                self.assertTrue(finished.wait(1.), 'wait only ended on maintenance timeout')
+                self.assertEqual(failures, [])
+            finally:
+                self.service._stop.set()
+                self.service._notify_work()
+                thread.join(1.)
+
+    def test_worker_pipe_wakes_without_fc_packet(self):
+        self.assert_wakes(lambda: self.peer.send(('result', (0, None, 'test'))))
+        self.assertEqual(self.service._connection.recv(), ('result', (0, None, 'test')))
+
+    def test_callback_queue_wakes_idle_service(self):
+        event = ('result', 0, None)
+        self.assert_wakes(lambda: self.service._queue_event(event))
+        self.assertEqual(self.service._events.get_nowait(), event)
+
+    def test_stop_wakes_idle_service(self):
+        def stop():
+            self.service._stop.set()
+            self.service._notify_work()
+        self.assert_wakes(stop)
+
+    def test_pending_queue_never_waits_for_another_wakeup(self):
+        # A previous socket read may coalesce several queued events.
+        self.service._events.put_nowait(('result', 0, None))
+        with patch('Interaction.post_release_pi_planner.wait') as wait_mock:
+            self.service._wait_for_work()
+        wait_mock.assert_not_called()
+
+    def test_maintenance_period_unchanged_and_both_sources_registered(self):
+        with patch('Interaction.post_release_pi_planner.wait', return_value=[]) as wait_mock:
+            self.service._wait_for_work()
+        wait_mock.assert_called_once_with(
+            [self.service._connection, self.service._wake_read], timeout=.002)
 
 
 if __name__ == '__main__':

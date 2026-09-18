@@ -12,9 +12,11 @@ from __future__ import annotations
 import ctypes
 import math
 import multiprocessing
+from multiprocessing.connection import wait
 from pathlib import Path
 import queue
 import shutil
+import socket
 import struct
 import subprocess
 import sys
@@ -219,6 +221,7 @@ class PiEventPlanner:
         self._stop = threading.Event()
         self._events = queue.Queue(maxsize=16)
         self._process = self._thread = self._connection = None
+        self._wake_read = self._wake_write = None
         self._callback = self._on_packet
         self._listening = False
         self._generation = 0
@@ -249,6 +252,9 @@ class PiEventPlanner:
             kind, payload = parent.recv()
             if kind != 'ready':
                 raise RuntimeError('Pi planner prewarm failed: %s' % payload)
+            self._wake_read, self._wake_write = socket.socketpair()
+            self._wake_read.setblocking(False)
+            self._wake_write.setblocking(False)
             self.cf.add_port_callback(CRTPPort.SETPOINT_HL, self._callback)
             self._listening = True
             self._thread = threading.Thread(target=self._run, name='post-release-plan-link', daemon=True)
@@ -305,19 +311,50 @@ class PiEventPlanner:
                         self._status['snapshot_duplicate_count'] += 1
                     if body is not None and not self._snapshot_queued:
                         decode_snapshot(body)
-                        self._events.put_nowait(('snapshot', generation, body))
+                        self._queue_event(('snapshot', generation, body))
                         self._snapshot_queued = True
                     elif (body is not None and not self._ack_retry_queued and
                           self._status['snapshot_ack_count'] < 3):
-                        self._events.put_nowait(('snapshot_retry', generation, None))
+                        self._queue_event(('snapshot_retry', generation, None))
                         self._ack_retry_queued = True
                 elif data[0] == PLAN_RESULT and len(data) == RESULT.size:
                     values = RESULT.unpack(data)
                     if (values[1] == VERSION and values[2] == assembly.sequence and
                             values[3] == assembly.session_id and values[4] == assembly.token):
-                        self._events.put_nowait(('result', generation, values))
+                        self._queue_event(('result', generation, values))
             except (ValueError, queue.Full) as exc:
                 self._status.update(phase='snapshot_rejected', error=str(exc))
+
+    def _notify_work(self):
+        writer = self._wake_write
+        if writer is not None:
+            try:
+                writer.send(b'\0')
+            except BlockingIOError:
+                # A full socket already has an unread wakeup. The queue, not
+                # the number of wake bytes, owns the pending events.
+                pass
+            except OSError:
+                if not self._stop.is_set():
+                    raise
+
+    def _queue_event(self, event):
+        self._events.put_nowait(event)
+        self._notify_work()
+
+    def _wait_for_work(self, timeout_s=.002):
+        # Wait on BOTH the process result pipe and callback wake socket. A
+        # completed plan used to wait for Queue.get(timeout=.002) to expire.
+        # Keep that timeout for unchanged retry/deadline maintenance, but
+        # process results and FC packets now interrupt the wait immediately.
+        if not self._events.empty() or self._stop.is_set():
+            return
+        ready = wait([self._connection, self._wake_read], timeout=timeout_s)
+        if self._wake_read in ready:
+            try:
+                self._wake_read.recv(4096)
+            except BlockingIOError:
+                pass
 
     def _send(self, payload):
         # Only queue while the state lock is held. cflib invokes packet-sent
@@ -452,8 +489,11 @@ class PiEventPlanner:
     def _run(self):
         try:
             while not self._stop.is_set():
+                self._wait_for_work()
+                if self._stop.is_set():
+                    break
                 try:
-                    event = self._events.get(timeout=.002)
+                    event = self._events.get_nowait()
                 except queue.Empty:
                     event = None
                 result_message = self._connection.recv() if self._connection.poll() else None
@@ -473,6 +513,7 @@ class PiEventPlanner:
 
     def close(self):
         self._stop.set()
+        self._notify_work()
         if self._listening:
             self.cf.remove_port_callback(CRTPPort.SETPOINT_HL, self._callback)
             self._listening = False
@@ -490,5 +531,9 @@ class PiEventPlanner:
                 self._process.join(timeout=1.)
         if self._connection:
             self._connection.close()
+        for wake_socket in (self._wake_read, self._wake_write):
+            if wake_socket is not None:
+                wake_socket.close()
+        self._wake_read = self._wake_write = None
         with self._lock:
             self._status.update(ready=False, phase='closed')
