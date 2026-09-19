@@ -337,10 +337,14 @@ class Controller:
             planner = getattr(self.cf, '_post_release_pi_planner', None)
             if planner is None or not planner.status().get('ready', False):
                 raise RuntimeError('Pi event planner is not prewarmed before arm')
-            for name in ('pRelJoint', 'pRelHost'):
-                if int(self.cf.param.get_value('hlCommander.' + name)) != 1:
-                    raise RuntimeError('Pi event planner firmware mode not '
-                                       'confirmed before arm: ' + name)
+            from Interaction.firmware_parameter_confirmation import (
+                confirm_firmware_mode_parameters,
+            )
+            confirmed = confirm_firmware_mode_parameters(self.cf.param)
+            if not planner.status().get('ready', False):
+                raise RuntimeError('Pi event planner stopped during pre-arm '
+                                   'parameter confirmation')
+            logger.info('Pi event planner firmware mode confirmed: %s', confirmed)
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             values = self.log_manager.get_latest_group_log_data('FIRMWARE_BRAKE')
