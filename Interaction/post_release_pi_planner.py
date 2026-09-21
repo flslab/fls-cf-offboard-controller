@@ -10,6 +10,7 @@ The FC owns timing/late rejection and the bounded emergency level return.
 from __future__ import annotations
 
 import ctypes
+from collections import deque
 import math
 import multiprocessing
 from multiprocessing.connection import wait
@@ -287,6 +288,27 @@ class PiEventPlanner:
         self._model_assembly = None
         self._model_event = threading.Event()
         self._model_error = None
+        self._diagnostics = deque(maxlen=128)
+        self._diagnostics_dropped = 0
+
+    def _record_diagnostic(self, event, **fields):
+        # Caller holds _lock. No file/network I/O on the timing-critical path.
+        if len(self._diagnostics) == self._diagnostics.maxlen:
+            self._diagnostics_dropped += 1
+        self._diagnostics.append(dict(schema='pi_plan_evidence_v1', event=event,
+            pi_monotonic_ns=time.monotonic_ns(), generation=self._generation,
+            session_id=self._status.get('session_id'), sequence=self._status.get('sequence'),
+            token=self._assembly.token if self._assembly else None, **fields))
+
+    def drain_diagnostics(self):
+        with self._lock:
+            rows = list(self._diagnostics)
+            self._diagnostics.clear()
+            if self._diagnostics_dropped:
+                rows.insert(0, dict(schema='pi_plan_evidence_v1', event='buffer_overflow',
+                                    dropped=self._diagnostics_dropped))
+                self._diagnostics_dropped = 0
+            return rows
 
     def start(self, timeout_s=25.):
         if self._process is not None:
@@ -433,7 +455,13 @@ class PiEventPlanner:
                     elif body is not None:
                         self._status['snapshot_duplicate_count'] += 1
                     if body is not None and not self._snapshot_queued:
-                        body = expand_snapshot(body, self._model_body)
+                        wire_body = body
+                        body = expand_snapshot(wire_body, self._model_body)
+                        self._record_diagnostic('snapshot', protocol_version=VERSION,
+                            wire_body_hex=wire_body.hex(), expanded_body_hex=body.hex(),
+                            model_body_hex=self._model_body.hex(),
+                            model_id=validate_model(self._model_body),
+                            first_fragment_pi_monotonic_s=assembly.first_receive_s)
                         self._queue_event(('snapshot', generation, body))
                         self._snapshot_queued = True
                 elif data[0] == PLAN_RESULT and len(data) == RESULT.size:
@@ -522,6 +550,7 @@ class PiEventPlanner:
             # duplicate must not restart/alter a completed transaction.
             if self._sent_plan is None:
                 return
+            self._record_diagnostic('firmware_result', result_body_hex=RESULT.pack(*payload).hex())
             errno, accepted = payload[5:7]
             received_us, executed_us = payload[7:9]
             # Execution is a second asynchronous notice, not another handshake.
@@ -567,6 +596,10 @@ class PiEventPlanner:
     def _handle_plan(self, generation, plan, error):
         if generation != self._generation:
             return
+        self._record_diagnostic('planner_result', error=error,
+            expanded_plan_hex=plan['body'].hex() if plan and 'body' in plan else None,
+            wire_plan_hex=compact_plan(plan['body']).hex() if plan and 'body' in plan else None,
+            summary={key: value for key, value in (plan or {}).items() if key != 'body'})
         if self._assembly is not None and self._assembly.rejected:
             self._status.update(phase='snapshot_rejected', error='snapshot assembly rejected')
             return

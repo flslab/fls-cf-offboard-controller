@@ -15512,6 +15512,42 @@ class InteractionsControl:
 
     def _wait_for_firmware_brake_hold(self, completion, *, brake_mode,
                                      baseline_receipt_s, baseline_timeouts):
+        from Interaction.post_release_command_trace import ReleaseCommandTrace
+        cf = getattr(self, 'cf', None)
+        trace = ReleaseCommandTrace(cf) if brake_mode == 'pi_joint' and cf is not None else None
+        try:
+            if trace is not None:
+                trace.start()
+            self._release_command_trace = trace
+            return self._wait_for_firmware_brake_hold_impl(completion,
+                brake_mode=brake_mode, baseline_receipt_s=baseline_receipt_s,
+                baseline_timeouts=baseline_timeouts)
+        finally:
+            if trace is not None:
+                trace.close()
+            self._flush_release_diagnostics()
+            self._release_command_trace = None
+
+    def _flush_release_diagnostics(self):
+        # Flush only on the monitor thread, never on USB/worker callbacks.
+        try:
+            planner = getattr(getattr(self, 'cf', None), '_post_release_pi_planner', None)
+            drain = getattr(planner, 'drain_diagnostics', None)
+            rows = drain() if callable(drain) else []
+            if isinstance(rows, (list, tuple)):
+                for row in rows:
+                    self._log_event('Pi Release Planner Evidence', row)
+            trace = getattr(self, '_release_command_trace', None)
+            if trace is not None:
+                for row in trace.drain():
+                    self._log_event('Firmware Release Controller Targets', row)
+        except Exception:
+            if not getattr(self, '_release_diagnostics_warned', False):
+                logger.exception('Optional release diagnostics could not be saved')
+                self._release_diagnostics_warned = True
+
+    def _wait_for_firmware_brake_hold_impl(self, completion, *, brake_mode,
+                                          baseline_receipt_s, baseline_timeouts):
         monitor_started = time.monotonic()
         monitor = FirmwareBrakeMonitor(
             started_monotonic_s=monitor_started,
@@ -15522,6 +15558,7 @@ class InteractionsControl:
                       if brake_mode == 'pi_joint' else None)
         planner_phase = None
         while time.monotonic() - monitor_started < 6.0:
+            self._flush_release_diagnostics()
             self._check_firmware_brake_monitor_safety()
             if pi_planner is not None:
                 planner_status = pi_planner.status()
@@ -22199,18 +22236,22 @@ class InteractionsControl:
                                                    'prepared before arm')
                             pi_planner.begin_release(
                                 firmware_brake_session_id, 0)
-                        release_sent = handoff_pi_release_to_firmware(
-                            self.cf,
-                            session_id=firmware_brake_session_id,
-                            sequence=0,
-                            arduino_sample_ms=int(
-                                potentiometer_release_decision
-                                .unloaded_started_sample_id),
-                            pi_receive_monotonic_ns=int(round(
-                                potentiometer_release_decision
-                                .unloaded_started_at_s * 1_000_000_000)),
-                            firmware_auto_brake_armed=True,
-                        )
+                        try:
+                            release_sent = handoff_pi_release_to_firmware(
+                                self.cf,
+                                session_id=firmware_brake_session_id,
+                                sequence=0,
+                                arduino_sample_ms=int(
+                                    potentiometer_release_decision
+                                    .unloaded_started_sample_id),
+                                pi_receive_monotonic_ns=int(round(
+                                    potentiometer_release_decision
+                                    .unloaded_started_at_s * 1_000_000_000)),
+                                firmware_auto_brake_armed=True,
+                            )
+                        except Exception:
+                            self._flush_release_diagnostics()
+                            raise
                         self._translation_high_level_active = True
                         self._log_event(
                             'Firmware Post-Release Brake Handoff',

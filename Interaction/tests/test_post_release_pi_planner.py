@@ -340,6 +340,15 @@ class ServiceTests(unittest.TestCase):
             json.dumps(service.status())
             self.assertFalse(any(data[0] in (SNAPSHOT_ACK, PLAN_COMMIT) for data in cf.sent))
             self.assertEqual(len(cf.sent), 3)
+            evidence = service.drain_diagnostics()
+            snap = next(row for row in evidence if row['event'] == 'snapshot')
+            self.assertEqual(bytes.fromhex(snap['expanded_body_hex']), snapshot())
+            self.assertEqual(bytes.fromhex(snap['model_body_hex']), TEST_MODEL)
+            plan = next(row for row in evidence if row['event'] == 'planner_result')
+            self.assertEqual(compact_plan(bytes.fromhex(plan['expanded_plan_hex'])),
+                             bytes.fromhex(plan['wire_plan_hex']))
+            self.assertTrue(any(row['event'] == 'firmware_result' for row in evidence))
+            json.dumps(evidence)
         finally:
             service.close()
         self.assertFalse(service.status()['ready'])
