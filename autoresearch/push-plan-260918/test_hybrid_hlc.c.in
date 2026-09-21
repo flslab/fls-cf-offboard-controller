@@ -257,6 +257,20 @@ int main(void) {
   assert(jointPush.executedUs==5010320);
   assert(jointExecutionNoticeRemaining==3 && postReleaseAutoReplanCount==1);
   assert(out.attitude.pitch==0);
+  assert(out.mode.z==modeAbs && out.position.z==postReleaseAutoHeightM);
+  // Only the bounded return may outlive the old Vicon timeout, not rapid
+  // braking, stale attitude or an indefinitely repeated monitor call.
+  assert(jointHostCanFinishWithoutVicon(true,5400000,5.4f));
+  assert(!jointHostCanFinishWithoutVicon(false,5400000,5.4f));
+  assert(!jointHostCanFinishWithoutVicon(true,5700000,5.7f));
+  postReleaseAutoStage=1;
+  assert(!jointHostCanFinishWithoutVicon(true,5400000,5.4f));
+  out=issued(5.4f,true);
+  assert(out.mode.z==modeAbs && out.position.z==postReleaseAutoHeightM);
+  postReleaseAutoStage=2;jointActive=false;jointLocalActive=true;
+  jointLocalBeginS=5.f;jointLocalProfile.durationS=.5f;
+  assert(jointHostCanFinishWithoutVicon(true,5400000,5.4f));
+  assert(!jointHostCanFinishWithoutVicon(true,5600000,5.6f));
   puts("PASS: extracted production HLC capture/switch/timeout/render branches; zero old window, first-tick snapshot, prefix replacement/C3, loss, bounded refresh, no-Pi fault, actual execution timestamp");
   return 0;
 }

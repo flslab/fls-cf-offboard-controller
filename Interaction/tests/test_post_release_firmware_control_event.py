@@ -93,6 +93,48 @@ class FirmwareBrakeMonitorTimelineTests(unittest.TestCase):
                                     'readiness unavailable'):
             self.observe(0.5, receipt=1000.1, ready=0)
 
+    def accepted_plan(self):
+        self.monitor.track_accepted_plan(dict(phase='executing', firmware_errno=0,
+            snapshot_received_s=.05, start_delay_us=40000, duration_s=.8))
+
+    def test_accepted_curve_continues_without_claiming_hold(self):
+        self.accepted_plan()
+        self.observe(.1, receipt=1000.1, ready=0)
+        for t in (.45, .7, 1.0):
+            self.assertFalse(self.observe(t, receipt=1000+t, ready=0)['hold_confirmed'])
+        recovered = self.observe(1.05, receipt=1001.05, ready=1)
+        self.assertTrue(any(n == 'Firmware Brake Observer Recovered'
+                            for n, _ in recovered['events']))
+        self.assertTrue(self.observe(1.1, receipt=1001.1, ready=1, stage=4,
+                                     notice=self.notice)['hold_confirmed'])
+
+    def test_curve_grace_is_fixed_not_renewed_by_polling(self):
+        self.accepted_plan()
+        self.observe(.1, receipt=1000.1, ready=0)
+        self.observe(.5, receipt=1000.5, ready=0)
+        self.accepted_plan()
+        with self.assertRaisesRegex(FirmwareBrakeMonitorError, 'recovery deadline'):
+            self.observe(1.20, receipt=1001.20, ready=0)
+
+    def test_accepted_curve_does_not_excuse_rapid_hold_or_telemetry_loss(self):
+        for stage in (1, 4):
+            self.setUp()
+            self.accepted_plan()
+            self.observe(.1, receipt=1000.1, ready=0)
+            with self.assertRaises(FirmwareBrakeMonitorError):
+                self.observe(.5, receipt=1000.5, ready=0, stage=stage)
+        self.setUp()
+        self.accepted_plan()
+        self.observe(.1, receipt=1000.1, ready=0)
+        with self.assertRaises(FirmwareBrakeMonitorError):
+            self.observe(.5, receipt=1000.1, ready=0)
+
+    def test_unaccepted_or_invalid_plan_does_not_extend_grace(self):
+        for phase in ('planning', 'awaiting_result', 'rejected'):
+            self.monitor.track_accepted_plan(dict(phase=phase, firmware_errno=0,
+                snapshot_received_s=.05, start_delay_us=40000, duration_s=.8))
+        self.assertIsNone(self.monitor.accepted_plan_end_s)
+
     def test_timeout_and_ownership_failures_remain_distinct(self):
         with self.assertRaisesRegex(FirmwareBrakeMonitorError, 'timed out'):
             self.observe(0.1, receipt=1000.1, timeouts=8)

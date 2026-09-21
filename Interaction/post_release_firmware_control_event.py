@@ -94,6 +94,24 @@ class FirmwareBrakeMonitor:
         self.missing_ready_since_s = None
         self.delayed_reported = False
         self.fault = None
+        self.accepted_plan_end_s = None
+
+    def track_accepted_plan(self, status):
+        """Use confirmed FC acceptance, not a receipt-relative renewable grace."""
+        if (status.get('phase') not in ('accepted', 'executing') or
+                status.get('firmware_errno') != 0):
+            return
+        try:
+            start = float(status['snapshot_received_s'])
+            delay = float(status['start_delay_us']) / 1e6
+            duration = float(status['duration_s'])
+        except (KeyError, TypeError, ValueError):
+            return
+        end = start + delay + duration
+        if (all(math.isfinite(v) for v in (start, delay, duration, end)) and
+                0 <= delay <= 1 and 0 < duration <= 3 and
+                self.started_s <= start and end <= self.started_s + 5):
+            self.accepted_plan_end_s = end
 
     def _fail(self, code, message):
         self.fault = FirmwareBrakeMonitorError(message, code=code)
@@ -161,8 +179,14 @@ class FirmwareBrakeMonitor:
                            'firmware brake dropped ownership before hold')
         if (self.missing_ready_since_s is not None and
                 now_monotonic_s - self.missing_ready_since_s > 0.30):
-            self._fail('readiness_lost',
-                       'firmware control-state readiness unavailable for over 0.30 s')
+            bounded_curve = (health == 'fresh' and post_release_packet and
+                             brake_log.get('hlCommander.pRelAutoSt') == 2 and
+                             self.accepted_plan_end_s is not None and
+                             now_monotonic_s <= self.accepted_plan_end_s + 0.30)
+            if not bounded_curve:
+                self._fail('readiness_lost',
+                           'firmware control-state readiness unavailable beyond '
+                           '0.30 s / confirmed bounded curve recovery deadline')
 
         return {
             'health': health,

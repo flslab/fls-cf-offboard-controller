@@ -15562,6 +15562,7 @@ class InteractionsControl:
             self._check_firmware_brake_monitor_safety()
             if pi_planner is not None:
                 planner_status = pi_planner.status()
+                monitor.track_accepted_plan(planner_status)
                 # Local bookkeeping only: no new telemetry subscription and
                 # no waiting for Pi compute on the USB receive thread.
                 phase = (planner_status.get('phase'),

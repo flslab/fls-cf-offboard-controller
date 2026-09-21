@@ -28,7 +28,8 @@ def block_at(marker, start=0):
 helpers = '\n\n'.join(block_at(marker) for marker in [
     'static void jointCurrentWireModel(', 'static bool jointPushHandlePacket(',
     'static void jointHostCapture(', 'static float jointHostLocalDuration(',
-    'static bool jointHostBeginLocal(', 'static void jointHostDeadlineFault(',
+    'static bool jointHostBeginLocal(', 'static bool jointHostCanFinishWithoutVicon(',
+    'static void jointHostDeadlineFault(',
     'void crtpCommanderHighLevelPostReleaseApplied('])
 getsetpoint = source.index('static bool postReleaseAutoGetSetpoint(')
 host = block_at('if(jointHostEnabled && !jointActive)', getsetpoint)
