@@ -2,7 +2,7 @@
 
 No periodic state subscription is created. ``start`` compiles/warms the native
 kernel and a separate spawn process before arming. Packet callbacks only
-validate/assemble/queue; a service thread handles ACKs, planning and sends.
+validate/assemble/queue; a service thread handles planning and sends.
 The FC owns timing/late rejection and the bounded emergency level return.
 ``status`` is JSON-safe; ``ready``, ``phase`` and ``error`` are stable fields.
 """
@@ -15,6 +15,7 @@ import multiprocessing
 from multiprocessing.connection import wait
 from pathlib import Path
 import queue
+import secrets
 import shutil
 import socket
 import struct
@@ -27,23 +28,66 @@ import zlib
 
 from cflib.crtp.crtpstack import CRTPPacket, CRTPPort
 
-VERSION = 1
+VERSION = 3
 SNAPSHOT = 19
 SNAPSHOT_ACK = 20
 PLAN_CHUNK = 21
 PLAN_COMMIT = 22
 PLAN_RESULT = 23
+MODEL_REQUEST = 24
+MODEL_PART = 25
+MODEL_BODY = struct.Struct('<9f')
+MODEL_QUERY = struct.Struct('<BBI')
 CHUNK = struct.Struct('<BBHIHBB')
 ACK = struct.Struct('<BBHIH')
 COMMIT = struct.Struct('<BBHIHI')
-RESULT = struct.Struct('<BBHIHHI')
-SNAPSHOT_BODY = struct.Struct('<IIHH26f')
+RESULT = struct.Struct('<BBHIHHIII')
+SNAPSHOT_BODY = struct.Struct('<IIHH28f')
 PLAN_BODY = struct.Struct('<If12f')
+# Expanded bodies above are numerical-kernel interfaces, not v3 wire layouts.
+WIRE_SNAPSHOT_BODY = struct.Struct('<IIHHI19f')
+WIRE_PLAN_BODY = struct.Struct('<If6f')
 DATA_BYTES = 18
-DEFAULT_START_DELAY_US = 80_000
+DEFAULT_START_DELAY_US = 40_000
 MIN_START_DELAY_US = 20_000
 LOCAL_SEND_MARGIN_US = 10_000
 MAX_SNAPSHOT_WINDOW_US = 1_000_000
+
+
+def validate_model(body):
+    if len(body) != MODEL_BODY.size:
+        raise ValueError('model size mismatch')
+    values = MODEL_BODY.unpack(body)
+    if (not all(math.isfinite(v) for v in values) or
+            not all(0 < v <= 20 for v in values[:3]) or
+            not all(abs(v) <= 20 for v in values[3:6]) or
+            not all(struct.unpack('<f', struct.pack('<f', .01))[0] <= v <=
+                    struct.unpack('<f', struct.pack('<f', .20))[0] for v in values[6:])):
+        raise ValueError('invalid cached model')
+    return zlib.crc32(body) & 0xffffffff
+
+
+def compact_snapshot(body):
+    """Fixture/helper encoder matching FC; no quantization of dynamic state."""
+    epoch, latest, va, aa, *v = SNAPSHOT_BODY.unpack(body)
+    model = MODEL_BODY.pack(*v[14:23])
+    return WIRE_SNAPSHOT_BODY.pack(epoch, latest, va, aa, validate_model(model),
+                                   *(v[:14] + v[23:]))
+
+
+def expand_snapshot(body, cached_model):
+    epoch, latest, va, aa, model_id, *v = WIRE_SNAPSHOT_BODY.unpack(body)
+    if cached_model is None or validate_model(cached_model) != model_id:
+        raise ValueError('snapshot model changed or was not synchronized before arm')
+    expanded = SNAPSHOT_BODY.pack(epoch, latest, va, aa,
+        *(v[:14] + list(MODEL_BODY.unpack(cached_model)) + v[14:]))
+    decode_snapshot(expanded)
+    return expanded
+
+
+def compact_plan(body):
+    delay, duration, *v = PLAN_BODY.unpack(body)
+    return WIRE_PLAN_BODY.pack(delay, duration, *v[6:])
 
 
 def forward_delta_us(later, earlier):
@@ -94,7 +138,8 @@ class FragmentAssembler:
             self.token = token
             self.first_receive_s = time.monotonic() if now_s is None else now_s
         elif token != self.token:
-            # The FC is allowed only one immutable snapshot per release.
+            # Each assembler owns one immutable prefix token. The service
+            # replaces it explicitly when a newer FC prefix supersedes it.
             raise ValueError('snapshot token changed within release')
         if index in self.parts and self.parts[index] != payload:
             self.rejected = True
@@ -123,6 +168,11 @@ def decode_snapshot(body):
         raise ValueError('snapshot has no usable future start window')
     if abs(math.hypot(*values[8:10]) - 1.0) > .01:
         raise ValueError('snapshot direction is not normalized')
+    elapsed, duration = values[26:28]
+    if (elapsed < 0 or duration < 0 or duration > 1.6 or
+            (duration == 0 and elapsed != 0) or
+            (duration > 0 and (duration < .08 or elapsed > duration + .5))):
+        raise ValueError('invalid local reference prefix')
     return epoch, latest, state_age_us, attitude_age_us, values
 
 
@@ -150,12 +200,12 @@ class NativePlanner:
                                    ctypes.POINTER(ctypes.c_float)]
             self._solve.restype = ctypes.c_int
             # A real kernel call before ready avoids first-use runtime cost at release.
-            warm = [0.] * 26
+            warm = [0.] * 28
             warm[8] = 1.
             warm[14:17] = [6., 7.1, 6.]
             warm[17:20] = [1., 1., 1.]
             warm[20:23] = [.05, .07, .08]
-            self._solve((ctypes.c_float * 26)(*warm), .08, (ctypes.c_float * 17)())
+            self._solve((ctypes.c_float * 28)(*warm), .04, (ctypes.c_float * 17)())
         except BaseException:
             self._directory.cleanup()
             raise
@@ -165,7 +215,7 @@ class NativePlanner:
         delay_us = min(DEFAULT_START_DELAY_US, forward_delta_us(latest, epoch))
         out = (ctypes.c_float * 17)()
         started = time.monotonic()
-        solved = self._solve((ctypes.c_float * 26)(*values), delay_us / 1e6, out)
+        solved = self._solve((ctypes.c_float * 28)(*values), delay_us / 1e6, out)
         compute_s = time.monotonic() - started
         if not solved:
             raise ValueError('no feasible joint plan from event snapshot')
@@ -177,6 +227,7 @@ class NativePlanner:
                 'trusted_state_age_us': state_age_us, 'attitude_age_us': attitude_age_us,
                 'start_us': (epoch + delay_us) & 0xffffffff,
                 'duration_s': duration, 'compute_s': compute_s,
+                'prefix_elapsed_s': values[26], 'prefix_duration_s': values[27],
                 'predicted_terminal_speed_mps': out[13],
                 'predicted_min_forward_mps': out[14],
                 'predicted_start_speed_mps': out[15]}
@@ -213,7 +264,7 @@ def _planner_process(connection):
 
 
 class PiEventPlanner:
-    """Long-lived service; one immutable planning job per armed release."""
+    """Event-only service; a new FC prefix token supersedes the previous job."""
 
     def __init__(self, cf):
         self.cf = cf
@@ -227,12 +278,15 @@ class PiEventPlanner:
         self._generation = 0
         self._assembly = None
         self._snapshot_queued = False
-        self._ack_retry_queued = False
         self._result_seen = False
         self._sent_plan = None
         self._outbound = []
         self._process_jobs = []
         self._status = {'ready': False, 'phase': 'not_started', 'error': None}
+        self._model_body = None
+        self._model_assembly = None
+        self._model_event = threading.Event()
+        self._model_error = None
 
     def start(self, timeout_s=25.):
         if self._process is not None:
@@ -260,9 +314,40 @@ class PiEventPlanner:
             self._thread = threading.Thread(target=self._run, name='post-release-plan-link', daemon=True)
             self._status.update(ready=True, phase='ready', error=None)
             self._thread.start()
+            self.sync_model()
         except BaseException:
             self.close()
             raise
+
+    def sync_model(self, timeout_s=3.):
+        """Startup-only bounded model read. No release or controller authority."""
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
+            raise ValueError('invalid model synchronization timeout')
+        with self._lock:
+            if self._assembly is not None:
+                raise RuntimeError('model synchronization is only allowed before release')
+            nonce = secrets.randbits(32)
+            self._model_body = None
+            self._model_error = None
+            self._model_event.clear()
+            self._model_assembly = FragmentAssembler(MODEL_PART, nonce, 0, MODEL_BODY.size)
+        deadline = time.monotonic() + timeout_s
+        try:
+            for _ in range(6):
+                self._send_packet(MODEL_QUERY.pack(MODEL_REQUEST, VERSION, nonce))
+                if self._model_event.wait(max(0., min(.5, deadline-time.monotonic()))):
+                    break
+                if time.monotonic() >= deadline:
+                    break
+            with self._lock:
+                if self._model_error or self._model_body is None:
+                    raise RuntimeError('startup model sync failed: ' + (self._model_error or 'timeout'))
+                model_id = validate_model(self._model_body)
+                self._status['model_id'] = model_id
+                return model_id
+        finally:
+            with self._lock:
+                self._model_assembly = None
 
     def begin_release(self, session_id, sequence):
         if not (isinstance(session_id, int) and 0 <= session_id <= 0xffffffff and
@@ -272,22 +357,24 @@ class PiEventPlanner:
             if not self.status()['ready']:
                 raise RuntimeError('Pi event planner is not prewarmed/healthy')
             self._generation += 1
-            self._assembly = FragmentAssembler(SNAPSHOT, session_id, sequence, SNAPSHOT_BODY.size)
+            self._assembly = FragmentAssembler(SNAPSHOT, session_id, sequence, WIRE_SNAPSHOT_BODY.size)
             self._snapshot_queued = self._result_seen = False
-            self._ack_retry_queued = False
             self._sent_plan = None
             self._status = {'ready': True, 'phase': 'waiting_snapshot', 'error': None,
                             'session_id': session_id, 'sequence': sequence,
                             'generation': self._generation, 'release_begin_s': time.monotonic(),
-                            'snapshot_ack_count': 0, 'commit_send_count': 0,
+                            'plan_send_count': 0, 'superseded_snapshot_count': 0,
                             'snapshot_fragment_count': 0, 'snapshot_duplicate_count': 0}
 
     def status(self):
         with self._lock:
             result = dict(self._status)
+            result['model_id'] = (validate_model(self._model_body)
+                                  if self._model_body is not None else None)
             result['ready'] = bool(result.get('ready') and not self._stop.is_set()
                                    and self._process and self._process.is_alive()
-                                   and self._thread and self._thread.is_alive())
+                                   and self._thread and self._thread.is_alive()
+                                   and self._model_body is not None)
             return result
 
     def _on_packet(self, packet):
@@ -297,12 +384,48 @@ class PiEventPlanner:
         if not data:
             return
         with self._lock:
+            if data[0] == MODEL_PART:
+                if self._model_assembly is not None:
+                    try:
+                        body = self._model_assembly.accept(data)
+                        if body is not None:
+                            validate_model(body)
+                            self._model_body = body
+                            self._model_event.set()
+                    except ValueError as exc:
+                        self._model_error = str(exc)
+                        self._model_event.set()
+                return
             assembly = self._assembly
             if assembly is None or self._stop.is_set():
                 return
             generation = self._generation
             try:
                 if data[0] == SNAPSHOT:
+                    if len(data) >= CHUNK.size:
+                        _, version, seq, session, token, _, _ = CHUNK.unpack_from(data)
+                        if (version != VERSION or seq != assembly.sequence or
+                                session != assembly.session_id):
+                            return
+                        if assembly.token is not None and token != assembly.token:
+                            if not 0 < ((token - assembly.token) & 0xffff) < 0x8000:
+                                return  # delayed fragment from a superseded prefix
+                            self._generation += 1
+                            generation = self._generation
+                            self._assembly = assembly = FragmentAssembler(
+                                SNAPSHOT, session, seq, WIRE_SNAPSHOT_BODY.size)
+                            self._snapshot_queued = self._result_seen = False
+                            self._sent_plan = None
+                            self._status = {
+                                'ready': self._status.get('ready', False),
+                                'phase': 'waiting_snapshot', 'error': None,
+                                'session_id': session, 'sequence': seq,
+                                'generation': generation,
+                                'release_begin_s': self._status['release_begin_s'],
+                                'superseded_snapshot_count': self._status.get('superseded_snapshot_count', 0) + 1,
+                                'plan_send_count': 0, 'snapshot_fragment_count': 0,
+                                'snapshot_duplicate_count': 0,
+                            }
                     before = len(assembly.parts)
                     body = assembly.accept(data)
                     if len(assembly.parts) > before:
@@ -310,13 +433,9 @@ class PiEventPlanner:
                     elif body is not None:
                         self._status['snapshot_duplicate_count'] += 1
                     if body is not None and not self._snapshot_queued:
-                        decode_snapshot(body)
+                        body = expand_snapshot(body, self._model_body)
                         self._queue_event(('snapshot', generation, body))
                         self._snapshot_queued = True
-                    elif (body is not None and not self._ack_retry_queued and
-                          self._status['snapshot_ack_count'] < 3):
-                        self._queue_event(('snapshot_retry', generation, None))
-                        self._ack_retry_queued = True
                 elif data[0] == PLAN_RESULT and len(data) == RESULT.size:
                     values = RESULT.unpack(data)
                     if (values[1] == VERSION and values[2] == assembly.sequence and
@@ -372,12 +491,11 @@ class PiEventPlanner:
             if current:
                 self._send_packet(payload)
                 with self._lock:
-                    if generation == self._generation and payload[0] == PLAN_COMMIT:
+                    if (generation == self._generation and payload[0] == PLAN_CHUNK
+                            and payload[10] == payload[11] - 1):
                         sent_s = time.monotonic()
-                        self._status['last_commit_send_s'] = sent_s
-                        self._status.setdefault('first_commit_send_s', sent_s)
-                    elif generation == self._generation and payload[0] == SNAPSHOT_ACK:
-                        self._status['last_snapshot_ack_send_s'] = time.monotonic()
+                        self._status['last_plan_send_s'] = sent_s
+                        self._status.setdefault('first_plan_send_s', sent_s)
         for generation, payload in jobs:
             with self._lock:
                 current = generation == self._generation and not self._stop.is_set()
@@ -390,33 +508,30 @@ class PiEventPlanner:
         packet.data = payload
         self.cf.send_packet(packet)
 
-    def _snapshot_ack(self):
-        assembly = self._assembly
-        if self._status['snapshot_ack_count'] >= 3:
-            return
-        self._send(ACK.pack(SNAPSHOT_ACK, VERSION, assembly.sequence,
-                            assembly.session_id, assembly.token))
-        self._status['snapshot_ack_count'] += 1
-
     def _handle_event(self, kind, generation, payload):
         if generation != self._generation:
             return
         if kind == 'snapshot':
             if self._assembly.rejected:
                 return
-            self._snapshot_ack()
             self._status.update(phase='planning', snapshot_token=self._assembly.token,
                                 snapshot_received_s=self._assembly.first_receive_s)
             self._process_jobs.append((generation, payload))
-        elif kind == 'snapshot_retry':
-            self._ack_retry_queued = False
-            self._snapshot_ack()
         elif kind == 'result':
             # An unsolicited result cannot complete an unsent plan, and a
             # duplicate must not restart/alter a completed transaction.
-            if self._sent_plan is None or self._result_seen:
+            if self._sent_plan is None:
                 return
             errno, accepted = payload[5:7]
+            received_us, executed_us = payload[7:9]
+            # Execution is a second asynchronous notice, not another handshake.
+            # An execution notice can arrive before its acceptance notice.
+            if self._result_seen and self._status.get('phase') not in ('accepted', 'executing'):
+                return
+            if self._result_seen and (errno != 0 or not executed_us):
+                return
+            if self._status.get('fc_first_curve_us'):
+                return  # first execution timestamp is immutable
             # Wire errno follows ARM/newlib (EAGAIN=11), not the host OS's
             # errno.EAGAIN (35 on macOS). A commit may overtake a missing
             # fragment: resend the IDENTICAL plan, still with its original
@@ -424,10 +539,10 @@ class PiEventPlanner:
             if errno == 11:
                 remaining_us = (self._sent_plan['start_delay_us'] -
                                 (time.monotonic() - self._assembly.first_receive_s) * 1e6)
-                if (self._status['commit_send_count'] < 3 and
+                if (self._status['plan_send_count'] < 3 and
                         remaining_us > LOCAL_SEND_MARGIN_US):
                     self._status.update(phase='awaiting_result', firmware_errno=errno,
-                                        last_commit_send_s=time.monotonic() - .021,
+                                        last_plan_send_s=time.monotonic() - .021,
                                         incomplete_plan_replies=self._status.get('incomplete_plan_replies', 0) + 1)
                     return
             if errno == 0 and accepted != self._sent_plan['start_us']:
@@ -435,10 +550,19 @@ class PiEventPlanner:
                 self._result_seen = True
                 return
             self._result_seen = True
-            self._status.update(phase='accepted' if errno == 0 else 'rejected',
+            self._status.update(phase=('executing' if executed_us else 'accepted') if errno == 0 else 'rejected',
                                 firmware_errno=errno, accepted_start_us=accepted,
+                                fc_plan_received_us=received_us, fc_first_curve_us=executed_us,
                                 result_received_s=time.monotonic(),
                                 error=None if errno == 0 else 'FC rejected plan (errno=%s)' % errno)
+            if errno == 0 and self._sent_plan.get('snapshot_us') is not None:
+                self._status['fc_snapshot_to_plan_ms'] = forward_delta_us(
+                    received_us, self._sent_plan['snapshot_us']) / 1000.
+                if executed_us:
+                    self._status['fc_snapshot_to_first_curve_ms'] = forward_delta_us(
+                        executed_us, self._sent_plan['snapshot_us']) / 1000.
+                    self._status['fc_plan_to_first_curve_ms'] = forward_delta_us(
+                        executed_us, received_us) / 1000.
 
     def _handle_plan(self, generation, plan, error):
         if generation != self._generation:
@@ -463,12 +587,11 @@ class PiEventPlanner:
     def _send_plan(self):
         assembly, plan = self._assembly, self._sent_plan
         for packet in encode_chunks(PLAN_CHUNK, assembly.session_id,
-                                    assembly.sequence, assembly.token, plan['body']):
+                                    assembly.sequence, assembly.token, compact_plan(plan['body'])):
             self._send(packet)
-        self._send(COMMIT.pack(PLAN_COMMIT, VERSION, assembly.sequence, assembly.session_id,
-                               assembly.token, zlib.crc32(plan['body']) & 0xffffffff))
-        self._status['commit_send_count'] += 1
-        self._status['last_commit_send_s'] = time.monotonic()
+        # FC reconstructs/schedules as soon as all CRC-checked parts arrive.
+        self._status['plan_send_count'] += 1
+        self._status['last_plan_send_s'] = time.monotonic()
 
     def _tick(self):
         now = time.monotonic()
@@ -482,8 +605,8 @@ class PiEventPlanner:
             if age_us + LOCAL_SEND_MARGIN_US >= self._sent_plan['start_delay_us']:
                 if self._status.get('phase') == 'awaiting_result':
                     self._status.update(phase='result_timeout', error='FC plan acceptance not received before start')
-            elif (now - self._status['last_commit_send_s'] >= .02 and
-                  self._status['commit_send_count'] < 3):
+            elif (now - self._status['last_plan_send_s'] >= .02 and
+                  self._status['plan_send_count'] < 3):
                 self._send_plan()
 
     def _run(self):

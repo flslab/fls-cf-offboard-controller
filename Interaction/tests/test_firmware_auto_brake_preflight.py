@@ -317,7 +317,7 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'offboard EKF'):
             controller.prepare_firmware_auto_brake()
 
-    def firmware_params(self, version=26091805, *, extended=True):
+    def firmware_params(self, version=26092101, *, extended=True):
         names = ['pRelAuto', 'pRelMode', 'pRelTau']
         if extended:
             names += ['pRelJoint', 'pRelHost', 'pRelJVer']
@@ -334,7 +334,7 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
             'enabled': True, 'response_time_s': 0.14, 'mode': 'pi_joint'})
         controller.prepare_firmware_auto_brake()
         controller.cf = SimpleNamespace(param=self.firmware_params(26091804))
-        with self.assertRaisesRegex(RuntimeError, '26091805'):
+        with self.assertRaisesRegex(RuntimeError, '26092101'):
             controller._setup_firmware_auto_brake_params()
         controller.cf.param.set_value.assert_not_called()
 
@@ -394,6 +394,20 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
         controller.cf = SimpleNamespace()
         with self.assertRaisesRegex(RuntimeError, 'not prewarmed'):
             controller.verify_firmware_auto_brake_ready()
+
+    def test_final_prearm_refreshes_model_and_propagates_sync_failure(self):
+        controller = self.controller({
+            'enabled': True, 'response_time_s': .14, 'mode': 'pi_joint'})
+        controller.prepare_firmware_auto_brake()
+        planner = Mock()
+        planner.status.return_value = {'ready': True}
+        planner.sync_model.side_effect = RuntimeError('startup model sync failed')
+        controller.cf = SimpleNamespace(param=Mock(), _post_release_pi_planner=planner)
+        with patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters',
+                   return_value={'hlCommander.pRelJoint': 1, 'hlCommander.pRelHost': 1}):
+            with self.assertRaisesRegex(RuntimeError, 'model sync failed'):
+                controller.verify_firmware_auto_brake_ready()
+        planner.sync_model.assert_called_once_with()
 
     def test_single_marker_pointcloud_is_allowed_but_mixed_is_not(self):
         controller = self.controller({

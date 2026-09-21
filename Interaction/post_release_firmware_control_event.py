@@ -39,7 +39,7 @@ def firmware_brake_abort_message(brake_log):
         2: 'unwind plan invalid',
         3: 'attitude/body-rate feedback unavailable',
         4: 'rate-aware unwind plan infeasible',
-        11: 'Pi plan unavailable before local unwind deadline; bounded level return',
+        11: 'Pi plan unavailable after bounded local return; not a stable hold',
     }.get(reason, 'reason not reported' if reason is None else 'unknown reason')
     return 'firmware brake aborted (stage 6; %s; reason=%s)' % (
         description, 'unavailable' if reason is None else reason)

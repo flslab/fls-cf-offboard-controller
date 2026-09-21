@@ -17,12 +17,22 @@ from Interaction.post_release_pi_planner import (
     ACK, CHUNK, COMMIT, DATA_BYTES, PLAN_BODY, PLAN_CHUNK, PLAN_COMMIT,
     PLAN_RESULT, RESULT, SNAPSHOT, SNAPSHOT_ACK, SNAPSHOT_BODY, VERSION,
     FragmentAssembler, NativePlanner, PiEventPlanner, decode_snapshot,
-    encode_chunks, forward_delta_us,
+    encode_chunks as raw_encode_chunks, forward_delta_us,
+    WIRE_SNAPSHOT_BODY, WIRE_PLAN_BODY, MODEL_QUERY, MODEL_BODY, MODEL_REQUEST,
+    MODEL_PART, compact_snapshot, expand_snapshot, compact_plan, validate_model,
 )
 
 
+TEST_MODEL = MODEL_BODY.pack(6., 7.1, 6., 1., 1., 1., .05, .07, .08)
+
+def encode_chunks(kind, session, sequence, token, body):
+    if kind == SNAPSHOT:
+        body = compact_snapshot(body)
+    return raw_encode_chunks(kind, session, sequence, token, body)
+
+
 def snapshot(*, epoch=1_000_000, window=400_000, speed=1., yaw=0.):
-    values = [0.] * 26
+    values = [0.] * 28
     values[0:2] = [speed * math.cos(math.radians(yaw)),
                    speed * math.sin(math.radians(yaw))]
     values[3], values[6] = 10., 30.  # actual pitch and rate, not reference
@@ -44,40 +54,40 @@ def packet(data, channel=1):
 
 class ProtocolTests(unittest.TestCase):
     def test_exact_wire_sizes_and_roundtrip(self):
-        self.assertEqual((SNAPSHOT_BODY.size, PLAN_BODY.size), (116, 56))
-        self.assertEqual((ACK.size, COMMIT.size, RESULT.size), (10, 14, 16))
+        self.assertEqual((WIRE_SNAPSHOT_BODY.size, WIRE_PLAN_BODY.size), (92, 32))
+        self.assertEqual(RESULT.size, 24)
         data = snapshot()
         chunks = encode_chunks(SNAPSHOT, 0x12345678, 9, 17, data)
-        self.assertEqual(len(chunks), 7)
+        self.assertEqual(len(chunks), 6)
         self.assertTrue(all(len(item) <= 30 for item in chunks))
-        assembly = FragmentAssembler(SNAPSHOT, 0x12345678, 9, len(data))
+        assembly = FragmentAssembler(SNAPSHOT, 0x12345678, 9, WIRE_SNAPSHOT_BODY.size)
         found = None
         for chunk in reversed(chunks):
             result = assembly.accept(chunk)
             if result is not None:
                 found = result
-        self.assertEqual(found, data)
-        self.assertEqual(assembly.accept(chunks[0]), data)
+        self.assertEqual(expand_snapshot(found, TEST_MODEL), data)
+        self.assertEqual(expand_snapshot(assembly.accept(chunks[0]), TEST_MODEL), data)
 
     def test_missing_part_never_completes(self):
-        assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
         chunks = encode_chunks(SNAPSHOT, 99, 7, 4, snapshot())
         for chunk in chunks[:-1]:
             self.assertIsNone(assembly.accept(chunk))
         self.assertIsNone(assembly.accept(chunks[0]))
 
     def test_cross_session_sequence_and_version_ignored(self):
-        assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
         for session, seq in ((98, 7), (99, 8)):
             for chunk in encode_chunks(SNAPSHOT, session, seq, 4, snapshot()):
                 self.assertIsNone(assembly.accept(chunk))
         chunk = bytearray(encode_chunks(SNAPSHOT, 99, 7, 4, snapshot())[0])
-        chunk[1] = 2
+        chunk[1] = 1
         self.assertIsNone(assembly.accept(chunk))
         self.assertEqual(assembly.parts, {})
 
     def test_conflicting_duplicate_latches_rejection(self):
-        assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
         chunks = encode_chunks(SNAPSHOT, 99, 7, 4, snapshot())
         assembly.accept(chunks[0])
         broken = bytearray(chunks[0]); broken[-1] ^= 1
@@ -88,7 +98,7 @@ class ProtocolTests(unittest.TestCase):
             self.assertIsNone(assembly.accept(chunk))
 
     def test_token_change_is_not_cross_assembled(self):
-        assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
         first = encode_chunks(SNAPSHOT, 99, 7, 4, snapshot())
         second = encode_chunks(SNAPSHOT, 99, 7, 5, snapshot())
         assembly.accept(first[0])
@@ -97,7 +107,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_crc_and_exact_final_length(self):
         chunks = encode_chunks(SNAPSHOT, 99, 7, 4, snapshot())
-        assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
         with self.assertRaisesRegex(ValueError, 'length'):
             assembly.accept(chunks[-1] + b'\0')
         corrupted = list(chunks)
@@ -107,8 +117,8 @@ class ProtocolTests(unittest.TestCase):
                 assembly.accept(chunk)
 
     def test_bad_part_index_count(self):
-        for index, count in ((7, 7), (0, 8), (0, 0)):
-            assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        for index, count in ((8, 8), (0, 9), (0, 0)):
+            assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
             bad = CHUNK.pack(SNAPSHOT, VERSION, 7, 99, 4, index, count) + b'\0' * DATA_BYTES
             with self.assertRaisesRegex(ValueError, 'count/index'):
                 assembly.accept(bad)
@@ -148,13 +158,13 @@ class NativePlannerTests(unittest.TestCase):
     def test_real_kernel_uses_reference_not_predicted_actual_angles(self):
         result = self.planner.solve(snapshot())
         delay, duration, *parameters = PLAN_BODY.unpack(result['body'])
-        self.assertEqual(delay, 80_000)
+        self.assertEqual(delay, 40_000)
         self.assertEqual(parameters[:6], [0., 20., 0., 0., 0., 0.])
         self.assertLess(result['predicted_start_speed_mps'], 1.)
         self.assertLessEqual(result['predicted_terminal_speed_mps'], .012)
         self.assertGreaterEqual(result['predicted_min_forward_mps'], -.025)
         self.assertGreater(duration, .13)
-        self.assertEqual(result['start_us'], 1_080_000)
+        self.assertEqual(result['start_us'], 1_040_000)
 
     def test_world_yaw_rotation_preserves_relative_plan(self):
         a = PLAN_BODY.unpack(self.planner.solve(snapshot())['body'])
@@ -169,17 +179,27 @@ class NativePlannerTests(unittest.TestCase):
             self.planner.solve(snapshot(window=5_000))
 
     def test_start_deadline_cap_and_modular_epoch(self):
-        result = self.planner.solve(snapshot(epoch=0xffff0000, window=60_000))
-        self.assertEqual(result['start_delay_us'], 60_000)
-        self.assertEqual(result['start_us'], (0xffff0000 + 60_000) & 0xffffffff)
+        result = self.planner.solve(snapshot(epoch=0xffff0000, window=30_000))
+        self.assertEqual(result['start_delay_us'], 30_000)
+        self.assertEqual(result['start_us'], (0xffff0000 + 30_000) & 0xffffffff)
+
+    def test_unwind_prefix_uses_nonzero_reference_derivatives(self):
+        values = list(SNAPSHOT_BODY.unpack(snapshot(speed=1.03)))
+        values[-2:] = [.02, .32]
+        result = self.planner.solve(SNAPSHOT_BODY.pack(*values))
+        _, _, *parameters = PLAN_BODY.unpack(result['body'])
+        self.assertLess(parameters[1], 20.)
+        self.assertLess(parameters[4], 0.)
+        self.assertLessEqual(result['predicted_terminal_speed_mps'], .012)
+        self.assertGreaterEqual(result['predicted_min_forward_mps'], -.025)
 
     def test_vendored_kernel_pinned_hashes_and_paired_source_parity(self):
         bundled = Path(__file__).resolve().parents[1] / 'native' / 'post_release'
         paired = Path(os.environ.get('FLS_JOINT_FW', str(
             Path.home() / 'Documents/FLS_Research/crazyflie-firmware-master-post-release')))
         hashes = {
-            'post_release_joint_unwind.c': 'f8856df43f0bac01536fb46f700b4df3001da152891e249a4b879c1e4660f8e1',
-            'post_release_joint_unwind.h': '0d1b47f69c5df252df632f30779d4ba1be56f7f32fb37986bff7e16fb1bc74dd',
+            'post_release_joint_unwind.c': 'a58fe2864fcf7a0a98e78f2f3140dbb5f4d22709cb7ecaa2869a70725230f0b0',
+            'post_release_joint_unwind.h': '596b25187d7fa5a8690a1d9338fbbab993c6433a090806e8c5d7c1ed051be9ea',
             'post_release_forward_stop.c': '2a2cfec556ec32d0eacab4f7f6b9e45fe21b439fe5002481ab04ccd4efa0303c',
             'post_release_forward_stop.h': '6171bf8050d74d1f2f4315d09e2707287b276a1b87caf0a068e2fc95704460f9',
         }
@@ -198,7 +218,7 @@ class FakeCf:
         self.send_threads = []
         self.reply = True
         self.check_lock = None
-        self.assembly = FragmentAssembler(PLAN_CHUNK, 99, 7, PLAN_BODY.size)
+        self.assembly = FragmentAssembler(PLAN_CHUNK, 99, 7, WIRE_PLAN_BODY.size)
         self.plan = None
 
     def add_port_callback(self, port, callback):
@@ -221,18 +241,72 @@ class FakeCf:
         data = bytes(value.data)
         self.sent.append(data)
         self.send_threads.append(threading.current_thread().name)
+        if data[0] == MODEL_REQUEST:
+            _, _, nonce = MODEL_QUERY.unpack(data)
+            for part in raw_encode_chunks(MODEL_PART, nonce, 0, 0, TEST_MODEL):
+                self.callback(packet(part))
         if data[0] == PLAN_CHUNK:
             body = self.assembly.accept(data)
             if body is not None:
                 self.plan = body
-        elif data[0] == PLAN_COMMIT and self.reply:
-            delay = PLAN_BODY.unpack(self.plan)[0]
-            self.callback(packet(RESULT.pack(PLAN_RESULT, VERSION, 7, 99, 4, 0, 1_000_000 + delay)))
+                if self.reply:
+                    delay = WIRE_PLAN_BODY.unpack(self.plan)[0]
+                    self.callback(packet(RESULT.pack(PLAN_RESULT, VERSION, 7, 99, 4,
+                                                     0, 1_000_000 + delay, 1_005_000, 0)))
 
 
 class ServiceTests(unittest.TestCase):
+    def test_superseding_prefix_cancels_old_worker_and_old_packets(self):
+        service = PiEventPlanner(FakeCf())
+        service._model_body = TEST_MODEL
+        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
+        service._status.update(ready=True, release_begin_s=10.,
+                               snapshot_fragment_count=0, snapshot_duplicate_count=0)
+        old = encode_chunks(SNAPSHOT, 99, 7, 65535, snapshot())
+        new = encode_chunks(SNAPSHOT, 99, 7, 0, snapshot())
+        for chunk in old:
+            service._on_packet(packet(chunk))
+        generation = service._generation
+        for chunk in new:
+            service._on_packet(packet(chunk))
+        self.assertEqual(service._generation, generation + 1)
+        self.assertEqual(service._assembly.token, 0)
+        service._handle_plan(generation, None, 'late old failure')
+        for chunk in old:
+            service._on_packet(packet(chunk))
+        self.assertIsNone(service.status()['error'])
+        self.assertEqual(service.status()['superseded_snapshot_count'], 1)
+        self.assertEqual(service._assembly.token, 0)
+
+    def test_execution_notice_is_async_same_fc_clock_and_immutable(self):
+        service = PiEventPlanner(FakeCf())
+        service._model_body = TEST_MODEL
+        service._sent_plan = {'start_us': 100, 'snapshot_us': 0xfffffff0}
+        accepted = (PLAN_RESULT, VERSION, 7, 99, 4, 0, 100, 40, 0)
+        executed = (PLAN_RESULT, VERSION, 7, 99, 4, 0, 100, 40, 120)
+        service._handle_event('result', 0, accepted)
+        self.assertEqual(service.status()['phase'], 'accepted')
+        self.assertNotIn('fc_snapshot_to_first_curve_ms', service.status())
+        service._handle_event('result', 0, executed)
+        self.assertEqual(service.status()['phase'], 'executing')
+        self.assertAlmostEqual(service.status()['fc_snapshot_to_first_curve_ms'], .136)
+        self.assertAlmostEqual(service.status()['fc_plan_to_first_curve_ms'], .080)
+        service._handle_event('result', 0, accepted)
+        service._handle_event('result', 0, executed[:-1] + (125,))
+        self.assertEqual(service.status()['fc_first_curve_us'], 120)
+        self.assertEqual(service.cf.sent, [])
+
+    def test_execution_notice_can_arrive_before_acceptance(self):
+        service = PiEventPlanner(FakeCf())
+        service._model_body = TEST_MODEL
+        service._sent_plan = {'start_us': 100, 'snapshot_us': 0xfffffff0}
+        service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 0, 100, 40, 120))
+        service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 0, 100, 40, 0))
+        self.assertEqual(service.status()['phase'], 'executing')
+
     def test_refuses_before_prewarm(self):
         service = PiEventPlanner(FakeCf())
+        service._model_body = TEST_MODEL
         self.assertFalse(service.status()['ready'])
         with self.assertRaisesRegex(RuntimeError, 'prewarmed'):
             service.begin_release(99, 7)
@@ -241,6 +315,7 @@ class ServiceTests(unittest.TestCase):
     def test_spawn_process_end_to_end_and_idempotent_snapshot(self):
         cf = FakeCf()
         service = PiEventPlanner(cf)
+        service._model_body = TEST_MODEL
         try:
             service.start()
             cf.check_lock = service.status
@@ -255,15 +330,16 @@ class ServiceTests(unittest.TestCase):
                 time.sleep(.001)
             state = service.status()
             self.assertEqual(state['phase'], 'accepted', state)
-            self.assertEqual(state['accepted_start_us'], 1_080_000)
-            self.assertEqual(state['commit_send_count'], 1)
+            self.assertEqual(state['accepted_start_us'], 1_040_000)
+            self.assertEqual(state['plan_send_count'], 1)
             for chunk in chunks:
                 cf.callback(packet(chunk))
             time.sleep(.02)
-            self.assertEqual(service.status()['commit_send_count'], 1)
-            self.assertTrue(all(name == 'post-release-plan-link' for name in cf.send_threads))
+            self.assertEqual(service.status()['plan_send_count'], 1)
+            self.assertTrue(all(name == 'post-release-plan-link' for name, data in zip(cf.send_threads, cf.sent) if data[0] != MODEL_REQUEST))
             json.dumps(service.status())
-            self.assertTrue(any(data[0] == SNAPSHOT_ACK for data in cf.sent))
+            self.assertFalse(any(data[0] in (SNAPSHOT_ACK, PLAN_COMMIT) for data in cf.sent))
+            self.assertEqual(len(cf.sent), 3)
         finally:
             service.close()
         self.assertFalse(service.status()['ready'])
@@ -274,6 +350,7 @@ class ServiceTests(unittest.TestCase):
         # deadline: snapshot, worker result and FC result must all wake it.
         cf = FakeCf()
         service = PiEventPlanner(cf)
+        service._model_body = TEST_MODEL
         def long_wait(objects, timeout):
             return connection_wait(objects, timeout=5.)
         with patch('Interaction.post_release_pi_planner.wait', side_effect=long_wait):
@@ -286,7 +363,7 @@ class ServiceTests(unittest.TestCase):
                 while service.status()['phase'] != 'accepted' and time.monotonic() < deadline:
                     time.sleep(.001)
                 self.assertEqual(service.status()['phase'], 'accepted', service.status())
-                self.assertEqual(service.status()['commit_send_count'], 1)
+                self.assertEqual(service.status()['plan_send_count'], 1)
             finally:
                 service.close()
         self.assertFalse(service._thread.is_alive())
@@ -296,7 +373,8 @@ class ServiceTests(unittest.TestCase):
 
     def test_late_plan_is_never_shifted_or_sent(self):
         service = PiEventPlanner(FakeCf())
-        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        service._model_body = TEST_MODEL
+        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
         service._assembly.first_receive_s = 10.
         with patch('Interaction.post_release_pi_planner.time.monotonic', return_value=10.071):
             service._handle_plan(0, {'start_delay_us': 80_000}, None)
@@ -305,6 +383,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_old_worker_result_cannot_cross_release(self):
         service = PiEventPlanner(FakeCf())
+        service._model_body = TEST_MODEL
         service._generation = 2
         service._handle_plan(1, None, 'old failure')
         self.assertIsNone(service.status()['error'])
@@ -313,8 +392,9 @@ class ServiceTests(unittest.TestCase):
     def test_ack_not_sent_from_callback(self):
         cf = FakeCf()
         service = PiEventPlanner(cf)
-        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
-        service._status.update(snapshot_fragment_count=0, snapshot_duplicate_count=0, snapshot_ack_count=0)
+        service._model_body = TEST_MODEL
+        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
+        service._status.update(snapshot_fragment_count=0, snapshot_duplicate_count=0)
         for chunk in encode_chunks(SNAPSHOT, 99, 7, 4, snapshot()):
             service._on_packet(packet(chunk))
         self.assertEqual(cf.sent, [])
@@ -323,11 +403,12 @@ class ServiceTests(unittest.TestCase):
     def test_result_timeout_does_not_resend_at_or_after_start(self):
         cf = FakeCf()
         service = PiEventPlanner(cf)
-        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        service._model_body = TEST_MODEL
+        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
         service._assembly.token = 4
         service._assembly.first_receive_s = 10.
         service._sent_plan = {'start_delay_us': 80_000, 'start_us': 1_080_000}
-        service._status.update(phase='awaiting_result', last_commit_send_s=10., commit_send_count=1)
+        service._status.update(phase='awaiting_result', last_plan_send_s=10., plan_send_count=1)
         with patch('Interaction.post_release_pi_planner.time.monotonic', return_value=10.071):
             service._tick()
         self.assertEqual(service.status()['phase'], 'result_timeout')
@@ -336,12 +417,13 @@ class ServiceTests(unittest.TestCase):
     def test_bounded_retry_and_matching_rejection(self):
         cf = FakeCf(); cf.reply = False
         service = PiEventPlanner(cf)
-        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        service._model_body = TEST_MODEL
+        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
         service._assembly.token = 4
         service._assembly.first_receive_s = 10.
         service._sent_plan = {'body': PLAN_BODY.pack(80_000, .8, *([0.] * 12)),
                               'start_delay_us': 80_000, 'start_us': 1_080_000}
-        service._status.update(phase='awaiting_result', last_commit_send_s=10., commit_send_count=1)
+        service._status.update(phase='awaiting_result', last_plan_send_s=10., plan_send_count=1)
         with patch('Interaction.post_release_pi_planner.time.monotonic', return_value=10.021):
             service._tick()
         with patch('Interaction.post_release_pi_planner.time.monotonic', return_value=10.042):
@@ -349,17 +431,18 @@ class ServiceTests(unittest.TestCase):
         with patch('Interaction.post_release_pi_planner.time.monotonic', return_value=10.065):
             service._tick()
         service._flush_io()
-        self.assertEqual(service.status()['commit_send_count'], 3)
-        self.assertEqual(sum(data[0] == PLAN_COMMIT for data in cf.sent), 2)
-        service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 110, 0))
+        self.assertEqual(service.status()['plan_send_count'], 3)
+        self.assertEqual(sum(data[0] == PLAN_CHUNK for data in cf.sent), 4)
+        service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 110, 0, 0, 0))
         self.assertEqual(service.status()['phase'], 'rejected')
         self.assertEqual(service.status()['firmware_errno'], 110)
-        service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 0, 1_080_000))
+        service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 0, 1_080_000, 1_005_000, 0))
         self.assertEqual(service.status()['phase'], 'rejected')
 
     def test_conflicting_snapshot_cannot_launch_pending_plan(self):
         service = PiEventPlanner(FakeCf())
-        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        service._model_body = TEST_MODEL
+        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
         service._assembly.rejected = True
         service._handle_event('snapshot', 0, snapshot())
         service._handle_plan(0, {}, None)
@@ -368,32 +451,35 @@ class ServiceTests(unittest.TestCase):
 
     def test_wrong_success_epoch_is_rejected_not_retimed(self):
         service = PiEventPlanner(FakeCf())
+        service._model_body = TEST_MODEL
         service._sent_plan = {'start_us': 1_080_000}
-        service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 0, 1_090_000))
+        service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 0, 1_090_000, 1_005_000, 0))
         self.assertEqual(service.status()['phase'], 'result_rejected')
 
     def test_incomplete_commit_retries_identical_plan_then_accepts(self):
         cf = FakeCf(); cf.reply = False
         service = PiEventPlanner(cf)
-        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, SNAPSHOT_BODY.size)
+        service._model_body = TEST_MODEL
+        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
         service._assembly.token = 4
         service._assembly.first_receive_s = 10.
         body = PLAN_BODY.pack(80_000, .8, *([0.] * 12))
         service._sent_plan = {'body': body, 'start_delay_us': 80_000, 'start_us': 1_080_000}
-        service._status.update(phase='awaiting_result', last_commit_send_s=10., commit_send_count=1)
+        service._status.update(phase='awaiting_result', last_plan_send_s=10., plan_send_count=1)
         with patch('Interaction.post_release_pi_planner.time.monotonic', return_value=10.01):
-            service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 11, 0))
+            service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 11, 0, 0, 0))
             service._tick()
             service._flush_io()
         self.assertFalse(service._result_seen)
-        self.assertEqual(cf.plan, body)
-        self.assertEqual(service.status()['commit_send_count'], 2)
-        service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 0, 1_080_000))
+        self.assertEqual(cf.plan, compact_plan(body))
+        self.assertEqual(service.status()['plan_send_count'], 2)
+        service._handle_event('result', 0, (PLAN_RESULT, VERSION, 7, 99, 4, 0, 1_080_000, 1_005_000, 0))
         self.assertEqual(service.status()['phase'], 'accepted')
         self.assertEqual(service.status()['accepted_start_us'], 1_080_000)
 
     def test_snapshot_timeout_does_not_claim_hold(self):
         service = PiEventPlanner(FakeCf())
+        service._model_body = TEST_MODEL
         service._status.update(phase='waiting_snapshot', release_begin_s=10.)
         with patch('Interaction.post_release_pi_planner.time.monotonic', return_value=11.01):
             service._tick()
@@ -401,9 +487,83 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn('hold', service.status())
 
 
+class ModelCacheTests(unittest.TestCase):
+    def test_dynamic_integral_bias_and_direction_preserved_bit_exact(self):
+        values = list(SNAPSHOT_BODY.unpack(snapshot(yaw=47.)))
+        values[15:18] = [.123, -.456, .789]
+        body = SNAPSHOT_BODY.pack(*values)
+        self.assertEqual(expand_snapshot(compact_snapshot(body), TEST_MODEL), body)
+
+    def test_missing_or_changed_cache_never_reaches_worker(self):
+        wire = compact_snapshot(snapshot())
+        other = list(MODEL_BODY.unpack(TEST_MODEL)); other[0] += .1
+        for cache in (None, MODEL_BODY.pack(*other)):
+            with self.assertRaisesRegex(ValueError, 'model changed'):
+                expand_snapshot(wire, cache)
+            service = PiEventPlanner(FakeCf())
+            service._model_body = cache
+            service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
+            service._status.update(snapshot_fragment_count=0, snapshot_duplicate_count=0)
+            for chunk in encode_chunks(SNAPSHOT, 99, 7, 4, snapshot()):
+                service._on_packet(packet(chunk))
+            self.assertTrue(service._events.empty())
+            self.assertEqual(service.status()['phase'], 'snapshot_rejected')
+            self.assertEqual(service.cf.sent, [])
+
+    def test_tau_float32_boundaries_and_invalid_model(self):
+        values = list(MODEL_BODY.unpack(TEST_MODEL))
+        for tau in (.01, .20):
+            values[6] = tau
+            validate_model(MODEL_BODY.pack(*values))
+        for tau in (.009, .201, float('nan')):
+            values[6] = tau
+            with self.assertRaises(ValueError):
+                validate_model(MODEL_BODY.pack(*values))
+
+    def test_startup_timeout_is_bounded_and_not_ready(self):
+        cf = FakeCf()
+        cf.send_packet = lambda packet: None
+        service = PiEventPlanner(cf)
+        with self.assertRaisesRegex(RuntimeError, 'timeout'):
+            service.sync_model(timeout_s=.01)
+        self.assertFalse(service.status()['ready'])
+        self.assertIsNone(service._model_body)
+        self.assertIsNone(service._model_assembly)
+
+    def test_stale_nonce_response_is_ignored(self):
+        service = PiEventPlanner(FakeCf())
+        service._model_assembly = FragmentAssembler(MODEL_PART, 123, 0, MODEL_BODY.size)
+        for part in raw_encode_chunks(MODEL_PART, 122, 0, 0, TEST_MODEL):
+            service._on_packet(packet(part))
+        self.assertIsNone(service._model_body)
+        self.assertFalse(service._model_event.is_set())
+        for part in reversed(raw_encode_chunks(MODEL_PART, 123, 0, 0, TEST_MODEL)):
+            service._on_packet(packet(part))
+        self.assertEqual(service._model_body, TEST_MODEL)
+        self.assertTrue(service._model_event.is_set())
+
+    def test_corrupt_model_crc_never_ready(self):
+        service = PiEventPlanner(FakeCf())
+        service._model_assembly = FragmentAssembler(MODEL_PART, 123, 0, MODEL_BODY.size)
+        parts = raw_encode_chunks(MODEL_PART, 123, 0, 0, TEST_MODEL)
+        parts[-1] = parts[-1][:-1] + bytes([parts[-1][-1] ^ 1])
+        for part in parts:
+            service._on_packet(packet(part))
+        self.assertIsNone(service._model_body)
+        self.assertIn('CRC', service._model_error)
+
+    def test_no_model_sync_during_release(self):
+        service = PiEventPlanner(FakeCf())
+        service._assembly = FragmentAssembler(SNAPSHOT, 99, 7, WIRE_SNAPSHOT_BODY.size)
+        with self.assertRaisesRegex(RuntimeError, 'before release'):
+            service.sync_model()
+        self.assertEqual(service.cf.sent, [])
+
+
 class WakeupTests(unittest.TestCase):
     def setUp(self):
         self.service = PiEventPlanner(FakeCf())
+        self.service._model_body = TEST_MODEL
         self.service._connection, self.peer = multiprocessing.Pipe()
         self.service._wake_read, self.service._wake_write = socket.socketpair()
         self.service._wake_read.setblocking(False)

@@ -26,6 +26,11 @@ bool jointEvaluate(const jointPlan_t* plan, float t, float angle[3],
 bool jointBuildFromParameters(const float reference[3], const float rate[3],
   const float knot[3], const float endReference[3], float duration,
   jointPlan_t* plan);
+// Same bounded reconstruction with the full C3 reference boundary, used
+// when the Pi plan splices into an already running local septic unwind.
+bool jointBuildFromBoundaryParameters(const float reference[3], const float rate[3],
+  const float acceleration[3], const float jerk[3], const float knot[3],
+  const float endReference[3], float duration, jointPlan_t* plan);
 bool jointPredict(const jointPlan_t* plan, const jointState_t* initial,
   const jointModel_t* model, float yawDeg, const float direction[2],
   jointPrediction_t* prediction);

@@ -1,0 +1,262 @@
+#include <assert.h>
+#include <errno.h>
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include "post_release_local_unwind.h"
+#include "post_release_push_plan.h"
+#define CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_JOINT_UNWIND 1
+#define COMMANDER_PRIORITY_HIGHLEVEL 1
+#define pdTRUE 1
+#define portMAX_DELAY 1000
+#define CRTP_PORT_SETPOINT_HL 8
+typedef struct {uint8_t port,channel,size,data[30];} CRTPPacket;
+static CRTPPacket replies[16];
+static unsigned replyCount;
+static int crtpSendPacket(const CRTPPacket* p) {
+  assert(replyCount<16);replies[replyCount++]=*p;return pdTRUE;
+}
+static int lockTraj;
+static bool lockAvailable=true;
+static int xSemaphoreTake(int lock,int timeout) {(void)lock;(void)timeout;return lockAvailable?pdTRUE:0;}
+static void xSemaphoreGive(int lock) {(void)lock;}
+enum { modeDisable, modeAbs, modeAbsRate };
+typedef struct { float roll,pitch,yaw; } attitude_t;
+typedef struct { float x,y,z; } vector_t;
+typedef struct {
+  struct { int x,y,z,roll,pitch,yaw; } mode;
+  attitude_t attitude,attitudeRate;
+  vector_t position;
+} setpoint_t;
+typedef struct { vector_t position; } state_t;
+static uint32_t clockUs;
+static uint32_t usecTimestamp(void) {return clockUs;}
+static float degrees(float x) {return x*57.29577951308232f;}
+static setpoint_t previousCommand;
+static void commanderGetSetpoint(setpoint_t* s,const state_t* state) {(void)state;*s=previousCommand;}
+static int activePriority=COMMANDER_PRIORITY_HIGHLEVEL;
+static int commanderGetActivePriority(void) {return activePriority;}
+static void attitudeControllerJointModel(float gain[3],float bias[3],float ki[3]) {
+  const float g[3]={6,7.1f,6};
+  for(unsigned i=0;i<3;i++) {gain[i]=g[i];bias[i]=0;ki[i]=1;}
+}
+static jointModel_t jointModel={{.05f,.07f,.08f},{6,7.1f,6},{0,0},{0},{1,1,1}};
+static jointPlan_t jointPlan;
+static postReleasePushState_t jointPush;
+static bool jointEnabled=true,jointHostEnabled=true,jointActive;
+static bool jointHostScheduled,jointHostLevelActive,jointLocalActive;
+static float jointLocalBeginS,jointLocalInitialReference[3],jointHostLevelBeginS;
+static postReleaseUnwindProfile_t jointLocalProfile,jointHostLevelProfile;
+static uint32_t jointLocalCount,jointLocalMaxUs;
+static float jointLocalAcceleration,jointLocalJerk;
+static uint16_t jointPushToken;
+static uint8_t jointPushPart,jointPushAttempts,jointSnapshotRefreshCount;
+static uint32_t jointPushNextSendUs,jointExecutionNoticeNextUs;
+static unsigned jointExecutionNoticeRemaining;
+static uint8_t postReleaseAutoStage,postReleaseAutoAbortReason;
+static uint32_t postReleaseAutoStartUs,postReleaseAutoSession,postReleaseAutoSequence;
+static uint32_t postReleaseAutoRapidSetpointCount,postReleaseAutoReplanCount,postReleaseAutoBrakeTimeoutCount;
+static uint32_t postReleaseAutoLatestUnwindUs;
+static float postReleaseAutoDirectionXY[2]={1,0},postReleaseAutoYawRad;
+static float postReleaseAutoBrakeRollDeg,postReleaseAutoBrakePitchDeg;
+static float postReleaseAutoUnwindBeginS,postReleaseAutoUnwindDurationS,jointDeadline;
+static uint8_t postReleaseAutoUnwindCentiseconds;
+static float postReleaseAutoBlindUnwindDurationS=.2f,postReleaseAutoHeightM=.8f;
+static float postReleaseAutoReferenceDeg[3],postReleaseAutoReferenceRateDegS[3];
+static postReleaseUnwindProfile_t postReleaseAutoUnwindProfile;
+
+/*__PRODUCTION_HELPERS__*/
+
+static void tick(bool fresh,const float velocity[3],const float measuredAnglesDeg[3],
+    const float measuredRatesDegS[3],bool attitudeFresh,uint32_t nowUs) {
+  clockUs=nowUs;
+  const float t=nowUs*1e-6f;
+  const uint32_t observationUs=nowUs,attitudeObservationUs=nowUs;
+  state_t storage={0};const state_t* state=&storage;
+  if(jointEnabled && (postReleaseAutoStage==1u || postReleaseAutoStage==2u)) {
+/*__PRODUCTION_HOST_BLOCK__*/
+  }
+}
+
+static setpoint_t issued(float t,bool attitudeFresh) {
+  setpoint_t storage;setpoint_t* setpoint=&storage;
+/*__PRODUCTION_SETPOINT_BRANCHES__*/
+  return storage;
+}
+
+static void reset(uint32_t now) {
+  jointEnabled=jointHostEnabled=true;
+  lockAvailable=true;activePriority=COMMANDER_PRIORITY_HIGHLEVEL;
+  jointActive=jointHostScheduled=jointHostLevelActive=jointLocalActive=false;
+  jointLocalCount=jointLocalMaxUs=0;jointPushToken=1;
+  jointPushPart=jointPushAttempts=jointSnapshotRefreshCount=0;
+  jointPushNextSendUs=0;postReleaseAutoStage=1;postReleaseAutoAbortReason=0;
+  postReleaseAutoStartUs=now;postReleaseAutoLatestUnwindUs=now;
+  postReleaseAutoSession=99;postReleaseAutoSequence=7;
+  postReleaseAutoRapidSetpointCount=postReleaseAutoReplanCount=postReleaseAutoBrakeTimeoutCount=0;
+  postReleaseAutoBrakeRollDeg=0;
+  postReleaseAutoBrakePitchDeg=atanf(4/9.81f)*57.29577951308232f;
+  postReleaseAutoYawRad=0;postReleaseAutoDirectionXY[0]=1;postReleaseAutoDirectionXY[1]=0;
+  memset(&previousCommand,0,sizeof(previousCommand));
+  previousCommand.mode.roll=previousCommand.mode.pitch=modeAbs;
+  memset(&jointPlan,0,sizeof(jointPlan));
+  postReleasePushReset(&jointPush,99,7,jointPushToken);
+  clockUs=now;
+}
+
+static postReleasePushSnapshot_t snapshot(void) {
+  assert(jointPush.valid);
+  postReleasePushSnapshot_t result;
+  memcpy(&result,jointPush.snapshot,sizeof(result));
+  return result;
+}
+
+static void check_prefix_c3(const postReleasePushSnapshot_t* s,float elapsed) {
+  const float zero[3]={0};postReleaseUnwindProfile_t rebuilt;
+  assert(postReleaseUnwindPlan(s->rapidReference,zero,zero,zero,s->prefixDurationS,&rebuilt));
+  float a[3],r[3],ac[3],j[3],a2[3],r2[3],ac2[3],j2[3];
+  assert(postReleaseUnwindEvaluate(&jointLocalProfile,s->prefixElapsedS+elapsed,a,r,ac,j));
+  assert(postReleaseUnwindEvaluate(&rebuilt,s->prefixElapsedS+elapsed,a2,r2,ac2,j2));
+  for(unsigned i=0;i<3;i++) {
+    assert(fabsf(a[i]-a2[i])<1e-5f && fabsf(r[i]-r2[i])<1e-4f);
+    assert(fabsf(ac[i]-ac2[i])<.001f && fabsf(j[i]-j2[i])<.01f);
+  }
+}
+
+int main(void) {
+  const float level[3]={0},normal[3]={1.03f,0,0};
+  reset(1000000);
+  // Reproduce the old zero-window condition exactly. The old max-a cutoff
+  // must not gate capture or invoke reason11 on the first HLC evaluation.
+  assert(postReleaseAutoLatestUnwindUs==postReleaseAutoStartUs);
+  tick(true,normal,level,level,true,1000000);
+  assert(postReleaseAutoRapidSetpointCount==0);
+  assert(jointPush.valid && postReleaseAutoStage==1 && !jointLocalActive);
+  postReleasePushSnapshot_t snap=snapshot();
+  assert(snap.snapshotUs==1000000 && snap.latestStartUs==1120000);
+  assert(snap.prefixDurationS==0 && snap.velocity[0]==1.03f);
+  // Startup model reads work without enabling braking and never authorize it.
+  CRTPPacket request={.port=CRTP_PORT_SETPOINT_HL,.channel=0,.size=6,
+    .data={PostReleaseModelRequest,PostReleasePushVersion,0x78,0x56,0x34,0x12}};
+  jointHostEnabled=jointEnabled=false;
+  assert(jointPushHandlePacket(&request) && replyCount==3);
+  assert(!jointHostScheduled && postReleaseAutoStage==1);
+  uint8_t modelWire[40];
+  for(unsigned i=0;i<3;i++) {
+    assert(replies[i].data[0]==PostReleaseModelPart && replies[i].data[4]==0x78);
+    memcpy(modelWire+i*18,replies[i].data+12,replies[i].size-12);
+  }
+  assert(memcmp(modelWire,snap.attitudeGain,36)==0);
+  uint32_t crc;memcpy(&crc,modelWire+36,4);
+  assert(crc==postReleasePushModelId(&snap));
+  replyCount=0;request.data[1]=2;
+  assert(jointPushHandlePacket(&request) && replyCount==0);
+  jointHostEnabled=jointEnabled=true;
+  // If parameters change while Pi is solving, even a matching token cannot
+  // schedule a plan computed for the previous model.
+  request.size=30;memset(request.data,0,sizeof(request.data));
+  request.data[0]=PostReleasePlanPart;request.data[1]=PostReleasePushVersion;
+  request.data[2]=7;request.data[4]=99;request.data[8]=(uint8_t)jointPush.token;
+  request.data[11]=PostReleasePlanPartCount;
+  jointModel.tau[0]=.06f;
+  assert(jointPushHandlePacket(&request) && replyCount==1);
+  uint16_t err;memcpy(&err,replies[0].data+10,2);
+  assert(err==ESTALE && !jointPush.committed && !jointHostScheduled);
+  assert(jointPush.planMask==0);
+  jointModel.tau[0]=.05f;replyCount=0;
+  setpoint_t out=issued(1,true);
+  assert(postReleaseAutoRapidSetpointCount==1 && out.attitude.pitch>20);
+
+  // A risk-changing actual state preempts an accepted but not yet executed
+  // rapid-prefix plan. New token and the local prefix are captured this tick.
+  const uint16_t oldToken=jointPush.token;
+  jointHostScheduled=true;jointPush.committed=true;jointPush.acceptedStartUs=1080000;
+  const float slow[3]={.2f,0,0},tilted[3]={0,20,0},tilting[3]={0,40,0};
+  tick(true,slow,tilted,tilting,true,1010000);
+  assert(postReleaseAutoStage==2 && jointLocalActive && !jointActive);
+  assert(!jointHostScheduled && !jointPush.committed && jointPush.acceptedStartUs==0);
+  assert(jointPush.token!=oldToken && jointLocalCount==1);
+  snap=snapshot();assert(snap.prefixDurationS>.30f && snap.prefixElapsedS==0);
+  check_prefix_c3(&snap,0);check_prefix_c3(&snap,.11f);
+  out=issued(1.01f,true);
+  assert(fabsf(out.attitude.pitch-postReleaseAutoBrakePitchDeg)<.001f);
+  assert(fabsf(out.attitudeRate.pitch)<.001f);
+  // Through actual render branch: bounded rate/accel profile and zero C3 end.
+  float a[3],r[3],ac[3],j[3];
+  for(unsigned n=0;n<=100;n++) {
+    const float elapsed=jointLocalProfile.durationS*n/100;
+    assert(postReleaseUnwindEvaluate(&jointLocalProfile,elapsed,a,r,ac,j));
+    for(unsigned axis=0;axis<3;axis++) {assert(fabsf(r[axis])<=160.1f);assert(fabsf(ac[axis])<=3501);}
+  }
+  for(unsigned axis=0;axis<3;axis++) assert(a[axis]==0&&r[axis]==0&&ac[axis]==0&&j[axis]==0);
+
+  // No Pi: complete local return, then fault. Residual measured tilt must
+  // not become a new reference and there is never a position-hold stage.
+  const uint32_t faultTime=1010000+(uint32_t)((jointLocalProfile.durationS+.11f)*1e6f);
+  tick(true,slow,tilted,tilting,true,faultTime);
+  assert(postReleaseAutoStage==6 && postReleaseAutoAbortReason==11);
+  assert(!jointHostLevelActive && !jointActive && !jointHostScheduled);
+  out=issued(faultTime*1e-6f,true);
+  assert(out.attitude.roll==0 && out.attitude.pitch==0);
+  assert(out.attitudeRate.roll==0 && out.attitudeRate.pitch==0);
+  assert(out.mode.x==modeDisable && out.mode.y==modeDisable);
+
+  // Before any rapid setpoint, a low-speed already-tilted release unwinds
+  // continuously from the actual preceding command, not invented max tilt.
+  reset(2000000);previousCommand.attitude.pitch=12;
+  tick(true,slow,tilted,tilting,true,2000000);
+  assert(jointLocalActive && postReleaseAutoRapidSetpointCount==0);
+  snap=snapshot();assert(snap.rapidReference[1]==12);
+  out=issued(2,true);assert(fabsf(out.attitude.pitch-12)<.001f);
+
+  // A short Vicon gap does not authorize another maximum-tilt tick, but it
+  // cannot create a fresh snapshot. Outer stale-IMU/300ms guards are external.
+  reset(3000000);postReleaseAutoRapidSetpointCount=1;
+  tick(false,level,tilted,tilting,true,3010000);
+  assert(jointLocalActive && postReleaseAutoStage==2 && !jointPush.valid);
+  out=issued(jointLocalBeginS+jointLocalProfile.durationS*.5f,true);
+  assert(out.attitude.pitch>0 && out.attitude.pitch<postReleaseAutoBrakePitchDeg*.6f);
+  assert(postReleaseAutoRapidSetpointCount==1);
+
+  // Expired jobs refresh at most three times without resetting local motion.
+  reset(4000000);const float fast[3]={3,0,0};
+  tick(true,fast,level,level,true,4000000);
+  const uint16_t first=jointPush.token;
+  for(unsigned n=1;n<=4;n++) {
+    tick(true,fast,level,level,true,4000000+n*120000);
+    assert(postReleaseAutoStage==1 && !jointLocalActive);
+    assert(jointSnapshotRefreshCount==(n<3?n:3));
+  }
+  assert(jointPush.token==first+3 && jointPush.snapshotUs==4360000);
+
+  // A scheduled plan keeps its identity while waiting, then actually enters
+  // its accepted epoch. Execution notice timestamps come from the renderer.
+  reset(5000000);tick(true,fast,level,level,true,5000000);
+  const float zero[3]={0};
+  assert(jointBuildFromParameters(zero,zero,zero,zero,.30f,&jointPlan));
+  jointHostScheduled=true;jointPush.committed=true;jointPush.acceptedStartUs=5010000;
+  tick(true,fast,level,level,true,5010000);
+  assert(jointActive && !jointLocalActive && postReleaseAutoStage==2);
+  out=issued(5.01f,true);
+  assert(!jointPush.hasExecuted);
+  crtpCommanderHighLevelPostReleaseApplied(NULL);
+  setpoint_t wrong=out;wrong.attitude.pitch+=1;
+  crtpCommanderHighLevelPostReleaseApplied(&wrong);
+  wrong=out;wrong.mode.pitch=modeAbs;
+  crtpCommanderHighLevelPostReleaseApplied(&wrong);
+  activePriority=COMMANDER_PRIORITY_HIGHLEVEL+1;
+  crtpCommanderHighLevelPostReleaseApplied(&out);
+  activePriority=COMMANDER_PRIORITY_HIGHLEVEL;lockAvailable=false;
+  crtpCommanderHighLevelPostReleaseApplied(&out);
+  assert(!jointPush.hasExecuted);
+  lockAvailable=true;clockUs=5010320;
+  crtpCommanderHighLevelPostReleaseApplied(&out);
+  assert(jointPush.hasExecuted && jointPush.executedUs==5010320);
+  clockUs=5011320;crtpCommanderHighLevelPostReleaseApplied(&out);
+  assert(jointPush.executedUs==5010320);
+  assert(jointExecutionNoticeRemaining==3 && postReleaseAutoReplanCount==1);
+  assert(out.attitude.pitch==0);
+  puts("PASS: extracted production HLC capture/switch/timeout/render branches; zero old window, first-tick snapshot, prefix replacement/C3, loss, bounded refresh, no-Pi fault, actual execution timestamp");
+  return 0;
+}

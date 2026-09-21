@@ -29,8 +29,13 @@ static bool construct(const float a[3], const float r[3], const float ac[3],
 bool jointBuildFromParameters(const float a[3], const float r[3],
     const float knot[3], const float end[3], float duration, jointPlan_t* plan) {
   const float zero[3]={0};
+  return jointBuildFromBoundaryParameters(a,r,zero,zero,knot,end,duration,plan);
+}
+bool jointBuildFromBoundaryParameters(const float a[3], const float r[3],
+    const float ac[3], const float j[3], const float knot[3],
+    const float end[3], float duration, jointPlan_t* plan) {
   jointPlan_t candidate;
-  if (!plan || !construct(a,r,zero,zero,knot,end,duration,&candidate)) return false;
+  if (!plan || !construct(a,r,ac,j,knot,end,duration,&candidate)) return false;
   // Fixed, modest work in the command task. This screen is geometric only;
   // the Pi predictor remains responsible for predicted terminal dynamics.
   for (int k=0;k<=32;k++) {

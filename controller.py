@@ -345,6 +345,7 @@ class Controller:
                 raise RuntimeError('Pi event planner stopped during pre-arm '
                                    'parameter confirmation')
             logger.info('Pi event planner firmware mode confirmed: %s', confirmed)
+            planner.sync_model()
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             values = self.log_manager.get_latest_group_log_data('FIRMWARE_BRAKE')
@@ -383,8 +384,8 @@ class Controller:
                for group, names in required.items() for name in names):
             raise RuntimeError('connected Bolt lacks firmware auto-brake parameters')
         if host_mode and int(self.cf.param.get_value(
-                'hlCommander.pRelJVer')) < 26091805:
-            raise RuntimeError('pi_joint requires firmware pRelJVer >= 26091805')
+                'hlCommander.pRelJVer')) != 26092101:
+            raise RuntimeError('pi_joint v3 requires paired firmware pRelJVer = 26092101')
         # Preparation happens before arming, never on the release critical path.
         # If startup fails, do not enable the firmware host-planning mode.
         planner = getattr(self.cf, '_post_release_pi_planner', None)
