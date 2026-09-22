@@ -56,6 +56,10 @@ setup_logging()
 
 logger = logging.getLogger(__name__)
 
+# Paired experimental S-curve firmware identities. 26092202 adds the release
+# admission policy parameters and the rejection-reason logs.
+SCURVE_FIRMWARE_VERSIONS = frozenset({26092201, 26092202})
+
 
 pos_update_time_log = []
 pos_update_profile_log = []
@@ -118,6 +122,9 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
 
 
 class Controller:
+    # Latched from the connected Bolt while setting up the S-curve mode.
+    firmware_auto_brake_scurve_version = max(SCURVE_FIRMWARE_VERSIONS)
+
     def __init__(self, args):
         self.args = args
         if self._is_interaction_application():
@@ -359,7 +366,7 @@ class Controller:
         if self.firmware_auto_brake_mode == 'scurve':
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             confirmed = confirm_firmware_mode_parameters(self.cf.param, expected={
-                'hlCommander.pRelSVer': 26092201,
+                'hlCommander.pRelSVer': self.firmware_auto_brake_scurve_version,
                 'hlCommander.pRelMode': 2,
                 'hlCommander.pRelScD': self.firmware_auto_brake_stop_distance_m,
                 'hlCommander.pRelScT': self.firmware_auto_brake_stop_max_time_s,
@@ -427,8 +434,12 @@ class Controller:
         if host_mode and int(self.cf.param.get_value(
                 'hlCommander.pRelJVer')) != 26092101:
             raise RuntimeError('pi_joint v3 requires paired firmware pRelJVer = 26092101')
-        if scurve_mode and int(self.cf.param.get_value('hlCommander.pRelSVer')) != 26092201:
-            raise RuntimeError('scurve requires paired experimental firmware pRelSVer = 26092201')
+        if scurve_mode:
+            version = int(self.cf.param.get_value('hlCommander.pRelSVer'))
+            if version not in SCURVE_FIRMWARE_VERSIONS:
+                raise RuntimeError('scurve requires paired experimental firmware '
+                                   f'pRelSVer in {sorted(SCURVE_FIRMWARE_VERSIONS)}, got {version}')
+            self.firmware_auto_brake_scurve_version = version
         # Preparation happens before arming, never on the release critical path.
         # If startup fails, do not enable the firmware host-planning mode.
         planner = getattr(self.cf, '_post_release_pi_planner', None)
