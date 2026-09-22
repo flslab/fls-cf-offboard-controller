@@ -17608,9 +17608,9 @@ class InteractionsControl:
             raise ValueError('firmware_auto_brake.enabled must be boolean')
         firmware_brake_mode = firmware_brake_config.get('mode', 'two_phase')
         if firmware_brake_enabled and firmware_brake_mode not in (
-                'two_phase', 'zero_velocity', 'pi_joint'):
+                'two_phase', 'zero_velocity', 'pi_joint', 'scurve'):
             raise ValueError('firmware_auto_brake.mode must be two_phase, '
-                             'zero_velocity or pi_joint')
+                             'zero_velocity, pi_joint or scurve')
         if firmware_brake_enabled and pipeline.shadow_mode:
             raise ValueError('firmware auto brake requires active contact rendering')
         # Some offline harnesses construct the interaction object without its

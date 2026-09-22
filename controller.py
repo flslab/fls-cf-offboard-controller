@@ -184,6 +184,9 @@ class Controller:
         self.send_vicon_to_cf = True
         self.firmware_auto_brake_enabled = False
         self.firmware_auto_brake_response_time_s = None
+        self.firmware_auto_brake_stop_distance_m = 0.0
+        self.firmware_auto_brake_stop_max_time_s = 6.0
+        self.firmware_auto_brake_stop_min_peak = 0.3
         self.firmware_auto_brake_mode = 'two_phase'
         self._firmware_vicon_last_send_s = None
         self._firmware_vicon_mirror_error = None
@@ -306,9 +309,9 @@ class Controller:
         if not enabled:
             return
         brake_mode = mode.get('mode', 'two_phase')
-        if brake_mode not in ('two_phase', 'zero_velocity', 'pi_joint'):
+        if brake_mode not in ('two_phase', 'zero_velocity', 'pi_joint', 'scurve'):
             raise ValueError('firmware_auto_brake.mode must be two_phase, '
-                             'zero_velocity or pi_joint')
+                             'zero_velocity, pi_joint or scurve')
         self.firmware_auto_brake_mode = brake_mode
         response_time = mode.get('response_time_s')
         if (isinstance(response_time, bool) or
@@ -318,6 +321,26 @@ class Controller:
             raise ValueError('firmware_auto_brake.response_time_s must be a '
                              'measured 0.02–0.20 s hardware response fit')
         self.firmware_auto_brake_response_time_s = float(response_time)
+        # Optional S-curve target stop distance. Absent or 0 keeps the free
+        # stop, whose distance is whatever the release state produces.
+        stop = mode.get('stop_distance_m', 0.0)
+        if (isinstance(stop, bool) or not isinstance(stop, (int, float)) or
+                not math.isfinite(stop) or not 0.0 <= stop <= 10.0):
+            raise ValueError('firmware_auto_brake.stop_distance_m must be '
+                             '0 (free stop) or a distance up to 10 m')
+        if stop and brake_mode != 'scurve':
+            raise ValueError('firmware_auto_brake.stop_distance_m requires mode: scurve')
+        self.firmware_auto_brake_stop_distance_m = float(stop)
+        max_time = mode.get('stop_max_time_s', 6.0)
+        if (isinstance(max_time, bool) or not isinstance(max_time, (int, float)) or
+                not math.isfinite(max_time) or not 0.5 <= max_time <= 12.0):
+            raise ValueError('firmware_auto_brake.stop_max_time_s must be 0.5–12 s')
+        self.firmware_auto_brake_stop_max_time_s = float(max_time)
+        min_peak = mode.get('stop_min_decel', 0.3)
+        if (isinstance(min_peak, bool) or not isinstance(min_peak, (int, float)) or
+                not math.isfinite(min_peak) or not 0.05 <= min_peak <= 3.9):
+            raise ValueError('firmware_auto_brake.stop_min_decel must be 0.05–3.9 m/s^2')
+        self.firmware_auto_brake_stop_min_peak = float(min_peak)
         if not (self.args.interaction and self.args.sense and self.args.vicon
                 and self.args.vicon_mode in ('rigidbody', 'pointcloud')
                 and not self.args.vicon_full_pose and self.args.log
@@ -333,6 +356,19 @@ class Controller:
     def verify_firmware_auto_brake_ready(self):
         if not getattr(self, 'firmware_auto_brake_enabled', False):
             return
+        if self.firmware_auto_brake_mode == 'scurve':
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            confirmed = confirm_firmware_mode_parameters(self.cf.param, expected={
+                'hlCommander.pRelSVer': 26092201,
+                'hlCommander.pRelMode': 2,
+                'hlCommander.pRelScD': self.firmware_auto_brake_stop_distance_m,
+                'hlCommander.pRelScT': self.firmware_auto_brake_stop_max_time_s,
+                'hlCommander.pRelScB': self.firmware_auto_brake_stop_min_peak,
+                'hlCommander.pRelJoint': 0,
+                'hlCommander.pRelHost': 0,
+                'kalmanPRel.scEnable': 1,
+            })
+            logger.info('Experimental FC S-curve mode confirmed: %s', confirmed)
         if self.firmware_auto_brake_mode == 'pi_joint':
             planner = getattr(self.cf, '_post_release_pi_planner', None)
             if planner is None or not planner.status().get('ready', False):
@@ -356,7 +392,7 @@ class Controller:
                     values.get('hlCommander.pRelEvtVer') == 1 and
                     values.get('hlCommander.pRelMode') == (
                         1 if self.firmware_auto_brake_mode == 'zero_velocity'
-                        else 0) and
+                        else 2 if self.firmware_auto_brake_mode == 'scurve' else 0) and
                     isinstance(values.get('hlCommander.pRelTau'), (int, float)) and
                     abs(values['hlCommander.pRelTau'] -
                         self.firmware_auto_brake_response_time_s) < 0.001 and
@@ -377,8 +413,13 @@ class Controller:
             'hlCommander': ('pRelAuto', 'pRelMode', 'pRelTau'),
         }
         host_mode = self.firmware_auto_brake_mode == 'pi_joint'
+        scurve_mode = self.firmware_auto_brake_mode == 'scurve'
         if host_mode:
             required['hlCommander'] += ('pRelJoint', 'pRelHost', 'pRelJVer')
+        if scurve_mode:
+            required['hlCommander'] += ('pRelSVer', 'pRelJoint', 'pRelHost',
+                                        'pRelScD', 'pRelScT', 'pRelScB')
+            required['kalmanPRel'] += ('scEnable',)
         toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
         if any(name not in toc.get(group, {})
                for group, names in required.items() for name in names):
@@ -386,6 +427,8 @@ class Controller:
         if host_mode and int(self.cf.param.get_value(
                 'hlCommander.pRelJVer')) != 26092101:
             raise RuntimeError('pi_joint v3 requires paired firmware pRelJVer = 26092101')
+        if scurve_mode and int(self.cf.param.get_value('hlCommander.pRelSVer')) != 26092201:
+            raise RuntimeError('scurve requires paired experimental firmware pRelSVer = 26092201')
         # Preparation happens before arming, never on the release critical path.
         # If startup fails, do not enable the firmware host-planning mode.
         planner = getattr(self.cf, '_post_release_pi_planner', None)
@@ -409,7 +452,18 @@ class Controller:
                                 str(self.firmware_auto_brake_response_time_s))
         self.cf.param.set_value('hlCommander.pRelMode',
                                 '1' if self.firmware_auto_brake_mode ==
-                                'zero_velocity' else '0')
+                                'zero_velocity' else '2' if scurve_mode else '0')
+        if scurve_mode:
+            # Latched by firmware when the release plan is built; a later write
+            # does not replan an accepted event.
+            self.cf.param.set_value('hlCommander.pRelScD',
+                                    str(self.firmware_auto_brake_stop_distance_m))
+            self.cf.param.set_value('hlCommander.pRelScT',
+                                    str(self.firmware_auto_brake_stop_max_time_s))
+            self.cf.param.set_value('hlCommander.pRelScB',
+                                    str(self.firmware_auto_brake_stop_min_peak))
+        if 'scEnable' in toc.get('kalmanPRel', {}):
+            self.cf.param.set_value('kalmanPRel.scEnable', '1' if scurve_mode else '0')
         # Clear stale experimental switches when selecting either legacy mode.
         # Old firmware without these optional parameters remains supported.
         for name in ('pRelJoint', 'pRelHost'):
