@@ -144,6 +144,62 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
         self.assertFalse(diagnostics['fresh_post_release_packet'])
         self.assertIsNone(diagnostics['firmware_reject_reason'])
 
+    def test_firmware_hold_observation_waits_for_remaining_duration(self):
+        control = InteractionsControl.__new__(InteractionsControl)
+        clock = {'elapsed': 2.0}
+        control._log_event = Mock()
+        control._firmware_brake_status_snapshot = lambda: ({
+            'hlCommander.pRelAutoSt': 4,
+        }, 100.0 + clock['elapsed'])
+
+        def safe_sleep(duration):
+            clock['elapsed'] += duration
+
+        control._safe_sleep = safe_sleep
+        with patch('Interaction.interactions.time.monotonic',
+                   side_effect=lambda: clock['elapsed']), patch(
+                       'Interaction.interactions.time.time',
+                       side_effect=lambda: 100.0 + clock['elapsed']):
+            waited = control._hold_firmware_brake_until_interaction_duration(
+                enabled=True, interaction_start_s=100.0,
+                duration_s=5.0, brake_mode='scurve')
+
+        self.assertTrue(waited)
+        self.assertAlmostEqual(clock['elapsed'], 5.0)
+        self.assertEqual(
+            [call.args[0] for call in control._log_event.call_args_list],
+            ['Post-Release Hold Observation',
+             'Post-Release Hold Observation Complete'])
+
+    def test_firmware_hold_observation_is_opt_in(self):
+        control = InteractionsControl.__new__(InteractionsControl)
+        control._safe_sleep = Mock()
+        control._log_event = Mock()
+
+        waited = control._hold_firmware_brake_until_interaction_duration(
+            enabled=False, interaction_start_s=100.0,
+            duration_s=60.0, brake_mode='scurve')
+
+        self.assertFalse(waited)
+        control._safe_sleep.assert_not_called()
+        control._log_event.assert_not_called()
+
+    def test_firmware_hold_observation_fails_if_firmware_leaves_hold(self):
+        control = InteractionsControl.__new__(InteractionsControl)
+        control._safe_sleep = Mock()
+        control._log_event = Mock()
+        control._firmware_brake_status_snapshot = lambda: ({
+            'hlCommander.pRelAutoSt': 0,
+        }, 102.0)
+        with patch('Interaction.interactions.time.monotonic',
+                   return_value=2.0), patch(
+                       'Interaction.interactions.time.time',
+                       return_value=102.0):
+            with self.assertRaisesRegex(RuntimeError, 'left post-release hold'):
+                control._hold_firmware_brake_until_interaction_duration(
+                    enabled=True, interaction_start_s=100.0,
+                    duration_s=5.0, brake_mode='scurve')
+
     def test_wait_loop_checks_battery_during_telemetry_gap_and_pending_notice(self):
         elapsed, completion, _, checked_at = self.run_firmware_wait(
             lambda _: self.brake_packet(0.0), abort_at=0.15,

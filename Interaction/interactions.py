@@ -33,6 +33,7 @@ from Interaction.post_release_firmware_control_event import (
     FirmwareHoldNotification,
     FirmwareReleaseRejectedError,
     firmware_brake_abort_message,
+    firmware_brake_log_health,
     firmware_release_rejection_diagnostics,
     handoff_pi_release_to_firmware,
 )
@@ -15566,6 +15567,47 @@ class InteractionsControl:
         diagnostics['fresh_post_release_packet'] = fresh_packet
         return brake_log if fresh_packet else {}, diagnostics
 
+    def _hold_firmware_brake_until_interaction_duration(
+            self, *, enabled, interaction_start_s, duration_s, brake_mode):
+        """Observe the firmware-owned stage-4 hold until mission duration."""
+        if not enabled or interaction_start_s is None:
+            return False
+        remaining_s = float(duration_s) - (time.time() - interaction_start_s)
+        if remaining_s <= 0.0:
+            return False
+        self._log_event('Post-Release Hold Observation', {
+            'remaining_s': round(remaining_s, 2),
+            'duration_s': float(duration_s),
+            'firmware_stage': 4,
+            'brake_mode': brake_mode,
+        })
+        deadline_s = time.monotonic() + remaining_s
+        while True:
+            now_s = time.monotonic()
+            if now_s >= deadline_s:
+                break
+            brake_log, receipt_s = self._firmware_brake_status_snapshot()
+            self._check_firmware_brake_monitor_safety(brake_log)
+            health, age_s = firmware_brake_log_health(
+                receipt_s, now_s=time.time(),
+                monitor_elapsed_s=remaining_s - (deadline_s - now_s))
+            if health == 'expired':
+                raise StaleLocalizationError(
+                    'firmware hold status log exceeded bounded grace '
+                    '(age %.3f s)' % age_s)
+            stage = brake_log.get('hlCommander.pRelAutoSt')
+            if stage is not None and stage != 4:
+                raise RuntimeError(
+                    'firmware left post-release hold before interaction '
+                    f'duration elapsed (stage={stage})')
+            self._safe_sleep(min(0.05, deadline_s - now_s))
+        self._log_event('Post-Release Hold Observation Complete', {
+            'duration_s': float(duration_s),
+            'firmware_stage': 4,
+            'brake_mode': brake_mode,
+        })
+        return True
+
     def _wait_for_firmware_brake_hold_impl(self, completion, *, brake_mode,
                                           baseline_receipt_s, baseline_timeouts):
         monitor_started = time.monotonic()
@@ -19832,21 +19874,6 @@ class InteractionsControl:
                 # Exit as soon as the completed brake has a measured hold
                 # target. The verified firmware handoff does not emit an LL
                 # position setpoint, which would preempt its HLC owner.
-                if (firmware_brake_config.get('hold_until_duration', False)
-                        and interaction_start is not None):
-                    remaining_s = duration - (time.time() - interaction_start)
-                    if remaining_s > 0.0:
-                        self._log_event('Post-Release Hold Observation', {
-                            'remaining_s': round(remaining_s, 2),
-                            'duration_s': duration,
-                            'firmware_stage': 4,
-                        })
-                        # The firmware HLC keeps holding on its own; the
-                        # offboard only waits, so the battery and safety
-                        # checks in _safe_sleep still run every 50 ms.
-                        hold_deadline = time.time() + remaining_s
-                        while time.time() < hold_deadline:
-                            self._safe_sleep(0.05)
                 break
             if (
                 bootstrap_coverage is not None
@@ -22310,6 +22337,13 @@ class InteractionsControl:
                             baseline_receipt_s=baseline_brake_receipt_s,
                             baseline_timeouts=baseline_brake_timeouts,
                         )
+                    self._hold_firmware_brake_until_interaction_duration(
+                        enabled=firmware_brake_config.get(
+                            'hold_until_duration', False),
+                        interaction_start_s=interaction_start,
+                        duration_s=duration,
+                        brake_mode=firmware_brake_mode,
+                    )
                     break
                 release_event_clock_evidence = dict(
                     contact_attitude_release_preview_clock_evidence
