@@ -19812,6 +19812,21 @@ class InteractionsControl:
                 # Exit as soon as the completed brake has a measured hold
                 # target. The verified firmware handoff does not emit an LL
                 # position setpoint, which would preempt its HLC owner.
+                if (firmware_brake_config.get('hold_until_duration', False)
+                        and interaction_start is not None):
+                    remaining_s = duration - (time.time() - interaction_start)
+                    if remaining_s > 0.0:
+                        self._log_event('Post-Release Hold Observation', {
+                            'remaining_s': round(remaining_s, 2),
+                            'duration_s': duration,
+                            'firmware_stage': 4,
+                        })
+                        # The firmware HLC keeps holding on its own; the
+                        # offboard only waits, so the battery and safety
+                        # checks in _safe_sleep still run every 50 ms.
+                        hold_deadline = time.time() + remaining_s
+                        while time.time() < hold_deadline:
+                            self._safe_sleep(0.05)
                 break
             if (
                 bootstrap_coverage is not None
