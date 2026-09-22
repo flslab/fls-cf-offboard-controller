@@ -34,6 +34,74 @@ def load_mocap():
 
 
 class MocapTimingTests(unittest.TestCase):
+    def test_source_metadata_is_opt_in_and_preserves_host_timestamp(self):
+        module = load_mocap()
+        module.motioncapture.MotionCapture = type(
+            'PatchedCapture', (), {'frameMetadata': lambda self: {}})
+        clock, frames, diagnostics = Clock(), [], []
+        metadata = iter([
+            {'frame_number': 101, 'hardware_frame_number': 9001,
+             'latency_total_s': .004},
+            {'frame_number': 103, 'hardware_frame_number': 9003,
+             'timecode': {'hours': 1, 'minutes': 2, 'seconds': 3, 'frames': 4}},
+        ])
+        capture = SimpleNamespace(
+            pointCloud=np.array([[0., 0., 0.]]),
+            waitForNextFrame=lambda: clock.advance(.01),
+            frameMetadata=lambda: next(metadata),
+        )
+        mocap = module.Mocap(mode='pointcloud', timing_callback=diagnostics.append,
+                             source_metadata=True)
+        mocap.subscribe_point([0, 0, 0], frames.append)
+
+        def diagnostic(row):
+            diagnostics.append(row)
+            if len(diagnostics) == 2:
+                mocap.running = False
+
+        mocap.timing_callback = diagnostic
+        with patch.object(module, 'time', clock), patch.object(
+                module.motioncapture, 'connect', return_value=capture):
+            mocap.run()
+        self.assertEqual([row['source_frame_delta'] for row in diagnostics], [None, 2])
+        self.assertEqual(diagnostics[0]['source_metadata']['hardware_frame_number'], 9001)
+        self.assertIn('source_metadata_read_duration_s', diagnostics[0])
+        self.assertAlmostEqual(diagnostics[1]['time'], 1010.02)
+        self.assertFalse(diagnostics[1]['source_capture_time_available'])
+        self.assertEqual(frames[1]['mocap_timing']['source_frame_delta'], 2)
+        self.assertEqual(frames[1]['mocap_timing']['frame_time_scope'], 'host_after_wait')
+
+    def test_source_metadata_requires_patched_package(self):
+        module = load_mocap()
+        with self.assertRaisesRegex(RuntimeError, 'patched package'):
+            module.Mocap(timing_callback=lambda _: None, source_metadata=True)
+
+    def test_source_metadata_read_error_does_not_drop_pose(self):
+        module = load_mocap()
+        module.motioncapture.MotionCapture = type(
+            'PatchedCapture', (), {'frameMetadata': lambda self: {}})
+        clock, frames, diagnostics = Clock(), [], []
+        capture = SimpleNamespace(pointCloud=np.array([[0., 0., 0.]]))
+        mocap = module.Mocap(mode='pointcloud', timing_callback=diagnostics.append,
+                             source_metadata=True)
+        mocap.subscribe_point([0, 0, 0], frames.append)
+
+        def wait():
+            clock.advance(.01)
+            mocap.running = False
+
+        def fail_metadata():
+            raise RuntimeError('diagnostic unavailable')
+
+        capture.waitForNextFrame = wait
+        capture.frameMetadata = fail_metadata
+        with patch.object(module, 'time', clock), patch.object(
+                module.motioncapture, 'connect', return_value=capture):
+            mocap.run()
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(diagnostics[0]['source_metadata_error'],
+                         'diagnostic unavailable')
+
     def test_wait_processing_callback_and_unmatched_frames_are_distinct(self):
         module = load_mocap()
         clock, frames, diagnostics = Clock(), [], []

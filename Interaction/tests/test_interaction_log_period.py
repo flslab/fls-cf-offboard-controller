@@ -1,5 +1,6 @@
 """Period compatibility checks for the deployed FLS logging protocol."""
 
+import struct
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -74,19 +75,32 @@ class InteractionLogPeriodTests(unittest.TestCase):
                          'ATT_RATE_CTL'):
             self.assertNotIn(optional, selected)
         self.assertEqual(set(selected), {
-            'VEL_ORI', 'POS_ACC', 'RATE_EST', 'MOT_BAT', 'FIRMWARE_BRAKE',
+            'FIRMWARE_KIN', 'FIRMWARE_ACT', 'FIRMWARE_BRAKE',
         })
         blocks = self.initialize(selected)
         by_name = {block.name: block for block in blocks}
+        self.assertEqual(by_name['FIRMWARE_KIN'].period_in_ms, 100)
+        self.assertEqual(by_name['FIRMWARE_ACT'].period_in_ms, 100)
+        self.assertEqual(
+            sum({'int16_t': 2, 'uint32_t': 4}[kind]
+                for _, kind in by_name['FIRMWARE_KIN'].variables), 22)
+        self.assertEqual(
+            sum({'int16_t': 2, 'uint16_t': 2, 'float': 4}[kind]
+                for _, kind in by_name['FIRMWARE_ACT'].variables), 18)
         self.assertEqual(by_name['FIRMWARE_BRAKE'].period_in_ms, 1000)
-        self.assertIn(
+        self.assertEqual(by_name['FIRMWARE_BRAKE'].variables, [
+            ('hlCommander.pRelReady', 'uint8_t'),
             ('hlCommander.pRelAutoSt', 'uint8_t'),
-            by_name['FIRMWARE_BRAKE'].variables,
-        )
-        self.assertIn(
-            ('hlCommander.pRelAutoTime', 'uint32_t'),
-            by_name['FIRMWARE_BRAKE'].variables,
-        )
+            ('hlCommander.pRelAbort', 'uint8_t'),
+            ('hlCommander.pRelAutoTime', 'uint8_t'),
+            ('hlCommander.pRelEvtVer', 'uint8_t'),
+            ('hlCommander.pRelMode', 'uint8_t'),
+            ('hlCommander.pRelTau', 'FP16'),
+        ])
+        sizes = {'uint8_t': 1, 'FP16': 2}
+        self.assertEqual(sum(
+            sizes[kind] for _, kind in by_name['FIRMWARE_BRAKE'].variables
+        ), 8)
 
     def test_firmware_optional_logs_can_be_enabled_without_changing_legacy(self):
         wrench = {
@@ -104,6 +118,24 @@ class InteractionLogPeriodTests(unittest.TestCase):
         wrench['firmware_auto_brake']['include_optional_log_groups'] = 'yes'
         with self.assertRaisesRegex(ValueError, 'include_optional_log_groups'):
             interaction_config.log_vars_for_mission(mission)
+
+    def test_firmware_compressed_logs_have_scoped_legacy_fallback(self):
+        wrench = {'firmware_auto_brake': {
+            'enabled': True, 'compressed_state_logs': False,
+        }}
+        mission = {'Interaction': {'config': {'wrench_interaction': wrench}}}
+        selected = interaction_config.log_vars_for_mission(mission)
+        self.assertEqual(set(selected), {
+            'VEL_ORI', 'POS_ACC', 'RATE_EST', 'MOT_BAT', 'FIRMWARE_BRAKE',
+        })
+        wrench['firmware_auto_brake']['compressed_state_logs'] = 'yes'
+        with self.assertRaisesRegex(ValueError, 'compressed_state_logs'):
+            interaction_config.log_vars_for_mission(mission)
+
+    def test_half_precision_response_readback_preserves_prearm_tolerance(self):
+        for response_s in (0.02, 0.08, 0.14, 0.20):
+            readback = struct.unpack('<e', struct.pack('<e', response_s))[0]
+            self.assertLess(abs(readback-response_s), 0.001)
 
     def test_enabled_yaw_command_model_keeps_yaw_log_required(self):
         mission = {'Interaction': {'config': {'wrench_interaction': {

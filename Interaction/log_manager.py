@@ -1,4 +1,5 @@
 import copy
+from bisect import bisect_left
 import collections
 import json
 import os
@@ -15,6 +16,7 @@ from log_manager_abs import LogManager
 from cflib.crazyflie.log import LogConfig
 import time
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -224,8 +226,15 @@ class InteractionLogger(LogManager):
 
         logger.debug("logging activated")
 
-    def add_log_group(self, name, *args, kf=False, **kwargs):
+    def add_log_group(self, name, *args, kf=False,
+                      kf_use_mocap_elapsed_dt=False, **kwargs):
         self.groups[name] = []
+        elapsed_groups = getattr(self, '_kf_mocap_elapsed_groups', None)
+        if elapsed_groups is None:
+            elapsed_groups = self._kf_mocap_elapsed_groups = set()
+            self._kf_mocap_last_epoch_s = {}
+        elapsed_groups.discard(name)
+        self._kf_mocap_last_epoch_s.pop(name, None)
         if kf:
             # controller.py renamed --fps to --tracker-camera-rate; the follow/test
             # controllers still pass --fps
@@ -236,6 +245,8 @@ class InteractionLogger(LogManager):
                 'y': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
                 'z': VelocityKalmanFilter(dt=dt, process_noise=1.0, measurement_noise=0.001 ** 2),
             }
+            if name == 'frames' and kf_use_mocap_elapsed_dt:
+                elapsed_groups.add(name)
 
     def add_log_entry(self, group_name, entry, *args, **kwargs):
         # Preserve the legacy/default-disabled timing path. The additional
@@ -304,7 +315,11 @@ class InteractionLogger(LogManager):
             kf is not None and entry is not None
             and entry.get('tvec', None) is not None
         ):
-            entry['vel'] = self._update_kf(entry['tvec'], kf)
+            if group_name in getattr(self, '_kf_mocap_elapsed_groups', ()):
+                entry['vel'] = self._update_mocap_elapsed_kf(
+                    group_name, entry, kf)
+            else:
+                entry['vel'] = self._update_kf(entry['tvec'], kf)
 
         self.groups[group_name].append(entry)
 
@@ -403,9 +418,79 @@ class InteractionLogger(LogManager):
         skew_ms, packet = min(candidates, key=lambda item: item[0])
         return packet.copy(), 0.001 * float(skew_ms)
 
+    def get_latest_paired_group_log_data(
+            self, log_group, paired_group, *, max_skew_s):
+        """Atomically select the newest complete device-clock packet pair.
+
+        Independent callbacks may have published only half of the newest
+        pair. Search retained history instead of combining that half with a
+        different cycle. Preserve the reference packet's ORIGINAL host time:
+        callers must still apply their existing age limits, even when newer
+        unmatched packets keep arriving. This method does not refresh age.
+        """
+        if not math.isfinite(max_skew_s) or max_skew_s < 0:
+            raise ValueError('invalid packet-pair skew limit')
+        with self.cf_log_packet_lock:
+            metadata = getattr(self, 'cf_log_group_packet_metadata', {})
+            reference = list(self.cf_log_group_packets.get(log_group, ()))
+            reference_meta = list(metadata.get(log_group, ()))
+            paired = list(self.cf_log_group_packets.get(paired_group, ()))
+            paired_meta = list(metadata.get(paired_group, ()))
+        if (not reference or not paired
+                or len(reference) != len(reference_meta)
+                or len(paired) != len(paired_meta)):
+            return None
+        anchor = reference_meta[-1].get('cf_timestamp_ms')
+        if anchor is None:
+            return None
+
+        def epoch_offset(timing):
+            epoch = timing.get('cf_timestamp_ms')
+            if epoch is None:
+                return None
+            return ((int(epoch) - int(anchor) + 0x800000) & 0xFFFFFF) - 0x800000
+
+        # Sort once, then use binary search rather than scanning both history
+        # buffers for every candidate. Epochs are unwrapped around the latest
+        # reference so pairing also works across the CRTP 24-bit clock wrap.
+        candidates = []
+        for data, timing in zip(paired, paired_meta):
+            offset = epoch_offset(timing)
+            if offset is not None:
+                candidates.append((offset, data))
+        candidates.sort(key=lambda item: item[0])
+        if not candidates:
+            return None
+        epochs = [item[0] for item in candidates]
+        for data, timing in zip(reversed(reference), reversed(reference_meta)):
+            epoch = epoch_offset(timing)
+            if epoch is None:
+                continue
+            index = bisect_left(epochs, epoch)
+            neighbors = candidates[max(0, index - 1):index + 1]
+            nearest_epoch, nearest = min(neighbors, key=lambda item: abs(item[0] - epoch))
+            skew_s = .001 * abs(nearest_epoch - epoch)
+            if skew_s <= max_skew_s:
+                return data.copy(), timing.copy(), nearest.copy(), skew_s
+        return None
+
     def get_latest_cf_log_data(self, group_name, param_name):
         if self.cf_log_data is None:
             return None
+        # Landing still asks for legacy stateEstimate XYZ. In the opt-in
+        # firmware-auto-brake subscription those coordinates arrive as
+        # stateEstimateZ millimetres instead of a third position log block.
+        if (
+            group_name == 'VEL_POS'
+            and param_name in (
+                'stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z'
+            )
+            and 'FIRMWARE_KIN' in self.cf_log_data
+        ):
+            axis = param_name.rsplit('.', 1)[1]
+            values = self.cf_log_data['FIRMWARE_KIN'][
+                f'stateEstimateZ.{axis}']['data']
+            return 0.001 * values[-1] if values else None
         group = self.cf_log_data.get(group_name)
         if group is None:
             # interaction config names this group POS_ACC, not VEL_POS
@@ -580,6 +665,40 @@ class InteractionLogger(LogManager):
 
     def _update_kf(self, pos, kf):
         return [axis_kf.update(p) for p, axis_kf in zip(pos, kf.values())]
+
+    def _update_mocap_elapsed_kf(self, group_name, entry, kf):
+        """Match firmware mirror epochs without changing frame timestamps.
+
+        This is an opt-in host diagnostic, not firmware command authority.
+        Preserve filter history across gaps; reject missing/nonmonotonic epochs
+        rather than inventing a dt from logger scheduling or wall-clock time.
+        """
+        epoch = (entry.get('mocap_timing') or {}).get(
+            'wait_return_monotonic_s')
+        previous = self._kf_mocap_last_epoch_s.get(group_name)
+        status = None
+        if (isinstance(epoch, bool) or not isinstance(epoch, (int, float))
+                or not math.isfinite(epoch)):
+            status = 'missing_or_invalid_epoch'
+        elif previous is not None and epoch <= previous:
+            status = 'nonmonotonic_epoch'
+        if status is not None:
+            entry['velocity_kf_timing'] = {
+                'basis': 'pi_mocap_wait_return_monotonic',
+                'update_applied': False, 'status': status, 'dt_s': None,
+            }
+            return [float(axis.x[1, 0]) for axis in kf.values()]
+        dt = None if previous is None else epoch - previous
+        velocity = [axis.update(position, dt=dt)
+                    for position, axis in zip(entry['tvec'], kf.values())]
+        self._kf_mocap_last_epoch_s[group_name] = float(epoch)
+        entry['velocity_kf_timing'] = {
+            'basis': 'pi_mocap_wait_return_monotonic',
+            'update_applied': True,
+            'status': 'initial_nominal_step' if dt is None else 'elapsed_step',
+            'dt_s': next(iter(kf.values())).dt,
+        }
+        return velocity
 
     import subprocess
 

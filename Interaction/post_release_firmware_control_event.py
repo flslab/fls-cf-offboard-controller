@@ -27,6 +27,174 @@ HOLD_NOTICE_TYPE = 17
 HOLD_ACK_TYPE = 18
 HOLD_NOTICE_PACKET = struct.Struct('<BBHIffffI')
 HOLD_ACK_PACKET = struct.Struct('<BBHI')
+FIRMWARE_BRAKE_LOG_WARN_AGE_S = 0.35
+FIRMWARE_BRAKE_LOG_FAIL_AGE_S = 0.80
+
+
+def firmware_brake_abort_message(brake_log):
+    """Describe the reported fault without guessing its underlying sensor."""
+    reason = brake_log.get('hlCommander.pRelAbort')
+    description = {
+        1: 'trusted control state unavailable',
+        2: 'unwind plan invalid',
+        3: 'attitude/body-rate feedback unavailable',
+        4: 'rate-aware unwind plan infeasible',
+        11: 'Pi plan unavailable after bounded local return; not a stable hold',
+    }.get(reason, 'reason not reported' if reason is None else 'unknown reason')
+    return 'firmware brake aborted (stage 6; %s; reason=%s)' % (
+        description, 'unavailable' if reason is None else reason)
+
+
+def firmware_brake_log_health(receipt_time_s, *, now_s,
+                              monitor_elapsed_s):
+    """Distinguish a short status-log gap from unverified firmware control."""
+    if receipt_time_s is None:
+        age_s = monitor_elapsed_s
+    elif (not math.isfinite(receipt_time_s) or
+          not math.isfinite(now_s)):
+        age_s = math.inf
+    else:
+        age_s = max(0.0, now_s - receipt_time_s)
+    if age_s > FIRMWARE_BRAKE_LOG_FAIL_AGE_S:
+        return 'expired', age_s
+    if age_s > FIRMWARE_BRAKE_LOG_WARN_AGE_S:
+        return 'delayed', age_s
+    return ('waiting' if receipt_time_s is None else 'fresh'), age_s
+
+
+def firmware_hold_status_confirmed(notice, brake_log, log_health):
+    """A hold notice alone cannot substitute for a fresh stage-4 heartbeat."""
+    return (notice is not None and log_health == 'fresh' and
+            brake_log.get('hlCommander.pRelReady') == 1 and
+            brake_log.get('hlCommander.pRelAutoSt') == 4)
+
+
+class FirmwareBrakeMonitorError(RuntimeError):
+    def __init__(self, message, *, code):
+        super().__init__(message)
+        self.code = code
+
+
+class FirmwareBrakeMonitor:
+    """Bound a single accepted release's heartbeat and terminal evidence.
+
+    Receipt times identify packets; elapsed deadlines use the monotonic clock.
+    An unchanged pre-release packet cannot prove completion of this release.
+    Once received, a firmware abort remains a fault even if its packet ages.
+    """
+
+    def __init__(self, *, started_monotonic_s, baseline_receipt_time_s,
+                 baseline_timeouts):
+        self.started_s = started_monotonic_s
+        self.baseline_receipt_s = baseline_receipt_time_s
+        self.baseline_timeouts = baseline_timeouts
+        self.last_receipt_s = None
+        self.last_observed_s = None
+        self.last_initial_age_s = 0.0
+        self.missing_ready_since_s = None
+        self.delayed_reported = False
+        self.fault = None
+        self.accepted_plan_end_s = None
+
+    def track_accepted_plan(self, status):
+        """Use confirmed FC acceptance, not a receipt-relative renewable grace."""
+        if (status.get('phase') not in ('accepted', 'executing') or
+                status.get('firmware_errno') != 0):
+            return
+        try:
+            start = float(status['snapshot_received_s'])
+            delay = float(status['start_delay_us']) / 1e6
+            duration = float(status['duration_s'])
+        except (KeyError, TypeError, ValueError):
+            return
+        end = start + delay + duration
+        if (all(math.isfinite(v) for v in (start, delay, duration, end)) and
+                0 <= delay <= 1 and 0 < duration <= 3 and
+                self.started_s <= start and end <= self.started_s + 5):
+            self.accepted_plan_end_s = end
+
+    def _fail(self, code, message):
+        self.fault = FirmwareBrakeMonitorError(message, code=code)
+        raise self.fault
+
+    def observe(self, brake_log, *, receipt_time_s, now_wall_s,
+                now_monotonic_s, notice=None):
+        if self.fault is not None:
+            raise self.fault
+        elapsed_s = now_monotonic_s - self.started_s
+        post_release_packet = (receipt_time_s is not None and
+                               receipt_time_s != self.baseline_receipt_s)
+        new_packet = (post_release_packet and
+                      receipt_time_s != self.last_receipt_s)
+        if new_packet:
+            self.last_receipt_s = receipt_time_s
+            self.last_observed_s = now_monotonic_s
+            _, self.last_initial_age_s = firmware_brake_log_health(
+                receipt_time_s, now_s=now_wall_s,
+                monitor_elapsed_s=elapsed_s)
+        if self.last_observed_s is None:
+            health, age_s = firmware_brake_log_health(
+                None, now_s=now_wall_s, monitor_elapsed_s=elapsed_s)
+        else:
+            age_s = (self.last_initial_age_s +
+                     now_monotonic_s - self.last_observed_s)
+            health, _ = firmware_brake_log_health(
+                0.0, now_s=age_s, monitor_elapsed_s=elapsed_s)
+
+        # A known fault has precedence over telemetry freshness/readiness.
+        if post_release_packet:
+            if brake_log.get('hlCommander.pRelAutoSt') == 6:
+                self._fail('firmware_abort', firmware_brake_abort_message(brake_log))
+            timeouts = brake_log.get('hlCommander.pRelAutoTime')
+            if (timeouts is not None and self.baseline_timeouts is not None and
+                    timeouts != self.baseline_timeouts):
+                self._fail('brake_timeout',
+                           'firmware maximum-attitude brake timed out')
+
+        if health == 'expired':
+            self._fail('status_expired',
+                       'firmware brake status log exceeded bounded grace '
+                       '(age %.3f s)' % age_s)
+        events = []
+        if health == 'delayed' and not self.delayed_reported:
+            self.delayed_reported = True
+            events.append(('Firmware Brake Status Log Delayed', {'age_s': age_s}))
+        elif health == 'fresh' and self.delayed_reported:
+            self.delayed_reported = False
+            events.append(('Firmware Brake Status Log Recovered', {'age_s': age_s}))
+
+        if health == 'fresh' and post_release_packet:
+            if brake_log.get('hlCommander.pRelReady') == 1:
+                if self.missing_ready_since_s is not None:
+                    events.append(('Firmware Brake Observer Recovered', {
+                        'elapsed_s': now_monotonic_s - self.missing_ready_since_s}))
+                self.missing_ready_since_s = None
+            elif self.missing_ready_since_s is None:
+                self.missing_ready_since_s = now_monotonic_s
+                events.append(('Firmware Brake Observer Warning', {
+                    'firmware_stage': brake_log.get('hlCommander.pRelAutoSt')}))
+            if (brake_log.get('hlCommander.pRelAutoSt') == 0 and
+                    elapsed_s > 0.35):
+                self._fail('ownership_lost',
+                           'firmware brake dropped ownership before hold')
+        if (self.missing_ready_since_s is not None and
+                now_monotonic_s - self.missing_ready_since_s > 0.30):
+            bounded_curve = (health == 'fresh' and post_release_packet and
+                             brake_log.get('hlCommander.pRelAutoSt') == 2 and
+                             self.accepted_plan_end_s is not None and
+                             now_monotonic_s <= self.accepted_plan_end_s + 0.30)
+            if not bounded_curve:
+                self._fail('readiness_lost',
+                           'firmware control-state readiness unavailable beyond '
+                           '0.30 s / confirmed bounded curve recovery deadline')
+
+        return {
+            'health': health,
+            'age_s': age_s,
+            'events': events,
+            'hold_confirmed': (post_release_packet and
+                               firmware_hold_status_confirmed(notice, brake_log, health)),
+        }
 
 
 def parse_post_release_hold_notice(packet, *, session_id, sequence):

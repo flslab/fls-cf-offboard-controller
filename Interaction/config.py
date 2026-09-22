@@ -499,6 +499,46 @@ RATE_EST = {
 }
 
 
+# Existing firmware stateEstimateZ fields: millimetres, millimetres/second,
+# a packed quaternion, and milliradians/second.  The two blocks replace four
+# 100 Hz CRTP blocks only for firmware-owned interaction braking.  Neither
+# changes the estimator or the ordinary interaction log subscriptions.
+FIRMWARE_KIN = {
+    'log_period_ms': 10,
+    **{
+        f'stateEstimateZ.{name}': {
+            'type': 'int16_t', 'unit': unit, 'data': [],
+        }
+        for name, unit in (
+            ('x', 'mm'), ('y', 'mm'), ('z', 'mm'),
+            ('vx', 'mm/s'), ('vy', 'mm/s'), ('vz', 'mm/s'),
+            ('rateRoll', 'mrad/s'), ('ratePitch', 'mrad/s'),
+            ('rateYaw', 'mrad/s'),
+        )
+    },
+    'stateEstimateZ.quat': {
+        'type': 'uint32_t', 'unit': 'packed quaternion', 'data': [],
+    },
+}
+
+FIRMWARE_ACT = {
+    'log_period_ms': 10,
+    **{
+        f'stateEstimateZ.{axis}': {
+            'type': 'int16_t', 'unit': 'mm/s^2', 'data': [],
+        }
+        for axis in ('ax', 'ay', 'az')
+    },
+    **{
+        f'motor.m{index}': {
+            'type': 'uint16_t', 'unit': '', 'data': [],
+        }
+        for index in range(1, 5)
+    },
+    'pm.vbat': {'type': 'float', 'unit': 'V', 'data': []},
+}
+
+
 # Simulation-only firmware 15-state reference packets.  They are kept in
 # separate CRTP blocks so the reference can be sampled without changing the
 # active stateEstimate/PID estimator path.
@@ -882,15 +922,18 @@ def onboard_yaw_log_required(mission):
 
 FIRMWARE_BRAKE_LOG_VARS = {
     'log_period_ms': 100,
+    # Runtime heartbeat and pre-arm protocol/config checks only. The firmware
+    # still exposes detailed counters in its TOC for a separate diagnostic
+    # session, but normal interaction does not continuously stream them.
     'hlCommander.pRelReady': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelAutoSt': {'type': 'uint8_t', 'unit': '', 'data': []},
-    'hlCommander.pRelAutoN': {'type': 'uint32_t', 'unit': '', 'data': []},
-    'hlCommander.pRelAutoRej': {'type': 'uint32_t', 'unit': '', 'data': []},
-    'hlCommander.pRelAutoTime': {'type': 'uint32_t', 'unit': '', 'data': []},
-    'hlCommander.pRelAutoEn': {'type': 'uint8_t', 'unit': '', 'data': []},
+    'hlCommander.pRelAbort': {'type': 'uint8_t', 'unit': '', 'data': []},
+    # Only a change from the pre-release baseline matters during one handoff.
+    # A modulo-256 counter detects that change without a four-byte stream.
+    'hlCommander.pRelAutoTime': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelEvtVer': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelMode': {'type': 'uint8_t', 'unit': '', 'data': []},
-    'hlCommander.pRelTau': {'type': 'float', 'unit': 's', 'data': []},
+    'hlCommander.pRelTau': {'type': 'FP16', 'unit': 's', 'data': []},
 }
 
 
@@ -934,10 +977,19 @@ def log_vars_for_mission(mission):
             raise ValueError(
                 'firmware_auto_brake.include_optional_log_groups must be boolean'
             )
-        selected = {
-            name: LOG_VARS[name]
-            for name in ('VEL_ORI', 'POS_ACC', 'RATE_EST', 'MOT_BAT')
-        }
+        compressed_logs = (wrench_config.get('firmware_auto_brake') or {}).get(
+            'compressed_state_logs', True)
+        if type(compressed_logs) is not bool:
+            raise ValueError(
+                'firmware_auto_brake.compressed_state_logs must be boolean'
+            )
+        selected = (
+            {'FIRMWARE_KIN': FIRMWARE_KIN, 'FIRMWARE_ACT': FIRMWARE_ACT}
+            if compressed_logs else {
+                name: LOG_VARS[name]
+                for name in ('VEL_ORI', 'POS_ACC', 'RATE_EST', 'MOT_BAT')
+            }
+        )
         if optional_logs:
             selected.update({
                 'YAW_CTL': YAW_CTL,

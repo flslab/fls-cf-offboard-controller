@@ -2,8 +2,12 @@ import struct
 import unittest
 
 from Interaction.post_release_firmware_control_event import (
+    FirmwareBrakeMonitor,
+    FirmwareBrakeMonitorError,
     FirmwareHoldNotification,
     encode_pi_release_command,
+    firmware_brake_log_health,
+    firmware_hold_status_confirmed,
     handoff_pi_release_to_firmware,
     parse_pi_release_ack,
     parse_post_release_hold_notice,
@@ -12,7 +16,161 @@ from Interaction.post_release_firmware_control_event import (
 )
 
 
+class FirmwareBrakeMonitorTimelineTests(unittest.TestCase):
+    def setUp(self):
+        self.monitor = FirmwareBrakeMonitor(
+            started_monotonic_s=0.0, baseline_receipt_time_s=999.9,
+            baseline_timeouts=7)
+        self.notice = {'session_id': 99, 'sequence': 7}
+
+    def observe(self, now, *, receipt=None, stage=2, ready=1,
+                reason=0, timeouts=7, notice=None, wall=None):
+        return self.monitor.observe({
+            'hlCommander.pRelReady': ready,
+            'hlCommander.pRelAutoSt': stage,
+            'hlCommander.pRelAbort': reason,
+            'hlCommander.pRelAutoTime': timeouts,
+        }, receipt_time_s=receipt,
+           now_wall_s=1000.0 + now if wall is None else wall,
+           now_monotonic_s=now, notice=notice)
+
+    def test_cached_previous_release_hold_is_not_terminal_evidence(self):
+        update = self.observe(0.1, receipt=999.9, stage=4, notice=self.notice)
+        self.assertEqual(update['health'], 'waiting')
+        self.assertFalse(update['hold_confirmed'])
+        update = self.observe(0.2, receipt=1000.2, stage=2, notice=self.notice)
+        self.assertFalse(update['hold_confirmed'])
+        update = self.observe(0.3, receipt=1000.3, stage=4, notice=self.notice)
+        self.assertTrue(update['hold_confirmed'])
+
+    def test_log_gap_warns_once_and_recovers_without_premature_hold_ack(self):
+        self.observe(0.1, receipt=1000.1)
+        update = self.observe(0.46, receipt=1000.1, notice=self.notice)
+        self.assertEqual(update['health'], 'delayed')
+        self.assertEqual(len(update['events']), 1)
+        self.assertFalse(update['hold_confirmed'])
+        update = self.observe(0.55, receipt=1000.1, notice=self.notice)
+        self.assertEqual(update['events'], [])
+        update = self.observe(0.6, receipt=1000.6, stage=4, notice=self.notice)
+        self.assertTrue(update['hold_confirmed'])
+        self.assertEqual(update['events'][0][0],
+                         'Firmware Brake Status Log Recovered')
+
+    def test_elapsed_log_gap_is_monotonic_despite_host_clock_rollback(self):
+        self.observe(0.1, receipt=1000.1)
+        update = self.observe(0.50, receipt=1000.1, wall=900.0)
+        self.assertEqual(update['health'], 'delayed')
+        with self.assertRaisesRegex(FirmwareBrakeMonitorError, 'bounded grace'):
+            self.observe(0.91, receipt=1000.1, wall=900.4)
+
+    def test_received_abort_preempts_readiness_and_log_grace_then_latches(self):
+        self.observe(0.1, receipt=1000.1, ready=0)
+        with self.assertRaisesRegex(FirmwareBrakeMonitorError,
+                                    'unwind plan invalid') as caught:
+            self.observe(0.15, receipt=1000.15, stage=6, ready=0, reason=2)
+        self.assertEqual(caught.exception.code, 'firmware_abort')
+        with self.assertRaisesRegex(FirmwareBrakeMonitorError, 'unwind plan invalid'):
+            self.observe(0.2, receipt=1000.2, stage=4, notice=self.notice)
+
+    def test_delayed_abort_packet_still_reports_firmware_reason_first(self):
+        with self.assertRaisesRegex(FirmwareBrakeMonitorError,
+                                    'trusted control state unavailable'):
+            self.observe(0.9, receipt=1000.01, stage=6, reason=1)
+
+    def test_readiness_can_recover_within_existing_bound(self):
+        first = self.observe(0.1, receipt=1000.1, ready=0)
+        self.assertEqual(first['events'][0][0], 'Firmware Brake Observer Warning')
+        self.observe(0.2, receipt=1000.2, ready=0)
+        recovered = self.observe(0.35, receipt=1000.35, ready=1)
+        self.assertEqual(recovered['events'][0][0],
+                         'Firmware Brake Observer Recovered')
+        self.assertTrue(self.observe(
+            0.5, receipt=1000.5, stage=4, notice=self.notice)['hold_confirmed'])
+
+    def test_readiness_loss_is_not_excused_by_telemetry_grace(self):
+        self.observe(0.1, receipt=1000.1, ready=0)
+        with self.assertRaisesRegex(FirmwareBrakeMonitorError,
+                                    'readiness unavailable'):
+            self.observe(0.5, receipt=1000.1, ready=0)
+
+    def accepted_plan(self):
+        self.monitor.track_accepted_plan(dict(phase='executing', firmware_errno=0,
+            snapshot_received_s=.05, start_delay_us=40000, duration_s=.8))
+
+    def test_accepted_curve_continues_without_claiming_hold(self):
+        self.accepted_plan()
+        self.observe(.1, receipt=1000.1, ready=0)
+        for t in (.45, .7, 1.0):
+            self.assertFalse(self.observe(t, receipt=1000+t, ready=0)['hold_confirmed'])
+        recovered = self.observe(1.05, receipt=1001.05, ready=1)
+        self.assertTrue(any(n == 'Firmware Brake Observer Recovered'
+                            for n, _ in recovered['events']))
+        self.assertTrue(self.observe(1.1, receipt=1001.1, ready=1, stage=4,
+                                     notice=self.notice)['hold_confirmed'])
+
+    def test_curve_grace_is_fixed_not_renewed_by_polling(self):
+        self.accepted_plan()
+        self.observe(.1, receipt=1000.1, ready=0)
+        self.observe(.5, receipt=1000.5, ready=0)
+        self.accepted_plan()
+        with self.assertRaisesRegex(FirmwareBrakeMonitorError, 'recovery deadline'):
+            self.observe(1.20, receipt=1001.20, ready=0)
+
+    def test_accepted_curve_does_not_excuse_rapid_hold_or_telemetry_loss(self):
+        for stage in (1, 4):
+            self.setUp()
+            self.accepted_plan()
+            self.observe(.1, receipt=1000.1, ready=0)
+            with self.assertRaises(FirmwareBrakeMonitorError):
+                self.observe(.5, receipt=1000.5, ready=0, stage=stage)
+        self.setUp()
+        self.accepted_plan()
+        self.observe(.1, receipt=1000.1, ready=0)
+        with self.assertRaises(FirmwareBrakeMonitorError):
+            self.observe(.5, receipt=1000.1, ready=0)
+
+    def test_unaccepted_or_invalid_plan_does_not_extend_grace(self):
+        for phase in ('planning', 'awaiting_result', 'rejected'):
+            self.monitor.track_accepted_plan(dict(phase=phase, firmware_errno=0,
+                snapshot_received_s=.05, start_delay_us=40000, duration_s=.8))
+        self.assertIsNone(self.monitor.accepted_plan_end_s)
+
+    def test_timeout_and_ownership_failures_remain_distinct(self):
+        with self.assertRaisesRegex(FirmwareBrakeMonitorError, 'timed out'):
+            self.observe(0.1, receipt=1000.1, timeouts=8)
+        self.setUp()
+        with self.assertRaisesRegex(FirmwareBrakeMonitorError, 'dropped ownership'):
+            self.observe(0.4, receipt=1000.4, stage=0)
+
+
 class PostReleaseFirmwareControlEventTests(unittest.TestCase):
+    def test_brake_status_log_has_bounded_warning_grace(self):
+        self.assertEqual(firmware_brake_log_health(
+            99.70, now_s=100.0, monitor_elapsed_s=1.0)[0], 'fresh')
+        self.assertEqual(firmware_brake_log_health(
+            99.60, now_s=100.0, monitor_elapsed_s=1.0)[0], 'delayed')
+        self.assertEqual(firmware_brake_log_health(
+            99.10, now_s=100.0, monitor_elapsed_s=1.0)[0], 'expired')
+        self.assertEqual(firmware_brake_log_health(
+            None, now_s=100.0, monitor_elapsed_s=0.40)[0], 'delayed')
+        self.assertEqual(firmware_brake_log_health(
+            None, now_s=100.0, monitor_elapsed_s=0.81)[0], 'expired')
+
+    def test_hold_notice_waits_for_fresh_stage_four_status(self):
+        notice = {'session_id': 99, 'sequence': 7}
+        status = {'hlCommander.pRelReady': 1,
+                  'hlCommander.pRelAutoSt': 4}
+        self.assertFalse(firmware_hold_status_confirmed(
+            notice, status, 'delayed'))
+        self.assertFalse(firmware_hold_status_confirmed(
+            notice, {**status, 'hlCommander.pRelReady': 0}, 'fresh'))
+        self.assertFalse(firmware_hold_status_confirmed(
+            notice, {**status, 'hlCommander.pRelAutoSt': 3}, 'fresh'))
+        self.assertFalse(firmware_hold_status_confirmed(
+            None, status, 'fresh'))
+        self.assertTrue(firmware_hold_status_confirmed(
+            notice, status, 'fresh'))
+
     def test_vicon_mirror_carries_pi_receive_epoch_without_cross_clock_math(self):
         class FakeCf:
             def __init__(self):
