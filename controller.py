@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 # Paired experimental S-curve firmware identities. 26092202 adds the release
 # admission policy parameters and the rejection-reason logs.
-SCURVE_FIRMWARE_VERSIONS = frozenset({26092201, 26092202})
+SCURVE_FIRMWARE_VERSIONS = frozenset({26092201, 26092202, 26092203})
 
 
 pos_update_time_log = []
