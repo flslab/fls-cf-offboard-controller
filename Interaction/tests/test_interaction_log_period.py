@@ -95,6 +95,8 @@ class InteractionLogPeriodTests(unittest.TestCase):
             ('hlCommander.pRelAutoTime', 'uint8_t'),
             ('hlCommander.pRelEvtVer', 'uint8_t'),
             ('hlCommander.pRelMode', 'uint8_t'),
+            ('hlCommander.pRelRejR', 'uint8_t'),
+            ('hlCommander.pRelRejD', 'uint8_t'),
             ('hlCommander.pRelTau', 'FP16'),
             ('hlCommander.scV', 'FP16'),
             ('hlCommander.scCmd', 'FP16'),
@@ -103,7 +105,7 @@ class InteractionLogPeriodTests(unittest.TestCase):
         sizes = {'uint8_t': 1, 'FP16': 2}
         self.assertEqual(sum(
             sizes[kind] for _, kind in by_name['FIRMWARE_BRAKE'].variables
-        ), 14)
+        ), 16)
 
     def test_brake_log_period_is_opt_in_and_rejects_bad_values(self):
         def selected(period):

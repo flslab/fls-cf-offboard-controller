@@ -31,6 +31,92 @@ FIRMWARE_BRAKE_LOG_WARN_AGE_S = 0.35
 FIRMWARE_BRAKE_LOG_FAIL_AGE_S = 0.80
 
 
+_RELEASE_REJECTION_REASONS = {
+    1: 'general firmware admission gate failed',
+    2: 'duplicate release event',
+    3: 'S-curve prediction unavailable',
+    4: 'S-curve initial plan infeasible',
+    5: 'current attitude/body-rate estimate unavailable',
+    6: 'trusted Vicon15 state unavailable',
+    7: 'release state outside configured bounds',
+    8: 'brake attitude could not be constructed',
+    9: 'brake delay calculation infeasible',
+}
+
+
+def firmware_release_rejection_diagnostics(brake_log):
+    """Decode the sticky reason/detail exported by the paired firmware."""
+    reason = brake_log.get('hlCommander.pRelRejR')
+    detail = brake_log.get('hlCommander.pRelRejD')
+    try:
+        reason = int(reason) if reason is not None else None
+        detail = int(detail) if detail is not None else None
+    except (TypeError, ValueError):
+        reason, detail = None, None
+
+    description = _RELEASE_REJECTION_REASONS.get(
+        reason, 'reason not yet available' if not reason else 'unknown reason')
+    detail_description = None
+    if reason == 3 and detail is not None:
+        detail_description = (
+            'trusted state available but predictor not ready'
+            if detail & 1 else 'trusted state unavailable')
+    elif reason == 4 and detail is not None:
+        detail_description = (
+            'horizontal speed below 1 mm/s'
+            if detail & 1 else 'profile solver rejected the release state')
+    elif reason == 6 and detail is not None:
+        detail_description = (
+            'current trusted sample failed cache validation'
+            if detail & 1 else 'no current trusted sample')
+    elif reason == 7 and detail is not None:
+        labels = (
+            (1, 'non-finite input'),
+            (2, 'trusted state older than 60 ms'),
+            (4, 'speed below configured minimum'),
+            (8, 'vertical speed above limit'),
+            (16, 'height below configured floor'),
+            (32, 'no horizontal direction'),
+        )
+        failures = [label for bit, label in labels if detail & bit]
+        detail_description = ', '.join(failures) if failures else 'no bound bit set'
+    return {
+        'firmware_reject_reason': reason,
+        'firmware_reject_detail': detail,
+        'firmware_reject_description': description,
+        'firmware_reject_detail_description': detail_description,
+    }
+
+
+class FirmwareReleaseRejectedError(RuntimeError):
+    """Firmware returned an ACK but refused to claim release ownership."""
+
+    def __init__(self, ack_errno, diagnostics=None):
+        self.ack_errno = int(ack_errno)
+        self.diagnostics = dict(diagnostics or {})
+        super().__init__(self._message())
+
+    def _message(self):
+        description = self.diagnostics.get('firmware_reject_description')
+        reason = self.diagnostics.get('firmware_reject_reason')
+        detail = self.diagnostics.get('firmware_reject_detail')
+        detail_description = self.diagnostics.get(
+            'firmware_reject_detail_description')
+        message = f'firmware rejected release event (errno={self.ack_errno}'
+        if reason:
+            message += f', reason={reason}: {description}'
+            if detail is not None:
+                message += f', detail={detail}'
+            if detail_description:
+                message += f': {detail_description}'
+        return message + ')'
+
+    def add_firmware_diagnostics(self, brake_log):
+        self.diagnostics = firmware_release_rejection_diagnostics(brake_log)
+        self.args = (self._message(),)
+        return self
+
+
 def firmware_brake_abort_message(brake_log):
     """Describe the reported fault without guessing its underlying sensor."""
     reason = brake_log.get('hlCommander.pRelAbort')
@@ -419,9 +505,7 @@ def handoff_pi_release_to_firmware(
         if not received.wait(ack_timeout_s):
             raise RuntimeError('firmware release event ACK timed out; LL ownership retained')
         if not matched['event_queued_by_firmware']:
-            raise RuntimeError(
-                f"firmware rejected release event (errno={matched['ack_errno']})"
-            )
+            raise FirmwareReleaseRejectedError(matched['ack_errno'])
         return {
             'session_id': session_id,
             'sequence': sequence,

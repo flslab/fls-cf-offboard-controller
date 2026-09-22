@@ -31,7 +31,9 @@ from Interaction.post_release_firmware_control_event import (
     FirmwareBrakeMonitor,
     FirmwareBrakeMonitorError,
     FirmwareHoldNotification,
+    FirmwareReleaseRejectedError,
     firmware_brake_abort_message,
+    firmware_release_rejection_diagnostics,
     handoff_pi_release_to_firmware,
 )
 from Interaction.adaptive_braking_calibration import AdaptiveBrakingCalibration
@@ -15546,6 +15548,24 @@ class InteractionsControl:
                 logger.exception('Optional release diagnostics could not be saved')
                 self._release_diagnostics_warned = True
 
+    def _capture_firmware_release_rejection(self, baseline_receipt_s):
+        """Wait briefly for the log packet written after a rejected ACK."""
+        deadline = time.monotonic() + 0.05
+        brake_log, receipt_s = self._firmware_brake_status_snapshot()
+        while (receipt_s == baseline_receipt_s and
+               time.monotonic() < deadline):
+            self._safe_sleep(0.005)
+            brake_log, receipt_s = self._firmware_brake_status_snapshot()
+        fresh_packet = (receipt_s is not None and
+                        receipt_s != baseline_receipt_s)
+        # The fields are sticky. Never attribute an earlier release's reason
+        # to this ACK when no post-release status packet arrived in time.
+        diagnostics = firmware_release_rejection_diagnostics(
+            brake_log if fresh_packet else {})
+        diagnostics['brake_log_receipt_s'] = receipt_s
+        diagnostics['fresh_post_release_packet'] = fresh_packet
+        return brake_log if fresh_packet else {}, diagnostics
+
     def _wait_for_firmware_brake_hold_impl(self, completion, *, brake_mode,
                                           baseline_receipt_s, baseline_timeouts):
         monitor_started = time.monotonic()
@@ -22265,6 +22285,18 @@ class InteractionsControl:
                                     .unloaded_started_at_s * 1_000_000_000)),
                                 firmware_auto_brake_armed=True,
                             )
+                        except FirmwareReleaseRejectedError as error:
+                            brake_log, diagnostics = (
+                                self._capture_firmware_release_rejection(
+                                    baseline_brake_receipt_s))
+                            error.add_firmware_diagnostics(brake_log)
+                            self._log_event(
+                                'Firmware Release Event Rejected', {
+                                    'ack_errno': error.ack_errno,
+                                    **diagnostics,
+                                })
+                            self._flush_release_diagnostics()
+                            raise
                         except Exception:
                             self._flush_release_diagnostics()
                             raise

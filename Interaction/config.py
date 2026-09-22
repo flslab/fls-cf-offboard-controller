@@ -933,8 +933,13 @@ FIRMWARE_BRAKE_LOG_VARS = {
     'hlCommander.pRelAutoTime': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelEvtVer': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelMode': {'type': 'uint8_t', 'unit': '', 'data': []},
+    # Sticky reason/detail for the most recent rejected release event. Keep
+    # these in the normal block so an ACK errno can be tied to the exact
+    # firmware admission gate instead of being reported only as EAGAIN.
+    'hlCommander.pRelRejR': {'type': 'uint8_t', 'unit': '', 'data': []},
+    'hlCommander.pRelRejD': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelTau': {'type': 'FP16', 'unit': 's', 'data': []},
-    # S-curve reference/command trace. FP16 keeps the whole block at 14 bytes;
+    # S-curve reference/command trace. FP16 keeps the whole block at 16 bytes;
     # these resolve ~1 mm/s and ~1 mm/s^2, far finer than the effects studied.
     'hlCommander.scV': {'type': 'FP16', 'unit': 'm/s', 'data': []},
     'hlCommander.scCmd': {'type': 'FP16', 'unit': 'm/s2', 'data': []},

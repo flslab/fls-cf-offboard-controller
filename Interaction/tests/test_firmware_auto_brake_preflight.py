@@ -106,6 +106,44 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
         self.assertEqual(control._firmware_brake_status_snapshot(),
                          (packet, 1000.0))
 
+    def test_release_rejection_capture_uses_new_status_packet(self):
+        control = InteractionsControl.__new__(InteractionsControl)
+        control._firmware_brake_status_snapshot = lambda: ({
+            'hlCommander.pRelRejR': 3,
+            'hlCommander.pRelRejD': 1,
+        }, 1000.02)
+        control._safe_sleep = Mock()
+
+        brake_log, diagnostics = (
+            control._capture_firmware_release_rejection(1000.0))
+
+        self.assertEqual(brake_log['hlCommander.pRelRejR'], 3)
+        self.assertTrue(diagnostics['fresh_post_release_packet'])
+        self.assertIn('predictor not ready',
+                      diagnostics['firmware_reject_detail_description'])
+        control._safe_sleep.assert_not_called()
+
+    def test_release_rejection_capture_does_not_reuse_sticky_old_reason(self):
+        control = InteractionsControl.__new__(InteractionsControl)
+        clock = {'now': 0.0}
+        control._firmware_brake_status_snapshot = lambda: ({
+            'hlCommander.pRelRejR': 5,
+            'hlCommander.pRelRejD': 0,
+        }, 1000.0)
+
+        def safe_sleep(duration):
+            clock['now'] += duration
+
+        control._safe_sleep = safe_sleep
+        with patch('Interaction.interactions.time.monotonic',
+                   side_effect=lambda: clock['now']):
+            brake_log, diagnostics = (
+                control._capture_firmware_release_rejection(1000.0))
+
+        self.assertEqual(brake_log, {})
+        self.assertFalse(diagnostics['fresh_post_release_packet'])
+        self.assertIsNone(diagnostics['firmware_reject_reason'])
+
     def test_wait_loop_checks_battery_during_telemetry_gap_and_pending_notice(self):
         elapsed, completion, _, checked_at = self.run_firmware_wait(
             lambda _: self.brake_packet(0.0), abort_at=0.15,

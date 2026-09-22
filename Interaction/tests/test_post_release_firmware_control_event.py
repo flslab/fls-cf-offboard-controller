@@ -5,9 +5,11 @@ from Interaction.post_release_firmware_control_event import (
     FirmwareBrakeMonitor,
     FirmwareBrakeMonitorError,
     FirmwareHoldNotification,
+    FirmwareReleaseRejectedError,
     encode_pi_release_command,
     firmware_brake_log_health,
     firmware_hold_status_confirmed,
+    firmware_release_rejection_diagnostics,
     handoff_pi_release_to_firmware,
     parse_pi_release_ack,
     parse_post_release_hold_notice,
@@ -266,7 +268,8 @@ class PostReleaseFirmwareControlEventTests(unittest.TestCase):
 
         cf = FakeCf()
         ticks = iter((100_080_000_000, 100_080_500_000))
-        with self.assertRaisesRegex(RuntimeError, 'rejected'):
+        with self.assertRaisesRegex(FirmwareReleaseRejectedError,
+                                    'errno=22') as caught:
             handoff_pi_release_to_firmware(
                 cf, session_id=99, sequence=7,
                 arduino_sample_ms=12345,
@@ -274,6 +277,37 @@ class PostReleaseFirmwareControlEventTests(unittest.TestCase):
                 firmware_auto_brake_armed=True,
                 monotonic_ns=lambda: next(ticks),
             )
+        self.assertEqual(caught.exception.ack_errno, 22)
+
+    def test_release_rejection_diagnostics_decode_predictor_and_bounds(self):
+        predictor = firmware_release_rejection_diagnostics({
+            'hlCommander.pRelRejR': 3,
+            'hlCommander.pRelRejD': 1,
+        })
+        self.assertIn('predictor not ready',
+                      predictor['firmware_reject_detail_description'])
+
+        bounds = firmware_release_rejection_diagnostics({
+            'hlCommander.pRelRejR': 7,
+            'hlCommander.pRelRejD': 2 | 4 | 32,
+        })
+        self.assertIn('older than 60 ms',
+                      bounds['firmware_reject_detail_description'])
+        self.assertIn('speed below',
+                      bounds['firmware_reject_detail_description'])
+        self.assertIn('no horizontal direction',
+                      bounds['firmware_reject_detail_description'])
+
+    def test_rejected_error_can_be_enriched_from_firmware_log(self):
+        error = FirmwareReleaseRejectedError(11)
+        self.assertEqual(str(error),
+                         'firmware rejected release event (errno=11)')
+        error.add_firmware_diagnostics({
+            'hlCommander.pRelRejR': 6,
+            'hlCommander.pRelRejD': 0,
+        })
+        self.assertIn('reason=6: trusted Vicon15 state unavailable', str(error))
+        self.assertIn('no current trusted sample', str(error))
 
     def test_hold_notice_matches_release_and_is_acknowledged_without_go_to(self):
         class FakeCf:
