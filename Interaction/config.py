@@ -934,7 +934,32 @@ FIRMWARE_BRAKE_LOG_VARS = {
     'hlCommander.pRelEvtVer': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelMode': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelTau': {'type': 'FP16', 'unit': 's', 'data': []},
+    # S-curve reference/command trace. FP16 keeps the whole block at 14 bytes;
+    # these resolve ~1 mm/s and ~1 mm/s^2, far finer than the effects studied.
+    'hlCommander.scV': {'type': 'FP16', 'unit': 'm/s', 'data': []},
+    'hlCommander.scCmd': {'type': 'FP16', 'unit': 'm/s2', 'data': []},
+    'hlCommander.scPeak': {'type': 'FP16', 'unit': 'm/s2', 'data': []},
 }
+
+
+def firmware_brake_log_vars(mission):
+    """FIRMWARE_BRAKE with an optional faster period for brake diagnosis.
+
+    The default 100 ms only yields about seven samples across a stop, which
+    cannot separate a reference error from a feedback one. A mission may set
+    wrench_interaction.firmware_auto_brake.brake_log_period_ms to trade link
+    budget for resolution; nothing else changes.
+    """
+    try:
+        wrench = (mission['Interaction']['config']
+                  .get('wrench_interaction') or {})
+        period = (wrench.get('firmware_auto_brake') or {}).get(
+            'brake_log_period_ms')
+    except (KeyError, TypeError, AttributeError):
+        period = None
+    if not isinstance(period, int) or isinstance(period, bool) or period < 10:
+        return FIRMWARE_BRAKE_LOG_VARS
+    return {**FIRMWARE_BRAKE_LOG_VARS, 'log_period_ms': period}
 
 
 def log_vars_for_mission(mission):
@@ -999,7 +1024,7 @@ def log_vars_for_mission(mission):
             })
         elif onboard_yaw_log_required(mission):
             selected['YAW_CTL'] = YAW_CTL
-        selected['FIRMWARE_BRAKE'] = FIRMWARE_BRAKE_LOG_VARS
+        selected['FIRMWARE_BRAKE'] = firmware_brake_log_vars(mission)
         return selected
     # A dormant diagnostic must not make a legacy mission fail because it
     # happens to carry an old or misspelled shadow-mode value.  Mode validation

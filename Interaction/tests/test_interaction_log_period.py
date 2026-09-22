@@ -96,11 +96,32 @@ class InteractionLogPeriodTests(unittest.TestCase):
             ('hlCommander.pRelEvtVer', 'uint8_t'),
             ('hlCommander.pRelMode', 'uint8_t'),
             ('hlCommander.pRelTau', 'FP16'),
+            ('hlCommander.scV', 'FP16'),
+            ('hlCommander.scCmd', 'FP16'),
+            ('hlCommander.scPeak', 'FP16'),
         ])
         sizes = {'uint8_t': 1, 'FP16': 2}
         self.assertEqual(sum(
             sizes[kind] for _, kind in by_name['FIRMWARE_BRAKE'].variables
-        ), 8)
+        ), 14)
+
+    def test_brake_log_period_is_opt_in_and_rejects_bad_values(self):
+        def selected(period):
+            mission = {'Interaction': {'config': {'wrench_interaction': {
+                'firmware_auto_brake': {'enabled': True,
+                                        'brake_log_period_ms': period},
+            }}}}
+            return interaction_config.firmware_brake_log_vars(mission)
+
+        self.assertEqual(selected(20)['log_period_ms'], 20)
+        # Absent, non-integer, boolean and out-of-range values keep 100 ms.
+        for bad in (None, 'fast', True, 5, 9.5):
+            self.assertEqual(selected(bad)['log_period_ms'], 100)
+        self.assertEqual(
+            interaction_config.firmware_brake_log_vars({})['log_period_ms'], 100)
+        # The shared default is never mutated by an override.
+        self.assertEqual(
+            interaction_config.FIRMWARE_BRAKE_LOG_VARS['log_period_ms'], 100)
 
     def test_firmware_optional_logs_can_be_enabled_without_changing_legacy(self):
         wrench = {
