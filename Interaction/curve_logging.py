@@ -49,7 +49,7 @@ def curve_state_log_vars(selected, *, events_enabled=True):
             'hlCommander.curveQ':{'type':'uint8_t'},
             'hlCommander.pRelGap0':{'type':'float'},
             'hlCommander.pRelStale0':{'type':'uint8_t'},
-            'kalmanPRel.readyErr':{'type':'uint8_t'}}
+            'pRelVicon.readyErr':{'type':'uint8_t'}}
     return result
 
 

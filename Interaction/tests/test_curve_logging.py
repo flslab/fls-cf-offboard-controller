@@ -171,6 +171,29 @@ class CurveLoggingTests(unittest.TestCase):
         result=m.observe(log,receipt_time_s=1.01,now_wall_s=1.01,now_monotonic_s=1.01)
         events=dict(result['events']);self.assertTrue(events['Firmware Release Using IMU Prediction']['warning_only'])
 
+    def test_curve_status_registers_against_bolt_toc(self):
+        from cflib.crazyflie.log import Log, LogConfig
+        # Names exported by the paired Bolt firmware, independent of the
+        # generated host configuration. readyErr belongs to pRelVicon.
+        exported = {
+            'hlCommander.curveDrop', 'hlCommander.curveId',
+            'hlCommander.curveQ', 'hlCommander.pRelGap0',
+            'hlCommander.pRelStale0', 'pRelVicon.readyErr',
+        }
+        cf = Mock()
+        log = Log(cf)
+        log.toc = Mock()
+        log.toc.get_element_by_complete_name.side_effect = (
+            lambda name: SimpleNamespace() if name in exported else None)
+        group = curve_state_log_vars({})['CURVE_STATUS']
+        config = LogConfig('CURVE_STATUS', group['log_period_ms'] * 10)
+        for name, value in group.items():
+            if name != 'log_period_ms':
+                config.add_variable(name, value['type'])
+        log.add_config(config)
+        self.assertTrue(config.valid)
+        self.assertEqual({v.name for v in config.variables}, exported)
+
 
 def math_degrees(x):
     import math
