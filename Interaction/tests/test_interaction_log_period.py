@@ -101,11 +101,12 @@ class InteractionLogPeriodTests(unittest.TestCase):
             ('hlCommander.scV', 'FP16'),
             ('hlCommander.scCmd', 'FP16'),
             ('hlCommander.scPeak', 'FP16'),
+            ('hlCommander.pRelStale0', 'uint8_t'),
         ])
         sizes = {'uint8_t': 1, 'FP16': 2}
         self.assertEqual(sum(
             sizes[kind] for _, kind in by_name['FIRMWARE_BRAKE'].variables
-        ), 16)
+        ), 17)
 
     def test_brake_log_period_is_opt_in_and_rejects_bad_values(self):
         def selected(period):

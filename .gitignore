@@ -4,10 +4,22 @@ metrics/
 .codex_tmp/
 Interaction/wrench_calibration.json
 
-# Local-only simulator-trained RL checkpoints and per-episode audit streams.
-# Keep experiment plans/summary reports visible; never upload weights by accident.
-autoresearch/loop-*/round*_seed*/
-autoresearch/loop-*/**/trajectories.json
+# Local research/build artifacts, not offboard runtime dependencies.
+/autoresearch/
+/experiments/
+/reports/
+/training/
+/firmware/
+/hardware/interaction_absorber_v1/
+/hardware/LightBender_Airpot_V1.zip
+/docs/qp_braking.md
+/docs/direct_stop_rl_training_plan.md
+/Interaction/analysis/online_prediction_2026-09-04_*/
+/Interaction/evaluate_qp_braking.py
+/Interaction/qp_braking.py
+/Interaction/tests/test_qp_braking.py
+# Machine-specific calibration is preserved locally, never deployed via Git.
+/Interaction/attitude_response.json
 
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python
@@ -192,4 +204,3 @@ downloads.json
 .claude
 # End of https://www.toptal.com/developers/gitignore/api/python
 tmp/
-autoresearch

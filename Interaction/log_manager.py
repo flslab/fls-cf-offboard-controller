@@ -182,6 +182,12 @@ class InteractionLogger(LogManager):
         self.live_logger.mark_start()
 
     def stop(self, *args, **kwargs):
+        curve_error = None
+        if getattr(self, 'curve_recorder', None) is not None:
+            try:
+                self.curve_recorder.close()
+            except Exception as error:
+                curve_error = error
         with self.cf_log_callback_lock:
             self._accepting_cf_log_callbacks = False
             self._cf_log_packet_listeners = []
@@ -192,6 +198,8 @@ class InteractionLogger(LogManager):
                 log_config.stop()
 
         self.live_logger.close()
+        if curve_error is not None:
+            raise curve_error
 
     def init_cf_logger(self, cf, cf_log_vars, cf_log_period=100):
         self.cf_log_data = copy.deepcopy(cf_log_vars)

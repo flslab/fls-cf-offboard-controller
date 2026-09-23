@@ -181,6 +181,7 @@ class FirmwareBrakeMonitor:
         self.delayed_reported = False
         self.fault = None
         self.accepted_plan_end_s = None
+        self.imu_bridge_reported = False
 
     def track_accepted_plan(self, status):
         """Use confirmed FC acceptance, not a receipt-relative renewable grace."""
@@ -242,6 +243,14 @@ class FirmwareBrakeMonitor:
                        'firmware brake status log exceeded bounded grace '
                        '(age %.3f s)' % age_s)
         events = []
+        if (post_release_packet and not self.imu_bridge_reported
+                and brake_log.get('hlCommander.pRelMode') == 2
+                and brake_log.get('hlCommander.pRelStale0') == 1):
+            self.imu_bridge_reported = True
+            events.append(('Firmware Release Using IMU Prediction', {
+                'vicon_age_at_release_s': brake_log.get('hlCommander.pRelGap0'),
+                'warning_only': True,
+            }))
         if health == 'delayed' and not self.delayed_reported:
             self.delayed_reported = True
             events.append(('Firmware Brake Status Log Delayed', {'age_s': age_s}))

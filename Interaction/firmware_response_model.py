@@ -15,7 +15,6 @@ import zlib
 
 from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
 
-VERSION = 26092301
 DEFAULT_PATH = Path(__file__).with_name('attitude_response.json')
 PID_NAMES = tuple(f'{group}.{axis}{term}' for group in ('pid_attitude', 'pid_rate')
                   for axis in ('roll', 'pitch') for term in ('_kp', '_ki', '_kd', '_kff')) + (
@@ -131,13 +130,13 @@ def model_parameters(model):
 def upload_model(param, model, *, timeout_s=5.):
     values = model_parameters(model)
     toc = getattr(getattr(param, 'toc', None), 'toc', {})
-    required = set(values) | {'pRelResp.ver', 'pRelResp.runtime', 'pRelResp.commit',
+    required = set(values) | {'pRelResp.runtime', 'pRelResp.commit',
                               'pRelResp.ready', 'pRelResp.activeId'}
     if any(name.split('.')[1] not in toc.get('pRelResp', {}) for name in required):
         raise RuntimeError('firmware lacks calibrated response model; reflash paired firmware')
-    # Identity and actual runtime support, not just a parameter-shaped stub.
+    # Require an executing runtime, not a specific build/date identifier.
     confirm_firmware_mode_parameters(param, timeout_s=timeout_s,
-        expected={'pRelResp.ver': VERSION, 'pRelResp.runtime': 1})
+        expected={'pRelResp.runtime': 1})
     param.set_value('pRelResp.commit', '0')
     confirm_firmware_mode_parameters(param, timeout_s=timeout_s,
         expected={'pRelResp.ready': 0, 'pRelResp.activeId': 0})

@@ -56,11 +56,6 @@ setup_logging()
 
 logger = logging.getLogger(__name__)
 
-# Paired experimental S-curve firmware identities. 26092202 adds the release
-# admission policy parameters and the rejection-reason logs.
-SCURVE_FIRMWARE_VERSIONS = frozenset({26092201, 26092202, 26092203, 26092304})
-
-
 pos_update_time_log = []
 pos_update_profile_log = []
 
@@ -122,8 +117,8 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
 
 
 class Controller:
-    # Latched from the connected Bolt while setting up the S-curve mode.
-    firmware_auto_brake_scurve_version = max(SCURVE_FIRMWARE_VERSIONS)
+    # Optional build metadata, never an admission/arming condition.
+    firmware_auto_brake_scurve_version = None
 
     def __init__(self, args):
         self.args = args
@@ -377,6 +372,13 @@ class Controller:
     def verify_firmware_auto_brake_ready(self):
         if not getattr(self, 'firmware_auto_brake_enabled', False):
             return
+        curve_recorder = getattr(getattr(self, 'log_manager', None), 'curve_recorder', None)
+        if curve_recorder is not None:
+            curve_recorder.check()
+            if curve_recorder.events_enabled:
+                from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+                confirm_firmware_mode_parameters(self.cf.param, expected={
+                    'hlCommander.curveVer':1, 'hlCommander.curveLog':1})
         response_expected = getattr(self, '_firmware_response_expected', None)
         if response_expected is not None:
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
@@ -385,7 +387,6 @@ class Controller:
         if self.firmware_auto_brake_mode == 'scurve':
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             confirmed = confirm_firmware_mode_parameters(self.cf.param, expected={
-                'hlCommander.pRelSVer': self.firmware_auto_brake_scurve_version,
                 'hlCommander.pRelMode': 2,
                 'hlCommander.pRelScD': self.firmware_auto_brake_stop_distance_m,
                 'hlCommander.pRelScT': self.firmware_auto_brake_stop_max_time_s,
@@ -441,24 +442,25 @@ class Controller:
         host_mode = self.firmware_auto_brake_mode == 'pi_joint'
         scurve_mode = self.firmware_auto_brake_mode == 'scurve'
         if host_mode:
-            required['hlCommander'] += ('pRelJoint', 'pRelHost', 'pRelJVer')
+            required['hlCommander'] += ('pRelJoint', 'pRelHost')
         if scurve_mode:
-            required['hlCommander'] += ('pRelSVer', 'pRelJoint', 'pRelHost',
+            required['hlCommander'] += ('pRelJoint', 'pRelHost',
                                         'pRelScD', 'pRelScT', 'pRelScB')
             required['kalmanPRel'] += ('scEnable',)
         toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
         if any(name not in toc.get(group, {})
                for group, names in required.items() for name in names):
             raise RuntimeError('connected Bolt lacks firmware auto-brake parameters')
-        if host_mode and int(self.cf.param.get_value(
-                'hlCommander.pRelJVer')) != 26092101:
-            raise RuntimeError('pi_joint v3 requires paired firmware pRelJVer = 26092101')
-        if scurve_mode:
-            version = int(self.cf.param.get_value('hlCommander.pRelSVer'))
-            if version not in SCURVE_FIRMWARE_VERSIONS:
-                raise RuntimeError('scurve requires paired experimental firmware '
-                                   f'pRelSVer in {sorted(SCURVE_FIRMWARE_VERSIONS)}, got {version}')
-            self.firmware_auto_brake_scurve_version = version
+        self.firmware_build_info = {}
+        for name in ('pRelSVer', 'pRelAdVer', 'pRelJVer'):
+            if name in toc.get('hlCommander', {}):
+                try:
+                    self.firmware_build_info['hlCommander.'+name] = int(
+                        self.cf.param.get_value('hlCommander.'+name))
+                except (KeyError, TypeError, ValueError, RuntimeError):
+                    logger.warning('Firmware build metadata unavailable: %s', name)
+        self.firmware_auto_brake_scurve_version = self.firmware_build_info.get('hlCommander.pRelSVer')
+        logger.info('Firmware build metadata (diagnostic only): %s', self.firmware_build_info)
         response = getattr(self, 'firmware_response_model_config', {})
         if response.get('enabled', False):
             from Interaction.firmware_response_model import (
@@ -471,15 +473,14 @@ class Controller:
             if not path.is_absolute():
                 path = Path(__file__).resolve().parent / path
             model = load_model(self.args.drone_id, path=path, pid_values=current_pid)
-            if any(name not in toc.get('hlCommander', {}) for name in ('pRelAdapt', 'pRelAdVer')):
+            if 'pRelAdapt' not in toc.get('hlCommander', {}):
                 raise RuntimeError('firmware lacks calibrated adaptive planner')
             # Disable authority before the parameter transaction. Never enable
             # from cached values or leave an old model armed after failure.
             self.cf.param.set_value('hlCommander.pRelAuto', '0')
             self.cf.param.set_value('hlCommander.pRelAdapt', '0')
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
-            runtime_identity = {'hlCommander.pRelSVer': 26092304,
-                                'hlCommander.pRelAdVer': 26092303}
+            runtime_identity = {'pRelResp.runtime': 1}
             confirm_firmware_mode_parameters(self.cf.param, expected=runtime_identity)
             expected = upload_model(self.cf.param, model)
             expected.update(runtime_identity)
@@ -487,6 +488,11 @@ class Controller:
             expected['hlCommander.pRelAdapt'] = 1
             self._firmware_response_expected = expected
             self._firmware_response_pid = current_pid
+            curve_recorder = getattr(getattr(self, 'log_manager', None), 'curve_recorder', None)
+            if curve_recorder is not None:
+                curve_recorder.events.write(dict(type='runtime_configuration',
+                    **curve_recorder.ids,firmware=self.firmware_build_info,uploaded=expected,
+                    calibration=model,pid_values=current_pid))
             logger.info('Calibrated response uploaded: source=%s id=%s file=%s',
                         model['source_log'], expected['pRelResp.id'], path)
         elif 'pRelAdapt' in toc.get('hlCommander', {}):
@@ -1578,8 +1584,35 @@ class Controller:
                     ),
                     lambda _mission: self.cfg.LOG_VARS,
                 )
+                selected = select_log_vars(self.mission)
+                from Interaction.curve_logging import curve_log_config, curve_state_log_vars
+                curve_config = curve_log_config(self.mission)
+                if curve_config.get('enabled', False):
+                    events_enabled = not getattr(self.args, 'calibrate', False)
+                    if events_enabled and (not getattr(self, 'firmware_auto_brake_enabled', False)
+                            or self.firmware_auto_brake_mode != 'scurve'
+                            or not self.firmware_response_model_config.get('enabled', False)):
+                        raise ValueError('curve events require calibrated firmware scurve braking')
+                    from Interaction.curve_logging import CurveRecorder
+                    from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+                    if events_enabled:
+                        if 'curveVer' not in self.cf.param.toc.toc.get('hlCommander', {}):
+                            raise RuntimeError('firmware lacks curve event logging protocol')
+                        confirm_firmware_mode_parameters(self.cf.param, expected={
+                            'hlCommander.curveVer':1})
+                    if 'curveLog' in self.cf.param.toc.toc.get('hlCommander', {}):
+                        self.cf.param.set_value('hlCommander.curveLog', '0')
+                    self.log_manager.curve_recorder = CurveRecorder(self.cf,self.log_manager,
+                        directory=self.args.log_dir,tag=self.args.tag,
+                        user_id=curve_config.get('user_id'),trial_id=curve_config.get('trial_id'),
+                        events_enabled=events_enabled)
+                    if events_enabled:
+                        self.cf.param.set_value('hlCommander.curveLog', '1')
+                    selected = curve_state_log_vars(selected, events_enabled=events_enabled)
+                elif 'curveLog' in self.cf.param.toc.toc.get('hlCommander', {}):
+                    self.cf.param.set_value('hlCommander.curveLog', '0')
                 self.log_manager.init_cf_logger(
-                    self.cf, select_log_vars(self.mission),
+                    self.cf, selected,
                     self.args.cf_log_period,
                 )
             # Legacy interactions use Vicon-derived velocity. The onboard

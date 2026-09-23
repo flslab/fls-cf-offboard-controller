@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch, Mock
 
 from Interaction.firmware_response_model import (
-    PID_NAMES, VERSION, load_model, model_parameters, save_report, upload_model,
+    PID_NAMES, load_model, model_parameters, save_report, upload_model,
     validate_report, fit_completed_calibration,
 )
 from Interaction.tests.test_firmware_parameter_confirmation import AsyncParams
@@ -28,7 +28,7 @@ def model():
 class ResponseModelTests(unittest.TestCase):
     def params(self, *, runtime=1):
         m = model()
-        replies = dict(model_parameters(m), **{'pRelResp.ver': VERSION,
+        replies = dict(model_parameters(m), **{'pRelResp.ver': 26092301,
             'pRelResp.runtime': runtime, 'pRelResp.ready': 0, 'pRelResp.activeId': 0,
             'pRelResp.commit': 0})
         p = AsyncParams(replies)
@@ -119,8 +119,9 @@ class ResponseModelTests(unittest.TestCase):
         ctrl.firmware_response_model_config = {'enabled': True}
         ctrl.args.drone_id = 'lb11'; ctrl.use_flowdeck = False
         ctrl.cfg = SimpleNamespace(PID_VALUES={})
-        p = SCurvePreflightTests().params(); p.toc.toc['hlCommander']['pRelAdapt'] = None
+        p = SCurvePreflightTests().params(version=99999999); p.toc.toc['hlCommander']['pRelAdapt'] = None
         p.toc.toc['hlCommander']['pRelAdVer'] = None
+        p.replies['hlCommander.pRelAdVer'] = '99999998'
         ctrl.cf = SimpleNamespace(param=p)
         def upload(*args):
             self.assertEqual(p.set_value.call_args.args, ('hlCommander.pRelAdapt', '0'))
@@ -131,8 +132,7 @@ class ResponseModelTests(unittest.TestCase):
              patch('Interaction.firmware_response_model.upload_model', side_effect=upload), \
              patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters') as identity:
             ctrl._setup_firmware_auto_brake_params()
-        identity.assert_called_once_with(p, expected={'hlCommander.pRelSVer':26092304,
-                                                     'hlCommander.pRelAdVer':26092303})
+        identity.assert_called_once_with(p, expected={'pRelResp.runtime':1})
         self.assertEqual(p.set_value.call_args.args, ('hlCommander.pRelAuto','1'))
         self.assertEqual(ctrl._firmware_response_expected['hlCommander.pRelAdapt'], 1)
 
@@ -144,7 +144,7 @@ class ResponseModelTests(unittest.TestCase):
         ctrl.prepare_firmware_auto_brake()
         self.assertFalse(ctrl.firmware_auto_brake_enabled)
 
-    def test_wrong_adaptive_runtime_never_uploads_or_enables(self):
+    def test_missing_executing_runtime_never_uploads_or_enables(self):
         from Interaction.tests.test_scurve_firmware_preflight import SCurvePreflightTests
         from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
         ctrl = SCurvePreflightTests().controller()
@@ -154,6 +154,7 @@ class ResponseModelTests(unittest.TestCase):
         p = SCurvePreflightTests().params()
         p.toc.toc['hlCommander'].update(pRelAdapt=None, pRelAdVer=None)
         p.replies['hlCommander.pRelAdVer'] = '26092302'
+        p.replies['pRelResp.runtime'] = '0'
         ctrl.cf = SimpleNamespace(param=p)
         def fresh(param, *, expected):
             return confirm_firmware_mode_parameters(param, expected=expected, timeout_s=.01)
@@ -161,13 +162,23 @@ class ResponseModelTests(unittest.TestCase):
              patch('Interaction.firmware_response_model.load_model', return_value=model()), \
              patch('Interaction.firmware_response_model.upload_model') as upload, \
              patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters', side_effect=fresh):
-            with self.assertRaisesRegex(RuntimeError, 'pRelAdVer'):
+            with self.assertRaisesRegex(RuntimeError, 'pRelResp.runtime'):
                 ctrl._setup_firmware_auto_brake_params()
         upload.assert_not_called()
         writes = [c.args for c in p.set_value.call_args_list]
         self.assertIn(('hlCommander.pRelAuto', '0'), writes)
         self.assertNotIn(('hlCommander.pRelAuto', '1'), writes)
         self.assertNotIn(('hlCommander.pRelAdapt', '1'), writes)
+
+    def test_response_build_number_does_not_gate_model_upload(self):
+        for version in (1,99999999,None):
+            p=self.params()
+            if version is None:
+                del p.toc.toc['pRelResp']['ver']
+                del p.replies['pRelResp.ver']
+            else:p.replies['pRelResp.ver']=version
+            self.assertEqual(upload_model(p,model(),timeout_s=.01)['pRelResp.ready'],1)
+            self.assertNotIn('pRelResp.ver',p.requested)
 
     def test_parameter_mapping_uses_closed_loop_fields_not_motor_tau(self):
         values = model_parameters(model())

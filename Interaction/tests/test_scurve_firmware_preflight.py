@@ -13,7 +13,7 @@ class SCurvePreflightTests(unittest.TestCase):
         ctrl.prepare_firmware_auto_brake()
         return ctrl
 
-    def params(self, version=26092304, distance='0.0'):
+    def params(self, version=26092305, distance='0.0'):
         p=AsyncParams({'hlCommander.pRelSVer':str(version),
             'hlCommander.pRelMode':'2','hlCommander.pRelJoint':'0',
             'hlCommander.pRelHost':'0','kalmanPRel.scEnable':'1',
@@ -47,13 +47,18 @@ class SCurvePreflightTests(unittest.TestCase):
             self.assertIn(('kalmanPRel.scEnable','0'),writes)
             self.assertIn(('hlCommander.pRelMode',code),writes)
 
-    def test_version_and_missing_capability_reject_before_any_write(self):
-        for fault in ('version','missing'):
-            p=self.params(1 if fault=='version' else 26092203)
-            if fault=='missing':del p.toc.toc['kalmanPRel']['scEnable']
-            ctrl=self.controller();ctrl.cf=SimpleNamespace(param=p)
-            with self.assertRaises(RuntimeError):ctrl._setup_firmware_auto_brake_params()
-            p.set_value.assert_not_called()
+    def test_missing_capability_rejects_before_any_write(self):
+        p=self.params();del p.toc.toc['kalmanPRel']['scEnable']
+        ctrl=self.controller();ctrl.cf=SimpleNamespace(param=p)
+        with self.assertRaises(RuntimeError):ctrl._setup_firmware_auto_brake_params()
+        p.set_value.assert_not_called()
+
+    def test_missing_build_number_does_not_reject_capable_firmware(self):
+        p=self.params();del p.toc.toc['hlCommander']['pRelSVer']
+        ctrl=self.controller();ctrl.cf=SimpleNamespace(param=p)
+        ctrl._setup_firmware_auto_brake_params()
+        self.assertIsNone(ctrl.firmware_auto_brake_scurve_version)
+        self.assertEqual(p.set_value.call_args.args,('hlCommander.pRelAuto','1'))
 
     def test_fresh_mode_confirmation_and_original_observer_ready_gate(self):
         ctrl=self.controller();p=self.params();ctrl.cf=SimpleNamespace(param=p)
@@ -63,7 +68,7 @@ class SCurvePreflightTests(unittest.TestCase):
         ctrl._firmware_vicon_last_send_s=1.;ctrl._firmware_vicon_mirror_error=None
         with patch('controller.time.monotonic',return_value=1.):
             ctrl.verify_firmware_auto_brake_ready()
-        self.assertEqual(set(p.requested),set(p.replies));self.assertFalse(p.callbacks)
+        self.assertEqual(set(p.requested),set(p.replies)-{'hlCommander.pRelSVer'});self.assertFalse(p.callbacks)
 
     def test_distance_mode_writes_and_confirms_the_selected_target(self):
         ctrl=baseline.FirmwareAutoBrakePreflightTests().controller({
@@ -80,8 +85,8 @@ class SCurvePreflightTests(unittest.TestCase):
         with patch('controller.time.monotonic',return_value=1.):
             ctrl.verify_firmware_auto_brake_ready()
 
-    def test_both_paired_firmware_identities_are_accepted(self):
-        for version in (26092201, 26092202, 26092203, 26092304):
+    def test_build_numbers_are_diagnostic_only_including_unknown_versions(self):
+        for version in (1, 26092201, 26092202, 26092203, 26092304, 26092305, 99999999):
             ctrl=self.controller();p=self.params(version);ctrl.cf=SimpleNamespace(param=p)
             ctrl._setup_firmware_auto_brake_params()
             self.assertEqual(ctrl.firmware_auto_brake_scurve_version, version)

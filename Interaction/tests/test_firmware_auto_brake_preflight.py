@@ -405,16 +405,11 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
             set_value=Mock(), get_value=lambda key: values[key],
         )
 
-    def test_pi_joint_requires_new_firmware_and_prewarms_before_enable(self):
+    def test_pi_joint_build_number_is_diagnostic_and_prewarms_before_enable(self):
         controller = self.controller({
             'enabled': True, 'response_time_s': 0.14, 'mode': 'pi_joint'})
         controller.prepare_firmware_auto_brake()
         controller.cf = SimpleNamespace(param=self.firmware_params(26091804))
-        with self.assertRaisesRegex(RuntimeError, '26092101'):
-            controller._setup_firmware_auto_brake_params()
-        controller.cf.param.set_value.assert_not_called()
-
-        controller.cf.param = self.firmware_params()
         planner = Mock()
         planner.status.return_value = {'ready': True}
         def assert_not_enabled():

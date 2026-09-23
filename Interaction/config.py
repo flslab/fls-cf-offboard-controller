@@ -944,6 +944,7 @@ FIRMWARE_BRAKE_LOG_VARS = {
     'hlCommander.scV': {'type': 'FP16', 'unit': 'm/s', 'data': []},
     'hlCommander.scCmd': {'type': 'FP16', 'unit': 'm/s2', 'data': []},
     'hlCommander.scPeak': {'type': 'FP16', 'unit': 'm/s2', 'data': []},
+    'hlCommander.pRelStale0': {'type': 'uint8_t', 'unit': 'stale Vicon at release', 'data': []},
 }
 
 
