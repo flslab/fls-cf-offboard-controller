@@ -763,7 +763,7 @@ POS_VEL_CTL = {
 
 # Controller loop stage 2: Attitude → Rate output, Rate → Actuator output
 ATT_RATE_CTL = {
-    'log_period_ms': 100,
+    'log_period_ms': 10,
     "controller.rollRate": {
         "type": "float",
         "unit": "deg/s",
