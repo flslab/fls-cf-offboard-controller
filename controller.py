@@ -304,6 +304,11 @@ class Controller:
         self.run_mission()
 
     def prepare_firmware_auto_brake(self):
+        # Calibration produces the model; it cannot require that model or arm
+        # the contact/release policy before its first calibration flight.
+        if getattr(self.args, 'calibrate', False):
+            self.firmware_auto_brake_enabled = False
+            return
         wrench = ((self.mission or {}).get('Interaction', {})
                   .get('config', {}).get('wrench_interaction') or {})
         mode = wrench.get('firmware_auto_brake') or {}
@@ -320,6 +325,13 @@ class Controller:
             raise ValueError('firmware_auto_brake.mode must be two_phase, '
                              'zero_velocity, pi_joint or scurve')
         self.firmware_auto_brake_mode = brake_mode
+        response = mode.get('response_model', {})
+        if (not isinstance(response, dict)
+                or type(response.get('enabled', False)) is not bool):
+            raise ValueError('firmware_auto_brake.response_model needs boolean enabled')
+        self.firmware_response_model_config = response
+        if response.get('enabled', False) and brake_mode != 'scurve':
+            raise ValueError('calibrated response_model requires mode: scurve')
         response_time = mode.get('response_time_s')
         if (isinstance(response_time, bool) or
                 not isinstance(response_time, (int, float)) or
@@ -338,6 +350,8 @@ class Controller:
         if stop and brake_mode != 'scurve':
             raise ValueError('firmware_auto_brake.stop_distance_m requires mode: scurve')
         self.firmware_auto_brake_stop_distance_m = float(stop)
+        if response.get('enabled', False) and stop != 0:
+            raise ValueError('calibrated response_model currently requires free-stop distance 0')
         max_time = mode.get('stop_max_time_s', 6.0)
         if (isinstance(max_time, bool) or not isinstance(max_time, (int, float)) or
                 not math.isfinite(max_time) or not 0.5 <= max_time <= 12.0):
@@ -363,6 +377,11 @@ class Controller:
     def verify_firmware_auto_brake_ready(self):
         if not getattr(self, 'firmware_auto_brake_enabled', False):
             return
+        response_expected = getattr(self, '_firmware_response_expected', None)
+        if response_expected is not None:
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            confirm_firmware_mode_parameters(self.cf.param, expected=response_expected)
+            confirm_firmware_mode_parameters(self.cf.param, expected=self._firmware_response_pid)
         if self.firmware_auto_brake_mode == 'scurve':
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             confirmed = confirm_firmware_mode_parameters(self.cf.param, expected={
@@ -440,6 +459,36 @@ class Controller:
                 raise RuntimeError('scurve requires paired experimental firmware '
                                    f'pRelSVer in {sorted(SCURVE_FIRMWARE_VERSIONS)}, got {version}')
             self.firmware_auto_brake_scurve_version = version
+        response = getattr(self, 'firmware_response_model_config', {})
+        if response.get('enabled', False):
+            from Interaction.firmware_response_model import (
+                DEFAULT_PATH, confirm_pid_context, load_model, upload_model,
+            )
+            from pathlib import Path
+            configured = self.cfg.PID_VALUES_FLOWDECK if self.use_flowdeck else self.cfg.PID_VALUES
+            current_pid = confirm_pid_context(self.cf.param, configured)
+            path = Path(response.get('calibration_file', DEFAULT_PATH))
+            if not path.is_absolute():
+                path = Path(__file__).resolve().parent / path
+            model = load_model(self.args.drone_id, path=path, pid_values=current_pid)
+            if 'pRelAdapt' not in toc.get('hlCommander', {}):
+                raise RuntimeError('firmware lacks calibrated adaptive planner')
+            # Disable authority before the parameter transaction. Never enable
+            # from cached values or leave an old model armed after failure.
+            self.cf.param.set_value('hlCommander.pRelAuto', '0')
+            self.cf.param.set_value('hlCommander.pRelAdapt', '0')
+            expected = upload_model(self.cf.param, model)
+            self.cf.param.set_value('hlCommander.pRelAdapt', '1')
+            expected['hlCommander.pRelAdapt'] = 1
+            self._firmware_response_expected = expected
+            self._firmware_response_pid = current_pid
+            logger.info('Calibrated response uploaded: source=%s id=%s file=%s',
+                        model['source_log'], expected['pRelResp.id'], path)
+        elif 'pRelAdapt' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelAdapt', '0')
+            if 'commit' in toc.get('pRelResp', {}):
+                self.cf.param.set_value('pRelResp.commit', '0')
+            self._firmware_response_expected = None
         # Preparation happens before arming, never on the release critical path.
         # If startup fails, do not enable the firmware host-planning mode.
         planner = getattr(self.cf, '_post_release_pi_planner', None)
@@ -870,6 +919,28 @@ class Controller:
             del self.servo
 
         self.disconnect()
+        # Fit only after landing, logger closure and disconnect: never run an
+        # optimizer in the flight/control or sensor callback thread.
+        calibration_pid = getattr(self, '_response_calibration_pid', None)
+        if calibration_pid is not None and logging_shutdown_error is None:
+            try:
+                from pathlib import Path
+                from Interaction.firmware_response_model import fit_completed_calibration
+                response_config = (((self.mission or {}).get('Interaction', {}).get('config', {})
+                                    .get('wrench_interaction', {}).get('firmware_auto_brake', {})
+                                    .get('response_model', {})))
+                from Interaction.firmware_response_model import DEFAULT_PATH
+                output_path = Path(response_config.get('calibration_file', DEFAULT_PATH))
+                if not output_path.is_absolute():
+                    output_path = Path(__file__).resolve().parent / output_path
+                result = fit_completed_calibration(
+                    self.args.drone_id,
+                    Path(self.args.log_dir) / (self.args.tag + '.json'), calibration_pid,
+                    path=output_path)
+                logger.info('Attitude response calibration saved: accepted=%s reason=%s',
+                            result['accepted'], result.get('reason', 'passed'))
+            except Exception:
+                logger.exception('Attitude response fit not saved; existing calibration preserved')
         if logging_shutdown_error is not None:
             raise logging_shutdown_error
 
@@ -1764,6 +1835,16 @@ class Controller:
         else:
             self._set_pid_values(self.cfg.PID_VALUES)
 
+        if (getattr(self.args, 'calibrate', False)
+                and not getattr(self.args, 'planar_braking_calibration', False)
+                and self.args.controller_type == 'pid'):
+            from Interaction.firmware_response_model import confirm_pid_context
+            configured = self.cfg.PID_VALUES_FLOWDECK if self.use_flowdeck else self.cfg.PID_VALUES
+            self._response_calibration_pid = confirm_pid_context(self.cf.param, configured)
+            self.log_manager.add_log_entry('events', {
+                'time': time.time(), 'pid_values': self._response_calibration_pid,
+            }, name='Attitude Response Calibration Context')
+
         if (self.args.vicon or self.use_flowdeck or getattr(self.args, 'crazysim', False)) and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
             self._set_initial_position(self.init_coord[0], self.init_coord[1], self.init_coord[2], self.args.init_yaw)
             reset_estimator(self.cf)
@@ -1790,7 +1871,8 @@ class Controller:
 
         self.verify_contact_attitude_final_prearm_ready()
         if (getattr(self, 'firmware_auto_brake_enabled', False) and
-                self.firmware_auto_brake_mode == 'pi_joint'):
+                (self.firmware_auto_brake_mode == 'pi_joint'
+                 or getattr(self, '_firmware_response_expected', None) is not None)):
             # The orchestrator handshake may take time after setup_params.
             # Refuse arming if the prewarmed worker died while waiting.
             self.verify_firmware_auto_brake_ready()
@@ -2443,6 +2525,8 @@ class Controller:
                 calibration_mission = deepcopy(self.mission)
                 wrench_config = calibration_mission.setdefault('Interaction', {}).setdefault(
                     'config', {}).setdefault('wrench_interaction', {})
+                if 'firmware_auto_brake' in wrench_config:
+                    wrench_config['firmware_auto_brake']['enabled'] = False
                 wrench_config.setdefault('adaptive_braking_calibration', {})[
                     'enabled'
                 ] = adaptive_braking
