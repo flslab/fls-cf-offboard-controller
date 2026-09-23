@@ -4656,6 +4656,7 @@ class TranslationControlHandoff:
         self.mode = self.POSITION_HOLD
         self._brake_started_at = None
         self._detector_rearm_at = None
+        self.firmware_hold_active = False
         self.brake_direction = np.zeros(3)
         self.coast_jerk_limited_free_stop_axis_xy = np.zeros(2)
         self.coast_jerk_limited_high_level_goto_active = False
@@ -5889,6 +5890,7 @@ class TranslationControlHandoff:
                 raise ValueError('contact position must be finite XYZ')
             self.hold_position = position.copy()
         self.hover_z = float(self.hold_position[2])
+        self.firmware_hold_active = False
         self._coast_command_history = []
         self.coast_jerk_limited_release_model_acceleration_xy_m_s2 = None
         self.coast_jerk_limited_release_model_source = None
@@ -14074,6 +14076,31 @@ class TranslationControlHandoff:
         self._transition_mode(self.POSITION_HOLD)
         return True
 
+    def accept_firmware_hold(self, position, yaw_deg, timestamp):
+        """Mirror an acknowledged FC hold without sending or replanning it."""
+        position = np.asarray(position, dtype=float)
+        if (position.shape != (3,) or not np.all(np.isfinite(position))
+                or not np.isfinite(yaw_deg) or not np.isfinite(timestamp)):
+            raise ValueError('firmware hold must contain finite position, yaw and time')
+        self.hold_position = position.copy()
+        self.stopping_position_m = position.copy()
+        self.hover_z = float(position[2])
+        self.yaw_deg = float(yaw_deg)
+        self.set_contact_attitude(0., 0., 0.)
+        self._release_candidate_mode = None
+        self.coast_post_release_estimator_authority_wait = False
+        self._tail_neutralization_deadline = None
+        self._tail_neutralization_needs_send_anchor = False
+        self._brake_started_at = None
+        self.brake_completion_reason = 'firmware_position_hold'
+        self.brake_command_tilt_deg = 0.
+        self._detector_rearm_at = float(timestamp) + self.rearm_delay_s
+        self._coast_command_history = []
+        self._sent_command_history.clear()
+        self._last_sent_command = None
+        self.firmware_hold_active = True
+        self._transition_mode(self.POSITION_HOLD)
+
     def consume_detector_rearm(self, timestamp):
         """Return true once when the post-braking detector delay expires."""
         timestamp = float(timestamp)
@@ -14652,6 +14679,10 @@ class TranslationControlHandoff:
     def send(
             self, commander, command_timestamp=None, yaw_deg=None,
             high_level_commander=None, defer_stale_first_send=False):
+        if self.firmware_hold_active:
+            # Includes duplicate-state resend paths: even one LL hold packet
+            # would preempt the FC's hold. A confirmed new contact releases it.
+            return None
         if self.coast_jerk_hard_safety_abort_reason is not None:
             raise BrakingSafetyAbortError(
                 self.coast_jerk_hard_safety_abort_reason
@@ -15567,46 +15598,22 @@ class InteractionsControl:
         diagnostics['fresh_post_release_packet'] = fresh_packet
         return brake_log if fresh_packet else {}, diagnostics
 
-    def _hold_firmware_brake_until_interaction_duration(
-            self, *, enabled, interaction_start_s, duration_s, brake_mode):
-        """Observe the firmware-owned stage-4 hold until mission duration."""
-        if not enabled or interaction_start_s is None:
-            return False
-        remaining_s = float(duration_s) - (time.time() - interaction_start_s)
-        if remaining_s <= 0.0:
-            return False
-        self._log_event('Post-Release Hold Observation', {
-            'remaining_s': round(remaining_s, 2),
-            'duration_s': float(duration_s),
-            'firmware_stage': 4,
-            'brake_mode': brake_mode,
-        })
-        deadline_s = time.monotonic() + remaining_s
-        while True:
-            now_s = time.monotonic()
-            if now_s >= deadline_s:
-                break
-            brake_log, receipt_s = self._firmware_brake_status_snapshot()
-            self._check_firmware_brake_monitor_safety(brake_log)
-            health, age_s = firmware_brake_log_health(
-                receipt_s, now_s=time.time(),
-                monitor_elapsed_s=remaining_s - (deadline_s - now_s))
-            if health == 'expired':
-                raise StaleLocalizationError(
-                    'firmware hold status log exceeded bounded grace '
-                    '(age %.3f s)' % age_s)
-            stage = brake_log.get('hlCommander.pRelAutoSt')
-            if stage is not None and stage != 4:
-                raise RuntimeError(
-                    'firmware left post-release hold before interaction '
-                    f'duration elapsed (stage={stage})')
-            self._safe_sleep(min(0.05, deadline_s - now_s))
-        self._log_event('Post-Release Hold Observation Complete', {
-            'duration_s': float(duration_s),
-            'firmware_stage': 4,
-            'brake_mode': brake_mode,
-        })
-        return True
+    def _check_firmware_hold_for_reinteraction(self, hold_started_s):
+        """Non-blocking hold health check; the normal loop still detects touch."""
+        brake_log, receipt_s = self._firmware_brake_status_snapshot()
+        self._check_firmware_brake_monitor_safety(brake_log)
+        health, age_s = firmware_brake_log_health(
+            receipt_s, now_s=time.time(),
+            monitor_elapsed_s=time.monotonic() - hold_started_s)
+        if health == 'expired':
+            raise StaleLocalizationError(
+                'firmware hold status log exceeded bounded grace '
+                '(age %.3f s)' % age_s)
+        stage = brake_log.get('hlCommander.pRelAutoSt')
+        if stage is not None and stage != 4:
+            raise RuntimeError(
+                'firmware left post-release hold before new contact '
+                f'(stage={stage})')
 
     def _wait_for_firmware_brake_hold_impl(self, completion, *, brake_mode,
                                           baseline_receipt_s, baseline_timeouts):
@@ -15661,7 +15668,7 @@ class InteractionsControl:
                     **({'pi_planner': pi_planner.status()}
                        if pi_planner is not None else {}),
                 })
-                return
+                return notice
             # The notice becomes permanently ready after receipt. A safety-
             # aware wait also prevents a pending notice from busy-spinning.
             # Polling cached status here adds no packets to the flight link.
@@ -19488,6 +19495,8 @@ class InteractionsControl:
         post_release_event_diagnostic_sequence = 0
         post_release_event_diagnostic_session_id = uuid4().int & 0xFFFFFFFF
         firmware_brake_session_id = uuid4().int & 0xFFFFFFFF
+        firmware_brake_sequence = 0
+        firmware_hold_started_s = None
         contact_attitude_release_retry = None
         contact_attitude_release_preview_event = None
         contact_attitude_release_preview_clock_evidence = None
@@ -19954,6 +19963,8 @@ class InteractionsControl:
                             'an active attitude maneuver'
                         )
                     break
+            if firmware_brake_enabled and translation_control.firmware_hold_active:
+                self._check_firmware_hold_for_reinteraction(firmware_hold_started_s)
             calibration_clock_lag_s = (
                 now - interaction_start - calibration_elapsed_s
                 - sum(gate.total_wait_s(now) for gate in calibration_trial_gates)
@@ -20561,7 +20572,7 @@ class InteractionsControl:
                         yaw_deg=np.degrees(state['attitude_rpy'][2]),
                     )
                 raise
-            if not max_tilt_free_stop:
+            if not max_tilt_free_stop and not firmware_brake_enabled:
                 # Legacy paths retain their previous best-effort exit hold.
                 self._translation_exit_target = (
                     position.tolist(), nominal_yaw_deg
@@ -21020,6 +21031,8 @@ class InteractionsControl:
                                     initial_contact_gate.armed
                                     and translation_control.mode
                                     == translation_control.POSITION_HOLD
+                                    and (not translation_control.firmware_hold_active
+                                         or translation_control._detector_rearm_at is None)
                                 )
                                 or (
                                     potentiometer_release_processed
@@ -21521,6 +21534,12 @@ class InteractionsControl:
                         self._bounded_wrench_reference(position),
                         log_details=current_interaction_log_details(),
                         allow_coast_reentry=coast_recontact):
+                    if firmware_brake_enabled:
+                        # The next LL contact command takes ownership. Do not
+                        # later land through an obsolete HLC hold on a fault.
+                        self._translation_high_level_active = False
+                        self._translation_exit_target = None
+                        firmware_hold_started_s = None
                     self._set_contact_pid_attitude_authority(True)
                     pipeline.admittance.reset()
                     if coast_recontact:
@@ -22290,7 +22309,7 @@ class InteractionsControl:
                         'hlCommander.pRelAutoTime')
                     with FirmwareHoldNotification(
                             self.cf, session_id=firmware_brake_session_id,
-                            sequence=0) as completion:
+                            sequence=firmware_brake_sequence) as completion:
                         if firmware_brake_mode == 'pi_joint':
                             pi_planner = getattr(
                                 self.cf, '_post_release_pi_planner', None)
@@ -22298,12 +22317,12 @@ class InteractionsControl:
                                 raise RuntimeError('Pi event planner was not '
                                                    'prepared before arm')
                             pi_planner.begin_release(
-                                firmware_brake_session_id, 0)
+                                firmware_brake_session_id, firmware_brake_sequence)
                         try:
                             release_sent = handoff_pi_release_to_firmware(
                                 self.cf,
                                 session_id=firmware_brake_session_id,
-                                sequence=0,
+                                sequence=firmware_brake_sequence,
                                 arduino_sample_ms=int(
                                     potentiometer_release_decision
                                     .unloaded_started_sample_id),
@@ -22332,19 +22351,38 @@ class InteractionsControl:
                             'Firmware Post-Release Brake Handoff',
                             {**release_sent, 'brake_mode': firmware_brake_mode},
                         )
-                        self._wait_for_firmware_brake_hold(
+                        hold_notice = self._wait_for_firmware_brake_hold(
                             completion, brake_mode=firmware_brake_mode,
                             baseline_receipt_s=baseline_brake_receipt_s,
                             baseline_timeouts=baseline_brake_timeouts,
                         )
-                    self._hold_firmware_brake_until_interaction_duration(
-                        enabled=firmware_brake_config.get(
-                            'hold_until_duration', False),
-                        interaction_start_s=interaction_start,
-                        duration_s=duration,
-                        brake_mode=firmware_brake_mode,
-                    )
-                    break
+                    # Finish one contact, not the mission. Keep the FC's exact
+                    # hold reference and the original interaction_start clock.
+                    translation_control.accept_firmware_hold(
+                        hold_notice['hold_position_m'],
+                        np.degrees(hold_notice['hold_yaw_rad']), time.time())
+                    firmware_hold_started_s = time.monotonic()
+                    self._set_contact_pid_attitude_authority(False)
+                    last_command_position = translation_control.hold_position.copy()
+                    last_command_yaw = translation_control.yaw_deg
+                    potentiometer_release_processed = True
+                    potentiometer_release_pending = False
+                    potentiometer_release_decision = None
+                    potentiometer_contact_decision = None
+                    potentiometer_release_detector.disarm()
+                    if potentiometer_contact_detector is not None:
+                        potentiometer_contact_detector.mark_released()
+                    selected_render_mode = render_relation = render_selection = None
+                    pipeline.admittance.reset()
+                    self._log_event('Firmware Interaction Completed', {
+                        **hold_notice, 'brake_mode': firmware_brake_mode,
+                        'resume_contact_detection': True,
+                        'remaining_s': max(0., duration - (time.time() - interaction_start)),
+                    })
+                    firmware_brake_sequence = (firmware_brake_sequence + 1) & 0xFFFF
+                    if firmware_brake_sequence == 0:
+                        firmware_brake_session_id = uuid4().int & 0xFFFFFFFF
+                    continue
                 release_event_clock_evidence = dict(
                     contact_attitude_release_preview_clock_evidence
                     or release_clock_evidence(
