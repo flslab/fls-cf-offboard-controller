@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 # Paired experimental S-curve firmware identities. 26092202 adds the release
 # admission policy parameters and the rejection-reason logs.
-SCURVE_FIRMWARE_VERSIONS = frozenset({26092201, 26092202, 26092203})
+SCURVE_FIRMWARE_VERSIONS = frozenset({26092201, 26092202, 26092203, 26092304})
 
 
 pos_update_time_log = []
@@ -471,13 +471,18 @@ class Controller:
             if not path.is_absolute():
                 path = Path(__file__).resolve().parent / path
             model = load_model(self.args.drone_id, path=path, pid_values=current_pid)
-            if 'pRelAdapt' not in toc.get('hlCommander', {}):
+            if any(name not in toc.get('hlCommander', {}) for name in ('pRelAdapt', 'pRelAdVer')):
                 raise RuntimeError('firmware lacks calibrated adaptive planner')
             # Disable authority before the parameter transaction. Never enable
             # from cached values or leave an old model armed after failure.
             self.cf.param.set_value('hlCommander.pRelAuto', '0')
             self.cf.param.set_value('hlCommander.pRelAdapt', '0')
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            runtime_identity = {'hlCommander.pRelSVer': 26092304,
+                                'hlCommander.pRelAdVer': 26092303}
+            confirm_firmware_mode_parameters(self.cf.param, expected=runtime_identity)
             expected = upload_model(self.cf.param, model)
+            expected.update(runtime_identity)
             self.cf.param.set_value('hlCommander.pRelAdapt', '1')
             expected['hlCommander.pRelAdapt'] = 1
             self._firmware_response_expected = expected

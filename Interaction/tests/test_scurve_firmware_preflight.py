@@ -13,7 +13,7 @@ class SCurvePreflightTests(unittest.TestCase):
         ctrl.prepare_firmware_auto_brake()
         return ctrl
 
-    def params(self, version=26092203, distance='0.0'):
+    def params(self, version=26092304, distance='0.0'):
         p=AsyncParams({'hlCommander.pRelSVer':str(version),
             'hlCommander.pRelMode':'2','hlCommander.pRelJoint':'0',
             'hlCommander.pRelHost':'0','kalmanPRel.scEnable':'1',
@@ -81,7 +81,7 @@ class SCurvePreflightTests(unittest.TestCase):
             ctrl.verify_firmware_auto_brake_ready()
 
     def test_both_paired_firmware_identities_are_accepted(self):
-        for version in (26092201, 26092202, 26092203):
+        for version in (26092201, 26092202, 26092203, 26092304):
             ctrl=self.controller();p=self.params(version);ctrl.cf=SimpleNamespace(param=p)
             ctrl._setup_firmware_auto_brake_params()
             self.assertEqual(ctrl.firmware_auto_brake_scurve_version, version)

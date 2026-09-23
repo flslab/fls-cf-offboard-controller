@@ -1,0 +1,646 @@
+--- a/src/modules/interface/kalman_core/post_release_adaptive_scurve.h
++++ b/src/modules/interface/kalman_core/post_release_adaptive_scurve.h
+@@ -0,0 +1,172 @@
++#pragma once
++// Experimental response-aware finite-horizon brake. Pure C, no truth input.
++// Local rotational plant gain, COM offset, motor lag and real PID memory;
++// not a complete 6-DOF rigid-body/motor model. Every prediction includes rate.
++#include <math.h>
++#include <stdbool.h>
++#include <string.h>
++
++typedef struct { float c[8], T, second[8], end; bool split; } scaPoly;
++typedef struct { float x, w, a, j; } scaRef;
++typedef struct { float v, x, w, a, integral, attIntegral; } scaState;
++typedef struct {
++  float tau, kp, damping, bias, accBias, gain,rp,ri,rd,aki,akd,lever,leverX;
++  bool closed;
++  float delay,wn,zeta,cgain,cbias,history[76];
++} scaModel;
++typedef struct { float v, x, w, a, minV, distance, peakX, peakW, peakA; } scaPrediction;
++static inline float scaClip(float x,float a,float b) { return fminf(b,fmaxf(a,x)); }
++static inline void scaMake(scaRef s,float end,float T,float bump,scaPoly *p) {
++  p->T=T;p->end=end;p->split=false;float *c=p->c;
++  c[0]=s.x-end;c[1]=s.w*T;c[2]=s.a*T*T*.5f;c[3]=s.j*T*T*T/6;
++  c[4]=-35*c[0]-20*c[1]-10*c[2]-4*c[3];
++  c[5]=84*c[0]+45*c[1]+20*c[2]+6*c[3];
++  c[6]=-70*c[0]-36*c[1]-15*c[2]-4*c[3];
++  c[7]=20*c[0]+10*c[1]+4*c[2]+c[3];c[0]+=end;
++  // Degree-7 null-space: preserves start angle/rate/acceleration and
++  // terminal angle/rate/acceleration/jerk. Replans are C2, not C3.
++  c[3]+=128*bump;c[4]-=512*bump;c[5]+=768*bump;
++  c[6]-=512*bump;c[7]+=128*bump;
++}
++static inline scaRef scaEval(const scaPoly *p,float t) {
++  if(t>=p->T)return (scaRef){.x=p->end};
++  const float duration=p->split?p->T*.5f:p->T;
++  const float *c=p->split && t>=duration?p->second:p->c;
++  const float local=p->split && t>=duration?t-duration:t;
++  const float u=scaClip(local/duration,0,1);scaRef r={0};
++  // M4F has single-precision hardware only. Terminal value is explicit above;
++  // keep the bounded interior polynomial on the FPU, not soft double math.
++  float x=c[7],w=7*c[7],a=42*c[7],j=210*c[7];
++  for(int k=6;k>=0;k--) {
++    x=x*u+c[k];
++    if(k>=1)w=w*u+k*c[k];
++    if(k>=2)a=a*u+k*(k-1)*c[k];
++    if(k>=3)j=j*u+k*(k-1)*(k-2)*c[k];
++  }
++  r.x=x;r.w=w/duration;r.a=a/(duration*duration);r.j=j/(duration*duration*duration);
++  if(t>=p->T) {r.w=r.a=r.j=0;}
++  return r;
++}
++static inline void scaBridge(scaRef start,scaRef mid,float T,scaPoly *p) {
++  scaMake(start,0,T*.5f,0,p);float *c=p->c;const float h=T*.5f;
++  const float e0=mid.x,e1=mid.w*h,e2=mid.a*h*h,e3=mid.j*h*h*h;
++  c[4]+=35*e0-15*e1+2.5f*e2-e3/6;
++  c[5]+=-84*e0+39*e1-7*e2+e3/2;
++  c[6]+=70*e0-34*e1+6.5f*e2-e3/2;
++  c[7]+=-20*e0+10*e1-2*e2+e3/6;
++  scaPoly second;scaMake(mid,0,h,0,&second);
++  memcpy(p->second,second.c,sizeof(second.c));p->T=T;p->split=true;
++}
++static inline void scaSmoothBump(scaRef start,float T,float bump,scaPoly *p) {
++  scaPoly base;scaMake(start,0,T,0,&base);
++  scaRef mid=scaEval(&base,T*.5f);mid.x+=bump;
++  // Two degree-7 pieces, C3 at the splice and on every replan. Unlike a
++  // degree-7 u^3(1-u)^4 correction, this cannot jump the jerk feedforward.
++  scaBridge(start,mid,T,p);
++}
++static inline float scaFeedforward(scaRef r,scaState z,const scaModel *m) {
++  // A fitted closed-loop model already contains the PID dynamics. Do not
++  // apply the physical motor/PID inverse on top of it.
++  if(m->closed)return 0;
++  if(m->gain>0)return scaClip(r.w+
++    ((r.a+m->tau*r.j-m->bias)/m->gain-m->ri*z.integral+m->rd*z.a)/m->rp-
++    m->aki*z.attIntegral+m->akd*z.w+.5f*(r.w-z.w),-2.79f,2.79f);
++  return scaClip(r.w+m->tau*r.a+m->damping*(r.w-z.w),-2.79f,2.79f);
++}
++static inline float scaClosedCommand(float angle,const scaModel *m) {
++  return scaClip((angle-m->cbias)/m->cgain,-.395f,.395f);
++}
++static inline scaPrediction scaClosedRollout(const scaPoly *p,scaState z,
++    const scaModel *m,float tail) {
++  scaPrediction o={.minV=z.v};
++  const unsigned n=(unsigned)ceilf((p->T+tail)/.002f);
++  const float h=(p->T+tail)/n;
++  // Exact second-order transition for each held target (float-only). It
++  // advances measured angle AND angular rate; no zero-rate initialization.
++  const float d=m->zeta*m->wn, w2=m->wn*m->wn, disc=d*d-w2;
++  float c,b;
++  if(fabsf(disc)<1e-4f) {c=1;b=h;}
++  else if(disc>0) {const float q=sqrtf(disc);c=coshf(q*h);b=sinhf(q*h)/q;}
++  else {const float q=sqrtf(-disc);c=cosf(q*h);b=sinf(q*h)/q;}
++  const float e=expf(-d*h),a00=e*(c+d*b),a01=e*b;
++  const float a10=-w2*a01,a11=e*(c-d*b);
++  float held=0,commandEpoch=-1e9f;
++  for(unsigned k=0;k<n;k++) {
++    const float t=k*h, delayed=t-m->delay;
++    float command;
++    if(delayed<0) {
++      const int index=(int)floorf((delayed+.15f)/.002f+1e-5f);
++      command=m->history[(int)scaClip(index,0,75)];
++    } else {
++      const float epoch=floorf((delayed+1e-6f)/.01f)*.01f;
++      if(epoch!=commandEpoch) {held=scaClosedCommand(scaEval(p,epoch).x,m);commandEpoch=epoch;}
++      command=held;
++    }
++    const float target=m->cgain*command+m->cbias,err=z.x-target;
++    const float nextX=target+a00*err+a01*z.w,nextW=a10*err+a11*z.w;
++    const float acc=9.81f*tanf(.5f*(z.x+nextX));
++    o.distance+=h*z.v+.5f*h*h*acc;z.v+=h*acc;
++    z.a=(nextW-z.w)/h;z.x=nextX;z.w=nextW;
++    o.minV=fminf(o.minV,z.v);
++    const scaRef r=scaEval(p,t);
++    o.peakX=fmaxf(o.peakX,fabsf(scaClosedCommand(r.x,m)));
++    o.peakW=fmaxf(o.peakW,fabsf(r.w));o.peakA=fmaxf(o.peakA,fabsf(r.a));
++  }
++  o.v=z.v;o.x=z.x;o.w=z.w;o.a=z.a;return o;
++}
++static inline scaPrediction scaRollout(const scaPoly *p,scaState z,
++    const scaModel *m,float tail) {
++  if(m->closed)return scaClosedRollout(p,z,m,tail);
++  scaPrediction o={.minV=z.v};float distance=0;
++  // Input/output velocity is the tracked frame origin, not the COM. Rollout
++  // force integration is at the COM; angular momentum moves the tracked point.
++  z.v+=(m->lever*cosf(z.x)-m->leverX*sinf(z.x))*z.w;
++  const unsigned n=(unsigned)ceilf((p->T+tail)/.002f);
++  const float h=(p->T+tail)/n;
++  scaRef r={0};float heldFeedforward=0,nextCommand=0;
++  for(unsigned k=0;k<n;k++) {
++    // HLC is 100 Hz; inner PID is 500 Hz. Predict the same zero-order hold
++    // on attitude/rate feedforward, not an unrealizable continuously updated
++    // inverse model using future gyro acceleration and PID integral values.
++    if(k*h+1e-6f>=nextCommand) {
++      r=scaEval(p,k*h);heldFeedforward=scaFeedforward(r,z,m);nextCommand+=.01f;
++    }
++    const float command=m->kp*(r.x-z.x)+m->aki*z.attIntegral-m->akd*z.w+
++      heldFeedforward;
++    float dw=(command-z.w)/m->tau+m->bias;
++    if(m->gain>0) {
++      const float torqueAccel=m->gain*(m->rp*(command-z.w)+m->ri*z.integral-m->rd*z.a)+m->bias;
++      const float nextA=z.a+(1-expf(-h/m->tau))*(torqueAccel-z.a);
++      dw=.5f*(z.a+nextA);z.a=nextA;
++      z.integral=scaClip(z.integral+h*(command-z.w),-.581195f,.581195f);
++      z.attIntegral=scaClip(z.attIntegral+h*(r.x-z.x),-.349066f,.349066f);
++    }
++    const float acc=9.81f*tanf(z.x+.5f*h*z.w)+m->accBias;
++    distance+=h*z.v+.5f*h*h*acc;z.v+=h*acc;
++    z.x+=h*z.w+.5f*h*h*dw;z.w+=h*dw;
++    const float pointV=z.v-(m->lever*cosf(z.x)-m->leverX*sinf(z.x))*z.w;
++    o.minV=fminf(o.minV,pointV);o.peakX=fmaxf(o.peakX,fabsf(r.x));
++    o.peakW=fmaxf(o.peakW,fabsf(r.w));o.peakA=fmaxf(o.peakA,fabsf(r.a));
++  }
++  o.v=z.v-(m->lever*cosf(z.x)-m->leverX*sinf(z.x))*z.w;
++  o.x=z.x;o.w=z.w;o.a=z.a;o.distance=distance;return o;
++}
++static inline bool scaSolve(scaRef start,scaState measured,const scaModel *m,
++    float T,float tail,float terminalV,scaPoly *p,scaPrediction *out,float *bump) {
++  if(m->gain>0 || m->closed) {
++    float b=0;
++    for(unsigned k=0;k<4;k++) {
++      scaSmoothBump(start,T,b,p);*out=scaRollout(p,measured,m,tail);
++      if(fabsf(out->v-terminalV)<.0005f)break;
++      scaPoly shifted;scaSmoothBump(start,T,b+.002f,&shifted);
++      scaPrediction other=scaRollout(&shifted,measured,m,tail);
++      const float slope=(other.v-out->v)/.002f;
++      if(!isfinite(slope) || fabsf(slope)<.02f){*bump=b;return false;}
++      b+=scaClip((terminalV-out->v)/slope,-.2f,.2f);
++    }
++    scaSmoothBump(start,T,b,p);*out=scaRollout(p,measured,m,tail);*bump=b;
++    return isfinite(out->v) && fabsf(out->v-terminalV)<.008f && out->peakX<.395f &&
++      out->peakW<2.79f && out->peakA<34.91f;
++  }
++  *out=(scaPrediction){0};*bump=0;return false;
++}
+--- a/src/modules/interface/kalman_core/post_release_calibrated_job.h
++++ b/src/modules/interface/kalman_core/post_release_calibrated_job.h
+@@ -0,0 +1,72 @@
++#pragma once
++#include <stdint.h>
++#include "post_release_adaptive_scurve.h"
++
++// Planning is scheduled into the future: until activation the old reference
++// remains authoritative. Predict that prefix, including queued delayed inputs.
++#define SCR_LEAD_US 100000u
++#define SCR_LEAD_S .1f
++typedef struct {
++  scaState state[2]; scaModel model[2]; scaPoly old[2];
++  float planAge, remaining;
++  uint32_t epoch, stamp;
++  bool unwind;
++} scrJob;
++typedef struct {
++  scaPoly plan[2]; scaPrediction prediction[2];
++  uint32_t epoch, activation;
++  float duration;
++  bool valid;
++} scrResult;
++
++static inline void scrAdvance(scaState *z,scaModel *m,const scaPoly *old,float age) {
++  const float h=.002f,d=m->zeta*m->wn,w2=m->wn*m->wn,disc=d*d-w2;
++  float c,b;
++  if(fabsf(disc)<1e-4f){c=1;b=h;}
++  else if(disc>0){float q=sqrtf(disc);c=coshf(q*h);b=sinhf(q*h)/q;}
++  else {float q=sqrtf(-disc);c=cosf(q*h);b=sinf(q*h)/q;}
++  const float e=expf(-d*h),a00=e*(c+d*b),a01=e*b,a10=-w2*a01,a11=e*(c-d*b);
++  for(unsigned k=0;k<50;k++) {
++    float delayed=k*h-m->delay;
++    float command=delayed<0 ? m->history[(int)scaClip(floorf((delayed+.15f)/h+1e-5f),0,75)] :
++      scaClosedCommand(scaEval(old,age+floorf((delayed+1e-6f)/.01f)*.01f).x,m);
++    float target=m->cgain*command+m->cbias,err=z->x-target;
++    float x=target+a00*err+a01*z->w,w=a10*err+a11*z->w;
++    z->v+=h*9.81f*tanf(.5f*(z->x+x));z->a=(w-z->w)/h;z->x=x;z->w=w;
++  }
++  for(unsigned k=0;k<76;k++) {
++    if(k<25)m->history[k]=m->history[k+50];
++    else m->history[k]=scaClosedCommand(scaEval(old,age+floorf(((k-25)*h+1e-6f)/.01f)*.01f).x,m);
++  }
++}
++
++static inline scrResult scrSolve(scrJob *job) {
++  scrResult result={.epoch=job->epoch,.activation=job->stamp+SCR_LEAD_US};
++  scaRef start[2];
++  for(unsigned i=0;i<2;i++) {
++    if(!job->model[i].closed || !isfinite(job->state[i].v))return result;
++    scrAdvance(&job->state[i],&job->model[i],&job->old[i],job->planAge);
++    start[i]=scaEval(&job->old[i],job->planAge+SCR_LEAD_S);
++  }
++  const float adjust[3]={0,.06f,-.04f};
++  // Bounded search, independent of the real-time control task. No physical
++  // plant fallback is compiled into this entry point.
++  for(unsigned k=0;k<(job->unwind?3u:13u);k++) {
++    const float T=job->unwind ? job->remaining-SCR_LEAD_S-.12f+adjust[k] : .16f+.04f*k;
++    if(T<.08f || T>1.2f)continue;
++    scaPoly p[2];scaPrediction pred[2];float bump;bool ok=true;
++    for(unsigned i=0;i<2;i++)ok=scaSolve(start[i],job->state[i],&job->model[i],T,.12f,
++      i?0:.003f,&p[i],&pred[i],&bump) && ok;
++    if(pred[0].minV<-.008f)ok=false;
++    for(unsigned n=0;ok && n<=60;n++) {
++      const float a=scaClosedCommand(scaEval(&p[0],T*n/60).x,&job->model[0]);
++      const float b=scaClosedCommand(scaEval(&p[1],T*n/60).x,&job->model[1]);
++      if(hypotf(a,b)>.395f)ok=false;
++    }
++    if(ok) {
++      memcpy(result.plan,p,sizeof(p));memcpy(result.prediction,pred,sizeof(pred));
++      result.duration=T+.12f;result.valid=true;break;
++    }
++  }
++  return result;
++}
+--- a/src/modules/interface/kalman_core/post_release_response.h
++++ b/src/modules/interface/kalman_core/post_release_response.h
+@@ -0,0 +1,23 @@
++#pragma once
++#include <stdbool.h>
++#include <stdint.h>
++#include <math.h>
++
++// Entire closed-loop attitude response, in Crazyflie roll/pitch setpoint signs.
++// These are NOT motor lag/torque coefficients.
++typedef struct { float delay, wn, zeta, gain, bias; } prResponseAxis;
++typedef struct { prResponseAxis axis[2]; uint32_t id; uint8_t source; } prResponseModel;
++static inline bool prResponseValid(const prResponseModel *m) {
++  if (!m->id || (m->source != 1 && m->source != 2)) return false;
++  for (unsigned i=0;i<2;i++) {
++    const prResponseAxis *a=&m->axis[i];
++    if (!isfinite(a->delay) || !isfinite(a->wn) || !isfinite(a->zeta) ||
++        !isfinite(a->gain) || !isfinite(a->bias) || a->delay<0 || a->delay>=.15f ||
++        a->wn<=5 || a->wn>=60 || a->zeta<=.2f || a->zeta>=2 ||
++        a->gain<=.7f || a->gain>=1.3f || fabsf(a->bias)>3) return false;
++  }
++  return true;
++}
++bool prResponseGet(prResponseModel *out);
++void prResponseRecord(uint32_t nowUs, float rollDeg, float pitchDeg, bool powered);
++bool prResponseHistory(uint32_t nowUs, float roll[76], float pitch[76]);
+--- a/src/modules/src/Kbuild
++++ b/src/modules/src/Kbuild
+@@ -8,6 +8,7 @@
+ obj-y += crtp_supervisor.o
+ obj-y += crtp_commander_generic.o
+ obj-y += crtp_commander_high_level.o
++obj-$(CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE) += post_release_response.o
+ obj-y += crtp_commander.o
+ obj-y += crtp_commander_rpyt.o
+ obj-y += crtp_localization_service.o
+--- a/src/modules/src/controller/controller_pid.c
++++ b/src/modules/src/controller/controller_pid.c
+@@ -1,5 +1,10 @@
+ #include <string.h>
+ #include "autoconf.h"
++#ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
++#include "post_release_response.h"
++#include "usec_time.h"
++#endif
++#include "autoconf.h"
+ #ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_JOINT_UNWIND
+ #include "crtp_commander_high_level.h"
+ #endif
+@@ -138,6 +143,10 @@
+       attitudeDesired.pitch = setpoint->attitude.pitch;
+     }
+ 
++#ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
++    prResponseRecord((uint32_t)usecTimestamp(),attitudeDesired.roll,
++      attitudeDesired.pitch,actuatorThrust>0);
++#endif
+     attitudeControllerCorrectAttitudePID(state->attitude.roll, state->attitude.pitch, state->attitude.yaw,
+                                 attitudeDesired.roll, attitudeDesired.pitch, attitudeDesired.yaw,
+                                 &rateDesired.roll, &rateDesired.pitch, &rateDesired.yaw);
+--- a/src/modules/src/crtp_commander_high_level.c
++++ b/src/modules/src/crtp_commander_high_level.c
+@@ -133,7 +133,7 @@
+ // switch the active stage.
+ static uint8_t postReleaseAutoMode = 0;
+ // Opt-in mode 2. Runtime selection is latched for the accepted event.
+-static uint32_t scVersion=26092203u;
++static uint32_t scVersion=26092304u;
+ static scPlan_t scProfile;
+ static bool scActive=false,scRunning=false;
+ static uint32_t scBeginUs,scLastUs,scMaxUs;
+@@ -530,6 +530,10 @@
+ STATIC_MEM_TASK_ALLOC(crtpCommanderHighLevelTask, CMD_HIGH_LEVEL_TASK_STACKSIZE);
+ #endif
+ 
++#ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
++#include "post_release_calibrated_worker.inc"
++#endif
++
+ // CRTP Packet definitions
+ 
+ // trajectory command (first byte of crtp packet)
+@@ -746,6 +750,9 @@
+   STATIC_MEM_TASK_CREATE(crtpCommanderHighLevelTask, crtpCommanderHighLevelTask, CMD_HIGH_LEVEL_TASK_NAME, NULL, CMD_HIGH_LEVEL_TASK_PRI);
+ 
+   lockTraj = xSemaphoreCreateMutexStatic(&lockTrajBuffer);
++#ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
++  STATIC_MEM_TASK_CREATE(scrWorker, scrWorker, "calBrake", NULL, 1);
++#endif
+ 
+   pos = vzero();
+   vel = vzero();
+@@ -779,6 +786,12 @@
+ #ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
+ static int postReleaseAutoAccept(
+     const struct data_post_release_pi_release* event) {
++  prResponseModel calibrated={0};
++  if(scAdaptiveEnable && (postReleaseAutoMode!=2u || scStopRequestM>0 ||
++      !prResponseGet(&calibrated))) {
++    postReleaseAutoRejectCount++;postReleaseAutoRejectReason=1u;
++    postReleaseAutoRejectDetail=9u;return EAGAIN;
++  }
+   if (!postReleaseAutoEnabled || isBlocked || event->version != 1u ||
+       controllerGetType() != ControllerTypePID ||
+       postReleaseAutoMode > 2u ||
+@@ -830,7 +843,7 @@
+     const float along=speed>1e-6f?((cosf(yaw)*bx-sinf(yaw)*by)*pv[0]+
+       (sinf(yaw)*bx+cosf(yaw)*by)*pv[1])/speed:0;
+     scPlan_t seed;
+-    if(speed<.001f || !scPlan(speed,along,4,20,10,&seed)) {
++    if(speed<.001f || (!scAdaptiveEnable && !scPlan(speed,along,4,20,10,&seed))) {
+       postReleaseAutoRejectCount++;
+       postReleaseAutoRejectReason=4u;
+       postReleaseAutoRejectDetail=speed<.001f?1u:0u;
+@@ -915,6 +928,8 @@
+   postReleaseAutoIdentityValid = true;
+   postReleaseAutoStartUs = nowUs;
+   scActive=false;scAnchored=false;scRunning=postReleaseAutoMode==2u;scMaxUs=0;
++  scAdaptiveRunning=scAdaptiveEnable!=0;
++  if(scAdaptiveRunning)scrModel=calibrated;
+ #ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_JOINT_UNWIND
+   jointActive = false;
+   jointLastPlanUs = 0;
+@@ -1323,6 +1338,7 @@
+ #endif
+ 
+ #include "post_release_scurve_runtime.inc"
++#include "post_release_calibrated_runtime.inc"
+ 
+ static bool postReleaseAutoGetSetpoint(setpoint_t* setpoint,
+     const state_t* state, const float t) {
+@@ -1364,6 +1380,8 @@
+   }
+   postReleaseAutoVelocityGap = fresh ? 0u : 1u;
+   if(scRunning && attitudeFresh && controllerGetType()==ControllerTypePID) {
++    if(scAdaptiveRunning)return scCalibratedGetSetpoint(setpoint,state,t,nowUs,fresh,
++      position,velocity,measuredAnglesDeg,rawBodyRatesDegS);
+     // Own the entire accepted S-curve through fault return or measured hold;
+     // never fall into the old rapid-brake or velocity-tail state machine.
+     return scGetSetpoint(setpoint,state,t,nowUs,fresh,position,velocity,
+@@ -2989,6 +3007,8 @@
+ PARAM_ADD(PARAM_UINT8, pRelAuto, &postReleaseAutoEnabled)
+ PARAM_ADD(PARAM_UINT8, pRelMode, &postReleaseAutoMode)
+ PARAM_ADD(PARAM_UINT32 | PARAM_RONLY, pRelSVer, &scVersion)
++PARAM_ADD(PARAM_UINT8, pRelAdapt, &scAdaptiveEnable)
++PARAM_ADD(PARAM_UINT32 | PARAM_RONLY, pRelAdVer, &scAdaptiveVersion)
+ PARAM_ADD(PARAM_FLOAT, pRelTau, &postReleaseAutoResponseS)
+ /** @brief S-curve target stop distance from release (m); <= 0 = free stop. */
+ PARAM_ADD(PARAM_FLOAT, pRelScD, &scStopRequestM)
+@@ -3043,6 +3063,10 @@
+ LOG_ADD(LOG_UINT8, pRelEvtVer, &postReleaseAutoEventVersion)
+ LOG_ADD(LOG_UINT8, pRelMode, &postReleaseAutoMode)
+ LOG_ADD(LOG_UINT32, scUs, &scMaxUs)
++LOG_ADD(LOG_UINT32, scModel, &scrUsedId)
++LOG_ADD(LOG_UINT32, scWorkUs, &scrWorkerMaxUs)
++LOG_ADD(LOG_UINT32, scLate, &scrLate)
++LOG_ADD(LOG_UINT16, scStack, &scrStackFree)
+ LOG_ADD(LOG_UINT8, scQual, &scQuality)
+ LOG_ADD(LOG_FLOAT, scAge, &scSourceAge)
+ LOG_ADD(LOG_FLOAT, scV, &scPredV)
+--- a/src/modules/src/post_release_calibrated_runtime.inc
++++ b/src/modules/src/post_release_calibrated_runtime.inc
+@@ -0,0 +1,100 @@
++// Calibrated-only Bolt runtime. Numerical search never runs in stabilizer.
++static scaPoly scrPlan[2];
++static scrResult scrScheduled;
++static bool scrScheduledValid,scrUnwind;
++static uint32_t scrPlanUs,scrSubmitUs;
++static float scrDeadline;
++static bool scCalibratedGetSetpoint(setpoint_t *setpoint,const state_t *state,float t,
++    uint32_t nowUs,bool fresh,const float position[3],const float velocity[3],
++    const float observed[3],const float body[3]) {
++  const uint32_t begin=(uint32_t)usecTimestamp();
++  const float dx=postReleaseAutoDirectionXY[0],dy=postReleaseAutoDirectionXY[1];
++  const float c=cosf(postReleaseAutoYawRad),s=sinf(postReleaseAutoYawRad);
++  const float ux=c*dx+s*dy,uy=-s*dx+c*dy;
++  const float mix[2][2]={{-uy,-ux},{-ux,uy}};
++  float angles[3]={observed[0],observed[1],observed[2]},euler[3];
++  // Match the output source used in the response fit, without changing PID
++  // estimator ownership. A post-release15 fit remains explicitly selectable.
++  if(scrModel.source==1){angles[0]=state->attitude.roll;angles[1]=state->attitude.pitch;}
++  postReleaseEulerRatesFromBody(angles[0],angles[1],body,euler);
++  float px[2]={0},pv[2]={0},pa[2]={0};
++  scQuality=estimatorKalmanGetSCurvePrediction(px,pv,pa,&scSourceAge);
++  static float hr[76],hp[76];
++  static scaModel model[2];
++  const bool history=prResponseHistory(nowUs,hr,hp);
++  scaState z[2]={{.v=dx*pv[0]+dy*pv[1]},{.v=-dy*pv[0]+dx*pv[1]}};
++  for(unsigned i=0;i<2;i++) {
++    model[i]=(scaModel){.closed=true};
++    for(unsigned j=0;j<2;j++) {
++      const float weight=mix[i][j]*mix[i][j];const prResponseAxis *a=&scrModel.axis[j];
++      model[i].delay+=weight*a->delay;model[i].wn+=weight*a->wn;
++      model[i].zeta+=weight*a->zeta;model[i].cgain+=weight*a->gain;
++      model[i].cbias+=mix[i][j]*radians(a->bias);
++      z[i].x+=mix[i][j]*radians(angles[j]);z[i].w+=mix[i][j]*radians(euler[j]);
++    }
++    if(history)for(unsigned k=0;k<76;k++)model[i].history[k]=radians(mix[i][0]*hr[k]+mix[i][1]*hp[k]);
++  }
++  if(!scActive) {
++    scActive=true;scBeginUs=scLastUs=scrPlanUs=scrSubmitUs=nowUs;
++    scrUnwind=false;scrScheduledValid=false;scrDeadline=6;scrUsedId=scrModel.id;
++    // Let an old pending worker job drain; its epoch can never be applied.
++    taskENTER_CRITICAL();scrEpoch++;scrReady=false;taskEXIT_CRITICAL();
++    for(unsigned i=0;i<2;i++)scaMake((scaRef){.x=z[i].x,.w=z[i].w},i?0:-atanf(3.6f/9.81f),.35f,0,&scrPlan[i]);
++    postReleaseAutoReplanCount++;
++  }
++  const float age=(uint32_t)(nowUs-scBeginUs)*1e-6f;
++  bool fault=postReleaseAutoStage==6 || !history || !scrUsedId || scQuality==0 || age>6;
++  if(fault){if(postReleaseAutoStage!=6)postReleaseAutoAbortReason=scQuality?8:1;postReleaseAutoStage=6;}
++  taskENTER_CRITICAL();
++  if(scrReady) {
++    if(scrReply.valid && scrReply.epoch==scrEpoch && (int32_t)(scrReply.activation-nowUs)>=0) {
++      scrScheduled=scrReply;scrScheduledValid=true;
++    }
++    scrReady=false;
++  }
++  taskEXIT_CRITICAL();
++  if(!fault && scrScheduledValid && (int32_t)(nowUs-scrScheduled.activation)>=0) {
++    // Reject discontinuous late activation; never rewind the curve clock.
++    if(nowUs-scrScheduled.activation<=15000u) {
++      memcpy(scrPlan,scrScheduled.plan,sizeof(scrPlan));scrPlanUs=scrScheduled.activation;
++      scrDeadline=(uint32_t)(scrPlanUs-scBeginUs)*1e-6f+scrScheduled.duration;
++      scrUnwind=true;postReleaseAutoReplanCount++;
++    } else scrLate++;
++    scrScheduledValid=false;
++  }
++  if(!fault)postReleaseAutoStage=scrUnwind?2:1;
++  const float planAge=(uint32_t)(nowUs-scrPlanUs)*1e-6f;
++  if(!fault && fresh && scQuality==2 && !scrScheduledValid && nowUs-scrSubmitUs>=40000u &&
++      (!scrUnwind || scrDeadline-age>SCR_LEAD_S+.22f)) {
++    taskENTER_CRITICAL();
++    if(!scrBusy && !scrPending) {
++      for(unsigned i=0;i<2;i++){scrMailbox.state[i]=z[i];scrMailbox.model[i]=model[i];scrMailbox.old[i]=scrPlan[i];}
++      scrMailbox.planAge=planAge;scrMailbox.remaining=scrDeadline-age;
++      scrMailbox.epoch=scrEpoch;scrMailbox.stamp=nowUs;scrMailbox.unwind=scrUnwind;
++      scrPending=scrBusy=true;scrSubmitUs=nowUs;
++    }
++    taskEXIT_CRITICAL();
++  }
++  float command[2];
++  for(unsigned i=0;i<2;i++)command[i]=fault?0:scaClosedCommand(scaEval(&scrPlan[i],planAge).x,&model[i]);
++  float norm=hypotf(command[0],command[1]);
++  if(norm>.395f){command[0]*=.395f/norm;command[1]*=.395f/norm;}
++  const float ref[3]={degrees(-uy*command[0]-ux*command[1]),degrees(-ux*command[0]+uy*command[1]),0};
++  memcpy(postReleaseAutoReferenceDeg,ref,sizeof(ref));
++  scPredV=z[0].v;scAlong=9.81f*tanf(command[0]);scCross=9.81f*tanf(command[1]);
++  scProfile.total=scrDeadline;postReleaseAutoRapidSetpointCount++;
++  if(!fault && scrUnwind && age>=scrDeadline && fresh && scQuality==2) {
++    const struct traj_eval hold={.pos=mkvec(position[0],position[1],postReleaseAutoHeightM),
++      .vel=vzero(),.acc=vzero(),.omega=vzero(),.yaw=postReleaseAutoYawRad};
++    if(plan_go_to_from(&planner,&hold,false,false,hold.pos,hold.yaw,0,t)==0) {
++      positionControllerResetXY(position[0],position[1]);postReleaseAutoStage=4;
++      postReleaseAutoHoldCount++;postReleaseAutoQueueHoldNotice(&hold,nowUs);return false;
++    }
++  }
++  memset(setpoint,0,sizeof(*setpoint));setpoint->mode.z=modeAbs;
++  setpoint->position.z=postReleaseAutoHeightM;
++  setpoint->mode.roll=setpoint->mode.pitch=setpoint->mode.yaw=modeAbs;
++  setpoint->attitude.roll=ref[0];setpoint->attitude.pitch=ref[1];setpoint->attitude.yaw=degrees(postReleaseAutoYawRad);
++  uint32_t elapsed=(uint32_t)usecTimestamp()-begin;if(elapsed>scMaxUs)scMaxUs=elapsed;
++  (void)velocity;return true;
++}
+--- a/src/modules/src/post_release_calibrated_worker.inc
++++ b/src/modules/src/post_release_calibrated_worker.inc
+@@ -0,0 +1,36 @@
++#include "post_release_response.h"
++#include "post_release_calibrated_job.h"
++static uint8_t scAdaptiveEnable;
++static uint32_t scAdaptiveVersion=26092303u;
++static bool scAdaptiveRunning;
++static prResponseModel scrModel;
++static scrJob scrMailbox;
++static scrResult scrReply;
++static bool scrPending,scrReady,scrBusy;
++static uint32_t scrEpoch,scrLate,scrWorkerMaxUs,scrUsedId;
++static uint16_t scrStackFree;
++static void scrWorker(void *arg);
++STATIC_MEM_TASK_ALLOC(scrWorker, 1536);
++static void scrWorker(void *arg) {
++  static scrJob job;
++  static scrResult result;
++  (void)arg;
++  while(1) {
++    taskENTER_CRITICAL();
++    bool run=scrPending;
++    if(run){job=scrMailbox;scrPending=false;}
++    taskEXIT_CRITICAL();
++    if(run) {
++      uint32_t begin=(uint32_t)usecTimestamp();
++      result=scrSolve(&job);
++      uint32_t now=(uint32_t)usecTimestamp(),elapsed=now-begin;
++      if(elapsed>scrWorkerMaxUs)scrWorkerMaxUs=elapsed;
++      scrStackFree=(uint16_t)uxTaskGetStackHighWaterMark(NULL);
++      taskENTER_CRITICAL();
++      if((int32_t)(now-result.activation)>=0){result.valid=false;scrLate++;}
++      scrReply=result;scrReady=true;scrBusy=false;
++      taskEXIT_CRITICAL();
++    }
++    vTaskDelay(1);
++  }
++}
+--- a/src/modules/src/post_release_response.c
++++ b/src/modules/src/post_release_response.c
+@@ -0,0 +1,83 @@
++#include <string.h>
++#include "autoconf.h"
++#include "post_release_response.h"
++#include "supervisor.h"
++#include "param.h"
++#include "FreeRTOS.h"
++#include "task.h"
++
++static prResponseModel draft, applied;
++static uint32_t version=26092301u, commit, activeId;
++static uint8_t ready, error;
++// This build includes the calibrated planner and actual PID target history.
++#if defined(CONFIG_PLATFORM_SITL) || defined(CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE)
++static uint8_t runtime=1;
++#else
++static uint8_t runtime=0;
++#endif
++static struct { uint32_t us; float r,p; } history[128];
++static unsigned head, count;
++static void dirty(void) {
++  if (supervisorIsArmed()) { error=1; return; }
++  taskENTER_CRITICAL(); ready=0;activeId=0; taskEXIT_CRITICAL();
++}
++static void apply(void) {
++  if (supervisorIsArmed()) { error=1; return; }
++  taskENTER_CRITICAL();
++  ready=0;activeId=0;error=0;
++  if (commit) {
++    if (commit!=draft.id || !prResponseValid(&draft)) error=2;
++    else {applied=draft;activeId=applied.id;ready=1;}
++  }
++  taskEXIT_CRITICAL();
++}
++bool prResponseGet(prResponseModel *out) {
++  taskENTER_CRITICAL();
++  const bool ok=ready;
++  if(ok)*out=applied;
++  taskEXIT_CRITICAL();
++  return ok;
++}
++void prResponseRecord(uint32_t nowUs,float rollDeg,float pitchDeg,bool powered) {
++  if(!powered || !isfinite(rollDeg) || !isfinite(pitchDeg)) {count=0;return;}
++  history[head].us=nowUs;history[head].r=rollDeg;history[head].p=pitchDeg;
++  head=(head+1)%128;if(count<128)count++;
++}
++bool prResponseHistory(uint32_t nowUs,float roll[76],float pitch[76]) {
++  // Same stabilizer thread is reader/writer. Walk backwards once, causal ZOH.
++  if(count<2)return false;
++  unsigned offset=1,index=(head+127)%128;
++  if((uint32_t)(nowUs-history[index].us)>10000)return false;
++  for(unsigned k=0;k<76;k++) {
++    const uint32_t targetAge=2000*k;
++    while((uint32_t)(nowUs-history[index].us)<targetAge) {
++      if(++offset>count)return false;
++      const unsigned previous=(index+127)%128;
++      if((uint32_t)(history[index].us-history[previous].us)>6000)return false;
++      index=previous;
++    }
++    if((uint32_t)(nowUs-history[index].us)-targetAge>10000)return false;
++    roll[75-k]=history[index].r;pitch[75-k]=history[index].p;
++  }
++  return true;
++}
++PARAM_GROUP_START(pRelResp)
++PARAM_ADD(PARAM_UINT32|PARAM_RONLY, ver, &version)
++PARAM_ADD(PARAM_UINT8|PARAM_RONLY, runtime, &runtime)
++PARAM_ADD(PARAM_UINT8|PARAM_RONLY, ready, &ready)
++PARAM_ADD(PARAM_UINT8|PARAM_RONLY, error, &error)
++PARAM_ADD(PARAM_UINT32|PARAM_RONLY, activeId, &activeId)
++PARAM_ADD_WITH_CALLBACK(PARAM_UINT32, commit, &commit, apply)
++PARAM_ADD_WITH_CALLBACK(PARAM_UINT32, id, &draft.id, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_UINT8, source, &draft.source, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_FLOAT, rDelay, &draft.axis[0].delay, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_FLOAT, rWn, &draft.axis[0].wn, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_FLOAT, rZeta, &draft.axis[0].zeta, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_FLOAT, rGain, &draft.axis[0].gain, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_FLOAT, rBias, &draft.axis[0].bias, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_FLOAT, pDelay, &draft.axis[1].delay, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_FLOAT, pWn, &draft.axis[1].wn, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_FLOAT, pZeta, &draft.axis[1].zeta, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_FLOAT, pGain, &draft.axis[1].gain, dirty)
++PARAM_ADD_WITH_CALLBACK(PARAM_FLOAT, pBias, &draft.axis[1].bias, dirty)
++PARAM_GROUP_STOP(pRelResp)
+--- a/snapshot_version.json
++++ b/snapshot_version.json
+@@ -1,4 +1,4 @@
+ {
+   "base_revision": "0f2632ccb897c390c3029fd29761d840279a0dc2",
+-  "tag": "scurve-dist-26092203"
++  "tag": "bolt-calibrated-runtime-26092304"
+ }

@@ -120,6 +120,7 @@ class ResponseModelTests(unittest.TestCase):
         ctrl.args.drone_id = 'lb11'; ctrl.use_flowdeck = False
         ctrl.cfg = SimpleNamespace(PID_VALUES={})
         p = SCurvePreflightTests().params(); p.toc.toc['hlCommander']['pRelAdapt'] = None
+        p.toc.toc['hlCommander']['pRelAdVer'] = None
         ctrl.cf = SimpleNamespace(param=p)
         def upload(*args):
             self.assertEqual(p.set_value.call_args.args, ('hlCommander.pRelAdapt', '0'))
@@ -127,8 +128,11 @@ class ResponseModelTests(unittest.TestCase):
             return {'pRelResp.ready': 1, 'pRelResp.id': 42}
         with patch('Interaction.firmware_response_model.confirm_pid_context', return_value={'pid_rate.roll_kp':90.}), \
              patch('Interaction.firmware_response_model.load_model', return_value=model()), \
-             patch('Interaction.firmware_response_model.upload_model', side_effect=upload):
+             patch('Interaction.firmware_response_model.upload_model', side_effect=upload), \
+             patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters') as identity:
             ctrl._setup_firmware_auto_brake_params()
+        identity.assert_called_once_with(p, expected={'hlCommander.pRelSVer':26092304,
+                                                     'hlCommander.pRelAdVer':26092303})
         self.assertEqual(p.set_value.call_args.args, ('hlCommander.pRelAuto','1'))
         self.assertEqual(ctrl._firmware_response_expected['hlCommander.pRelAdapt'], 1)
 
@@ -139,6 +143,31 @@ class ResponseModelTests(unittest.TestCase):
         ctrl.args.calibrate = True;ctrl.args.interaction = False
         ctrl.prepare_firmware_auto_brake()
         self.assertFalse(ctrl.firmware_auto_brake_enabled)
+
+    def test_wrong_adaptive_runtime_never_uploads_or_enables(self):
+        from Interaction.tests.test_scurve_firmware_preflight import SCurvePreflightTests
+        from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+        ctrl = SCurvePreflightTests().controller()
+        ctrl.firmware_response_model_config = {'enabled': True}
+        ctrl.args.drone_id = 'lb11'; ctrl.use_flowdeck = False
+        ctrl.cfg = SimpleNamespace(PID_VALUES={})
+        p = SCurvePreflightTests().params()
+        p.toc.toc['hlCommander'].update(pRelAdapt=None, pRelAdVer=None)
+        p.replies['hlCommander.pRelAdVer'] = '26092302'
+        ctrl.cf = SimpleNamespace(param=p)
+        def fresh(param, *, expected):
+            return confirm_firmware_mode_parameters(param, expected=expected, timeout_s=.01)
+        with patch('Interaction.firmware_response_model.confirm_pid_context', return_value={}), \
+             patch('Interaction.firmware_response_model.load_model', return_value=model()), \
+             patch('Interaction.firmware_response_model.upload_model') as upload, \
+             patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters', side_effect=fresh):
+            with self.assertRaisesRegex(RuntimeError, 'pRelAdVer'):
+                ctrl._setup_firmware_auto_brake_params()
+        upload.assert_not_called()
+        writes = [c.args for c in p.set_value.call_args_list]
+        self.assertIn(('hlCommander.pRelAuto', '0'), writes)
+        self.assertNotIn(('hlCommander.pRelAuto', '1'), writes)
+        self.assertNotIn(('hlCommander.pRelAdapt', '1'), writes)
 
     def test_parameter_mapping_uses_closed_loop_fields_not_motor_tau(self):
         values = model_parameters(model())
