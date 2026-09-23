@@ -49,7 +49,13 @@ def curve_state_log_vars(selected, *, events_enabled=True):
             'hlCommander.curveQ':{'type':'uint8_t'},
             'hlCommander.pRelGap0':{'type':'float'},
             'hlCommander.pRelStale0':{'type':'uint8_t'},
+            'hlCommander.scQual':{'type':'uint8_t'},
+            'hlCommander.scAge':{'type':'float'},
             'pRelVicon.readyErr':{'type':'uint8_t'}}
+        result['CURVE_ESTIMATOR'] = {'log_period_ms':100,
+            **{name: {'type':'float'} for name in (
+                'pRelVicon.vx', 'pRelVicon.vy', 'kalmanPRel.vx',
+                'kalmanPRel.vy', 'kalmanPRel.ax', 'kalmanPRel.ay')}}
     return result
 
 
@@ -67,7 +73,7 @@ def decode_event(wire):
             response=dict(zip(('delay_s','wn_rad_s','zeta','gain','bias_rad'),v[14+5*i:19+5*i]))))
     if kind<=2 and any(a['duration_s']<=0 or a['response']['gain']<=0 for a in axes):
         raise ValueError('invalid executable curve')
-    return dict(type='curve', event=KINDS[kind], event_id=event, session_id=session,
+    result = dict(type='curve', event=KINDS[kind], event_id=event, session_id=session,
         sequence=sequence, interaction_id=f'{session}:{sequence}', plan_id=plan,
         replaces_plan_id=replaces, applied_us_mod32=applied,
         cf_timestamp_ms=tick, plan_origin_us_mod32=origin, model_id=model,
@@ -75,6 +81,17 @@ def decode_event(wire):
         direction_xy=list(v[:2]), release_yaw_rad=v[2], velocity_xy_m_s=list(v[3:5]),
         acceleration_xy_m_s2=list(v[5:7]), roll_pitch_deg=list(v[7:9]),
         euler_roll_pitch_rate_deg_s=list(v[9:11]), position_m=list(v[11:14]), axes=axes)
+    if kind in (4, 5):
+        # Wire v1 does not identify which terminal state fields remain valid.
+        # In particular failed state acquisition leaves zero-filled buffers.
+        fields = ('velocity_xy_m_s', 'acceleration_xy_m_s2', 'position_m',
+                  'roll_pitch_deg', 'euler_roll_pitch_rate_deg_s')
+        result['raw_unverified_state'] = {key: result[key] for key in fields}
+        result.update({key: None for key in fields})
+        result['state_validity'] = 'unknown_terminal_state_wire_v1'
+    else:
+        result['state_validity'] = 'runtime_accepted'
+    return result
 
 
 class CurveAssembler:
@@ -185,14 +202,14 @@ class CurveRecorder:
             except Exception as error:self._error(error)
 
     def _state(self,packet):
-        if packet.group not in ('FIRMWARE_KIN','FIRMWARE_ACT','ATT_DES','CURVE_STATUS'):return
+        if packet.group not in ('FIRMWARE_KIN','FIRMWARE_ACT','ATT_DES','CURVE_STATUS','CURVE_ESTIMATOR'):return
         with self.lock:
             if self.closed:return
             try:
                 self.states.write(dict(normalize_state(packet),**self.ids))
                 self.state_counts[packet.group]+=1
                 previous=self.state_last.get(packet.group)
-                if previous is not None and packet.group!='CURVE_STATUS':
+                if previous is not None and packet.group not in ('CURVE_STATUS','CURVE_ESTIMATOR'):
                     dt=(packet.cf_timestamp_ms-previous)&0xffffff
                     if dt>15:self.state_gaps[packet.group]+=1
                 self.state_last[packet.group]=packet.cf_timestamp_ms

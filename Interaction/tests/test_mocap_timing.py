@@ -34,6 +34,21 @@ def load_mocap():
 
 
 class MocapTimingTests(unittest.TestCase):
+    def test_point_tracking_reports_empty_and_rejected_cloud_without_pose(self):
+        module = load_mocap()
+        frames = []
+        mocap = module.Mocap(mode='pointcloud')
+        mocap.subscribe_point([0, 0, 1], frames.append, name='lb11')
+        for cloud, expected in ((np.empty((0, 3)), 'empty_cloud'),
+                                (np.array([[1000., 0., 1000.]]), 'outside_gate'),
+                                (np.array([[0., 0., 1000.]]), 'matched')):
+            mocap._frame_timing = {'callback_count': 0, 'callback_duration_s': 0.,
+                                   'max_callback_duration_s': 0.,
+                                   'wait_return_monotonic_s': 0., 'wait_duration_s': 0.}
+            mocap._process_point_clouds(cloud, mocap.points_to_track, np.zeros(3), 1, 1.)
+            self.assertEqual(mocap._frame_timing['point_tracking'][0]['status'], expected)
+            self.assertEqual(len(frames), int(expected == 'matched'))
+
     def test_source_metadata_is_opt_in_and_preserves_host_timestamp(self):
         module = load_mocap()
         module.motioncapture.MotionCapture = type(

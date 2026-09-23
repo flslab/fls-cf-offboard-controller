@@ -204,6 +204,13 @@ class InteractionLogger(LogManager):
     def init_cf_logger(self, cf, cf_log_vars, cf_log_period=100):
         self.cf_log_data = copy.deepcopy(cf_log_vars)
 
+        # Runtime storage belongs to this logger, not the configuration. New
+        # diagnostic groups may specify only their wire types.
+        for group in self.cf_log_data.values():
+            for name, variable in group.items():
+                if name != 'log_period_ms':
+                    variable['data'] = []
+
         self.cf_var_logger = []
         for name, log_group in self.cf_log_data.items():
             # The deployed FLS firmware consumes the cflib period byte in 1 ms

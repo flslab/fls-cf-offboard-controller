@@ -59,3 +59,23 @@ Calibration files, experiment output, firmware snapshots and generated CAD stay
 local and are excluded by `.gitignore`. Runtime code, tests and this operating
 guide remain tracked. Artifact cleanup removes files from the current Git tree,
 not from historical commits or local ignored copies.
+# Diagnostic validity and tracking gaps
+
+Curve wire protocol v1 does not carry per-field validity for `abort` or
+`interrupted` events. The decoder therefore writes their position, velocity,
+acceleration, attitude and rates as `null`, with
+`state_validity: unknown_terminal_state_wire_v1`. Original wire values remain
+under `raw_unverified_state`; zero there is not evidence of a stopped drone.
+Previously recorded JSONL files are not rewritten by this change.
+
+`CURVE_STATUS` includes `scQual` and `scAge` at 10 Hz. `scAge` is the last
+successful prediction query's source age, not a continuously advancing clock
+after a failed query. `CURVE_ESTIMATOR` records Vicon-filter velocity and shadow
+ESKF velocity/acceleration at 10 Hz; these are diagnostic sources, not all the
+same as the S-curve feedback observer or ordinary PID state. Compare them with
+the existing 100 Hz ordinary-state logs and activated curve snapshots, aligned
+by firmware timestamps. No estimator ownership is changed.
+
+When mocap timing logging is enabled, `point_tracking` reports `matched`,
+`empty_cloud`, or `outside_gate`, including nearest-point and matching-gate
+distances. Missing matches do not generate a fake pose or widen the gate.

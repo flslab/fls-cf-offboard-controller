@@ -40,6 +40,15 @@ def state(group,tick=50000):
 
 
 class CurveLoggingTests(unittest.TestCase):
+    def test_terminal_wire_state_is_not_presented_as_measured_zero(self):
+        for kind in (4, 5):
+            event = decode_event(wire(kind=kind))
+            self.assertIsNone(event['velocity_xy_m_s'])
+            self.assertIsNone(event['position_m'])
+            self.assertEqual(event['raw_unverified_state']['velocity_xy_m_s'], [0, 0])
+            self.assertEqual(event['state_validity'], 'unknown_terminal_state_wire_v1')
+        self.assertEqual(decode_event(wire())['state_validity'], 'runtime_accepted')
+
     def test_out_of_order_duplicate_and_crc(self):
         a=CurveAssembler();parts=fragments(wire())
         result=None
@@ -179,6 +188,7 @@ class CurveLoggingTests(unittest.TestCase):
             'hlCommander.curveDrop', 'hlCommander.curveId',
             'hlCommander.curveQ', 'hlCommander.pRelGap0',
             'hlCommander.pRelStale0', 'pRelVicon.readyErr',
+            'hlCommander.scQual', 'hlCommander.scAge',
         }
         cf = Mock()
         log = Log(cf)
@@ -193,6 +203,18 @@ class CurveLoggingTests(unittest.TestCase):
         log.add_config(config)
         self.assertTrue(config.valid)
         self.assertEqual({v.name for v in config.variables}, exported)
+
+    def test_estimator_diagnostics_are_recorded_at_their_own_period(self):
+        with TemporaryDirectory() as tmp:
+            cf = Mock()
+            logger = SimpleNamespace(args=SimpleNamespace(), add_cf_packet_listener=Mock(return_value=Mock()))
+            rec = CurveRecorder(cf, logger, directory=tmp, tag='trial', events_enabled=False)
+            for tick in (50000, 50100):
+                rec._state(state('CURVE_ESTIMATOR', tick))
+            rec.close()
+            rows = [json.loads(line) for line in Path(tmp, 'trial.states.jsonl').read_text().splitlines()]
+            self.assertEqual(len([row for row in rows if row['type'] == 'state']), 2)
+            self.assertEqual(rec.state_gaps['CURVE_ESTIMATOR'], 0)
 
 
 def math_degrees(x):

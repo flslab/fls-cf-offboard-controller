@@ -16,6 +16,26 @@ from Interaction.log_manager import (
 
 
 class LogPacketTimestampTests(unittest.TestCase):
+    def test_type_only_curve_status_config_delivers_first_callback(self):
+        from Interaction.curve_logging import curve_state_log_vars
+        from cflib.crazyflie.log import LogConfig
+        logger = self.make_logger()
+        selected = {'CURVE_STATUS': curve_state_log_vars({})['CURVE_STATUS']}
+        received = []
+        logger.add_cf_packet_listener(received.append)
+        data = {name: 0 for name in selected['CURVE_STATUS']
+                if name != 'log_period_ms'}
+        def start(config):
+            config.data_received_cb.call(1234, dict(data), config)
+        with patch.object(LogConfig, 'start', start):
+            logger.init_cf_logger(Mock(), selected)
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0].group, 'CURVE_STATUS')
+        for name in data:
+            self.assertEqual(logger.cf_log_data['CURVE_STATUS'][name]['data'], [0])
+            self.assertNotIn('data', selected['CURVE_STATUS'][name])
+        self.assertEqual(logger.live_logger.write.call_args.args[0]['group'], 'CURVE_STATUS')
+
     def make_logger(self, *, enabled=True):
         logger = InteractionLogger.__new__(InteractionLogger)
         logger.cf_log_group_times = {}

@@ -195,7 +195,15 @@ class Mocap(threading.Thread):
 
     def _process_point_clouds(self, cloud_arr, targets, offset, frame_count, now):
         """Applies offset to point clouds and triggers callbacks."""
-        if self.mode not in ['pointcloud', 'mixed'] or cloud_arr is None or len(cloud_arr) == 0:
+        if self.mode not in ['pointcloud', 'mixed']:
+            return
+
+        diagnostics = []
+        if self._frame_timing is not None:
+            self._frame_timing['point_tracking'] = diagnostics
+        if cloud_arr is None or len(cloud_arr) == 0:
+            diagnostics.extend({'name': pt['name'], 'status': 'empty_cloud',
+                                'point_count': 0} for pt in targets)
             return
 
         for pt_data in targets:
@@ -206,6 +214,14 @@ class Mocap(threading.Thread):
             min_dist_sq = dist_sq[min_idx]
 
             max_dist_sq = pt_data['max_dist_sq'] if pt_data['captured'] else pt_data['max_dist_sq'] * 4
+            diagnostics.append({
+                'name': pt_data['name'], 'point_count': len(cloud_arr),
+                'status': 'matched' if min_dist_sq <= max_dist_sq else 'outside_gate',
+                'nearest_distance_m': float(np.sqrt(min_dist_sq)) / 1000,
+                'gate_distance_m': float(np.sqrt(max_dist_sq)) / 1000,
+                'target_position_m': (target_pos / 1000).tolist(),
+                'nearest_position_m': (cloud_arr[min_idx] / 1000).tolist(),
+            })
             if min_dist_sq <= max_dist_sq:
                 pt_data['captured'] = True
                 closest_point = cloud_arr[min_idx]
