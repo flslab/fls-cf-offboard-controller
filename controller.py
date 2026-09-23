@@ -229,7 +229,14 @@ class Controller:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()
+        try:
+            self.stop()
+        except Exception:
+            if exc_type is None:
+                raise
+            # Cleanup must not replace the mission/link exception that caused
+            # us to exit. stop() has already attempted every resource.
+            logger.exception('Cleanup also failed; preserving original mission error.')
 
     def connect(self):
         logger.info(f"Connecting to {self.uri}...")
@@ -852,20 +859,31 @@ class Controller:
         self.verify_contact_attitude_mocap_ready()
 
     def stop(self):
+        if getattr(self, '_stop_started', False):
+            return
+        self._stop_started = True
         self.mission_duration = time.time() - self.mission_start_time
+        cleanup_errors = []
+
+        def attempt(name, action):
+            try:
+                action()
+            except Exception as error:
+                cleanup_errors.append(error)
+                logger.exception('%s failed; continuing resource cleanup.', name)
 
         if self.servo:
-            self._set_safe_servo_angles()
+            attempt('Servo safe position', self._set_safe_servo_angles)
             if self.args.ground_test:
                 time.sleep(1)
 
-        self.land()
+        attempt('Landing (not confirmed on error)', self.land)
 
         if self.bat_logger:
-            self.bat_logger.stop()
+            attempt('Battery logger stop', self.bat_logger.stop)
 
         if self.mocap:
-            self.mocap.stop()
+            attempt('Mocap stop', self.mocap.stop)
 
         handle = getattr(self, '_contact_attitude_shadow_prearm', None)
         if handle is not None:
@@ -877,12 +895,11 @@ class Controller:
                 )
 
         if self.force_sensor:
-            self.force_sensor.stop()
+            attempt('Force sensor stop', self.force_sensor.stop)
 
         if self.rpi_power_monitor:
-            self.rpi_power_monitor.stop()
+            attempt('Power monitor stop', self.rpi_power_monitor.stop)
 
-        logging_shutdown_error = None
         if self.log_manager:
             try:
                 self.log_manager.stop(
@@ -897,7 +914,7 @@ class Controller:
                     args=vars(self.args),
                 )
             except Exception as error:
-                logging_shutdown_error = error
+                cleanup_errors.append(error)
                 logger.exception('Log shutdown failed; continuing resource cleanup and disconnect.')
             
         if getattr(self, "tracker", None):
@@ -921,19 +938,19 @@ class Controller:
                 logger.error(f"Failed to terminate blinker process: {e}")
 
         if self.smooth_controller:
-            self.smooth_controller.stop()
+            attempt('Smooth controller stop', self.smooth_controller.stop)
 
         if self.led:
-            self.led.stop()
+            attempt('LED stop', self.led.stop)
 
         if self.servo:
             del self.servo
 
-        self.disconnect()
+        attempt('Disconnect', self.disconnect)
         # Fit only after landing, logger closure and disconnect: never run an
         # optimizer in the flight/control or sensor callback thread.
         calibration_pid = getattr(self, '_response_calibration_pid', None)
-        if calibration_pid is not None and logging_shutdown_error is None:
+        if calibration_pid is not None and not cleanup_errors:
             try:
                 from pathlib import Path
                 from Interaction.firmware_response_model import fit_completed_calibration
@@ -952,8 +969,8 @@ class Controller:
                             result['accepted'], result.get('reason', 'passed'))
             except Exception:
                 logger.exception('Attitude response fit not saved; existing calibration preserved')
-        if logging_shutdown_error is not None:
-            raise logging_shutdown_error
+        if cleanup_errors:
+            raise cleanup_errors[0]
 
     def load_manifest(self):
         if not self.args.orchestrated:
@@ -1322,6 +1339,10 @@ class Controller:
         logger.info(f"MyGrid mode -> {mode}")
 
     def land(self):
+        if getattr(getattr(self, 'cf', None), 'link', True) is None:
+            # cflib clears both the link and parameter TOC after link loss.
+            # Do not send commands or claim a landing acknowledgement then.
+            raise ConnectionError('Cannot command or confirm landing: Crazyflie link is disconnected')
         if self.args.skip_landing:
             self._send_landing_confirmation(self.voltage)
             return

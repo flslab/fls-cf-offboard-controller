@@ -195,7 +195,12 @@ class InteractionLogger(LogManager):
 
         if self.cf_var_logger is not None:
             for log_config in self.cf_var_logger:
-                log_config.stop()
+                try:
+                    log_config.stop()
+                except Exception as error:
+                    if curve_error is None:
+                        curve_error = error
+                    logger.exception('Log block stop failed; still closing local log file.')
 
         self.live_logger.close()
         if curve_error is not None:

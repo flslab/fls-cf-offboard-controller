@@ -23,6 +23,47 @@ def methods(names, **namespace):
 
 
 class LoggingCleanupTests(unittest.TestCase):
+    def test_disconnected_landing_sends_nothing_and_never_confirms(self):
+        namespace = methods({'land'})
+        controller = SimpleNamespace(cf=SimpleNamespace(link=None),
+            _send_landing_confirmation=Mock(), flying=True)
+        with self.assertRaisesRegex(ConnectionError, 'link is disconnected'):
+            namespace['land'](controller)
+        controller._send_landing_confirmation.assert_not_called()
+        self.assertTrue(controller.flying)
+
+    def test_exit_preserves_primary_exception_and_reports_cleanup_failure(self):
+        log = Mock()
+        exit_method = methods({'__exit__'}, logger=log)['__exit__']
+        controller = SimpleNamespace(stop=Mock(side_effect=OSError('cleanup')))
+        primary = ConnectionError('USB disconnected')
+        self.assertIsNone(exit_method(controller, type(primary), primary, None))
+        log.exception.assert_called_once()
+        with self.assertRaisesRegex(OSError, 'cleanup'):
+            exit_method(controller, None, None, None)
+
+    def test_landing_and_sensor_failures_do_not_skip_remaining_cleanup(self):
+        namespace = methods({'stop'}, time=SimpleNamespace(time=lambda: 10), logger=Mock())
+        failure = ConnectionError('USB disconnected')
+        controller = SimpleNamespace(
+            mission_start_time=0, servo=None, land=Mock(side_effect=failure),
+            bat_logger=Mock(), mocap=Mock(), force_sensor=Mock(),
+            rpi_power_monitor=Mock(), log_manager=Mock(),
+            args=SimpleNamespace(log_dir='/unused', tag='test'), animation_start_times=[],
+            animation_stop_times=[], viewpoint_offsets=[], reference_offsets=[],
+            tracker_process=None, blinker_process=None, smooth_controller=Mock(),
+            led=Mock(), disconnect=Mock())
+        controller.bat_logger.stop.side_effect = OSError('no link')
+        with self.assertRaises(ConnectionError) as caught:
+            namespace['stop'](controller)
+        self.assertIs(caught.exception, failure)
+        for name in ('bat_logger', 'mocap', 'force_sensor', 'rpi_power_monitor',
+                     'log_manager', 'smooth_controller', 'led'):
+            getattr(controller, name).stop.assert_called_once()
+        controller.disconnect.assert_called_once()
+        namespace['stop'](controller)
+        controller.land.assert_called_once()
+
     def test_battery_critical_requires_two_consecutive_low_samples(self):
         namespace = methods({'_watch_battery'}, logger=Mock(), time=Mock())
         logs = Mock()
