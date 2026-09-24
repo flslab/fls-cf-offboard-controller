@@ -493,6 +493,8 @@ class Controller:
         if 'pRelComp' in toc.get('hlCommander', {}):
             # A prior compensated mission must never leak into another mode.
             curve_expected.setdefault('hlCommander.pRelComp', 0)
+        if 'pRelCompB' in toc.get('hlCommander', {}):
+            curve_expected.setdefault('hlCommander.pRelCompB', 0)
         if velocity_mode and not analytic:
             # New firmware separates reference shape from command execution.
             # pRelVelCmd alone can otherwise retain the default attitude path
@@ -504,9 +506,10 @@ class Controller:
         for key in curve_expected:
             group, name = key.split('.', 1)
             required[group] = required.get(group, ()) + (name,)
-        if any(name not in toc.get(group, {})
-               for group, names in required.items() for name in names):
-            raise RuntimeError('connected Bolt lacks firmware auto-brake parameters')
+        missing=[group+'.'+name for group,names in required.items()
+                 for name in names if name not in toc.get(group,{})]
+        if missing:
+            raise RuntimeError('connected Bolt lacks firmware auto-brake parameters: '+', '.join(missing))
         if velocity_mode and self.firmware_auto_brake_stop_distance_m > 0:
             raise ValueError('velocity curve requires free-stop distance 0')
         self._firmware_curve_expected = curve_expected
@@ -567,6 +570,8 @@ class Controller:
             self.cf.param.set_value('hlCommander.pRelVelCmd', '1' if velocity_mode else '0')
         if not velocity_mode and 'pRelComp' in toc.get('hlCommander', {}):
             self.cf.param.set_value('hlCommander.pRelComp', '0')
+        if not velocity_mode and 'pRelCompB' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelCompB', '0')
         if velocity_mode:
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             for key, value in curve_expected.items():
@@ -1717,7 +1722,14 @@ class Controller:
                         events_enabled=events_enabled,protocol_version=protocol_version)
                     if events_enabled:
                         self.cf.param.set_value('hlCommander.curveLog', '1')
-                    selected = curve_state_log_vars(selected, events_enabled=events_enabled)
+                    residual_logging = events_enabled and bool(getattr(
+                        self, '_firmware_analytic_expected', {}).get('hlCommander.pRelCompB'))
+                    if residual_logging:
+                        toc = getattr(getattr(self.cf.log, 'toc', None), 'toc', {})
+                        if any(k not in toc.get('pRelComp', {}) for k in ('bx', 'by')):
+                            raise RuntimeError('firmware lacks acceleration residual telemetry')
+                    selected = curve_state_log_vars(selected, events_enabled=events_enabled,
+                                                    acceleration_residual=residual_logging)
                 elif 'curveLog' in self.cf.param.toc.toc.get('hlCommander', {}):
                     self.cf.param.set_value('hlCommander.curveLog', '0')
                 self.log_manager.init_cf_logger(

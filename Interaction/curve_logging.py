@@ -46,13 +46,18 @@ def curve_log_config(mission):
     return config
 
 
-def curve_state_log_vars(selected, *, events_enabled=True):
+def curve_state_log_vars(selected, *, events_enabled=True, acceleration_residual=False):
     from Interaction.config import FIRMWARE_KIN, FIRMWARE_ACT, ATT_DES
     # Reuse already-present compressed blocks; only command and health blocks
     # are new on the normal firmware-braking path.
     result = dict(selected)
     result.update(FIRMWARE_KIN=FIRMWARE_KIN, FIRMWARE_ACT=FIRMWARE_ACT,
                   ATT_DES={**ATT_DES, 'log_period_ms':10})
+    if acceleration_residual:
+        # 18 existing bytes + 8 residual bytes = CRTP's 26-byte limit.
+        # Preserve the 100 Hz block count and don't mutate shared config.
+        result['FIRMWARE_ACT'] = {**FIRMWARE_ACT, **{
+            'pRelComp.'+name: {'type':'float','unit':'m/s^2'} for name in ('bx','by')}}
     if events_enabled:
         result['CURVE_STATUS'] = {'log_period_ms':100,
             'hlCommander.curveDrop':{'type':'uint32_t'},
@@ -138,6 +143,10 @@ def decode_event(wire):
             response_compensation='delay_state_prediction_and_tail_impulse_feedback',
             response_axes=['roll', 'pitch'],
             reconstruction='reference_only; command also requires state, causal command history and runtime parameters')
+    if flags & 0x400000:
+        if not flags & 0x200000:
+            raise ValueError('acceleration residual requires response compensation')
+        result['acceleration_residual'] = 'bounded_world_velocity_increment_observer'
     result['timing'] = dict(clock='unavailable', plan_compute_us=None,
         control_step_max_us=None, hold_compute_us=None, control_steps=None)
     if version == 2:
@@ -224,6 +233,11 @@ def normalize_state(packet):
         a=[.001*d['stateEstimateZ.a'+axis] for axis in 'xyz']
         result['acceleration_world_m_s2']=[a[0],a[1],a[2]-9.81]
         result['acceleration_encoding']='stateEstimateZ: mm/s2, z includes +g'
+        if 'pRelComp.bx' in d and 'pRelComp.by' in d:
+            bias=[d['pRelComp.bx'],d['pRelComp.by']]
+            if not all(math.isfinite(x) for x in bias):
+                raise ValueError('nonfinite acceleration residual')
+            result['acceleration_residual_world_xy_m_s2']=bias
     elif packet.group=='ATT_DES':
         result['command_roll_pitch_deg']=[d['controller.roll'],d['controller.pitch']]
     return result

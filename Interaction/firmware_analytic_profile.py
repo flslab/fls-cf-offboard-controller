@@ -14,7 +14,7 @@ def profile_parameters(config):
         raise ValueError('analytic_profile must be a mapping')
     allowed = {'shape', 'execution', 'tail_s', 'single_s', 'handoff', 'feedback',
                'attitude_kp', 'attitude_kv', 'rate_feedforward',
-               'response_compensation', 'response_bandwidth'}
+               'response_compensation', 'response_bandwidth', 'acceleration_residual'}
     if set(config) - allowed:
         raise ValueError('unknown analytic_profile fields: ' + ', '.join(sorted(set(config) - allowed)))
     def choice(key, choices):
@@ -39,6 +39,11 @@ def profile_parameters(config):
                          'and rate_feedforward: false (calibrated ordinary attitude model)')
     if 'response_bandwidth' in config and not compensate:
         raise ValueError('response_bandwidth requires response_compensation')
+    residual=config.get('acceleration_residual', False)
+    if type(residual) is not bool:
+        raise ValueError('analytic_profile.acceleration_residual must be boolean')
+    if residual and not compensate:
+        raise ValueError('acceleration_residual requires response_compensation')
     result = {
         'hlCommander.pRelLite': 0,
         'hlCommander.pRelVelCmd': 1,
@@ -59,4 +64,6 @@ def profile_parameters(config):
         result['hlCommander.pRelComp'] = int(compensate)
     if compensate:
         result['hlCommander.pRelCompW'] = number('response_bandwidth', 6, 16, 12)
+    if 'acceleration_residual' in config:
+        result['hlCommander.pRelCompB'] = int(residual)
     return result

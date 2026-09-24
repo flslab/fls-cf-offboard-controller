@@ -47,6 +47,32 @@ def state(group,tick=50000):
 
 
 class CurveLoggingTests(unittest.TestCase):
+    def test_acceleration_residual_logs_reuse_one_full_size_block(self):
+        from Interaction.config import FIRMWARE_ACT
+        before=dict(FIRMWARE_ACT)
+        plain=curve_state_log_vars({})
+        enabled=curve_state_log_vars({},acceleration_residual=True)
+        self.assertEqual(plain.keys(),enabled.keys())
+        self.assertEqual(FIRMWARE_ACT,before)
+        sizes={'uint32_t':4,'int16_t':2,'uint16_t':2,'float':4,'uint8_t':1}
+        self.assertEqual(sum(sizes[v['type']] for k,v in enabled['FIRMWARE_ACT'].items()
+                             if k!='log_period_ms'),26)
+        packet=state('FIRMWARE_ACT');packet.data.update({'pRelComp.bx':.1,'pRelComp.by':-.4})
+        self.assertEqual(normalize_state(packet)['acceleration_residual_world_xy_m_s2'],[.1,-.4])
+        packet.data['pRelComp.by']=float('nan')
+        with self.assertRaisesRegex(ValueError,'nonfinite'):normalize_state(packet)
+
+    def test_acceleration_residual_event_flag_requires_compensation(self):
+        data=bytearray(wire())
+        flags=0x400000|0x200000|0x10000|(3<<19)|(4<<8)
+        struct.pack_into('<I',data,HEADER.size-4,flags)
+        struct.pack_into('<I',data,len(data)-4,zlib.crc32(data[:-4]))
+        self.assertEqual(decode_event(data)['acceleration_residual'],
+                         'bounded_world_velocity_increment_observer')
+        struct.pack_into('<I',data,HEADER.size-4,flags^0x200000)
+        struct.pack_into('<I',data,len(data)-4,zlib.crc32(data[:-4]))
+        with self.assertRaisesRegex(ValueError,'requires response compensation'):decode_event(data)
+
     def test_compensation_model_and_curve_have_distinct_axes_and_units(self):
         data=bytearray(wire())
         flags=0x200000|0x10000|(3<<19)|(4<<8)

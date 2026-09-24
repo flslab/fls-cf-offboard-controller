@@ -41,3 +41,14 @@ class AnalyticProfileTests(unittest.TestCase):
                         {'response_bandwidth':True},{'response_bandwidth':17}):
             with self.subTest(changes=changes),self.assertRaises(ValueError):
                 profile_parameters(dict(cfg,**changes))
+
+    def test_acceleration_residual_is_explicit_and_requires_compensation(self):
+        cfg=self.config();cfg.update(execution='attitude',response_compensation=True,
+                                     acceleration_residual=True)
+        p=profile_parameters(cfg)
+        self.assertEqual(p['hlCommander.pRelCompB'],1)
+        self.assertEqual(p['hlCommander.pRelAdapt'],0)
+        self.assertNotIn('hlCommander.pRelCompB',profile_parameters(self.config()))
+        for changes in ({'response_compensation':False},{'acceleration_residual':1}):
+            with self.subTest(changes=changes),self.assertRaises(ValueError):
+                profile_parameters(dict(cfg,**changes))
