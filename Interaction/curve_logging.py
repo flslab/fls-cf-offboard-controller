@@ -128,6 +128,16 @@ def decode_event(wire):
         result['velocity_source'] = {1: 'ordinary_firmware_state', 3: 'ordinary_firmware_state',
             4: 'unified_vicon15', 5: 'simulation_truth'}.get(source, 'unknown')
         result['response_model_used'] = False
+    if flags & 0x200000:
+        if not velocity_mode or execution_kind != 3:
+            raise ValueError('response compensation requires explicit attitude velocity-reference execution')
+        if kind <= 3 and (not model or any(a['response']['gain'] <= 0 or
+                                          a['response']['wn_rad_s'] <= 0 for a in axes)):
+            raise ValueError('response compensation model missing from executable curve')
+        result.update(response_model_used=True,
+            response_compensation='delay_state_prediction_and_tail_impulse_feedback',
+            response_axes=['roll', 'pitch'],
+            reconstruction='reference_only; command also requires state, causal command history and runtime parameters')
     result['timing'] = dict(clock='unavailable', plan_compute_us=None,
         control_step_max_us=None, hold_compute_us=None, control_steps=None)
     if version == 2:

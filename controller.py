@@ -346,8 +346,11 @@ class Controller:
                 or type(response.get('enabled', False)) is not bool):
             raise ValueError('firmware_auto_brake.response_model needs boolean enabled')
         self.firmware_response_model_config = response
-        if self._firmware_analytic_expected and response.get('enabled', False):
-            raise ValueError('analytic_profile does not use the adaptive response-model worker')
+        compensated = bool(self._firmware_analytic_expected.get('hlCommander.pRelComp'))
+        if compensated and not response.get('enabled', False):
+            raise ValueError('response_compensation requires response_model.enabled: true')
+        if self._firmware_analytic_expected and response.get('enabled', False) and not compensated:
+            raise ValueError('analytic_profile model upload requires response_compensation')
         if response.get('enabled', False) and brake_mode != 'scurve':
             raise ValueError('calibrated response_model requires mode: scurve')
         if response.get('enabled', False) and command_mode == 'velocity':
@@ -487,6 +490,9 @@ class Controller:
         toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
         analytic = getattr(self, '_firmware_analytic_expected', {})
         curve_expected = dict(analytic)
+        if 'pRelComp' in toc.get('hlCommander', {}):
+            # A prior compensated mission must never leak into another mode.
+            curve_expected.setdefault('hlCommander.pRelComp', 0)
         if velocity_mode and not analytic:
             # New firmware separates reference shape from command execution.
             # pRelVelCmd alone can otherwise retain the default attitude path
@@ -529,7 +535,7 @@ class Controller:
                 path = Path(__file__).resolve().parent / path
             model = load_model(self.args.drone_id, path=path, pid_values=current_pid)
             if 'pRelAdapt' not in toc.get('hlCommander', {}):
-                raise RuntimeError('firmware lacks calibrated adaptive planner')
+                raise RuntimeError('firmware lacks calibrated response runtime')
             # Disable authority before the parameter transaction. Never enable
             # from cached values or leave an old model armed after failure.
             self.cf.param.set_value('hlCommander.pRelAuto', '0')
@@ -539,8 +545,10 @@ class Controller:
             confirm_firmware_mode_parameters(self.cf.param, expected=runtime_identity)
             expected = upload_model(self.cf.param, model)
             expected.update(runtime_identity)
-            self.cf.param.set_value('hlCommander.pRelAdapt', '1')
-            expected['hlCommander.pRelAdapt'] = 1
+            # Upload/commit is independent of enabling the heavy replan worker.
+            adaptive = 0 if analytic else 1
+            self.cf.param.set_value('hlCommander.pRelAdapt', str(adaptive))
+            expected['hlCommander.pRelAdapt'] = adaptive
             self._firmware_response_expected = expected
             self._firmware_response_pid = current_pid
             curve_recorder = getattr(getattr(self, 'log_manager', None), 'curve_recorder', None)
@@ -557,6 +565,8 @@ class Controller:
             self._firmware_response_expected = None
         if 'pRelVelCmd' in toc.get('hlCommander', {}):
             self.cf.param.set_value('hlCommander.pRelVelCmd', '1' if velocity_mode else '0')
+        if not velocity_mode and 'pRelComp' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelComp', '0')
         if velocity_mode:
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             for key, value in curve_expected.items():
@@ -577,7 +587,8 @@ class Controller:
                     analytic_profile=getattr(self, 'firmware_analytic_profile', None), confirmed_parameters=confirmed_curve,
                     velocity_source={1: 'ordinary_firmware_state', 2: 'unified_vicon15'}.get(
                         analytic.get('kalmanPRel.feedback'), 'firmware_configured'),
-                    response_model_used=False, replanning=False, nominal_deceleration_m_s2=3.6,
+                    response_model_used=bool(analytic.get('hlCommander.pRelComp')),
+                    replanning=False, nominal_deceleration_m_s2=3.6,
                     velocity_tail_s=analytic.get('hlCommander.pRelTail')))
         # Preparation happens before arming, never on the release critical path.
         # If startup fails, do not enable the firmware host-planning mode.

@@ -15626,6 +15626,7 @@ class InteractionsControl:
         pi_planner = (getattr(self.cf, '_post_release_pi_planner', None)
                       if brake_mode == 'pi_joint' else None)
         planner_phase = None
+        hold_notice_logged = False
         while time.monotonic() - monitor_started < 6.0:
             self._flush_release_diagnostics()
             self._check_firmware_brake_monitor_safety()
@@ -15641,6 +15642,18 @@ class InteractionsControl:
                     planner_phase = phase
             notice = completion.wait(0.0)
             brake_log, receipt_s = self._firmware_brake_status_snapshot()
+            if notice is not None and not hold_notice_logged:
+                # Preserve the FC's actual selected target even if the health
+                # check below fails. Receipt is NOT confirmation of stable hold
+                # and must not acknowledge or change commander ownership.
+                self._log_event('Firmware Post-Release Hold Target Received', {
+                    **notice,
+                    'firmware_stage': brake_log.get('hlCommander.pRelAutoSt'),
+                    'firmware_ready': brake_log.get('hlCommander.pRelReady'),
+                    'brake_mode': brake_mode,
+                    'hold_confirmed': False,
+                })
+                hold_notice_logged = True
             try:
                 update = monitor.observe(
                     brake_log, receipt_time_s=receipt_s, now_wall_s=time.time(),

@@ -47,6 +47,22 @@ def state(group,tick=50000):
 
 
 class CurveLoggingTests(unittest.TestCase):
+    def test_compensation_model_and_curve_have_distinct_axes_and_units(self):
+        data=bytearray(wire())
+        flags=0x200000|0x10000|(3<<19)|(4<<8)
+        struct.pack_into('<I',data,HEADER.size-4,flags)
+        struct.pack_into('<I',data,len(data)-4,zlib.crc32(data[:-4]))
+        e=decode_event(data)
+        self.assertTrue(e['response_model_used'])
+        self.assertEqual(e['response_axes'],['roll','pitch'])
+        self.assertEqual(e['curve_axes'],['along_velocity','cross_velocity'])
+        self.assertEqual(e['coefficient_units'],'m/s')
+        self.assertIsNone(reconstruct_command(e,50000))
+        for bad in (flags^(1<<19),flags^0x10000):
+            struct.pack_into('<I',data,HEADER.size-4,bad)
+            struct.pack_into('<I',data,len(data)-4,zlib.crc32(data[:-4]))
+            with self.assertRaises(ValueError):decode_event(data)
+
     def test_timing_v2_and_old_v1_have_unambiguous_missing_values(self):
         e=decode_event(wire())
         self.assertEqual(e['timing']['clock'],'mcu_elapsed')

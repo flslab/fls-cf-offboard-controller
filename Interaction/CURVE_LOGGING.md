@@ -52,6 +52,15 @@ actual segment duration and state source remain in each curve event.
 - No additional high-rate timing log block is allocated. Timing travels in
   the same acknowledged/CRC-protected event as its coefficients.
 
+The ordinary `TAG.json` event stream also saves
+`Firmware Post-Release Hold Target Received` once per received, identity-matched
+FC hold notice. Its `hold_position_m` is the actual commanded target; the
+`position_m` in a curve `hold` snapshot is instead the measured vehicle state.
+The receipt event is written before monitor readiness validation, with
+`hold_confirmed: false`. It does not acknowledge completion or bypass any
+health check. `Firmware Post-Release Hold Acquired` remains the later, separately
+validated success event. If no notice arrives, no target is fabricated.
+
 For the selected S-curve, coefficients describe **velocity references**, not
 attitude commands. They use ascending normalized local time:
 `v(u) = c0 + c1*u + ... + c7*u^7`, `u = local_time / segment_duration`.
@@ -147,3 +156,25 @@ and 26092403 binary are preserved unchanged. Use the new paired offboard files
 and new Bolt binary to obtain measured timing on hardware; none has been
 flashed/deployed by this change. See the generated delivery validation report
 for actual test results and any observed continuous-log gaps.
+# Optional calibrated S-curve attitude compensation
+
+`analytic_profile.response_compensation: true` selects bounded response-aware
+execution of the existing velocity S-curve. It requires attitude execution,
+`response_model.enabled: true`, and `rate_feedforward: false`. Uploading the
+model does **not** enable the adaptive replan worker; `pRelAdapt` stays zero.
+`response_bandwidth` (6–16 rad/s, default 12) is latched for each curve.
+
+Wire flag bit 21 marks this execution mode without changing the wire version.
+Curve coefficients still have m/s units and along/cross-release-velocity axes.
+The two response models instead have **roll/pitch** axes; decoded events expose
+`response_axes` separately. Runtime configuration records the calibration,
+PID identity, model id, compensation bandwidth and disabled replanning.
+Coefficients alone reconstruct the reference, **not** the compensated command:
+the latter also needs measured state/rates and the causal command history.
+
+`pRelComp.us`, `guardN`, `satN`, and `stopV` are optional diagnostics for maximum
+compensation step time, impulse-guard activations, command saturation, and
+predicted forward stopping velocity. `us` is MCU elapsed time on Bolt and host
+elapsed time in SITL, never a cross-platform timing equivalence. Existing
+curve-event computation timing remains available. A compensation model/state/
+history failure is abort reason 12, not an automatic fallback to fixed gains.

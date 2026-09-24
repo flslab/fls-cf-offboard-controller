@@ -13,7 +13,8 @@ def profile_parameters(config):
     if not isinstance(config, dict):
         raise ValueError('analytic_profile must be a mapping')
     allowed = {'shape', 'execution', 'tail_s', 'single_s', 'handoff', 'feedback',
-               'attitude_kp', 'attitude_kv', 'rate_feedforward'}
+               'attitude_kp', 'attitude_kv', 'rate_feedforward',
+               'response_compensation', 'response_bandwidth'}
     if set(config) - allowed:
         raise ValueError('unknown analytic_profile fields: ' + ', '.join(sorted(set(config) - allowed)))
     def choice(key, choices):
@@ -29,7 +30,16 @@ def profile_parameters(config):
     rate_ff=config.get('rate_feedforward', False)
     if type(rate_ff) is not bool:
         raise ValueError('analytic_profile.rate_feedforward must be boolean')
-    return {
+    compensate=config.get('response_compensation', False)
+    if type(compensate) is not bool:
+        raise ValueError('analytic_profile.response_compensation must be boolean')
+    if compensate and (config.get('execution') != 'attitude'
+                       or config.get('shape') != 'velocity_scurve' or rate_ff):
+        raise ValueError('response_compensation requires velocity_scurve attitude execution '
+                         'and rate_feedforward: false (calibrated ordinary attitude model)')
+    if 'response_bandwidth' in config and not compensate:
+        raise ValueError('response_bandwidth requires response_compensation')
+    result = {
         'hlCommander.pRelLite': 0,
         'hlCommander.pRelVelCmd': 1,
         'hlCommander.pRelAdapt': 0,
@@ -45,3 +55,8 @@ def profile_parameters(config):
         'kalmanPRel.fuseVicon': 1,
         'kalmanPRel.viconCI': .999,
     }
+    if 'response_compensation' in config:
+        result['hlCommander.pRelComp'] = int(compensate)
+    if compensate:
+        result['hlCommander.pRelCompW'] = number('response_bandwidth', 6, 16, 12)
+    return result

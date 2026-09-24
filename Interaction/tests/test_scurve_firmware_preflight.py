@@ -7,6 +7,34 @@ from Interaction.tests.test_firmware_parameter_confirmation import AsyncParams
 from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
 
 class SCurvePreflightTests(unittest.TestCase):
+    def test_compensation_uploads_model_without_starting_worker(self):
+        profile=dict(shape='velocity_scurve',execution='attitude',tail_s=1.2,
+            single_s=1.2,handoff='predicted_position',feedback='unified_vicon15',
+            response_compensation=True,rate_feedforward=False)
+        ctrl=baseline.FirmwareAutoBrakePreflightTests().controller(dict(
+            enabled=True,mode='scurve',response_time_s=.14,command_mode='attitude',
+            analytic_profile=profile,response_model={'enabled':True}))
+        ctrl.prepare_firmware_auto_brake()
+        p=self.velocity_params();ctrl.cf=SimpleNamespace(param=p)
+        for key,value in ctrl._firmware_analytic_expected.items():
+            group,name=key.split('.');p.toc.toc.setdefault(group,{})[name]=None
+            p.replies[key]=str(value)
+        p.replies['pRelResp.runtime']='1'
+        ctrl.cfg=SimpleNamespace(PID_VALUES={});ctrl.use_flowdeck=False
+        ctrl.args.drone_id='fixture'
+        ctrl.log_manager=SimpleNamespace(curve_recorder=SimpleNamespace(ids={},events=Mock()))
+        with patch('Interaction.firmware_response_model.confirm_pid_context',return_value={}), \
+             patch('Interaction.firmware_response_model.load_model',return_value={'source_log':'fixture'}), \
+             patch('Interaction.firmware_response_model.upload_model',return_value={'pRelResp.id':123}) as upload:
+            ctrl._setup_firmware_auto_brake_params()
+        upload.assert_called_once()
+        writes=[call.args for call in p.set_value.call_args_list]
+        self.assertNotIn(('hlCommander.pRelAdapt','1'),writes)
+        self.assertIn(('hlCommander.pRelComp','1'),writes)
+        self.assertEqual(writes[-1],('hlCommander.pRelAuto','1'))
+        self.assertEqual(ctrl._firmware_response_expected['hlCommander.pRelAdapt'],0)
+        self.assertTrue(ctrl.log_manager.curve_recorder.events.write.call_args.args[0]['response_model_used'])
+
     def test_analytic_profile_confirmed_before_enable_and_recorded(self):
         profile=dict(shape='single_position_polynomial', execution='attitude',
             tail_s=.7, single_s=.7, handoff='predicted_bumpless', feedback='unified_vicon15')

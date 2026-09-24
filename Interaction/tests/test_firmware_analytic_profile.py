@@ -27,3 +27,17 @@ class AnalyticProfileTests(unittest.TestCase):
             with self.assertRaises(ValueError):profile_parameters(cfg)
         cfg=self.config();cfg['replan']=True
         with self.assertRaises(ValueError):profile_parameters(cfg)
+
+    def test_response_compensation_is_opt_in_and_does_not_enable_replanning(self):
+        cfg=self.config();cfg.update(execution='attitude',response_compensation=True)
+        p=profile_parameters(cfg)
+        self.assertEqual(p['hlCommander.pRelComp'],1)
+        self.assertEqual(p['hlCommander.pRelAdapt'],0)
+        self.assertEqual(p['hlCommander.pRelCompW'],12)
+        self.assertEqual(p['hlCommander.pRelAttFF'],0)
+        self.assertNotIn('hlCommander.pRelComp',profile_parameters(self.config()))
+        for changes in ({'rate_feedforward':True},{'execution':'velocity'},
+                        {'shape':'single_position_polynomial'},{'response_bandwidth':float('nan')},
+                        {'response_bandwidth':True},{'response_bandwidth':17}):
+            with self.subTest(changes=changes),self.assertRaises(ValueError):
+                profile_parameters(dict(cfg,**changes))
