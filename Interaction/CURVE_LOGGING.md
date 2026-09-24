@@ -27,6 +27,18 @@ require a curve-event protocol. Firmware build/date identifiers remain optional
 diagnostic metadata, not arming gates. Required capabilities, parameter readback,
 estimator readiness and decodable wire formats are still checked.
 
+Curve logging does not itself require a calibration file. In particular,
+`command_mode: velocity` uses the velocity PID and intentionally keeps
+`response_model.enabled: false`; enabling an attitude-response worker is not a
+remedy for a logging startup error. Startup negotiates wire v1/v2 with the
+firmware and rechecks the same version before arm. Wire v2 includes timing.
+On multi-execution firmware, plain velocity mode explicitly writes and reads
+back `pRelExec=0`, `pRelShape=0`, and `pRelLite=0` where exposed. `pRelVelCmd=1`
+alone is not sufficient to select velocity execution. An explicit analytic
+profile retains its own execution/shape settings. Runtime metadata leaves
+unspecified tail duration unset instead of guessing a firmware default; the
+actual segment duration and state source remain in each curve event.
+
 ## Saved files and units
 
 - `LOG_DIR/TAG.curves.jsonl`: initial/phase/replan and hold/abort/interrupted

@@ -65,6 +65,64 @@ class SCurvePreflightTests(unittest.TestCase):
             ctrl._setup_firmware_auto_brake_params()
         p.set_value.assert_not_called()
 
+    def modern_velocity_params(self):
+        p = self.velocity_params()
+        for name in ('pRelExec', 'pRelShape', 'pRelLite'):
+            p.toc.toc['hlCommander'][name] = None
+            p.replies['hlCommander.' + name] = '0'
+        return p
+
+    def test_plain_velocity_explicitly_selects_execution_on_multimode_firmware(self):
+        ctrl = self.velocity_controller()
+        p = self.modern_velocity_params()
+        ctrl.cf = SimpleNamespace(param=p)
+        ctrl.log_manager = SimpleNamespace(curve_recorder=SimpleNamespace(ids={}, events=Mock()))
+        ctrl._setup_firmware_auto_brake_params()
+        writes = [call.args for call in p.set_value.call_args_list]
+        for name in ('pRelExec', 'pRelShape', 'pRelLite'):
+            key = 'hlCommander.' + name
+            self.assertIn((key, '0'), writes)
+            self.assertIn(key, p.requested)
+        self.assertEqual(writes[-1], ('hlCommander.pRelAuto', '1'))
+        metadata = ctrl.log_manager.curve_recorder.events.write.call_args.args[0]
+        self.assertEqual(metadata['command_mode'], 'velocity')
+        self.assertEqual(metadata['confirmed_parameters']['hlCommander.pRelExec'], 0)
+        self.assertIsNone(metadata['velocity_tail_s'])  # No invented firmware default.
+
+    def test_wrong_execution_readback_cannot_enable_braking(self):
+        ctrl = self.velocity_controller()
+        p = self.modern_velocity_params()
+        p.replies['hlCommander.pRelExec'] = '2'  # Firmware is still in attitude mode.
+        ctrl.cf = SimpleNamespace(param=p)
+        def quick_confirm(param, *, expected):
+            return confirm_firmware_mode_parameters(param, expected=expected, timeout_s=.001)
+        with patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters',
+                   side_effect=quick_confirm):
+            with self.assertRaisesRegex(RuntimeError, 'pRelExec=2'):
+                ctrl._setup_firmware_auto_brake_params()
+        self.assertNotIn(('hlCommander.pRelAuto', '1'),
+                         [call.args for call in p.set_value.call_args_list])
+
+    def test_prearm_rechecks_execution_and_negotiated_log_protocol(self):
+        ctrl = self.velocity_controller()
+        p = self.modern_velocity_params()
+        ctrl.cf = SimpleNamespace(param=p)
+        ctrl._setup_firmware_auto_brake_params()
+        p.replies.update({'hlCommander.curveVer': '2', 'hlCommander.curveLog': '1'})
+        ctrl.log_manager = SimpleNamespace(
+            curve_recorder=SimpleNamespace(check=Mock(), events_enabled=True, protocol_version=2),
+            get_latest_group_log_data=lambda _: {
+                'hlCommander.pRelReady': 1, 'hlCommander.pRelAutoSt': 0,
+                'hlCommander.pRelEvtVer': 1, 'hlCommander.pRelMode': 2,
+                'hlCommander.pRelTau': .14})
+        ctrl._firmware_vicon_last_send_s = 1.
+        ctrl._firmware_vicon_mirror_error = None
+        p.requested.clear()
+        with patch('controller.time.monotonic', return_value=1.):
+            ctrl.verify_firmware_auto_brake_ready()
+        for name in ('pRelExec', 'pRelShape', 'pRelLite', 'curveVer', 'curveLog'):
+            self.assertIn('hlCommander.' + name, p.requested)
+
     def test_velocity_rejects_attitude_response_fit_and_fixed_distance(self):
         with self.assertRaisesRegex(ValueError,'not a velocity-loop model'):
             self.velocity_controller(response_model={'enabled':True})

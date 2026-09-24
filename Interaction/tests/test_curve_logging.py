@@ -316,6 +316,44 @@ class CurveLoggingTests(unittest.TestCase):
                 self.assertEqual(recorder.call_args.kwargs['user_id'],'P02')
                 self.assertEqual(confirm.call_args.kwargs['expected'],{'hlCommander.curveVer':2})
 
+    def test_plain_velocity_logging_needs_no_calibration_model_for_v1_or_v2(self):
+        from Interaction.tests.test_controller_logging_cleanup import methods
+        setup = methods({'setup_logging'}, logger=Mock())['setup_logging']
+        for version in (1, 2, 99):
+            with self.subTest(version=version):
+                ctrl = SimpleNamespace(
+                    args=SimpleNamespace(log=True, illumination=False, hover=False,
+                        droneless=False, calibrate=False, log_dir='unused', tag='trial', cf_log_period=10),
+                    cfg=SimpleNamespace(LOG_VARS={}),
+                    mission={'Interaction': {'config': {'wrench_interaction': {
+                        'firmware_auto_brake': {'command_mode': 'velocity',
+                            'response_model': {'enabled': False}, 'curve_log': {'enabled': True}}}}}},
+                    _is_interaction_application=lambda: True,
+                    _uses_onboard_wrench_state=lambda: True,
+                    _uses_vicon_velocity_for_free_stop=lambda: False,
+                    firmware_auto_brake_enabled=True, firmware_auto_brake_mode='scurve',
+                    firmware_response_model_config={'enabled': False},
+                    firmware_brake_command_mode='velocity', _firmware_analytic_expected={}, cf=Mock())
+                ctrl.cf.param.toc.toc = {'hlCommander': {'curveVer': None, 'curveLog': None}}
+                ctrl.cf.param.get_value.return_value = str(version)
+                with patch('Interaction.log_manager.InteractionLogger'), \
+                     patch('Interaction.curve_logging.CurveRecorder') as recorder, \
+                     patch('Interaction.firmware_response_model.load_model') as load_model, \
+                     patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters') as confirm:
+                    if version == 99:
+                        with self.assertRaisesRegex(RuntimeError, 'unsupported curve event logging protocol'):
+                            setup(ctrl)
+                        recorder.assert_not_called()
+                        ctrl.cf.param.set_value.assert_not_called()
+                    else:
+                        setup(ctrl)
+                        self.assertEqual(recorder.call_args.kwargs['protocol_version'], version)
+                        self.assertTrue(recorder.call_args.kwargs['events_enabled'])
+                        self.assertEqual(confirm.call_args.kwargs['expected'], {'hlCommander.curveVer': version})
+                        self.assertEqual(ctrl.cf.param.set_value.call_args_list[-1].args,
+                                         ('hlCommander.curveLog', '1'))
+                    load_model.assert_not_called()
+
     def test_incomplete_tail_and_no_flight_packets(self):
         with TemporaryDirectory() as tmp:
             cf=Mock();logger=SimpleNamespace(args=SimpleNamespace(),add_cf_packet_listener=Mock(return_value=Mock()))
