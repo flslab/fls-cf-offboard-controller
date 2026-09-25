@@ -428,6 +428,8 @@ class Controller:
                 expected_mode.update({'hlCommander.pRelVelCmd': 1, 'hlCommander.pRelAdapt': 0})
             expected_mode.update(getattr(self, '_firmware_curve_expected',
                                          getattr(self, '_firmware_analytic_expected', {})))
+            if expected_mode.get('hlCommander.pRelHold') == 3:
+                expected_mode['hlCommander.pRelEnd'] = 1
             confirmed = confirm_firmware_mode_parameters(self.cf.param, expected=expected_mode)
             logger.info('Experimental FC S-curve mode confirmed: %s', confirmed)
         if self.firmware_auto_brake_mode == 'pi_joint':
@@ -490,11 +492,14 @@ class Controller:
         toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
         analytic = getattr(self, '_firmware_analytic_expected', {})
         curve_expected = dict(analytic)
+        capabilities = {'hlCommander.pRelEnd': 1} if analytic.get('hlCommander.pRelHold') == 3 else {}
         if 'pRelComp' in toc.get('hlCommander', {}):
             # A prior compensated mission must never leak into another mode.
             curve_expected.setdefault('hlCommander.pRelComp', 0)
         if 'pRelCompB' in toc.get('hlCommander', {}):
             curve_expected.setdefault('hlCommander.pRelCompB', 0)
+        if 'pRelSeed' in toc.get('hlCommander', {}):
+            curve_expected.setdefault('hlCommander.pRelSeed', 0)
         if velocity_mode and not analytic:
             # New firmware separates reference shape from command execution.
             # pRelVelCmd alone can otherwise retain the default attitude path
@@ -503,7 +508,7 @@ class Controller:
             for name in ('pRelExec', 'pRelShape', 'pRelLite'):
                 if name in toc.get('hlCommander', {}):
                     curve_expected['hlCommander.' + name] = 0
-        for key in curve_expected:
+        for key in {**curve_expected, **capabilities}:
             group, name = key.split('.', 1)
             required[group] = required.get(group, ()) + (name,)
         missing=[group+'.'+name for group,names in required.items()
@@ -515,6 +520,9 @@ class Controller:
         self._firmware_curve_expected = curve_expected
         if velocity_mode:
             self.cf.param.set_value('hlCommander.pRelAuto', '0')
+        if capabilities:
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            confirm_firmware_mode_parameters(self.cf.param, expected=capabilities)
         self.firmware_build_info = {}
         for name in ('pRelSVer', 'pRelAdVer', 'pRelJVer'):
             if name in toc.get('hlCommander', {}):
@@ -572,12 +580,14 @@ class Controller:
             self.cf.param.set_value('hlCommander.pRelComp', '0')
         if not velocity_mode and 'pRelCompB' in toc.get('hlCommander', {}):
             self.cf.param.set_value('hlCommander.pRelCompB', '0')
+        if not velocity_mode and 'pRelSeed' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelSeed', '0')
         if velocity_mode:
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             for key, value in curve_expected.items():
                 self.cf.param.set_value(key, str(value))
             confirmed_curve = confirm_firmware_mode_parameters(self.cf.param, expected={
-                'hlCommander.pRelVelCmd': 1, 'hlCommander.pRelAdapt': 0, **curve_expected})
+                'hlCommander.pRelVelCmd': 1, 'hlCommander.pRelAdapt': 0, **curve_expected, **capabilities})
             execution = {0: 'velocity', 1: 'position', 2: 'attitude'}[
                 curve_expected.get('hlCommander.pRelExec', 0)]
             logger.info('Bounded firmware curve selected: execution=%s, profile=%s, '

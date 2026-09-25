@@ -127,6 +127,7 @@ def firmware_brake_abort_message(brake_log):
         4: 'rate-aware unwind plan infeasible',
         11: 'Pi plan unavailable after bounded local return; not a stable hold',
         12: 'calibrated attitude compensation model, state or command history unavailable',
+        13: 'state-matched S-curve has no feasible bounded release-time plan',
     }.get(reason, 'reason not reported' if reason is None else 'unknown reason')
     return 'firmware brake aborted (stage 6; %s; reason=%s)' % (
         description, 'unavailable' if reason is None else reason)

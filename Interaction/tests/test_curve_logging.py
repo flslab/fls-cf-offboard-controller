@@ -73,6 +73,22 @@ class CurveLoggingTests(unittest.TestCase):
         struct.pack_into('<I',data,len(data)-4,zlib.crc32(data[:-4]))
         with self.assertRaisesRegex(ValueError,'requires response compensation'):decode_event(data)
 
+    def test_endpoint_policy_and_actual_choice_are_distinct(self):
+        for kind in (1,3):
+            for selected in (False,True):
+                data=bytearray(wire(kind=kind,velocity=True))
+                flags=0x800000|0x10000|(3<<19)|(4<<8)|(0x1000000 if selected else 0)
+                struct.pack_into('<I',data,HEADER.size-4,flags)
+                struct.pack_into('<I',data,len(data)-4,zlib.crc32(data[:-4]))
+                event=decode_event(data)
+                self.assertEqual(event['handoff_policy'],'curve_endpoint_forward')
+                if kind==3:
+                    self.assertEqual(event['handoff_selection'],'curve_endpoint' if selected else 'current_position')
+                else:self.assertNotIn('handoff_selection',event)
+        struct.pack_into('<I',data,HEADER.size-4,0x1000000)
+        struct.pack_into('<I',data,len(data)-4,zlib.crc32(data[:-4]))
+        with self.assertRaisesRegex(ValueError,'requires endpoint handoff policy'):decode_event(data)
+
     def test_compensation_model_and_curve_have_distinct_axes_and_units(self):
         data=bytearray(wire())
         flags=0x200000|0x10000|(3<<19)|(4<<8)

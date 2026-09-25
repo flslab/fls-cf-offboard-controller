@@ -7,10 +7,40 @@ from Interaction.tests.test_firmware_parameter_confirmation import AsyncParams
 from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
 
 class SCurvePreflightTests(unittest.TestCase):
+    def test_curve_endpoint_checks_capability_without_version_allowlist(self):
+        profile=dict(shape='velocity_scurve',execution='attitude',tail_s=1.2,
+            single_s=1.2,handoff='curve_endpoint_forward',feedback='unified_vicon15')
+        ctrl=baseline.FirmwareAutoBrakePreflightTests().controller(dict(
+            enabled=True,mode='scurve',response_time_s=.14,command_mode='attitude',analytic_profile=profile))
+        ctrl.prepare_firmware_auto_brake();p=self.velocity_params();ctrl.cf=SimpleNamespace(param=p)
+        for key,value in ctrl._firmware_analytic_expected.items():
+            group,name=key.split('.');p.toc.toc.setdefault(group,{})[name]=None;p.replies[key]=str(value)
+        with self.assertRaisesRegex(RuntimeError,'pRelEnd'):ctrl._setup_firmware_auto_brake_params()
+        p.set_value.assert_not_called()
+        p.toc.toc['hlCommander']['pRelEnd']=None;p.replies['hlCommander.pRelEnd']='0'
+        def quick(param, *, expected):
+            return confirm_firmware_mode_parameters(param,expected=expected,timeout_s=.001)
+        with patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters',side_effect=quick):
+            with self.assertRaisesRegex(RuntimeError,'pRelEnd'):ctrl._setup_firmware_auto_brake_params()
+        self.assertNotIn(('hlCommander.pRelAuto','1'),[c.args for c in p.set_value.call_args_list])
+        p.replies['hlCommander.pRelEnd']='1';p.set_value.reset_mock()
+        ctrl._setup_firmware_auto_brake_params()
+        writes=[c.args for c in p.set_value.call_args_list]
+        self.assertIn(('hlCommander.pRelHold','3'),writes)
+        self.assertFalse(any(k=='hlCommander.pRelEnd' for k,_ in writes))  # Read-only capability.
+        self.assertEqual(writes[-1],('hlCommander.pRelAuto','1'))
+        ctrl.log_manager=SimpleNamespace(get_latest_group_log_data=lambda _: {
+            'hlCommander.pRelReady':1,'hlCommander.pRelAutoSt':0,'hlCommander.pRelEvtVer':1,
+            'hlCommander.pRelMode':2,'hlCommander.pRelTau':.14})
+        ctrl._firmware_vicon_last_send_s=1.;ctrl._firmware_vicon_mirror_error=None;p.requested.clear()
+        with patch('controller.time.monotonic',return_value=1.):ctrl.verify_firmware_auto_brake_ready()
+        self.assertIn('hlCommander.pRelEnd',p.requested)
+
     def test_compensation_uploads_model_without_starting_worker(self):
         profile=dict(shape='velocity_scurve',execution='attitude',tail_s=1.2,
             single_s=1.2,handoff='predicted_position',feedback='unified_vicon15',
-            response_compensation=True,acceleration_residual=True,rate_feedforward=False)
+            response_compensation=True,acceleration_residual=True,rate_feedforward=False,
+            state_matched_start=True)
         ctrl=baseline.FirmwareAutoBrakePreflightTests().controller(dict(
             enabled=True,mode='scurve',response_time_s=.14,command_mode='attitude',
             analytic_profile=profile,response_model={'enabled':True}))
@@ -32,6 +62,7 @@ class SCurvePreflightTests(unittest.TestCase):
         self.assertNotIn(('hlCommander.pRelAdapt','1'),writes)
         self.assertIn(('hlCommander.pRelComp','1'),writes)
         self.assertIn(('hlCommander.pRelCompB','1'),writes)
+        self.assertIn(('hlCommander.pRelSeed','1'),writes)
         self.assertEqual(writes[-1],('hlCommander.pRelAuto','1'))
         self.assertEqual(ctrl._firmware_response_expected['hlCommander.pRelAdapt'],0)
         self.assertTrue(ctrl.log_manager.curve_recorder.events.write.call_args.args[0]['response_model_used'])

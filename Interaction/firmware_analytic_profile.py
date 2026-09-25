@@ -14,7 +14,8 @@ def profile_parameters(config):
         raise ValueError('analytic_profile must be a mapping')
     allowed = {'shape', 'execution', 'tail_s', 'single_s', 'handoff', 'feedback',
                'attitude_kp', 'attitude_kv', 'rate_feedforward',
-               'response_compensation', 'response_bandwidth', 'acceleration_residual'}
+               'response_compensation', 'response_bandwidth', 'acceleration_residual',
+               'state_matched_start'}
     if set(config) - allowed:
         raise ValueError('unknown analytic_profile fields: ' + ', '.join(sorted(set(config) - allowed)))
     def choice(key, choices):
@@ -44,6 +45,11 @@ def profile_parameters(config):
         raise ValueError('analytic_profile.acceleration_residual must be boolean')
     if residual and not compensate:
         raise ValueError('acceleration_residual requires response_compensation')
+    state_match=config.get('state_matched_start', False)
+    if type(state_match) is not bool:
+        raise ValueError('analytic_profile.state_matched_start must be boolean')
+    if state_match and not compensate:
+        raise ValueError('state_matched_start requires response_compensation')
     result = {
         'hlCommander.pRelLite': 0,
         'hlCommander.pRelVelCmd': 1,
@@ -55,7 +61,8 @@ def profile_parameters(config):
         'hlCommander.pRelAttP': number('attitude_kp', 0, 3, .8),
         'hlCommander.pRelAttV': number('attitude_kv', .1, 6, 2),
         'hlCommander.pRelAttFF': int(rate_ff),
-        'hlCommander.pRelHold': choice('handoff', {'current_position': 0, 'predicted_position': 1, 'predicted_bumpless': 2}),
+        'hlCommander.pRelHold': choice('handoff', {'current_position': 0, 'predicted_position': 1, 'predicted_bumpless': 2,
+                                                'curve_endpoint_forward': 3}),
         'kalmanPRel.feedback': choice('feedback', {'roll_pitch_only': 1, 'unified_vicon15': 2}),
         'kalmanPRel.fuseVicon': 1,
         'kalmanPRel.viconCI': .999,
@@ -66,4 +73,6 @@ def profile_parameters(config):
         result['hlCommander.pRelCompW'] = number('response_bandwidth', 6, 16, 12)
     if 'acceleration_residual' in config:
         result['hlCommander.pRelCompB'] = int(residual)
+    if 'state_matched_start' in config:
+        result['hlCommander.pRelSeed'] = int(state_match)
     return result

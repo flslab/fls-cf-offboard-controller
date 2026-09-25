@@ -8,6 +8,7 @@ from Interaction.post_release_firmware_control_event import (
     FirmwareReleaseRejectedError,
     encode_pi_release_command,
     firmware_brake_log_health,
+    firmware_brake_abort_message,
     firmware_hold_status_confirmed,
     firmware_release_rejection_diagnostics,
     handoff_pi_release_to_firmware,
@@ -19,6 +20,10 @@ from Interaction.post_release_firmware_control_event import (
 
 
 class FirmwareBrakeMonitorTimelineTests(unittest.TestCase):
+    def test_state_matched_plan_failure_is_identified(self):
+        self.assertIn('state-matched S-curve has no feasible bounded release-time plan',
+                      firmware_brake_abort_message({'hlCommander.pRelAbort': 13}))
+
     def setUp(self):
         self.monitor = FirmwareBrakeMonitor(
             started_monotonic_s=0.0, baseline_receipt_time_s=999.9,

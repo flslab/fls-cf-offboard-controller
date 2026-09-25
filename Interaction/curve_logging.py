@@ -125,6 +125,12 @@ def decode_event(wire):
             reconstruction='reference_only; feedback_command_requires_state_and_runtime_parameters')
     if velocity_mode and kind==2:
         result['event']='phase_transition'
+    if flags & 0x1000000 and not flags & 0x800000:
+        raise ValueError('selected curve endpoint requires endpoint handoff policy')
+    if flags & 0x800000:
+        result['handoff_policy'] = 'curve_endpoint_forward'
+        if result.get('event') == 'hold':
+            result['handoff_selection'] = 'curve_endpoint' if flags & 0x1000000 else 'current_position'
     execution_kind = (flags >> 19) & 3
     if execution_kind:
         result['command_mode'] = {1: 'velocity', 2: 'position', 3: 'attitude'}[execution_kind]

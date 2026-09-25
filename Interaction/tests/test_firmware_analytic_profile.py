@@ -10,6 +10,13 @@ class AnalyticProfileTests(unittest.TestCase):
     def test_none_preserves_legacy(self):
         self.assertEqual(profile_parameters(None), {})
 
+    def test_forward_curve_endpoint_is_explicit_without_replanning(self):
+        cfg=self.config();cfg['handoff']='curve_endpoint_forward'
+        p=profile_parameters(cfg)
+        self.assertEqual(p['hlCommander.pRelHold'],3)
+        self.assertEqual(p['hlCommander.pRelAdapt'],0)
+        self.assertEqual(p['hlCommander.pRelLite'],0)
+
     def test_six_paths_and_bypass_off(self):
         for s, shape in enumerate(('velocity_scurve', 'single_position_polynomial')):
             for e, execution in enumerate(('velocity', 'position', 'attitude')):
@@ -52,3 +59,17 @@ class AnalyticProfileTests(unittest.TestCase):
         for changes in ({'response_compensation':False},{'acceleration_residual':1}):
             with self.subTest(changes=changes),self.assertRaises(ValueError):
                 profile_parameters(dict(cfg,**changes))
+
+    def test_state_matched_start_is_explicit_and_requires_calibrated_execution(self):
+        cfg=self.config();cfg.update(execution='attitude',response_compensation=True,
+                                     state_matched_start=True)
+        p=profile_parameters(cfg)
+        self.assertEqual(p['hlCommander.pRelSeed'],1)
+        self.assertEqual(p['hlCommander.pRelAdapt'],0)
+        self.assertEqual(p['hlCommander.pRelAttFF'],0)
+        self.assertNotIn('hlCommander.pRelSeed',profile_parameters(self.config()))
+        self.assertEqual(profile_parameters(dict(cfg,state_matched_start=False))['hlCommander.pRelSeed'],0)
+        for change in ({'response_compensation':False},{'state_matched_start':1},
+                       {'state_matched_start':'true'},{'execution':'velocity'}):
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                profile_parameters(dict(cfg,**change))
