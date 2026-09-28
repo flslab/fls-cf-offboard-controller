@@ -13,14 +13,17 @@ from cflib.crtp.crtpstack import CRTPPacket, CRTPPort
 from Interaction.live_logger import LiveLogger
 from Interaction.compressed_state_logs import decode_kinematic_packet, validate_actuator_packet
 
-VERSION = 2
-SUPPORTED_VERSIONS = (1, 2)
+VERSION = 3
+SUPPORTED_VERSIONS = (1, 2, 3)
 PART, ACK, CHUNK = 0xd0, 0xd1, 22
 HEADER = struct.Struct('<BBH10I')
 FLOATS = struct.Struct('<60f')
 TIMING = struct.Struct('<5I')
+FRICTION = struct.Struct('<I5f')
 WIRE_SIZE_V1 = HEADER.size + FLOATS.size + 4
-WIRE_SIZE = WIRE_SIZE_V1 + TIMING.size
+WIRE_SIZE_V2 = WIRE_SIZE_V1 + TIMING.size
+WIRE_SIZE = WIRE_SIZE_V2 + FRICTION.size
+WIRE_SIZES = {1: WIRE_SIZE_V1, 2: WIRE_SIZE_V2, 3: WIRE_SIZE}
 PART_COUNT = (WIRE_SIZE + CHUNK - 1) // CHUNK
 KINDS = {1:'initial', 2:'replan', 3:'hold', 4:'abort', 5:'interrupted'}
 LOG = logging.getLogger(__name__)
@@ -78,7 +81,7 @@ def curve_state_log_vars(selected, *, events_enabled=True, acceleration_residual
 def decode_event(wire):
     if not wire or wire[0] not in SUPPORTED_VERSIONS:
         raise ValueError('unsupported curve event version')
-    size = WIRE_SIZE if wire[0] == 2 else WIRE_SIZE_V1
+    size = WIRE_SIZES[wire[0]]
     if len(wire)!=size or zlib.crc32(wire[:-4]) != struct.unpack('<I',wire[-4:])[0]:
         raise ValueError('curve event length/CRC mismatch')
     version,kind,sequence,event,session,plan,replaces,applied,tick,origin,model,dropped,flags = HEADER.unpack_from(wire)
@@ -155,7 +158,7 @@ def decode_event(wire):
         result['acceleration_residual'] = 'bounded_world_velocity_increment_observer'
     result['timing'] = dict(clock='unavailable', plan_compute_us=None,
         control_step_max_us=None, hold_compute_us=None, control_steps=None)
-    if version == 2:
+    if version >= 2:
         valid,plan_us,step_us,hold_us,steps = TIMING.unpack_from(wire, HEADER.size+FLOATS.size)
         result['timing'] = dict(
             clock={1:'mcu_elapsed',2:'sitl_host_elapsed'}.get((valid>>8)&0xff,'unavailable'),
@@ -164,8 +167,26 @@ def decode_event(wire):
             hold_compute_us=hold_us if valid&4 else None,
             control_steps=steps if valid&2 else None,
             scope='bounded runtime; control-step maximum through snapshot, includes planning/handoff but excludes snapshot serialization')
+    if version >= 3:
+        flags_mu, mu, decel, peak, duration, distance = FRICTION.unpack_from(
+            wire, HEADER.size+FLOATS.size+TIMING.size)
+        if flags_mu & ~15 or not all(math.isfinite(x) for x in (mu,decel,peak,duration,distance)):
+            raise ValueError('invalid friction metadata')
+        if flags_mu & 14 and not flags_mu & 1:
+            raise ValueError('friction metadata requires enabled flag')
+        if flags_mu & 1:
+            if not 0 <= mu <= 10 or min(decel,peak,duration,distance) < 0:
+                raise ValueError('invalid friction profile values')
+            result['friction'] = dict(enabled=True, kinetic_mu=mu,
+                requested_deceleration_m_s2=9.81*mu, planned_deceleration_bound_m_s2=decel,
+                planned_peak_deceleration_m_s2=peak, planned_duration_s=duration,
+                planned_distance_m=distance, plan_valid=bool(flags_mu&8),
+                time_limit_applied=bool(flags_mu&2), acceleration_limit_applied=bool(flags_mu&4),
+                policy='mu_g_bounded_ramp_fixed_smooth_tail')
+        else:
+            result['friction'] = {'enabled': False}
     if kind in (4, 5):
-        # Neither v1 nor the timing-only v2 extension carries state validity.
+        # No supported event version carries terminal state validity.
         # In particular failed state acquisition leaves zero-filled buffers.
         fields = ('velocity_xy_m_s', 'acceleration_xy_m_s2', 'position_m',
                   'roll_pitch_deg', 'euler_roll_pitch_rate_deg_s')
@@ -189,7 +210,7 @@ class CurveAssembler:
         if len(data)<8 or data[0]!=PART or data[1] not in SUPPORTED_VERSIONS:
             raise ValueError('invalid curve fragment header')
         version=data[1];self.last_version=version
-        wire_size=WIRE_SIZE if version==2 else WIRE_SIZE_V1
+        wire_size=WIRE_SIZES[version]
         event,index,count=struct.unpack_from('<IBB',data,2)
         expected=min(CHUNK,wire_size-index*CHUNK)
         if count!=(wire_size+CHUNK-1)//CHUNK or index>=count or len(data)!=8+expected:

@@ -21,6 +21,8 @@ COMMAND_TYPE = 15
 VERSION = 1
 MAX_PI_EVENT_AGE_US = 250_000
 PACKET = struct.Struct('<BBHIII')
+FRICTION_VERSION = 2
+FRICTION_PACKET = struct.Struct('<BBHIIIf')
 VICON_POSITION_TYPE = 16
 VICON_POSITION_PACKET = struct.Struct('<BIIfff')
 HOLD_NOTICE_TYPE = 17
@@ -128,6 +130,7 @@ def firmware_brake_abort_message(brake_log):
         11: 'Pi plan unavailable after bounded local return; not a stable hold',
         12: 'calibrated attitude compensation model, state or command history unavailable',
         13: 'state-matched S-curve has no feasible bounded release-time plan',
+        14: 'friction S-curve request is invalid or outside the existing time/acceleration envelope',
     }.get(reason, 'reason not reported' if reason is None else 'unknown reason')
     return 'firmware brake aborted (stage 6; %s; reason=%s)' % (
         description, 'unavailable' if reason is None else reason)
@@ -386,8 +389,27 @@ def send_vicon_position_mirror(cf, position_m, *,
             'pi_receive_to_send_us': age_us}
 
 
+def friction_release_options(brake_config, kinetic_mu):
+    """Bind this interaction's selected mu to its release, never a shared FC parameter."""
+    profile = brake_config.get('analytic_profile') or {}
+    enabled = profile.get('friction_from_interaction', False)
+    if type(enabled) is not bool:
+        raise ValueError('friction_from_interaction must be boolean')
+    if not enabled:
+        return {}
+    from Interaction.firmware_analytic_profile import profile_parameters
+    profile_parameters(profile)
+    if brake_config.get('mode') != 'scurve':
+        raise ValueError('friction release requires scurve')
+    if (isinstance(kinetic_mu, bool) or not isinstance(kinetic_mu, (int, float))
+            or not math.isfinite(kinetic_mu) or not 0 <= kinetic_mu <= 10):
+        raise ValueError('kinetic friction coefficient must be finite in [0, 10]')
+    return {'kinetic_friction_coefficient': float(kinetic_mu)}
+
+
 def encode_pi_release_command(*, session_id, sequence, arduino_sample_ms,
-                              pi_receive_monotonic_ns, send_monotonic_ns):
+                              pi_receive_monotonic_ns, send_monotonic_ns,
+                              kinetic_friction_coefficient=None):
     for name, value, limit in (
         ('session_id', session_id, 0xFFFFFFFF),
         ('sequence', sequence, 0xFFFF),
@@ -402,6 +424,13 @@ def encode_pi_release_command(*, session_id, sequence, arduino_sample_ms,
     if not 0 <= elapsed_ns <= MAX_PI_EVENT_AGE_US * 1000:
         raise ValueError('Pi release receive event is future-dated or stale')
     elapsed_us = elapsed_ns // 1000
+    if kinetic_friction_coefficient is not None:
+        mu = kinetic_friction_coefficient
+        if (isinstance(mu, bool) or not isinstance(mu, (int, float)) or
+                not math.isfinite(mu) or not 0 <= mu <= 10):
+            raise ValueError('kinetic friction coefficient must be finite in [0, 10]')
+        return FRICTION_PACKET.pack(COMMAND_TYPE, FRICTION_VERSION, sequence,
+            session_id, arduino_sample_ms, elapsed_us, mu), elapsed_us
     return PACKET.pack(COMMAND_TYPE, VERSION, sequence, session_id,
                        arduino_sample_ms, elapsed_us), elapsed_us
 
@@ -409,7 +438,7 @@ def encode_pi_release_command(*, session_id, sequence, arduino_sample_ms,
 def send_pi_release_command_once(
         cf, *, session_id, sequence, arduino_sample_ms,
         pi_receive_monotonic_ns, firmware_auto_brake_armed=False,
-        monotonic_ns=time.monotonic_ns):
+        monotonic_ns=time.monotonic_ns, kinetic_friction_coefficient=None):
     """Send once only after explicit firmware capability/arming validation.
 
     The HLC acknowledgement is separate; losing it must not cause automatic
@@ -423,6 +452,7 @@ def send_pi_release_command_once(
         arduino_sample_ms=arduino_sample_ms,
         pi_receive_monotonic_ns=pi_receive_monotonic_ns,
         send_monotonic_ns=send_ns,
+        kinetic_friction_coefficient=kinetic_friction_coefficient,
     )
     packet = CRTPPacket()
     packet.set_header(CRTPPort.SETPOINT_HL, 0)
@@ -434,6 +464,8 @@ def send_pi_release_command_once(
         'sequence': sequence,
         'release_event_arduino_time_ms': arduino_sample_ms,
         'request_payload_hex': payload.hex(),
+        'release_wire_version': payload[1],
+        'kinetic_friction_coefficient': kinetic_friction_coefficient,
         'pi_release_receive_monotonic_ns': pi_receive_monotonic_ns,
         'pi_send_start_monotonic_ns': send_ns,
         'pi_send_return_monotonic_ns': send_return_ns,
@@ -455,8 +487,10 @@ def parse_pi_release_ack(packet, *, request_payload_hex,
     except (TypeError, ValueError):
         return None
     data = bytes(packet.data)
-    if (len(request) != PACKET.size or
-            len(data) != PACKET.size + 1 or data[:-1] != request):
+    if (len(request) not in (PACKET.size, FRICTION_PACKET.size) or
+            request[0] != COMMAND_TYPE or
+            request[1] != (VERSION if len(request)==PACKET.size else FRICTION_VERSION) or
+            len(data) != len(request) + 1 or data[:-1] != request):
         return None
     return {
         'ack_errno': data[-1],
@@ -470,7 +504,8 @@ def parse_pi_release_ack(packet, *, request_payload_hex,
 def handoff_pi_release_to_firmware(
         cf, *, session_id, sequence, arduino_sample_ms,
         pi_receive_monotonic_ns, firmware_auto_brake_armed=False,
-        ack_timeout_s=0.15, monotonic_ns=time.monotonic_ns):
+        ack_timeout_s=0.15, monotonic_ns=time.monotonic_ns,
+        kinetic_friction_coefficient=None):
     """Confirm a firmware-owned LL-to-HLC transfer using the matching ACK.
 
     A timeout is ambiguous: this function never retries the release event or
@@ -507,6 +542,7 @@ def handoff_pi_release_to_firmware(
             arduino_sample_ms=arduino_sample_ms,
             pi_receive_monotonic_ns=pi_receive_monotonic_ns,
             send_monotonic_ns=send_ns,
+            kinetic_friction_coefficient=kinetic_friction_coefficient,
         )
         request = payload.hex()
         packet = CRTPPacket()
@@ -521,6 +557,8 @@ def handoff_pi_release_to_firmware(
             'session_id': session_id,
             'sequence': sequence,
             'release_event_arduino_time_ms': arduino_sample_ms,
+            'release_wire_version': payload[1],
+            'kinetic_friction_coefficient': kinetic_friction_coefficient,
             'pi_release_receive_monotonic_ns': pi_receive_monotonic_ns,
             'pi_send_start_monotonic_ns': send_ns,
             'pi_receive_to_send_elapsed_us': elapsed_us,

@@ -493,6 +493,8 @@ class Controller:
         analytic = getattr(self, '_firmware_analytic_expected', {})
         curve_expected = dict(analytic)
         capabilities = {'hlCommander.pRelEnd': 1} if analytic.get('hlCommander.pRelHold') == 3 else {}
+        if analytic.get('hlCommander.pRelFric'):
+            capabilities['hlCommander.pRelMuVer'] = 1
         if 'pRelComp' in toc.get('hlCommander', {}):
             # A prior compensated mission must never leak into another mode.
             curve_expected.setdefault('hlCommander.pRelComp', 0)
@@ -500,6 +502,11 @@ class Controller:
             curve_expected.setdefault('hlCommander.pRelCompB', 0)
         if 'pRelSeed' in toc.get('hlCommander', {}):
             curve_expected.setdefault('hlCommander.pRelSeed', 0)
+        if 'pRelCompP' in toc.get('hlCommander', {}):
+            # Omitted opt-in must clear an earlier experiment on the same FC.
+            curve_expected.setdefault('hlCommander.pRelCompP', 0)
+        if 'pRelFric' in toc.get('hlCommander', {}):
+            curve_expected.setdefault('hlCommander.pRelFric', 0)
         if velocity_mode and not analytic:
             # New firmware separates reference shape from command execution.
             # pRelVelCmd alone can otherwise retain the default attitude path
@@ -582,6 +589,10 @@ class Controller:
             self.cf.param.set_value('hlCommander.pRelCompB', '0')
         if not velocity_mode and 'pRelSeed' in toc.get('hlCommander', {}):
             self.cf.param.set_value('hlCommander.pRelSeed', '0')
+        if not velocity_mode and 'pRelCompP' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelCompP', '0')
+        if not velocity_mode and 'pRelFric' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelFric', '0')
         if velocity_mode:
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             for key, value in curve_expected.items():

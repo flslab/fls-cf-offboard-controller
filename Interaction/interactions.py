@@ -36,6 +36,7 @@ from Interaction.post_release_firmware_control_event import (
     firmware_brake_log_health,
     firmware_release_rejection_diagnostics,
     handoff_pi_release_to_firmware,
+    friction_release_options,
 )
 from Interaction.adaptive_braking_calibration import AdaptiveBrakingCalibration
 from Interaction.braking_response_calibration import (
@@ -22343,6 +22344,8 @@ class InteractionsControl:
                                     potentiometer_release_decision
                                     .unloaded_started_at_s * 1_000_000_000)),
                                 firmware_auto_brake_armed=True,
+                                **friction_release_options(firmware_brake_config,
+                                    force_kinetic_friction_coefficient),
                             )
                         except FirmwareReleaseRejectedError as error:
                             brake_log, diagnostics = (

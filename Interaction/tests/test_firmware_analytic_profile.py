@@ -73,3 +73,17 @@ class AnalyticProfileTests(unittest.TestCase):
                        {'state_matched_start':'true'},{'execution':'velocity'}):
             with self.subTest(change=change),self.assertRaises(ValueError):
                 profile_parameters(dict(cfg,**change))
+
+    def test_position_tracking_is_explicit_bounded_and_does_not_replan(self):
+        cfg=self.config();cfg.update(execution='attitude',response_compensation=True)
+        self.assertNotIn('hlCommander.pRelCompP',profile_parameters(cfg))
+        for value in (0,3,6):
+            params=profile_parameters(dict(cfg,position_tracking_bandwidth=value))
+            self.assertEqual(params['hlCommander.pRelCompP'],value)
+            self.assertEqual(params['hlCommander.pRelAdapt'],0)
+            self.assertEqual(params['hlCommander.pRelExec'],2)
+        for value in (True,None,'3',-.1,6.01,float('nan'),float('inf')):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                profile_parameters(dict(cfg,position_tracking_bandwidth=value))
+        with self.assertRaisesRegex(ValueError,'requires response_compensation'):
+            profile_parameters(dict(cfg,response_compensation=False,position_tracking_bandwidth=3))

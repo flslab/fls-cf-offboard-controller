@@ -40,7 +40,7 @@ class SCurvePreflightTests(unittest.TestCase):
         profile=dict(shape='velocity_scurve',execution='attitude',tail_s=1.2,
             single_s=1.2,handoff='predicted_position',feedback='unified_vicon15',
             response_compensation=True,acceleration_residual=True,rate_feedforward=False,
-            state_matched_start=True)
+            state_matched_start=True,position_tracking_bandwidth=3)
         ctrl=baseline.FirmwareAutoBrakePreflightTests().controller(dict(
             enabled=True,mode='scurve',response_time_s=.14,command_mode='attitude',
             analytic_profile=profile,response_model={'enabled':True}))
@@ -63,6 +63,8 @@ class SCurvePreflightTests(unittest.TestCase):
         self.assertIn(('hlCommander.pRelComp','1'),writes)
         self.assertIn(('hlCommander.pRelCompB','1'),writes)
         self.assertIn(('hlCommander.pRelSeed','1'),writes)
+        self.assertIn(('hlCommander.pRelCompP','3.0'),writes)
+        self.assertIn('hlCommander.pRelCompP',p.requested)
         self.assertEqual(writes[-1],('hlCommander.pRelAuto','1'))
         self.assertEqual(ctrl._firmware_response_expected['hlCommander.pRelAdapt'],0)
         self.assertTrue(ctrl.log_manager.curve_recorder.events.write.call_args.args[0]['response_model_used'])
@@ -138,6 +140,32 @@ class SCurvePreflightTests(unittest.TestCase):
         ctrl.cf=SimpleNamespace(param=p)
         ctrl._setup_firmware_auto_brake_params()
         self.assertIn(('hlCommander.pRelCompB','0'),[c.args for c in p.set_value.call_args_list])
+
+    def test_omitted_position_tracker_resets_supported_parameter(self):
+        ctrl=self.velocity_controller();p=self.modern_velocity_params()
+        p.toc.toc['hlCommander']['pRelCompP']=None
+        p.replies['hlCommander.pRelCompP']='3'
+        p.set_value.side_effect=lambda key,value:p.replies.update({key:value})
+        ctrl.cf=SimpleNamespace(param=p)
+        ctrl._setup_firmware_auto_brake_params()
+        writes=[c.args for c in p.set_value.call_args_list]
+        self.assertIn(('hlCommander.pRelCompP','0'),writes)
+        self.assertIn('hlCommander.pRelCompP',p.requested)
+        self.assertEqual(writes[-1],('hlCommander.pRelAuto','1'))
+
+    def test_position_tracker_requires_capability_before_any_write(self):
+        ctrl=baseline.FirmwareAutoBrakePreflightTests().controller(dict(
+            enabled=True,mode='scurve',response_time_s=.14,command_mode='attitude',
+            analytic_profile=dict(shape='velocity_scurve',execution='attitude',
+                tail_s=1.2,single_s=1.2,handoff='predicted_position',feedback='unified_vicon15',
+                response_compensation=True,position_tracking_bandwidth=3),
+            response_model={'enabled':True}))
+        ctrl.prepare_firmware_auto_brake();p=self.velocity_params();ctrl.cf=SimpleNamespace(param=p)
+        for key,value in ctrl._firmware_analytic_expected.items():
+            if key=='hlCommander.pRelCompP':continue
+            group,name=key.split('.');p.toc.toc.setdefault(group,{})[name]=None;p.replies[key]=str(value)
+        with self.assertRaisesRegex(RuntimeError,'pRelCompP'):ctrl._setup_firmware_auto_brake_params()
+        p.set_value.assert_not_called()
 
     def test_acceleration_residual_requires_capability_before_any_write(self):
         ctrl=baseline.FirmwareAutoBrakePreflightTests().controller(dict(
