@@ -43,6 +43,7 @@ _RELEASE_REJECTION_REASONS = {
     7: 'release state outside configured bounds',
     8: 'brake attitude could not be constructed',
     9: 'brake delay calculation infeasible',
+    10: 'requested stop distance/deceleration is infeasible',
 }
 
 
@@ -59,6 +60,11 @@ def firmware_release_rejection_diagnostics(brake_log):
     description = _RELEASE_REJECTION_REASONS.get(
         reason, 'reason not yet available' if not reason else 'unknown reason')
     detail_description = None
+    if reason == 10:
+        detail_description = {1:'invalid distance/deceleration request',
+            2:'distance too short for the deceleration cap and smooth tail',
+            3:'cannot stop within the configured duration without violating the deceleration cap',
+            4:'no forward speed',5:'unsupported curve execution mode'}.get(detail, 'unknown request failure')
     if reason == 3 and detail is not None:
         detail_description = (
             'trusted state available but predictor not ready'
@@ -131,6 +137,8 @@ def firmware_brake_abort_message(brake_log):
         12: 'calibrated attitude compensation model, state or command history unavailable',
         13: 'state-matched S-curve has no feasible bounded release-time plan',
         14: 'friction S-curve request is invalid or outside the existing time/acceleration envelope',
+        15: 'distance/deceleration request requires supported fixed-curve execution',
+        16: 'distance/deceleration request infeasible at curve activation; no executable initial curve',
     }.get(reason, 'reason not reported' if reason is None else 'unknown reason')
     return 'firmware brake aborted (stage 6; %s; reason=%s)' % (
         description, 'unavailable' if reason is None else reason)

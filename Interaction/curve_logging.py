@@ -13,17 +13,19 @@ from cflib.crtp.crtpstack import CRTPPacket, CRTPPort
 from Interaction.live_logger import LiveLogger
 from Interaction.compressed_state_logs import decode_kinematic_packet, validate_actuator_packet
 
-VERSION = 3
-SUPPORTED_VERSIONS = (1, 2, 3)
+VERSION = 4
+SUPPORTED_VERSIONS = (1, 2, 3, 4)
 PART, ACK, CHUNK = 0xd0, 0xd1, 22
 HEADER = struct.Struct('<BBH10I')
 FLOATS = struct.Struct('<60f')
 TIMING = struct.Struct('<5I')
 FRICTION = struct.Struct('<I5f')
+STOP_REQUEST = struct.Struct('<I5f')
 WIRE_SIZE_V1 = HEADER.size + FLOATS.size + 4
 WIRE_SIZE_V2 = WIRE_SIZE_V1 + TIMING.size
-WIRE_SIZE = WIRE_SIZE_V2 + FRICTION.size
-WIRE_SIZES = {1: WIRE_SIZE_V1, 2: WIRE_SIZE_V2, 3: WIRE_SIZE}
+WIRE_SIZE_V3 = WIRE_SIZE_V2 + FRICTION.size
+WIRE_SIZE = WIRE_SIZE_V3 + STOP_REQUEST.size
+WIRE_SIZES = {1: WIRE_SIZE_V1, 2: WIRE_SIZE_V2, 3: WIRE_SIZE_V3, 4: WIRE_SIZE}
 PART_COUNT = (WIRE_SIZE + CHUNK - 1) // CHUNK
 KINDS = {1:'initial', 2:'replan', 3:'hold', 4:'abort', 5:'interrupted'}
 LOG = logging.getLogger(__name__)
@@ -185,6 +187,20 @@ def decode_event(wire):
                 policy='mu_g_bounded_ramp_fixed_smooth_tail')
         else:
             result['friction'] = {'enabled': False}
+    if version >= 4:
+        bits, distance, cap, planned, duration, peak = STOP_REQUEST.unpack_from(
+            wire, HEADER.size+FLOATS.size+TIMING.size+FRICTION.size)
+        reason = bits >> 8
+        if (bits & 0xfc or reason > 5 or
+                not all(math.isfinite(x) and x >= 0 for x in (distance,cap,planned,duration,peak)) or
+                (bits & 1 and (reason or cap <= 0 or duration <= 0 or peak > cap+1e-5))):
+            raise ValueError('invalid stop request metadata')
+        result['stop_request'] = dict(distance_constrained=bool(bits&2), plan_valid=bool(bits&1),
+            requested_distance_m=distance, deceleration_cap_m_s2=cap,
+            planned_distance_m=planned, planned_duration_s=duration, planned_peak_deceleration_m_s2=peak,
+            failure_reason={0:None,1:'invalid_request',2:'distance_too_short',3:'duration_limit',
+                4:'no_forward_speed',5:'unsupported_execution'}[reason],
+            policy='distance_first_peak_cap_fixed_release_plan')
     if kind in (4, 5):
         # No supported event version carries terminal state validity.
         # In particular failed state acquisition leaves zero-filled buffers.

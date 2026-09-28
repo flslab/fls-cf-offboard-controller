@@ -10,7 +10,7 @@ import zlib
 
 from cflib.crtp.crtpstack import CRTPPacket, CRTPPort
 from cflib.utils.encoding import compress_quaternion
-from Interaction.curve_logging import (HEADER,FLOATS,TIMING,FRICTION,PART,VERSION,CHUNK,PART_COUNT,
+from Interaction.curve_logging import (HEADER,FLOATS,TIMING,FRICTION,STOP_REQUEST,PART,VERSION,CHUNK,PART_COUNT,
     CurveAssembler,CurveRecorder,decode_event,curve_state_log_vars,normalize_state)
 from Interaction.curve_log_export import reconstruct_command,reconstruct_velocity,export
 from Interaction.post_release_firmware_control_event import FirmwareBrakeMonitor
@@ -26,6 +26,7 @@ def wire(event=1,kind=1,velocity=False,version=VERSION):
     payload=HEADER.pack(version,kind,2,event,123,event,event-1,2000000,50000,2000000,42,0,flags)+FLOATS.pack(*v)
     if version>=2:payload+=TIMING.pack((1<<8)|7,17,93,240,501)
     if version>=3:payload+=FRICTION.pack(0,0,0,0,0,0)
+    if version>=4:payload+=STOP_REQUEST.pack(0,0,0,0,0,0)
     return payload+struct.pack('<I',zlib.crc32(payload))
 
 
@@ -378,7 +379,7 @@ class CurveLoggingTests(unittest.TestCase):
     def test_plain_velocity_logging_needs_no_calibration_model_for_v1_or_v2(self):
         from Interaction.tests.test_controller_logging_cleanup import methods
         setup = methods({'setup_logging'}, logger=Mock())['setup_logging']
-        for version in (1, 2, 3, 99):
+        for version in (1, 2, 3, 4, 99):
             with self.subTest(version=version):
                 ctrl = SimpleNamespace(
                     args=SimpleNamespace(log=True, illumination=False, hover=False,

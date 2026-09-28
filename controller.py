@@ -187,6 +187,8 @@ class Controller:
         self.firmware_auto_brake_enabled = False
         self.firmware_auto_brake_response_time_s = None
         self.firmware_auto_brake_stop_distance_m = 0.0
+        self.firmware_auto_brake_stop_deceleration_m_s2 = 3.6
+        self._firmware_stop_deceleration_explicit = False
         self.firmware_auto_brake_stop_max_time_s = 6.0
         self.firmware_auto_brake_stop_min_peak = 0.3
         self.firmware_auto_brake_mode = 'two_phase'
@@ -373,8 +375,25 @@ class Controller:
         if stop and brake_mode != 'scurve':
             raise ValueError('firmware_auto_brake.stop_distance_m requires mode: scurve')
         self.firmware_auto_brake_stop_distance_m = float(stop)
-        if response.get('enabled', False) and stop != 0:
-            raise ValueError('calibrated response_model currently requires free-stop distance 0')
+        decel = mode.get('stop_deceleration_m_s2', 3.6)
+        if (isinstance(decel, bool) or not isinstance(decel, (int, float)) or
+                not math.isfinite(decel) or not 0 < decel <= 3.6):
+            raise ValueError('firmware_auto_brake.stop_deceleration_m_s2 must be > 0 and <= 3.6 m/s^2')
+        self.firmware_auto_brake_stop_deceleration_m_s2 = float(decel)
+        self._firmware_stop_deceleration_explicit = 'stop_deceleration_m_s2' in mode
+        profile = self.firmware_analytic_profile or {}
+        distance_profile = (profile.get('shape') == 'velocity_scurve' and
+            profile.get('execution') == 'attitude' and compensated and
+            not profile.get('state_matched_start', False) and
+            profile.get('position_tracking_bandwidth', 0) > 0 and
+            profile.get('handoff') == 'curve_endpoint_forward')
+        if stop > 0 and (response.get('enabled', False) or profile) and not distance_profile:
+            raise ValueError('stop_distance_m requires compensated velocity_scurve attitude '
+                'P/V/A/J tracking, curve_endpoint_forward and state_matched_start: false')
+        if self._firmware_stop_deceleration_explicit and (brake_mode != 'scurve' or
+                profile.get('shape') != 'velocity_scurve' or profile.get('state_matched_start', False)):
+            raise ValueError('stop_deceleration_m_s2 requires velocity_scurve analytic_profile '
+                'with state_matched_start: false')
         max_time = mode.get('stop_max_time_s', 6.0)
         if (isinstance(max_time, bool) or not isinstance(max_time, (int, float)) or
                 not math.isfinite(max_time) or not 0.5 <= max_time <= 12.0):
@@ -493,6 +512,16 @@ class Controller:
         analytic = getattr(self, '_firmware_analytic_expected', {})
         curve_expected = dict(analytic)
         capabilities = {'hlCommander.pRelEnd': 1} if analytic.get('hlCommander.pRelHold') == 3 else {}
+        request_opt_in = (getattr(self, '_firmware_stop_deceleration_explicit', False) or
+                          (bool(analytic) and self.firmware_auto_brake_stop_distance_m > 0))
+        if request_opt_in:
+            capabilities['hlCommander.pRelReqVer'] = 1
+        if request_opt_in or 'pRelScA' in toc.get('hlCommander', {}):
+            curve_expected['hlCommander.pRelScA'] = (
+                getattr(self, 'firmware_auto_brake_stop_deceleration_m_s2', 3.6) if velocity_mode else 3.6)
+        if request_opt_in:
+            curve_expected.update({'hlCommander.pRelScD':self.firmware_auto_brake_stop_distance_m,
+                'hlCommander.pRelScT':self.firmware_auto_brake_stop_max_time_s})
         if analytic.get('hlCommander.pRelFric'):
             capabilities['hlCommander.pRelMuVer'] = 1
         if 'pRelComp' in toc.get('hlCommander', {}):
@@ -522,7 +551,7 @@ class Controller:
                  for name in names if name not in toc.get(group,{})]
         if missing:
             raise RuntimeError('connected Bolt lacks firmware auto-brake parameters: '+', '.join(missing))
-        if velocity_mode and self.firmware_auto_brake_stop_distance_m > 0:
+        if velocity_mode and not analytic and self.firmware_auto_brake_stop_distance_m > 0:
             raise ValueError('velocity curve requires free-stop distance 0')
         self._firmware_curve_expected = curve_expected
         if velocity_mode:
@@ -593,6 +622,8 @@ class Controller:
             self.cf.param.set_value('hlCommander.pRelCompP', '0')
         if not velocity_mode and 'pRelFric' in toc.get('hlCommander', {}):
             self.cf.param.set_value('hlCommander.pRelFric', '0')
+        if not velocity_mode and 'pRelScA' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelScA', '3.6')
         if velocity_mode:
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             for key, value in curve_expected.items():
@@ -614,7 +645,9 @@ class Controller:
                     velocity_source={1: 'ordinary_firmware_state', 2: 'unified_vicon15'}.get(
                         analytic.get('kalmanPRel.feedback'), 'firmware_configured'),
                     response_model_used=bool(analytic.get('hlCommander.pRelComp')),
-                    replanning=False, nominal_deceleration_m_s2=3.6,
+                    replanning=False,
+                    requested_stop_distance_m=self.firmware_auto_brake_stop_distance_m,
+                    nominal_deceleration_m_s2=getattr(self, 'firmware_auto_brake_stop_deceleration_m_s2', 3.6),
                     velocity_tail_s=analytic.get('hlCommander.pRelTail')))
         # Preparation happens before arming, never on the release critical path.
         # If startup fails, do not enable the firmware host-planning mode.

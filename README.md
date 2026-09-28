@@ -73,6 +73,42 @@ solutions that pass the configured reprojection, feature-count, image-span,
 innovation, and temporal gates. The packet carries `FC EKF yaw - PnP yaw` in
 radians and never forwards PnP roll or pitch.
 
+### Distance and deceleration inputs for onboard braking
+
+Paired firmware 26092803 exposes these `hlCommander` parameters:
+
+| Firmware parameter | Mission key under `firmware_auto_brake` | Meaning |
+| --- | --- | --- |
+| `pRelScD` | `stop_distance_m` | Requested distance along the fixed release-velocity direction, in metres; default `0` means free stop. |
+| `pRelScA` | `stop_deceleration_m_s2` | Positive reference peak-deceleration cap, in m/s^2; omitted means `3.6`. Currently limited to `3.6` by the existing reference envelope. |
+
+For example, add `stop_distance_m: 0.4` and `stop_deceleration_m_s2: 1.5` to
+the existing `firmware_auto_brake` mapping. Both values latch at release.
+Distance has priority: the FC solves the existing ramp/seventh-order tail
+reference so its velocity integral equals the requested distance and its
+terminal velocity is zero. It may use a lower peak than requested. The
+configured `tail_s` is preferred; distance/time constraints can shorten it
+to no less than 0.15 s. The existing maximum duration remains in force.
+An infeasible request is reported, not replaced by a different distance or
+a stronger deceleration. No distance uses free stop; omitting both inputs
+preserves the old 3.6 m/s^2 reference planner.
+
+Distance mode requires `velocity_scurve`, compensated `attitude` execution,
+positive `position_tracking_bandwidth` (the current P/V/A/J setting is `3.0`),
+`handoff: curve_endpoint_forward`, and `state_matched_start: false`.
+Startup checks `pRelReqVer=1` before enabling the mode, not a firmware build
+allowlist. Omission explicitly restores `pRelScA=3.6` on capable firmware.
+Version-4 curve events include the requested inputs, actual reference peak,
+integrated distance, duration and solver failure reason; older logs still read.
+
+Distance is relative to the FC curve-activation position. Exact reference
+area does not guarantee exact physical stopping: delay, initial attitude and
+tracking error still matter. The cap is for the reference, not a new hard
+limit on corrective acceleration. Existing compensation, actuator bounds,
+and forward-only handoff protection are unchanged; an overshoot/reversal can
+still cause the hold target to use the current point rather than fly backward
+to the reference endpoint. No online replanning is enabled.
+
 ### Per-interaction friction for onboard braking
 
 The compensated attitude S-curve can use the kinetic friction selected for the
@@ -99,9 +135,12 @@ The release packet atomically carries the selected kinetic coefficient with
 the interaction identity. The FC latches it for that release and uses `mu*9.81`
 as the requested deceleration bound. It preserves the fixed smooth tail and
 existing maximum duration/acceleration envelope; it does not enable repeated
-replanning. Lower friction generally gives a longer stopping reference at the
-same release speed, but duration limiting and the minimum smooth-tail duration
-can make different coefficients produce the same curve. This is not exact
+replanning. In 26092803 this bound is also capped by `pRelScA`; the firmware
+rejects a duration-infeasible request instead of increasing the cap to stop
+sooner. Lower friction generally gives a longer free-stop reference at the
+same release speed, but the smooth-tail duration can make different
+coefficients produce the same curve. With a requested distance, that distance
+takes priority and friction is an additional peak cap. This is not exact
 Coulomb motion throughout the smooth tail. Static friction is not used for
 this post-release distance calculation.
 
