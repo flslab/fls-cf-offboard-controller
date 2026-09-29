@@ -113,8 +113,6 @@ class LevelCoastStateTests(unittest.TestCase):
             ('grace', lambda c: c.update(grace_time=-1)),
             ('grace_start', lambda c: c['level_coast'].update(grace_start='unknown')),
             ('follow_yaw', lambda c: c['level_coast'].update(follow_yaw='false')),
-            ('yaw_rate_damping', lambda c: c['level_coast'].update(yaw_rate_damping='true')),
-            ('conflicting_yaw', lambda c: c['level_coast'].update(yaw_rate_damping=True, follow_yaw=True)),
             ('detector', lambda c: c['level_coast'].update(detector='unknown')),
         ]
         for name, mutate in variants:
@@ -137,13 +135,12 @@ class LevelCoastLoopTests(unittest.TestCase):
     def run_scenario(self, detector='potentiometer', *, duration=.85, fault=None,
                      grace_start='speed_threshold', grace_time=.10,
                      pressed_fn=None, speed_fn=None, follow_yaw=False,
-                     yaw_fn=None, state_delay=0., target_yaw=0., yaw_rate_damping=False):
+                     yaw_fn=None, state_delay=0., target_yaw=0.):
         config = configuration(detector)
         config['duration'] = duration
         config['grace_time'] = grace_time
         config['level_coast']['grace_start'] = grace_start
         config['level_coast']['follow_yaw'] = follow_yaw
-        config['level_coast']['yaw_rate_damping'] = yaw_rate_damping
         original = copy.deepcopy(config)
         clock = {'t': 0.}
         control = InteractionsControl.__new__(InteractionsControl)
@@ -155,7 +152,6 @@ class LevelCoastLoopTests(unittest.TestCase):
         control.lo_commander = FakeCommander()
         control.hl_commander = FakeCommander()
         control.cf = SimpleNamespace(param=SimpleNamespace(set_value=Mock(), set_value_raw=Mock()))
-        control.cf._level_coast_yaw_rate_ready = yaw_rate_damping
         control.pid_attitude_source = 'post-release-15state'
         control._pid_15state_control_active = False
         control.force_sensor = object()
@@ -164,10 +160,7 @@ class LevelCoastLoopTests(unittest.TestCase):
         control._log_event = Mock()
         control._handoff_translation_hold = Mock()
         commands = []
-        control.lo_commander.send_position_yaw_rate_setpoint = Mock()
-        control.lo_commander.send_zdistance_yaw_rate_setpoint = Mock()
-        for name in ('send_position_setpoint', 'send_zdistance_setpoint',
-                     'send_position_yaw_rate_setpoint', 'send_zdistance_yaw_rate_setpoint'):
+        for name in ('send_position_setpoint', 'send_zdistance_setpoint'):
             original_sender = getattr(control.lo_commander, name)
             def send(*args, name=name, original_sender=original_sender):
                 commands.append((clock['t'], name, args))
@@ -298,19 +291,6 @@ class LevelCoastLoopTests(unittest.TestCase):
             follow_yaw=True, yaw_fn=lambda t: 45., state_delay=.02)
         self.assertGreaterEqual(commands[0][0], .02)
         self.assertEqual(commands[0][2][3], 45.)
-
-    def test_direct_yaw_rate_uses_zero_rate_in_every_phase_despite_changing_heading(self):
-        _, commands, phases, _ = self.run_scenario(
-            yaw_rate_damping=True, yaw_fn=lambda t: 170. - 340*t, target_yaw=90.)
-        self.assertIn('grace', [p['phase'] for p in phases])
-        self.assertTrue(any(n == 'send_position_yaw_rate_setpoint' for _, n, _ in commands))
-        self.assertTrue(any(n == 'send_zdistance_yaw_rate_setpoint' for _, n, _ in commands))
-        for _, name, args in commands:
-            if name == 'send_position_yaw_rate_setpoint':
-                self.assertEqual(args[3], 0.)
-            else:
-                self.assertEqual(name, 'send_zdistance_yaw_rate_setpoint')
-                self.assertEqual(args, (0., 0., 0., 1.))
 
     def test_release_grace_preempts_coast_for_all_detectors(self):
         def pressed(t):
