@@ -36,6 +36,46 @@ def configuration(detector='potentiometer'):
 
 
 class LevelCoastStateTests(unittest.TestCase):
+    def test_release_grace_can_preempt_coast_and_restarts_each_release(self):
+        cycle = LevelCoastCycle([0, 0, 1], .03, .3, 'release')
+        cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
+        cycle.update([0, 0, 1], [.2, 0, 0], .1, started=True)
+        cycle.update([0, 0, 1], [.2, 0, 0], 1., released=True)
+        self.assertEqual(cycle.grace_started, 1.)
+        self.assertFalse(cycle.detection_enabled(1.29))
+        cycle.update([.2, 0, 1], [.2, 0, 0], 1.29, started=True)
+        self.assertEqual(cycle.phase, 'coast')
+        self.assertTrue(cycle.detection_enabled(1.31))
+        # A new onset wins even if speed reaches the stop threshold this sample.
+        cycle.update([.2, 0, 1], [.02, 0, 0], 1.31, started=True)
+        self.assertEqual(cycle.phase, 'contact')
+        self.assertIsNone(cycle.grace_started)
+        cycle.update([.4, 0, 1], [.2, 0, 0], 2., released=True)
+        self.assertEqual(cycle.grace_started, 2.)
+        self.assertFalse(cycle.detection_enabled(2.29))
+        self.assertTrue(cycle.detection_enabled(2.31))
+
+    def test_release_grace_low_speed_capture_keeps_remaining_timer(self):
+        cycle = LevelCoastCycle([0, 0, 1], .03, .3, 'release')
+        cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
+        cycle.update([0, 0, 1], [.2, 0, 0], .1, started=True)
+        cycle.update([.2, 0, 1], [.02, 0, 0], 1., released=True)
+        self.assertEqual(cycle.phase, 'grace')
+        self.assertFalse(cycle.level)
+        np.testing.assert_allclose(cycle.hold_position, [.2, 0, 1])
+        cycle.update([.2, 0, 1], [.04, 0, 0], 1.31)
+        self.assertEqual(cycle.phase, 'ready')  # No repeated stationary dwell.
+
+    def test_zero_release_grace_and_late_capture(self):
+        cycle = LevelCoastCycle([0, 0, 1], .03, 0., 'release')
+        cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
+        cycle.update([0, 0, 1], [.2, 0, 0], .1, started=True)
+        cycle.update([0, 0, 1], [.2, 0, 0], 1., released=True)
+        self.assertTrue(cycle.detection_enabled(1.))
+        cycle.update([.2, 0, 1.2], [.02, 0, 0], 1.1)
+        self.assertEqual(cycle.phase, 'ready')
+        np.testing.assert_allclose(cycle.hold_position, [.2, 0, 1])
+
     def test_release_is_required_and_full_xy_norm_controls_grace(self):
         cycle = LevelCoastCycle([0, 0, 1], .03, .5)
         cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
@@ -71,6 +111,8 @@ class LevelCoastStateTests(unittest.TestCase):
             ('threshold', lambda c: c['level_coast'].update(stop_speed_m_s=float('nan'))),
             ('duration', lambda c: c.update(duration=-1)),
             ('grace', lambda c: c.update(grace_time=-1)),
+            ('grace_start', lambda c: c['level_coast'].update(grace_start='unknown')),
+            ('follow_yaw', lambda c: c['level_coast'].update(follow_yaw='false')),
             ('detector', lambda c: c['level_coast'].update(detector='unknown')),
         ]
         for name, mutate in variants:
@@ -90,16 +132,22 @@ class LevelCoastStateTests(unittest.TestCase):
 
 
 class LevelCoastLoopTests(unittest.TestCase):
-    def run_scenario(self, detector='potentiometer', *, duration=.85, fault=None):
+    def run_scenario(self, detector='potentiometer', *, duration=.85, fault=None,
+                     grace_start='speed_threshold', grace_time=.10,
+                     pressed_fn=None, speed_fn=None, follow_yaw=False,
+                     yaw_fn=None, state_delay=0., target_yaw=0.):
         config = configuration(detector)
         config['duration'] = duration
+        config['grace_time'] = grace_time
+        config['level_coast']['grace_start'] = grace_start
+        config['level_coast']['follow_yaw'] = follow_yaw
         original = copy.deepcopy(config)
         clock = {'t': 0.}
         control = InteractionsControl.__new__(InteractionsControl)
         control.drone_id = 'lb11'
         control.ctrl_rate = 100
         control.mission = {'Interaction': {'config': config},
-                           'drones': {'lb11': {'target': [0, 0, 1]}}}
+                           'drones': {'lb11': {'target': [0, 0, 1, target_yaw]}}}
         control.bounds = dict(x_min=-1, x_max=1, y_min=-1, y_max=1, z_min=.3, z_max=2)
         control.lo_commander = FakeCommander()
         control.hl_commander = FakeCommander()
@@ -127,14 +175,22 @@ class LevelCoastLoopTests(unittest.TestCase):
 
         def pressed():
             t = clock['t']
+            if pressed_fn is not None:
+                return pressed_fn(t)
             return .08 <= t < .16 or .21 <= t < .26 or .36 <= t < .38 or .52 <= t < .60
 
         def state():
             t = clock['t']
+            if t < state_delay:
+                return None
             speed = .12 if .08 <= t < .3 or .52 <= t < .66 else .02 if t >= .3 else 0.
+            if speed_fn is not None:
+                speed = speed_fn(t)
             return dict(time=1000.+t-(.2 if fault == 'state' and t >= .2 else 0),
                 position=np.array([2. if fault == 'boundary' and t >= .2 else t/10, 0., 1.]),
-                velocity=np.array([speed, 0., 0.]), attitude_rpy=np.zeros(3), angular_velocity=np.zeros(3),
+                velocity=np.array([speed, 0., 0.]),
+                attitude_rpy=np.array([0., 0., np.radians(yaw_fn(t) if yaw_fn else 0.)]),
+                angular_velocity=np.zeros(3),
                 position_skew_s=0., angular_rate_skew_s=0., yaw_control_skew_s=None,
                 yaw_control_command=None, motor_skew_s=0., motor_state={
                     'time':1000.+t-(.2 if fault == 'motor' and t >= .2 else 0),
@@ -154,17 +210,15 @@ class LevelCoastLoopTests(unittest.TestCase):
         def model_update(pipeline, **kwargs):
             # Use the real model contact detector with controlled wrench input;
             # model fitting itself is covered by the pipeline's existing tests.
-            enabled = pipeline.detector.translation.enabled
-            if not hasattr(pipeline, '_level_test_detector'):
-                pipeline._level_test_detector = copy.deepcopy(pipeline.detector)
+            detector_state = pipeline.detector
+            pipeline.detector = copy.deepcopy(detector_state)
             pipeline.detector.translation.enabled = False
             result = real_update(pipeline, **kwargs)
-            pipeline.detector.translation.enabled = enabled
+            pipeline.detector = detector_state
             estimate = replace(result.estimate, external_force=np.array([
                 .3 if pressed() else 0., 0., 0.]), force_covariance=np.eye(3)*.0001,
                 measurement_rejected=False)
-            pipeline._level_test_detector.translation.enabled = enabled
-            return replace(result, contacts=pipeline._level_test_detector.update(estimate))
+            return replace(result, contacts=pipeline.detector.update(estimate))
 
         expected = {'battery':LowBatteryException, 'state':StaleLocalizationError,
                     'boundary':BoundaryExceededError, 'motor':RuntimeError, 'sensor':RuntimeError}
@@ -212,6 +266,64 @@ class LevelCoastLoopTests(unittest.TestCase):
                 self.assertTrue(any(n == 'send_zdistance_setpoint' for _, n, _ in commands))
                 self.assertTrue(all(a == (0.,0.,0.,1.) for _, n, a in commands
                                     if n == 'send_zdistance_setpoint'))
+
+    def test_follow_yaw_updates_all_hold_phases_but_never_becomes_a_yaw_rate(self):
+        def yaw(t):
+            return 170. + 50*t if t < .2 else -180. + 50*(t-.2)
+
+        for follow in (False, True):
+            with self.subTest(follow=follow):
+                _, commands, phases, _ = self.run_scenario(
+                    follow_yaw=follow, yaw_fn=yaw, target_yaw=90.)
+                hold_phases = set()
+                for t, name, args in commands:
+                    phase = next((p['phase'] for p in reversed(phases)
+                                  if p['elapsed_s'] <= t), 'prepare')
+                    if name == 'send_position_setpoint':
+                        hold_phases.add(phase)
+                        self.assertAlmostEqual(args[3], yaw(t) if follow else 0.)
+                    else:
+                        self.assertEqual(args, (0., 0., 0., 1.))
+                self.assertEqual(hold_phases, {'prepare', 'ready', 'grace'})
+
+    def test_follow_yaw_waits_for_first_fresh_state(self):
+        _, commands, _, _ = self.run_scenario(
+            follow_yaw=True, yaw_fn=lambda t: 45., state_delay=.02)
+        self.assertGreaterEqual(commands[0][0], .02)
+        self.assertEqual(commands[0][2][3], 45.)
+
+    def test_release_grace_preempts_coast_for_all_detectors(self):
+        def pressed(t):
+            return .08 <= t < .16 or .34 <= t < .42
+
+        def speed(t):
+            return .12 if pressed(t) else .06 if .16 <= t < .6 else .02
+
+        for detector in ('model', 'potentiometer', 'vel'):
+            with self.subTest(detector=detector):
+                control, commands, phases, _ = self.run_scenario(
+                    detector, grace_start='release', pressed_fn=pressed, speed_fn=speed)
+                self.assertEqual([p['phase'] for p in phases],
+                                 ['ready', 'contact', 'coast', 'contact', 'coast', 'ready'])
+                preemption = next(p for p in phases if p['coast_preempted'])
+                self.assertGreaterEqual(preemption['elapsed_s'], .34)
+                self.assertLess(preemption['elapsed_s'], .42)
+                for t, name, args in commands:
+                    if .10 <= t < .6:
+                        self.assertEqual((name, args), ('send_zdistance_setpoint', (0.,0.,0.,1.)))
+                    if t >= .6:
+                        self.assertEqual(name, 'send_position_setpoint')
+                        self.assertAlmostEqual(args[0], .06)
+                self.assertFalse(control._pid_15state_control_active)
+
+    def test_release_grace_discards_early_model_evidence_and_preserves_safety(self):
+        _, _, phases, _ = self.run_scenario('model', grace_start='release',
+            pressed_fn=lambda t: .08 <= t < .16 or .20 <= t < .23,
+            speed_fn=lambda t: .12 if .08 <= t < .6 else .02)
+        self.assertEqual(sum(p['phase'] == 'contact' for p in phases), 1)
+        for fault in ('battery', 'state', 'motor', 'sensor', 'boundary'):
+            with self.subTest(fault=fault):
+                self.run_scenario(grace_start='release', fault=fault)
 
     def test_duration_expires_in_every_phase(self):
         for duration, phase in ((.01,'prepare'), (.06,'ready'), (.13,'contact'),

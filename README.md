@@ -100,10 +100,31 @@ a low-speed release is a heuristic, not a separate measurement of hand contact.
 After the existing stationary arming gate, contact sends
 `send_zdistance_setpoint(0, 0, 0, nominal_z)` continuously. Confirmed release
 keeps that same command until `hypot(vx, vy) < level_coast.stop_speed_m_s`
-(default `0.03`). It then captures current XY at nominal Z, resets position and
-velocity integrators, and holds that position for `grace_time` (default `0.5 s`).
-Only after grace expires are the detectors reset and the stationary arming gate
-restarted. Contact/coast/grace cannot accept another onset.
+(default `0.03`), or a newly detected interaction preempts coast as described below.
+Low speed captures current XY at nominal Z and resets position/velocity integrators.
+`grace_time` specifies seconds (default `0.5`), and `level_coast.grace_start` selects:
+
+- `speed_threshold` (default): start grace at low-speed capture, hold position,
+  then reset detectors and repeat stationary arming. Coast/grace ignore onsets.
+- `release`: start grace at each **confirmed** release. At expiry, clear detector
+  evidence and the release latch, then allow a fresh onset even during coast.
+  That onset immediately enters contact; the next confirmed release restarts grace.
+  There is no repeated stationary arming in this mode. If low speed arrives before
+  expiry, hold the captured position for the remaining grace; if it arrives later,
+  hold position and remain ready. Initial startup still requires stationary arming.
+
+For example, `grace_time: 0.3` with `level_coast.grace_start: release` reopens
+detection 300 ms after confirmed release. Detection still requires fresh onset
+evidence; velocity/potentiometer detectors retain their unloaded baseline rule.
+This is a refractory interval, not proof that residual model force has decayed.
+Logs record the grace origin, detection enablement, and `coast_preempted` transitions.
+
+`level_coast.follow_yaw: true` updates position-hold yaw from the current onboard
+estimate during preparation, ready, and grace. Disabled or omitted sends absolute
+`yaw=0` in those phases, regardless of mission target yaw. Contact/coast always
+send zero yaw **rate**, with zero roll/pitch and nominal height. No firmware change
+or yaw-contact detector is required. Following waits for the first fresh yaw sample;
+it does not substitute a zero heading while awaiting startup state.
 
 `duration` covers the entire repeated loop after observer startup, including
 preparation and grace. At expiry in any phase, control returns to the ordinary
