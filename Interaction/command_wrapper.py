@@ -57,13 +57,17 @@ class CommandWrapper:
 
     def __getattr__(self, name):
         # Get the attribute from the base class safely
-        attr = getattr(self._wrapped_instance, name)
+        if name in ('send_position_yaw_rate_setpoint', 'send_zdistance_yaw_rate_setpoint'):
+            from Interaction.yaw_rate_commands import DirectYawRateCommander
+            attr = getattr(DirectYawRateCommander(self._wrapped_instance._cf), name)
+        else:
+            attr = getattr(self._wrapped_instance, name)
 
         # Intercept methods, but ignore private/internal ones
         if callable(attr) and not name.startswith('_'):
             @functools.wraps(attr)  # Keeps the original function's name and docstring
             def wrapper(*args, **kwargs):
-                if name == 'send_position_setpoint' or name == 'go_to':
+                if name in ('send_position_setpoint', 'send_position_yaw_rate_setpoint', 'go_to'):
                     # args are likely (x, y, z, yaw)
                     # We convert to list to mutate them
                     modified_args = list(args)

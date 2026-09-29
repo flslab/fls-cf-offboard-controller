@@ -52,6 +52,11 @@ def validate_level_coast(config, *, sensor_available):
     options['follow_yaw'] = options.get('follow_yaw', False)
     if type(options['follow_yaw']) is not bool:
         raise ValueError('level_coast.follow_yaw must be boolean')
+    options['yaw_rate_damping'] = options.get('yaw_rate_damping', False)
+    if type(options['yaw_rate_damping']) is not bool:
+        raise ValueError('level_coast.yaw_rate_damping must be boolean')
+    if options['yaw_rate_damping'] and options['follow_yaw']:
+        raise ValueError('yaw_rate_damping and follow_yaw cannot both be enabled')
     options['stop_speed_m_s'] = _number(
         options.get('stop_speed_m_s', .03), 'stop_speed_m_s', positive=True)
     options['detector'] = detector
@@ -216,6 +221,8 @@ def run_level_coast(owner, config):
     )
     options = validate_level_coast(
         config, sensor_available=getattr(owner, 'force_sensor', None) is not None)
+    if options['yaw_rate_damping'] and not getattr(owner.cf, '_level_coast_yaw_rate_ready', False):
+        raise RuntimeError('direct yaw-rate firmware was not confirmed before flight')
     calibrated_config = apply_detection_calibration(
         deepcopy(config['wrench_interaction']), owner.drone_id,
         config.get('wrench_calibration_file', DEFAULT_CALIBRATION_PATH))
@@ -249,7 +256,12 @@ def run_level_coast(owner, config):
     }, name='Level Coast Config')
 
     def send():
-        if cycle.level:
+        if options['yaw_rate_damping']:
+            if cycle.level:
+                owner.lo_commander.send_zdistance_yaw_rate_setpoint(0., 0., 0., float(nominal[2]))
+            else:
+                owner.lo_commander.send_position_yaw_rate_setpoint(*cycle.hold_position, 0.)
+        elif cycle.level:
             owner.lo_commander.send_zdistance_setpoint(0., 0., 0., float(nominal[2]))
         elif yaw is not None:
             owner.lo_commander.send_position_setpoint(*cycle.hold_position, yaw)
@@ -380,9 +392,10 @@ def run_level_coast(owner, config):
                 'grace_start': options['grace_start'],
                 'grace_elapsed_s': (None if cycle.grace_started is None
                                     else sample_now - cycle.grace_started),
-                'command_mode': 'level_zdistance' if cycle.level else 'position_hold',
-                'yaw_target_deg': None if cycle.level else yaw,
-                'yaw_rate_target_deg_s': 0. if cycle.level else None,
+                'command_mode': ('level_zdistance' if cycle.level else 'position_hold')
+                                + ('_direct_yaw_rate' if options['yaw_rate_damping'] else ''),
+                'yaw_target_deg': None if cycle.level or options['yaw_rate_damping'] else yaw,
+                'yaw_rate_target_deg_s': 0. if cycle.level or options['yaw_rate_damping'] else None,
                 **sensor,
             })
             owner._safe_sleep(dt)

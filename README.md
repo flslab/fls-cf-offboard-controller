@@ -119,7 +119,18 @@ evidence; velocity/potentiometer detectors retain their unloaded baseline rule.
 This is a refractory interval, not proof that residual model force has decayed.
 Logs record the grace origin, detection enablement, and `coast_preempted` transitions.
 
-`level_coast.follow_yaw: true` updates position-hold yaw from the current onboard
+`level_coast.yaw_rate_damping: true` uses direct yaw-rate PID control in both
+position hold and level-attitude contact/coast: desired yaw rate is always zero,
+with no heading-angle restoring target. It retains XYZ hold in position mode and
+zero roll/pitch plus nominal Z in attitude mode. This requires the paired firmware
+with `yawRate.version=1` and the PID controller (`stabilizer.controller=1`), freshly
+confirmed before arming. Old firmware fails preflight instead of accepting an
+unknown packet. The explicit generic packets are 12 (XYZ plus yaw rate) and 13
+(roll, pitch, yaw rate, Z); ordinary packet semantics are unchanged. The yaw rate
+loop still uses its existing gains and gyro measurement. Disabling this option
+returns to the normal yaw behavior; it is mutually exclusive with `follow_yaw`.
+
+The older `level_coast.follow_yaw: true` updates position-hold yaw from the current onboard
 estimate during preparation, ready, and grace. Disabled or omitted sends absolute
 `yaw=0` in those phases, regardless of mission target yaw. Contact/coast always
 send zero yaw **rate**, with zero roll/pitch and nominal height. No firmware change

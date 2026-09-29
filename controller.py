@@ -2083,6 +2083,10 @@ class Controller:
         if getattr(self, 'firmware_auto_brake_enabled', False):
             self._setup_firmware_auto_brake_params()
 
+        from Interaction.yaw_rate_commands import prepare_yaw_rate_damping
+        prepare_yaw_rate_damping(self.cf, self.mission, self.args.controller_type,
+                                calibrating=getattr(self.args, 'calibrate', False))
+
     def arm(self):
         if self.args.ground_test or self.args.skip_arm:
             return
