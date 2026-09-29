@@ -262,6 +262,7 @@ def run_level_coast(owner, config):
             pot_release.disarm()
 
     try:
+        print('[interaction] startup', flush=True)
         while start is None or time.monotonic() - start < options['duration_s']:
             owner._safe_sleep(0.)  # Sticky battery and operator abort checks.
             now = time.time()
@@ -295,6 +296,8 @@ def run_level_coast(owner, config):
                 owner._log_event('Level Coast Detection Rearmed', {
                     'phase': cycle.phase, 'grace_start': options['grace_start'],
                 })
+                if cycle.phase == 'coast':
+                    print('[interaction] coast: detection ready', flush=True)
             detection_was_enabled = enabled
             pipeline.detector.translation.enabled = (
                 options['detector'] == 'model' and enabled)
@@ -310,6 +313,7 @@ def run_level_coast(owner, config):
             if start is None:
                 start = time.monotonic()
                 owner._log_event('Level Coast Started', options)
+                print('[interaction] prepare', flush=True)
             if cycle.phase == 'prepare':
                 gate.update(state['velocity'], state['time'])
             started = released = False
@@ -362,6 +366,7 @@ def run_level_coast(owner, config):
                     'grace_start': options['grace_start'],
                     'coast_preempted': previous == 'coast' and cycle.phase == 'contact',
                 })
+                print(f'[interaction] {previous} -> {cycle.phase}', flush=True)
             if released:
                 detection_was_enabled = False  # Also rearm when grace is zero.
             send()
@@ -385,5 +390,6 @@ def run_level_coast(owner, config):
             'phase': cycle.phase, 'duration_s': options['duration_s'],
             'elapsed_s': time.monotonic() - start,
         })
+        print('[interaction] done', flush=True)
     finally:
         owner._set_contact_pid_attitude_authority(False)
