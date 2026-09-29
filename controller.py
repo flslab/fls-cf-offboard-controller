@@ -34,6 +34,7 @@ from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.braking_repeat_test import validate_repeat_test_options
 from Interaction.post_release_firmware_control_event import send_vicon_position_mirror
 from Interaction.config import onboard_yaw_log_required
+from Interaction.mission_profiles import resolve_mission_profiles
 from Interaction.compressed_state_logs import (
     MAX_PAIR_SKEW_S,
     decode_kinematic_packet,
@@ -313,6 +314,10 @@ class Controller:
         if getattr(self.args, 'calibrate', False):
             self.firmware_auto_brake_enabled = False
             return
+        translation = (self.mission or {}).get('Interaction', {}).get('config', {})
+        if translation.get('behavior') == 'level_coast':
+            from Interaction.level_coast import validate_level_coast
+            validate_level_coast(translation, sensor_available=getattr(self.args, 'sense', False))
         wrench = ((self.mission or {}).get('Interaction', {})
                   .get('config', {}).get('wrench_interaction') or {})
         mode = wrench.get('firmware_auto_brake') or {}
@@ -1143,7 +1148,7 @@ class Controller:
                     data = response.read().decode('utf-8')
                     _mission = yaml.safe_load(data)
                     if self.args.drone_id in _mission['drones']:
-                        self.missions.append(_mission)
+                        self.missions.append(resolve_mission_profiles(_mission))
                 logger.info(f"  > Download successful: {filename}")
 
             except urllib.error.URLError as e:
@@ -2666,6 +2671,7 @@ class Controller:
         except Exception as e:
             logging.error(f"Interaction Error: {e}\n")
             if (getattr(self, 'firmware_auto_brake_enabled', False) or
+                    (self.mission or {}).get('Interaction', {}).get('config', {}).get('behavior') == 'level_coast' or
                     getattr(self.args, 'contact_attitude_run', None) is not None):
                 raise
         finally:

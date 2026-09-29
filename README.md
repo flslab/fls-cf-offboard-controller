@@ -73,6 +73,46 @@ solutions that pass the configured reprojection, feature-count, image-span,
 innovation, and temporal gates. The packet carries `FC EKF yaw - PnP yaw` in
 radians and never forwards PnP roll or pitch.
 
+### Repeated level-attitude interaction
+
+`Interaction.config.behavior: level_coast` selects an independent timed behavior.
+Omitting it (or using `standard`) preserves the existing interaction/EKF and
+firmware braking path. The separate LightBender mission is
+`Interaction/SFL/translation_level_coast.yaml`; select that mission in the swarm
+manifest to use it. The original `translation_inertia.yaml` remains available.
+
+The mission selects `wrench_interaction_profile: level_coast`. Its shared settings
+live in this offboard repository at `Interaction/profiles/level_coast.yaml`.
+The controller expands that profile immediately after downloading the mission,
+before preflight and log setup. An optional inline `wrench_interaction` mapping
+overrides individual settings recursively; saved XYZ calibration is loaded after
+that. The runtime config log records the profile name and full effective settings.
+Unknown or missing profiles fail during mission loading. Deploy the offboard code
+and profile together when using a mission that references it.
+
+Keep `detection_method: momentum_impulse` for synchronized onboard state logging;
+the profile supplies `state_source: onboard`. Select the actual contact detector with
+`level_coast.detector: vel`, `model`, or `potentiometer` (`--sense` required).
+The model and potentiometer choices reuse the existing contact/release detectors
+and saved XYZ detection calibration. Velocity uses XY speed hysteresis and dwell;
+a low-speed release is a heuristic, not a separate measurement of hand contact.
+
+After the existing stationary arming gate, contact sends
+`send_zdistance_setpoint(0, 0, 0, nominal_z)` continuously. Confirmed release
+keeps that same command until `hypot(vx, vy) < level_coast.stop_speed_m_s`
+(default `0.03`). It then captures current XY at nominal Z, resets position and
+velocity integrators, and holds that position for `grace_time` (default `0.5 s`).
+Only after grace expires are the detectors reset and the stationary arming gate
+restarted. Contact/coast/grace cannot accept another onset.
+
+`duration` covers the entire repeated loop after observer startup, including
+preparation and grace. At expiry in any phase, control returns to the ordinary
+mission landing lifecycle. The new mode requires `firmware_auto_brake.enabled:
+false`; it does not submit release events or braking curves. Existing configured
+PID attitude-source switching is reused at contact and hold capture. State/motor
+freshness, measured boundaries, battery and operator-abort checks remain active.
+The example is an offline-tested configuration, not flight validation.
+
 ### Distance and deceleration inputs for onboard braking
 
 Paired firmware 26092803 exposes these `hlCommander` parameters:

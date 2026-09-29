@@ -16113,6 +16113,15 @@ class InteractionsControl:
             if braking_test_mode and not calibration_mode:
                 raise ValueError('braking repeat test requires the calibration control path')
             translation_setting = self.mission['Interaction']['config']
+            behavior = translation_setting.get('behavior', 'standard')
+            if behavior not in ('standard', 'level_coast'):
+                raise ValueError('translation behavior must be standard or level_coast')
+            if behavior == 'level_coast' and not calibration_mode:
+                if mpc_calibration_mode:
+                    raise ValueError('level_coast cannot run an MPC calibration')
+                from Interaction.level_coast import run_level_coast
+                run_level_coast(self, translation_setting)
+                return
             wrench_config = translation_setting.get('wrench_interaction')
             self._firmware_brake_active = bool(
                 (wrench_config or {}).get('firmware_auto_brake', {})
@@ -16552,6 +16561,7 @@ class InteractionsControl:
             except (AttributeError, KeyError, TypeError):
                 experiment_run = None
             if (self._firmware_brake_active or
+                self.mission['Interaction']['config'].get('behavior') == 'level_coast' or
                 calibration_mode
                 or mpc_calibration_mode
                 or experiment_run is not None
