@@ -1026,6 +1026,14 @@ class Controller:
 
         attempt('Landing (not confirmed on error)', self.land)
 
+        yaw_damping = getattr(self, '_offboard_yaw_damping', None)
+        if yaw_damping is not None:
+            if getattr(self, 'flying', True):
+                cleanup_errors.append(RuntimeError(
+                    'Yaw gains not restored while still flying; recovery backup retained'))
+            else:
+                attempt('Yaw-angle PID restore', yaw_damping.restore)
+
         if self.bat_logger:
             attempt('Battery logger stop', self.bat_logger.stop)
 
@@ -2031,8 +2039,48 @@ class Controller:
 
         logger.debug("logging activated")
 
+    def _prepare_offboard_yaw_damping(self, *, recover_only=False):
+        from pathlib import Path
+        import hashlib
+        from Interaction.offboard_yaw_damping import OffboardYawDamping
+        translation = (self.mission or {}).get('Interaction', {}).get('config', {})
+        selected = translation.get('behavior') == 'level_coast'
+        enabled = selected and (translation.get('level_coast') or {}).get('yaw_rate_damping', False)
+        if type(enabled) is not bool:
+            raise ValueError('level_coast.yaw_rate_damping must be boolean')
+        identity = getattr(self.args, 'drone_id', None)
+        if identity is None:
+            if enabled:
+                raise ValueError('yaw damping requires a drone_id for parameter recovery')
+            return
+        identity = str(identity)
+        key = hashlib.sha256(identity.encode()).hexdigest()[:16]
+        path = Path(__file__).resolve().parent / 'cache' / f'yaw-gains-{key}.json'
+        guard = OffboardYawDamping(self.cf, path)
+        if enabled or path.exists():
+            if (getattr(self, 'flying', False) or getattr(self.args, 'skip_takeoff', False)
+                    or getattr(self.args, 'skip_landing', False)):
+                raise ValueError('yaw damping setup/recovery requires grounded startup and normal landing')
+            # Recover an interrupted previous run before applying any new mode.
+            guard.restore()
+        self.cf._offboard_yaw_damping_active = False
+        if not enabled or recover_only:
+            return
+        if (self.args.controller_type != 'pid' or getattr(self.args, 'calibrate', False)
+                or not getattr(self.args, 'interaction', False)):
+            raise ValueError('yaw_rate_damping requires a PID interaction run, not calibration')
+        self._offboard_yaw_damping = guard
+        guard.enable()
+        self.log_manager.add_log_entry('configs', {
+            'enabled': True, 'original_yaw_angle_gains': guard.original,
+            'yaw_angle_gains': dict.fromkeys(guard.original, 0.0),
+            'yaw_rate_pid': 'unchanged',
+        }, name='Offboard Yaw Rate Damping')
+
     def setup_params(self):
         logger.info("Setting up parameters...")
+
+        self._prepare_offboard_yaw_damping(recover_only=True)
 
         self._activate_kalman_estimator()
         if not getattr(self.args, 'crazysim', False):
@@ -2082,6 +2130,8 @@ class Controller:
             )
         if getattr(self, 'firmware_auto_brake_enabled', False):
             self._setup_firmware_auto_brake_params()
+
+        self._prepare_offboard_yaw_damping()
 
     def arm(self):
         if self.args.ground_test or self.args.skip_arm:

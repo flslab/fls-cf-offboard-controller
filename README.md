@@ -119,6 +119,29 @@ evidence; velocity/potentiometer detectors retain their unloaded baseline rule.
 This is a refractory interval, not proof that residual model force has decayed.
 Logs record the grace origin, detection enablement, and `coast_preempted` transitions.
 
+`Interaction/level_coast.py` hardcodes `DETECTION_TO_ORI_DELAY_S = 0.10`
+(seconds). After a confirmed onset, keep sending the existing position target
+until this interval expires, then send the level-attitude command. Set it to
+`0.0` for immediate switching. Release detection, safety checks and the mission
+duration continue during the delay; an early release keeps its original grace
+start and switches to the level coasting command when the delay ends. If a new contact preempts coast,
+capture current XY for the new position-delay interval. Logs keep contact and
+release times separate from `Level Coast Command Mode Changed`, and the console
+prints `pos delay`, `pos -> ori`, and `ori -> pos`.
+
+`level_coast.yaw_rate_damping: true` uses the original firmware and standard
+position/z-distance packets. Offboard temporarily sets the four existing
+`pid_attitude.yaw_kp/ki/kd/kff` parameters to zero before takeoff and confirms
+them by fresh reads. The yaw-rate PID gains stay unchanged: both position and
+attitude commands then target zero rate without a heading-restoring term.
+This applies through takeoff, interaction and landing. It requires PID control,
+grounded startup and normal landing; it is incompatible with `follow_yaw`.
+Original gains are restored only after landing/stop. A recovery record in
+`cache/yaw-gains-*.json` is retained if restoration fails, and is restored at the
+next grounded startup, even when the option is disabled. No firmware source,
+packet format, flash or persistent parameter storage is changed. Existing yaw
+rate-loop damping remains active; this does not make yaw torque-free.
+
 `level_coast.follow_yaw: true` updates position-hold yaw from the current onboard
 estimate during preparation, ready, and grace. Disabled or omitted sends absolute
 `yaw=0` in those phases, regardless of mission target yaw. Contact/coast always

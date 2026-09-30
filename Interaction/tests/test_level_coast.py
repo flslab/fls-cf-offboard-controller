@@ -36,6 +36,46 @@ def configuration(detector='potentiometer'):
 
 
 class LevelCoastStateTests(unittest.TestCase):
+    def test_delay_keeps_position_and_remembers_early_release(self):
+        cycle = LevelCoastCycle([0, 0, 1], .03, .03, 'release', .1)
+        cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
+        cycle.update([.1, 0, 1], [.2, 0, 0], 1., started=True)
+        self.assertEqual(cycle.phase, 'contact')
+        self.assertFalse(cycle.level)
+        self.assertTrue(cycle.detection_enabled(1.01))  # Release remains active.
+        np.testing.assert_allclose(cycle.hold_position, [0, 0, 1])
+        cycle.update([.2, 0, 1], [.01, 0, 0], 1.02, released=True)
+        self.assertEqual(cycle.phase, 'coast')
+        self.assertEqual(cycle.grace_started, 1.02)
+        self.assertFalse(cycle.detection_enabled(1.09))
+        cycle.update([.3, 0, 1], [.01, 0, 0], 1.09)
+        self.assertFalse(cycle.level)
+        cycle.update([.3, 0, 1], [.01, 0, 0], 1.11)
+        self.assertTrue(cycle.level)  # First ori only after the entire delay.
+        cycle.update([.3, 0, 1], [.01, 0, 0], 1.12)
+        self.assertEqual(cycle.phase, 'ready')
+        np.testing.assert_allclose(cycle.hold_position, [.3, 0, 1])
+
+    def test_coast_preemption_restarts_delay_and_holds_current_xy(self):
+        cycle = LevelCoastCycle([0, 0, 1], .03, .03, 'release', .1)
+        cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
+        cycle.update([0, 0, 1], [.2, 0, 0], 1., started=True)
+        cycle.update([.1, 0, 1], [.2, 0, 0], 1.2, released=True)
+        self.assertTrue(cycle.level)
+        cycle.update([.5, .2, 1.2], [.2, 0, 0], 1.3, started=True)
+        self.assertFalse(cycle.level)
+        np.testing.assert_allclose(cycle.hold_position, [.5, .2, 1.])
+        cycle.update([.6, .2, 1.], [.2, 0, 0], 1.39)
+        self.assertFalse(cycle.level)
+        cycle.update([.6, .2, 1.], [.2, 0, 0], 1.41)
+        self.assertTrue(cycle.level)
+
+    def test_delay_constant_must_be_finite_and_nonnegative(self):
+        for value in (-.1, float('nan'), float('inf')):
+            with self.subTest(value=value), patch('Interaction.level_coast.DETECTION_TO_ORI_DELAY_S', value):
+                with self.assertRaisesRegex(ValueError, 'DETECTION_TO_ORI_DELAY_S'):
+                    validate_level_coast(configuration(), sensor_available=True)
+
     def test_release_grace_can_preempt_coast_and_restarts_each_release(self):
         cycle = LevelCoastCycle([0, 0, 1], .03, .3, 'release')
         cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
@@ -113,6 +153,8 @@ class LevelCoastStateTests(unittest.TestCase):
             ('grace', lambda c: c.update(grace_time=-1)),
             ('grace_start', lambda c: c['level_coast'].update(grace_start='unknown')),
             ('follow_yaw', lambda c: c['level_coast'].update(follow_yaw='false')),
+            ('yaw_rate_damping', lambda c: c['level_coast'].update(yaw_rate_damping='true')),
+            ('yaw_conflict', lambda c: c['level_coast'].update(yaw_rate_damping=True, follow_yaw=True)),
             ('detector', lambda c: c['level_coast'].update(detector='unknown')),
         ]
         for name, mutate in variants:
@@ -135,12 +177,14 @@ class LevelCoastLoopTests(unittest.TestCase):
     def run_scenario(self, detector='potentiometer', *, duration=.85, fault=None,
                      grace_start='speed_threshold', grace_time=.10,
                      pressed_fn=None, speed_fn=None, follow_yaw=False,
-                     yaw_fn=None, state_delay=0., target_yaw=0.):
+                     yaw_fn=None, state_delay=0., target_yaw=0., yaw_rate_damping=False,
+                     ori_delay=0.):
         config = configuration(detector)
         config['duration'] = duration
         config['grace_time'] = grace_time
         config['level_coast']['grace_start'] = grace_start
         config['level_coast']['follow_yaw'] = follow_yaw
+        config['level_coast']['yaw_rate_damping'] = yaw_rate_damping
         original = copy.deepcopy(config)
         clock = {'t': 0.}
         control = InteractionsControl.__new__(InteractionsControl)
@@ -152,6 +196,7 @@ class LevelCoastLoopTests(unittest.TestCase):
         control.lo_commander = FakeCommander()
         control.hl_commander = FakeCommander()
         control.cf = SimpleNamespace(param=SimpleNamespace(set_value=Mock(), set_value_raw=Mock()))
+        control.cf._offboard_yaw_damping_active = yaw_rate_damping
         control.pid_attitude_source = 'post-release-15state'
         control._pid_15state_control_active = False
         control.force_sensor = object()
@@ -223,6 +268,7 @@ class LevelCoastLoopTests(unittest.TestCase):
         expected = {'battery':LowBatteryException, 'state':StaleLocalizationError,
                     'boundary':BoundaryExceededError, 'motor':RuntimeError, 'sensor':RuntimeError}
         with patch('Interaction.level_coast.time.time', side_effect=lambda:1000.+clock['t']), \
+                patch('Interaction.level_coast.DETECTION_TO_ORI_DELAY_S', ori_delay), \
                 patch('Interaction.level_coast.time.monotonic', side_effect=lambda:clock['t']), \
                 patch('Interaction.level_coast.apply_detection_calibration', side_effect=lambda c,*_:c), \
                 patch.object(OnboardMomentumWrenchPipeline, 'update',
@@ -238,6 +284,36 @@ class LevelCoastLoopTests(unittest.TestCase):
         phases = [c.args[1] for c in control._log_event.call_args_list
                   if c.args[0] == 'Level Coast Phase Changed']
         return control, commands, phases, clock['t']
+
+    def test_delay_sends_only_pos_until_deadline_for_all_detectors(self):
+        for detector in ('potentiometer', 'vel', 'model'):
+            with self.subTest(detector=detector):
+                control, commands, phases, _ = self.run_scenario(detector, ori_delay=.1)
+                onsets = [p['elapsed_s'] for p in phases if p['phase'] == 'contact']
+                self.assertEqual(len(onsets), 2)
+                for onset in onsets:
+                    delayed = [(t,n,a) for t,n,a in commands if onset <= t < onset+.1-1e-8]
+                    self.assertTrue(delayed)
+                    self.assertTrue(all(n == 'send_position_setpoint' for _,n,_ in delayed))
+                    first_ori = next(t for t,n,_ in commands
+                                     if t >= onset and n == 'send_zdistance_setpoint')
+                    self.assertGreaterEqual(first_ori-onset, .1-1e-8)
+                    self.assertLessEqual(first_ori-onset, .111)
+                modes = [c.args[1] for c in control._log_event.call_args_list
+                         if c.args[0] == 'Level Coast Command Mode Changed'
+                         and c.args[1]['command_mode'] == 'level_zdistance']
+                self.assertEqual(len(modes), 2)
+                self.assertTrue(all(m['since_detection_s'] >= .1-1e-8 for m in modes))
+
+    def test_delay_does_not_block_duration_abort_or_early_release(self):
+        control, commands, phases, elapsed = self.run_scenario(duration=.23, ori_delay=.5)
+        self.assertTrue(any(p['released'] for p in phases))
+        self.assertTrue(all(n == 'send_position_setpoint' for _, n, _ in commands))
+        self.assertAlmostEqual(elapsed, .23)
+        for fault in ('battery', 'state', 'motor', 'sensor', 'boundary'):
+            with self.subTest(fault=fault):
+                control, _, _, _ = self.run_scenario(fault=fault, ori_delay=.5)
+                self.assertFalse(control._pid_15state_control_active)
 
     def test_potentiometer_two_contacts_and_ignored_contact_during_coast_and_grace(self):
         control, commands, phases, elapsed = self.run_scenario()
@@ -291,6 +367,16 @@ class LevelCoastLoopTests(unittest.TestCase):
             follow_yaw=True, yaw_fn=lambda t: 45., state_delay=.02)
         self.assertGreaterEqual(commands[0][0], .02)
         self.assertEqual(commands[0][2][3], 45.)
+
+    def test_yaw_damping_keeps_standard_packets_and_ignores_changing_heading(self):
+        _, commands, _, _ = self.run_scenario(yaw_rate_damping=True,
+            yaw_fn=lambda t: 170. - 340*t, target_yaw=90.)
+        for _, name, args in commands:
+            if name == 'send_position_setpoint':
+                self.assertEqual(args[3], 0.)
+            else:
+                self.assertEqual(name, 'send_zdistance_setpoint')
+                self.assertEqual(args, (0., 0., 0., 1.))
 
     def test_release_grace_preempts_coast_for_all_detectors(self):
         def pressed(t):

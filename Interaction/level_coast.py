@@ -14,6 +14,10 @@ from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH, apply_detection_calibration,
 )
 
+# Seconds from confirmed interaction detection to the first ori command.
+# Keep sending pos commands during this interval; 0.0 restores immediate ori.
+DETECTION_TO_ORI_DELAY_S = 0.10
+
 
 def _number(value, name, *, positive=False):
     result = float(value)
@@ -45,6 +49,8 @@ def validate_level_coast(config, *, sensor_available):
     if detector == 'potentiometer':
         _potentiometer_detectors(config)
     options['duration_s'] = _number(config['duration'], 'duration', positive=True)
+    options['detection_to_ori_delay_s'] = _number(
+        DETECTION_TO_ORI_DELAY_S, 'DETECTION_TO_ORI_DELAY_S')
     options['grace_s'] = _number(config.get('grace_time', .5), 'grace_time')
     options['grace_start'] = options.get('grace_start', 'speed_threshold')
     if options['grace_start'] not in ('speed_threshold', 'release'):
@@ -52,6 +58,11 @@ def validate_level_coast(config, *, sensor_available):
     options['follow_yaw'] = options.get('follow_yaw', False)
     if type(options['follow_yaw']) is not bool:
         raise ValueError('level_coast.follow_yaw must be boolean')
+    options['yaw_rate_damping'] = options.get('yaw_rate_damping', False)
+    if type(options['yaw_rate_damping']) is not bool:
+        raise ValueError('level_coast.yaw_rate_damping must be boolean')
+    if options['yaw_rate_damping'] and options['follow_yaw']:
+        raise ValueError('yaw_rate_damping and follow_yaw cannot both be enabled')
     options['stop_speed_m_s'] = _number(
         options.get('stop_speed_m_s', .03), 'stop_speed_m_s', positive=True)
     options['detector'] = detector
@@ -132,17 +143,21 @@ class VelocityContactDetector:
 class LevelCoastCycle:
     """Selectable grace timing; release-based rearming can interrupt coast."""
 
-    def __init__(self, position, stop_speed_m_s, grace_s, grace_start='speed_threshold'):
+    def __init__(self, position, stop_speed_m_s, grace_s, grace_start='speed_threshold',
+                 detection_to_ori_delay_s=0.):
         self.hold_position = np.asarray(position, dtype=float).copy()
         self.stop_speed = stop_speed_m_s
         self.grace_s = grace_s
         self.phase = 'prepare'
         self.grace_started = None
         self.grace_start = grace_start
+        self.detection_to_ori_delay_s = _number(detection_to_ori_delay_s, 'detection_to_ori_delay_s')
+        self.detected_at = None
+        self.delay_pending = False
 
     @property
     def level(self):
-        return self.phase in ('contact', 'coast')
+        return self.phase in ('contact', 'coast') and not self.delay_pending
 
     def grace_expired(self, now):
         return self.grace_started is not None and now - self.grace_started >= self.grace_s
@@ -150,21 +165,32 @@ class LevelCoastCycle:
     def detection_enabled(self, now):
         return self.phase in ('ready', 'contact') or (
             self.grace_start == 'release' and self.phase in ('coast', 'grace')
-            and self.grace_expired(now))
+            and not self.delay_pending and self.grace_expired(now))
 
     def update(self, position, velocity, now, *, armed=False, started=False, released=False):
         previous = self.phase
+        delay_finished = (self.delay_pending
+            and now - self.detected_at >= self.detection_to_ori_delay_s)
+        if delay_finished:
+            self.delay_pending = False
         if self.phase == 'prepare' and armed:
             self.phase = 'ready'
         elif self.phase != 'contact' and self.detection_enabled(now) and started:
+            if self.phase == 'coast' and self.detection_to_ori_delay_s > 0:
+                # Coast has no current position target. Hold here for the new
+                # delay instead of pulling back toward the previous interaction.
+                self.hold_position[:2] = np.asarray(position)[:2]
             self.phase = 'contact'
             self.grace_started = None
+            self.detected_at = now
+            self.delay_pending = self.detection_to_ori_delay_s > 0
         elif self.phase == 'contact' and released:
             self.phase = 'coast'
             if self.grace_start == 'release':
                 self.grace_started = now
         # A release already below threshold can capture hold in this sample.
-        if self.phase == 'coast' and np.linalg.norm(velocity[:2]) < self.stop_speed:
+        if (self.phase == 'coast' and not self.delay_pending and not delay_finished
+                and np.linalg.norm(velocity[:2]) < self.stop_speed):
             self.hold_position[:2] = np.asarray(position)[:2]
             if self.grace_start == 'speed_threshold':
                 self.grace_started = now
@@ -216,6 +242,8 @@ def run_level_coast(owner, config):
     )
     options = validate_level_coast(
         config, sensor_available=getattr(owner, 'force_sensor', None) is not None)
+    if options['yaw_rate_damping'] and not getattr(owner.cf, '_offboard_yaw_damping_active', False):
+        raise RuntimeError('offboard yaw damping was not confirmed before takeoff')
     calibrated_config = apply_detection_calibration(
         deepcopy(config['wrench_interaction']), owner.drone_id,
         config.get('wrench_calibration_file', DEFAULT_CALIBRATION_PATH))
@@ -229,7 +257,7 @@ def run_level_coast(owner, config):
     yaw = None if options['follow_yaw'] else 0.
     owner.check_interaction_boundary(nominal)
     cycle = LevelCoastCycle(nominal, options['stop_speed_m_s'], options['grace_s'],
-                            options['grace_start'])
+                            options['grace_start'], options['detection_to_ori_delay_s'])
     velocity_detector = VelocityContactDetector(**options['velocity'])
     pot_contact, pot_release = (_potentiometer_detectors(config)
         if options['detector'] == 'potentiometer' else (None, None))
@@ -345,17 +373,22 @@ def run_level_coast(owner, config):
                             pot_release.arm(force, sensor_time, peak_force_n=decision.peak_force_n)
             previous = cycle.phase
             was_level = cycle.level
+            # Start the command delay after evaluating the detector, not before
+            # potentially expensive model/sensor work at the start of the loop.
+            sample_now = time.monotonic()
             changed = cycle.update(
                 state['position'], state['velocity'], sample_now,
                 armed=gate.armed, started=started, released=released)
+            # Authority follows the transmitted command, not contact detection:
+            # contact/release bookkeeping continues while the pos delay runs.
+            if not was_level and cycle.level:
+                owner._set_contact_pid_attitude_authority(True)
+                owner._translation_high_level_active = False
+            elif was_level and not cycle.level:
+                owner._set_contact_pid_attitude_authority(False)
+                reset_pid_integrators_without_ack(owner.cf, ('posCtlPid.resetI', 'velCtlPid.resetI'))
             if changed:
-                if cycle.phase == 'contact':
-                    owner._set_contact_pid_attitude_authority(True)
-                    owner._translation_high_level_active = False
-                elif was_level and not cycle.level:
-                    owner._set_contact_pid_attitude_authority(False)
-                    reset_pid_integrators_without_ack(owner.cf, ('posCtlPid.resetI', 'velCtlPid.resetI'))
-                elif cycle.phase == 'prepare':
+                if cycle.phase == 'prepare':
                     gate.reset(after_interaction=True)
                     reset_detectors(state['time'])
                 owner._log_event('Level Coast Phase Changed', {
@@ -367,6 +400,17 @@ def run_level_coast(owner, config):
                     'coast_preempted': previous == 'coast' and cycle.phase == 'contact',
                 })
                 print(f'[interaction] {previous} -> {cycle.phase}', flush=True)
+            if started and cycle.delay_pending:
+                print(f'[interaction] pos delay: {cycle.detection_to_ori_delay_s:g}s', flush=True)
+            if was_level != cycle.level:
+                owner._log_event('Level Coast Command Mode Changed', {
+                    'command_mode': 'level_zdistance' if cycle.level else 'position_hold',
+                    'phase': cycle.phase,
+                    'detection_to_ori_delay_s': cycle.detection_to_ori_delay_s,
+                    'since_detection_s': (None if cycle.detected_at is None
+                                          else sample_now - cycle.detected_at),
+                })
+                print(f'[interaction] {"pos -> ori" if cycle.level else "ori -> pos"}', flush=True)
             if released:
                 detection_was_enabled = False  # Also rearm when grace is zero.
             send()
@@ -377,12 +421,16 @@ def run_level_coast(owner, config):
                 'external_force_N': output.estimate.external_force.tolist(),
                 'contact_started': started, 'release_confirmed': released,
                 'detection_enabled': enabled,
+                'detection_to_ori_delay_s': cycle.detection_to_ori_delay_s,
+                'ori_delay_pending': cycle.delay_pending,
                 'grace_start': options['grace_start'],
                 'grace_elapsed_s': (None if cycle.grace_started is None
                                     else sample_now - cycle.grace_started),
                 'command_mode': 'level_zdistance' if cycle.level else 'position_hold',
                 'yaw_target_deg': None if cycle.level else yaw,
                 'yaw_rate_target_deg_s': 0. if cycle.level else None,
+                'yaw_rate_damping': options['yaw_rate_damping'],
+                'effective_yaw_rate_target_deg_s': 0. if options['yaw_rate_damping'] else None,
                 **sensor,
             })
             owner._safe_sleep(dt)
