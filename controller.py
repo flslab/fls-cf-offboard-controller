@@ -2070,11 +2070,13 @@ class Controller:
                 or not getattr(self.args, 'interaction', False)):
             raise ValueError('yaw_rate_damping requires a PID interaction run, not calibration')
         self._offboard_yaw_damping = guard
-        guard.enable()
+        guard.prepare()
+        self.cf._offboard_yaw_damping_guard = guard
         self.log_manager.add_log_entry('configs', {
             'enabled': True, 'original_yaw_angle_gains': guard.original,
             'yaw_angle_gains': dict.fromkeys(guard.original, 0.0),
             'yaw_rate_pid': 'unchanged',
+            'activation': 'stable_interaction_ready',
         }, name='Offboard Yaw Rate Damping')
 
     def setup_params(self):

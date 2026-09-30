@@ -73,6 +73,43 @@ solutions that pass the configured reprojection, feature-count, image-span,
 innovation, and temporal gates. The packet carries `FC EKF yaw - PnP yaw` in
 radians and never forwards PnP roll or pitch.
 
+### Model-contact calibration and parallel diagnostics
+
+Normal FC-owned braking now also loads the offboard XYZ wrench alignment
+(`model_delay_s`, `model_time_constant_s`, `model_acceleration_scale`) from the
+per-drone wrench calibration file. This does not load retired Pi braking fits
+or replace the separate FC attitude-response calibration. The effective
+configuration records `wrench_detection_calibration` and its source. Missing
+files keep mission defaults with a warning; malformed saved vectors are rejected.
+
+Onboard wrench logs include `model_contact_diagnostics` (schema 2): raw and
+baseline-corrected **30 ms short-window** model contact decisions, baseline
+readiness/offset, and invalid-gap markers. The original 80 ms force path remains
+unchanged; its comparison decisions are stored under `long_window`. Saved XYZ
+delay/gain/response calibration is also used by the independent short estimator.
+The short path requires at least 20 ms of history and 30 ms of continuous
+above-threshold evidence, in addition to the existing strength-weighted CUSUM.
+This stops a single velocity-estimate step from triggering just because its
+short-window residual is large. Force thresholds and release dwell are unchanged.
+`window_s` and `minimum_window_s` in the diagnostic configuration override the
+short history lengths; continuous confirmation follows `window_s`.
+The estimator retains the sample preceding the window boundary: actual duration
+can exceed 30 ms by a sampling interval and is logged as `actual_window_s`.
+Neither 30 ms nor the minimum history is a promise of total detection latency.
+These are **shadow results only** and never change the selected detector,
+rendered force, release command or S-curve. Potentiometer detection stays selected.
+The bounded XY baseline uses only past idle/stationary samples and freezes on
+force changes, motion or contact evidence; it does not consume potentiometer
+labels or claim to measure absolute force. Missing windows are not no-contact
+evidence. Baseline learning is conservative and may remain unavailable.
+
+Diagnostics are enabled by default for the onboard path. To disable only this
+comparison, set `wrench_interaction.model_contact_diagnostics.enabled: false`.
+They run on the offboard computer, not the FC. During a blocking firmware-brake
+wait, this existing wrench stream still has a gap; do not use it to claim
+continuous release/re-contact validation. No active-detector replacement or
+physical-flight validation is implied by these logs.
+
 ### Repeated level-attitude interaction
 
 `Interaction.config.behavior: level_coast` selects an independent timed behavior.
@@ -131,10 +168,14 @@ prints `pos delay`, `pos -> ori`, and `ori -> pos`.
 
 `level_coast.yaw_rate_damping: true` uses the original firmware and standard
 position/z-distance packets. Offboard temporarily sets the four existing
-`pid_attitude.yaw_kp/ki/kd/kff` parameters to zero before takeoff and confirms
-them by fresh reads. The yaw-rate PID gains stay unchanged: both position and
+`pid_attitude.yaw_kp/ki/kd/kff` parameters to zero once the initial interaction
+stability gate is satisfied and confirms them by fresh reads. Preflight only
+checks and backs up the original gains; takeoff and stability waiting retain
+normal yaw control. Position commands continue during asynchronous confirmation,
+and interaction becomes ready only after confirmation succeeds. The yaw-rate PID
+gains stay unchanged: both position and
 attitude commands then target zero rate without a heading-restoring term.
-This applies through takeoff, interaction and landing. It requires PID control,
+Once enabled, this applies through interaction and landing. It requires PID control,
 grounded startup and normal landing; it is incompatible with `follow_yaw`.
 Original gains are restored only after landing/stop. A recovery record in
 `cache/yaw-gains-*.json` is retained if restoration fails, and is restored at the

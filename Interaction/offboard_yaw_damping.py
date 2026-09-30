@@ -1,6 +1,7 @@
 """Temporary, recoverable yaw-angle PID bypass using existing parameters only.
 
-All writes happen while grounded. Leave the rate PID unchanged, so ordinary
+Prepare a recovery record while grounded; enable after stable interaction arming.
+Leave the rate PID unchanged, so ordinary
 position and attitude commands both request zero yaw rate from that inner loop.
 Never store parameters to firmware persistent storage.
 """
@@ -9,6 +10,7 @@ import json
 import logging
 import math
 import os
+import threading
 from pathlib import Path
 
 from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
@@ -31,9 +33,17 @@ class OffboardYawDamping:
         self.cf = cf
         self.path = Path(backup_path)
         self.original = None
+        self.prepared = False
+        self._worker = None
+        self._done = threading.Event()
+        self._error = None
 
     def restore(self):
         """Call only after landing/stop, or before arming on the next connection."""
+        # Never let a pending enable overwrite the restored gains later.
+        if self._worker is not None:
+            self._worker.join()
+        self.prepared = False
         if not self.path.exists():
             return
         document = json.loads(self.path.read_text())
@@ -47,7 +57,8 @@ class OffboardYawDamping:
         self.cf._offboard_yaw_damping_active = False
         logger.info('Yaw-angle PID gains restored')
 
-    def enable(self):
+    def prepare(self):
+        """Grounded preflight: confirm originals and save them, without gain writes."""
         self.cf._offboard_yaw_damping_active = False
         toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
         for name in YAW_ANGLE_GAINS:
@@ -65,16 +76,34 @@ class OffboardYawDamping:
             json.dump({'schema': 1, 'gains': self.original}, stream)
             stream.flush()
             os.fsync(stream.fileno())
+        self.prepared = True
+
+    def request_enable(self):
+        """Start once after stable arming; poll without blocking flight commands.
+
+        A failed/partial activation retains the recovery record. The caller must
+        land on error and restore afterwards, as with other controller failures.
+        """
+        if not self.prepared:
+            raise RuntimeError('yaw damping was not prepared before takeoff')
+        if self._worker is None:
+            self._worker = threading.Thread(target=self._enable, name='yaw-damping-enable', daemon=True)
+            self._worker.start()
+        if not self._done.is_set():
+            return False
+        if self._error is not None:
+            raise RuntimeError('yaw damping activation failed; landing required') from self._error
+        return True
+
+    def _enable(self):
         try:
             for name in YAW_ANGLE_GAINS:
                 self.cf.param.set_value(name, '0')
             confirm_firmware_mode_parameters(self.cf.param, expected={
                 name: 0.0 for name in YAW_ANGLE_GAINS})
-        except Exception:
-            try:
-                self.restore()
-            except Exception:
-                logger.exception('Yaw gain rollback failed; backup retained at %s', self.path)
-            raise
-        self.cf._offboard_yaw_damping_active = True
-        logger.info('Yaw rate damping enabled: yaw-angle PID bypassed, rate PID unchanged')
+            self.cf._offboard_yaw_damping_active = True
+            logger.info('Yaw rate damping enabled: yaw-angle PID bypassed, rate PID unchanged')
+        except Exception as error:
+            self._error = error
+        finally:
+            self._done.set()

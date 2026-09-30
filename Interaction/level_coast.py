@@ -16,7 +16,7 @@ from Interaction.wrench_model_calibration import (
 
 # Seconds from confirmed interaction detection to the first ori command.
 # Keep sending pos commands during this interval; 0.0 restores immediate ori.
-DETECTION_TO_ORI_DELAY_S = 0.10
+DETECTION_TO_ORI_DELAY_S = 0.50
 
 
 def _number(value, name, *, positive=False):
@@ -242,8 +242,10 @@ def run_level_coast(owner, config):
     )
     options = validate_level_coast(
         config, sensor_available=getattr(owner, 'force_sensor', None) is not None)
-    if options['yaw_rate_damping'] and not getattr(owner.cf, '_offboard_yaw_damping_active', False):
-        raise RuntimeError('offboard yaw damping was not confirmed before takeoff')
+    yaw_guard = getattr(owner.cf, '_offboard_yaw_damping_guard', None)
+    if options['yaw_rate_damping'] and not getattr(yaw_guard, 'prepared', False):
+        raise RuntimeError('offboard yaw damping was not prepared before takeoff')
+    yaw_ready = not options['yaw_rate_damping']
     calibrated_config = apply_detection_calibration(
         deepcopy(config['wrench_interaction']), owner.drone_id,
         config.get('wrench_calibration_file', DEFAULT_CALIBRATION_PATH))
@@ -344,6 +346,11 @@ def run_level_coast(owner, config):
                 print('[interaction] prepare', flush=True)
             if cycle.phase == 'prepare':
                 gate.update(state['velocity'], state['time'])
+                if gate.armed and not yaw_ready:
+                    yaw_ready = yaw_guard.request_enable()
+                    if yaw_ready:
+                        owner._log_event('Level Coast Yaw Damping Enabled', {})
+                        print('[interaction] yaw damping enabled', flush=True)
             started = released = False
             sensor = {}
             if options['detector'] == 'model' and output.contacts is not None:
@@ -378,7 +385,7 @@ def run_level_coast(owner, config):
             sample_now = time.monotonic()
             changed = cycle.update(
                 state['position'], state['velocity'], sample_now,
-                armed=gate.armed, started=started, released=released)
+                armed=gate.armed and yaw_ready, started=started, released=released)
             # Authority follows the transmitted command, not contact detection:
             # contact/release bookkeeping continues while the pos delay runs.
             if not was_level and cycle.level:
@@ -430,7 +437,9 @@ def run_level_coast(owner, config):
                 'yaw_target_deg': None if cycle.level else yaw,
                 'yaw_rate_target_deg_s': 0. if cycle.level else None,
                 'yaw_rate_damping': options['yaw_rate_damping'],
-                'effective_yaw_rate_target_deg_s': 0. if options['yaw_rate_damping'] else None,
+                'yaw_rate_damping_active': options['yaw_rate_damping'] and yaw_ready,
+                'effective_yaw_rate_target_deg_s': (
+                    0. if options['yaw_rate_damping'] and yaw_ready else None),
                 **sensor,
             })
             owner._safe_sleep(dt)

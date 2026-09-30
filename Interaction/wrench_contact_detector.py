@@ -44,6 +44,7 @@ class ContactChannelDetector:
             onset_axes: Sequence[int] | None = None,
             release_projection_axes: Sequence[int] | None = None,
             release_direction_min_norm: float = 0.02,
+            minimum_onset_duration_s: float = 0.0,
     ):
         self.thresholds = np.asarray(component_thresholds, dtype=float)
         self.covariance_floor = np.asarray(covariance_floor, dtype=float)
@@ -56,6 +57,12 @@ class ContactChannelDetector:
         self.release_time_s = float(release_time_s)
         self.release_ratio = float(release_ratio)
         self.evidence_leak = float(evidence_leak)
+        self.minimum_onset_duration_s = float(minimum_onset_duration_s)
+        if (isinstance(minimum_onset_duration_s, bool)
+                or not math.isfinite(self.minimum_onset_duration_s)
+                or self.minimum_onset_duration_s < 0):
+            raise ValueError("minimum_onset_duration_s must be finite and nonnegative")
+        self._significant_since: float | None = None
         self.enabled = bool(enabled)
         self.onset_axes = (
             tuple(range(len(self.thresholds)))
@@ -103,6 +110,7 @@ class ContactChannelDetector:
         self.evidence = 0.0
         self._release_elapsed = 0.0
         self._last_timestamp = None if timestamp is None else float(timestamp)
+        self._significant_since = None
         self._release_direction = None
         self._release_direction_source = None
         self._projection_rearm_blocked = False
@@ -170,6 +178,7 @@ class ContactChannelDetector:
         self._last_timestamp = timestamp
 
         if not self.enabled:
+            self._significant_since = None
             self.active = False
             self.evidence = 0.0
             self._release_elapsed = 0.0
@@ -202,6 +211,20 @@ class ContactChannelDetector:
             ),
         ))
         significant = normalized >= 1.0 and confidence >= self.required_sigma
+        if significant:
+            if self._significant_since is None:
+                self._significant_since = timestamp
+        else:
+            self._significant_since = None
+        # Optional real elapsed-time guard. A high-amplitude, single-state
+        # jump must not bypass confirmation just by accumulating CUSUM fast.
+        # Zero preserves the existing detector's behavior exactly.
+        onset_duration_ready = (
+            self.minimum_onset_duration_s == 0.0
+            or (self._significant_since is not None
+                and timestamp - self._significant_since
+                >= self.minimum_onset_duration_s - 1e-9)
+        )
         started = False
         ended = False
         release_candidate_started = False
@@ -228,7 +251,7 @@ class ContactChannelDetector:
                     self.evidence = max(
                         0.0, self.evidence - dt * self.evidence_leak
                     )
-                if self.evidence >= self.onset_evidence_s:
+                if self.evidence >= self.onset_evidence_s and onset_duration_ready:
                     self.active = True
                     started = True
                     self._release_elapsed = 0.0

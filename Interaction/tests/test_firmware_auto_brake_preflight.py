@@ -17,6 +17,23 @@ from Interaction.onboard_wrench_interaction_pipeline import (
 
 
 class FirmwareAutoBrakePreflightTests(unittest.TestCase):
+    def test_firmware_owned_brake_loads_xyz_without_enabling_pi_braking(self):
+        original = {'firmware_auto_brake': {'enabled': True, 'mode': 'scurve'},
+                    'control_handoff': {'coast_jerk_limited_free_stop_enabled': True}}
+        calibrated = {**original, 'impulse_estimator': {
+            'model_acceleration_scale': [.8, .796, .706]},
+            'wrench_detection_calibration': {'status': 'loaded',
+                                            'parameters': {'test': True}}}
+        with patch('Interaction.interactions.apply_detection_calibration',
+                   return_value=calibrated) as load:
+            resolved = configure_firmware_owned_brake(
+                original, drone_id='lb11', calibration_path='test-wrench.json')
+        load.assert_called_once_with(original, 'lb11', 'test-wrench.json')
+        self.assertEqual(resolved['impulse_estimator']['model_acceleration_scale'],
+                         [.8, .796, .706])
+        self.assertEqual(resolved['firmware_auto_brake'], original['firmware_auto_brake'])
+        self.assertFalse(resolved['control_handoff']['coast_jerk_limited_free_stop_enabled'])
+
     def test_firmware_monitor_uses_sticky_battery_abort(self):
         controller = Controller.__new__(Controller)
         controller.battery_critical = Event()

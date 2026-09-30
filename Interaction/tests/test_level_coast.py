@@ -178,7 +178,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                      grace_start='speed_threshold', grace_time=.10,
                      pressed_fn=None, speed_fn=None, follow_yaw=False,
                      yaw_fn=None, state_delay=0., target_yaw=0., yaw_rate_damping=False,
-                     ori_delay=0.):
+                     ori_delay=0., yaw_confirm_delay=0.):
         config = configuration(detector)
         config['duration'] = duration
         config['grace_time'] = grace_time
@@ -196,7 +196,18 @@ class LevelCoastLoopTests(unittest.TestCase):
         control.lo_commander = FakeCommander()
         control.hl_commander = FakeCommander()
         control.cf = SimpleNamespace(param=SimpleNamespace(set_value=Mock(), set_value_raw=Mock()))
-        control.cf._offboard_yaw_damping_active = yaw_rate_damping
+        control.cf._offboard_yaw_damping_active = False
+        yaw_requests = []
+        def request_yaw():
+            yaw_requests.append(clock['t'])
+            if fault == 'yaw':
+                raise RuntimeError('yaw activation failed')
+            ready = clock['t'] - yaw_requests[0] >= yaw_confirm_delay
+            control.cf._offboard_yaw_damping_active = ready
+            return ready
+        control.cf._offboard_yaw_damping_guard = SimpleNamespace(
+            prepared=True, request_enable=Mock(side_effect=request_yaw))
+        control.yaw_requests = yaw_requests
         control.pid_attitude_source = 'post-release-15state'
         control._pid_15state_control_active = False
         control.force_sensor = object()
@@ -266,7 +277,7 @@ class LevelCoastLoopTests(unittest.TestCase):
             return replace(result, contacts=pipeline.detector.update(estimate))
 
         expected = {'battery':LowBatteryException, 'state':StaleLocalizationError,
-                    'boundary':BoundaryExceededError, 'motor':RuntimeError, 'sensor':RuntimeError}
+                    'boundary':BoundaryExceededError, 'motor':RuntimeError, 'sensor':RuntimeError, 'yaw':RuntimeError}
         with patch('Interaction.level_coast.time.time', side_effect=lambda:1000.+clock['t']), \
                 patch('Interaction.level_coast.DETECTION_TO_ORI_DELAY_S', ori_delay), \
                 patch('Interaction.level_coast.time.monotonic', side_effect=lambda:clock['t']), \
@@ -367,6 +378,30 @@ class LevelCoastLoopTests(unittest.TestCase):
             follow_yaw=True, yaw_fn=lambda t: 45., state_delay=.02)
         self.assertGreaterEqual(commands[0][0], .02)
         self.assertEqual(commands[0][2][3], 45.)
+
+    def test_yaw_damping_waits_for_stability_and_confirmation_before_detection(self):
+        control, commands, phases, _ = self.run_scenario(
+            yaw_rate_damping=True, yaw_confirm_delay=.06,
+            speed_fn=lambda t: .12 if t < .1 else 0.)
+        self.assertGreaterEqual(control.yaw_requests[0], .12)
+        ready = next(p for p in phases if p['phase'] == 'ready')
+        self.assertGreaterEqual(ready['elapsed_s'], control.yaw_requests[0] + .06)
+        self.assertTrue(all(name == 'send_position_setpoint'
+            for t, name, _ in commands if t < ready['elapsed_s']))
+        self.assertEqual(sum(c.args[0] == 'Level Coast Yaw Damping Enabled'
+            for c in control._log_event.call_args_list), 1)
+        self.assertLessEqual(max(control.yaw_requests), ready['elapsed_s'])
+
+    def test_yaw_damping_never_starts_if_not_stable_or_disabled(self):
+        for enabled, speed in ((True, .12), (False, 0.)):
+            control, _, _, _ = self.run_scenario(yaw_rate_damping=enabled,
+                speed_fn=lambda t: speed)
+            self.assertEqual(control.yaw_requests, [])
+
+    def test_yaw_confirmation_failure_never_arms_detection(self):
+        control, commands, phases, _ = self.run_scenario(yaw_rate_damping=True, fault='yaw')
+        self.assertEqual(phases, [])
+        self.assertTrue(all(name == 'send_position_setpoint' for _, name, _ in commands))
 
     def test_yaw_damping_keeps_standard_packets_and_ignores_changing_heading(self):
         _, commands, _, _ = self.run_scenario(yaw_rate_damping=True,

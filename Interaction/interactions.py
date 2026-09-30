@@ -122,10 +122,12 @@ from Interaction.release_lmpc_terminal_gate import (
     classify_terminal_post_state_commands,
 )
 from Interaction.wrench_interaction_pipeline import WrenchInteractionPipeline
+from Interaction.model_contact_diagnostics import ShortWindowContactDiagnostics
 from Interaction.planar_calibration_recovery import BoundedPlanarCalibrationRecovery
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH,
     apply_drone_calibration,
+    apply_detection_calibration,
     identify_planar_braking_response,
     identify_xyz_alignment,
     load_drone_calibration,
@@ -434,9 +436,20 @@ def apply_required_jerk_braking_calibration(
     return resolved, calibration
 
 
-def configure_firmware_owned_brake(config):
+def configure_firmware_owned_brake(config, *, drone_id=None,
+                                   calibration_path=DEFAULT_CALIBRATION_PATH):
     """Remove only Pi-owned release controls for the firmware brake mode."""
-    resolved = deepcopy(config)
+    resolved = (deepcopy(config) if drone_id is None else
+                apply_detection_calibration(config, drone_id, calibration_path))
+    if drone_id is not None:
+        provenance = resolved['wrench_detection_calibration']
+        if provenance['status'] == 'loaded':
+            logger.info('Loaded wrench detection XYZ calibration: %s; %s',
+                        calibration_path, provenance['parameters'])
+        else:
+            logger.warning('No saved wrench detection calibration for %s at %s; '
+                           'using mission/default alignment parameters.',
+                           drone_id, calibration_path)
     handoff = resolved.setdefault('control_handoff', {})
     handoff['coast_jerk_limited_attitude_enabled'] = False
     handoff['coast_jerk_limited_septic_smoothing_enabled'] = False
@@ -16294,7 +16307,8 @@ class InteractionsControl:
                         # contact renderer and measured flight boundaries but
                         # do not demand the old Pi-planned seventh-order fit.
                         wrench_config = configure_firmware_owned_brake(
-                            wrench_config)
+                            wrench_config, drone_id=self.drone_id,
+                            calibration_path=calibration_path)
                         interaction_duration = translation_setting['duration']
                     else:
                         wrench_config, saved_calibration = (
@@ -17693,6 +17707,24 @@ class InteractionsControl:
             )
         pipeline = OnboardMomentumWrenchPipeline(config)
         config = pipeline.config
+        diagnostic_config = config.get('model_contact_diagnostics', {})
+        if (not isinstance(diagnostic_config, dict)
+                or type(diagnostic_config.get('enabled', True)) is not bool):
+            raise ValueError('model_contact_diagnostics.enabled must be boolean')
+        model_contact_diagnostics = (
+            ShortWindowContactDiagnostics(
+                config['detection']['translation'], mass=config['mass'],
+                impulse_config=config['impulse_estimator'],
+                baseline_config=diagnostic_config.get('baseline'),
+                window_s=diagnostic_config.get('window_s', 0.03),
+                minimum_window_s=diagnostic_config.get('minimum_window_s', 0.02))
+            if diagnostic_config.get('enabled', True) else None)
+        config['model_contact_diagnostics'] = {
+            'enabled': model_contact_diagnostics is not None,
+            'command_authority': False,
+            **({} if model_contact_diagnostics is None else
+               model_contact_diagnostics.configuration),
+        }
         firmware_brake_config = config.get('firmware_auto_brake') or {}
         if not isinstance(firmware_brake_config, dict):
             raise ValueError('firmware_auto_brake must be a mapping')
@@ -20676,6 +20708,25 @@ class InteractionsControl:
                         yaw_deg=np.degrees(state['attitude_rpy'][2]),
                     )
                 raise
+
+            # Shadow only: never route these decisions or corrected forces to
+            # the primary detector, force renderer, release logic or commander.
+            model_contact_comparison = None
+            if model_contact_diagnostics is not None:
+                model_contact_comparison = model_contact_diagnostics.observe_safely(
+                    force=output.estimate.external_force,
+                    covariance=output.estimate.force_covariance,
+                    velocity=state['velocity'],
+                    angular_velocity=state['angular_velocity'],
+                    expected_acceleration=output.expected_linear_acceleration,
+                    force_bias=pipeline.force_bias,
+                    timestamp=state_time,
+                    state_valid=output.calibrated,
+                    long_valid=not output.estimate.measurement_rejected,
+                    armed=(initial_contact_gate.armed and not calibration_mode),
+                    idle=(translation_control.command_mode == 'position_hold'
+                          and not calibration_mode),
+                )
 
             firmware_brake_reference = state.get(
                 'firmware_15_state_reference'
@@ -26053,6 +26104,8 @@ class InteractionsControl:
                 velocity_mpc_shadow_last_decision = None
                 velocity_mpc_terminal_since = None
                 pipeline.detector.translation.reset(state_time)
+                if model_contact_diagnostics is not None:
+                    model_contact_diagnostics.reset()
                 initial_contact_gate.reset(after_interaction=True)
                 if potentiometer_contact_detector is not None:
                     potentiometer_contact_detector.reset()
@@ -27429,6 +27482,7 @@ class InteractionsControl:
                 'force_bias_N': pipeline.force_bias.tolist(),
                 'torque_bias_Nm': pipeline.torque_bias.tolist(),
                 'external_force_N': estimate.external_force.tolist(),
+                'model_contact_diagnostics': model_contact_comparison,
                 **sensor_fields,
                 'force_control_source': force_control_source,
                 'control_external_force_N': control_force_world.tolist(),
