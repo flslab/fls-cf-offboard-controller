@@ -16,7 +16,7 @@ from Interaction.wrench_model_calibration import (
 
 # Seconds from confirmed interaction detection to the first ori command.
 # Keep sending pos commands during this interval; 0.0 restores immediate ori.
-DETECTION_TO_ORI_DELAY_S = 0.50
+DETECTION_TO_ORI_DELAY_S = 0.20
 
 
 def _number(value, name, *, positive=False):
