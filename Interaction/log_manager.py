@@ -161,6 +161,7 @@ class InteractionLogger(LogManager):
         self._accepting_cf_log_callbacks = True
         self._cf_log_packet_sequence = 0
         self._cf_log_packet_listeners = []
+        self.capture_packet_timing = False
         self._mocap_frame_sequence = 0
         self._mocap_frame_listeners = []
         self.args = kwargs.get('controller_args', False)
@@ -563,6 +564,9 @@ class InteractionLogger(LogManager):
                 return
 
             cur_time = time.time()
+            capture_timing = getattr(self, 'capture_packet_timing', False)
+            listeners = tuple(getattr(self, '_cf_log_packet_listeners', ()))
+            cur_monotonic = time.monotonic() if capture_timing or listeners else None
             group_name = log_conf.name
             transport_timestamp = int(timestamp)
             effective_timestamp = transport_timestamp
@@ -620,15 +624,13 @@ class InteractionLogger(LogManager):
                         var_info['data'].append(data[var_name])
 
             packet_sequence = None
-            if getattr(self, '_cf_log_packet_listeners', None):
-                listeners = tuple(self._cf_log_packet_listeners)
-                # Preserve the exact default-disabled callback path: immutable
-                # packet allocation and global sequencing exist only while an
-                # opt-in shadow listener is registered.
+            if capture_timing or listeners:
+                # Capture-only calibration needs packet order and monotonic
+                # receipt times, but must not run a live experimental observer.
                 sequence = getattr(self, '_cf_log_packet_sequence', 0)
                 self._cf_log_packet_sequence = sequence + 1
                 packet_sequence = sequence
-                cur_monotonic = time.monotonic()
+            if listeners:
                 packet_data = MappingProxyType({
                     key: value for key, value in data.items() if key != 'time'
                 })

@@ -75,6 +75,29 @@ radians and never forwards PnP roll or pitch.
 
 ### Model-contact calibration and parallel diagnostics
 
+Ordinary `--calibrate --log` also records contact-free detector evaluation data
+automatically; no extra flag or mission change is needed. Fly the usual XYZ
+excitation **without hand contact**. This does not enable the experimental IMU
+detector, change flight commands, or add the optional multi-trial braking sweep.
+Normal interaction runs keep their existing subscriptions.
+
+The flight JSON includes `FORCE_IMU` (body `acc.x/y/z` in g and `gyro.x/y/z`
+in degrees/s), with a requested 10 ms period. State, motor/battery and attitude
+target groups are also requested at 10 ms. Packet records retain FC log ticks,
+host wall/monotonic receipt times and receipt sequence numbers. These are not
+individual IMU sampling timestamps or an atomic cross-group snapshot; actual
+rates and gaps must be checked after the flight. Log payloads are checked before
+takeoff (24 bytes for IMU, at most 26 per block; one block reserved for battery).
+
+`calibration_contact_capture` in that JSON saves the pre-flight mission and the
+previous per-drone calibration entry/hash before the ordinary fit can overwrite
+it. Missing previous calibration is marked explicitly. The existing effective
+runtime configuration, commands, Vicon frames and wrench records remain logged.
+Calibration disables live contact decisions, so zero live onsets is **not** a
+false-positive result: replay must enable detector decisions offline using frozen
+thresholds/model. A new fit evaluated on the same flight is an in-sample check,
+not independent validation. Keep the complete log for the offline comparison.
+
 Normal FC-owned braking now also loads the offboard XYZ wrench alignment
 (`model_delay_s`, `model_time_constant_s`, `model_acceleration_scale`) from the
 per-drone wrench calibration file. This does not load retired Pi braking fits

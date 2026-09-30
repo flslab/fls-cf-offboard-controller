@@ -342,12 +342,15 @@ class CurveLoggingTests(unittest.TestCase):
                 firmware_brake_command_mode=command_mode,cf=Mock())
             ctrl.cf.param.toc.toc={'hlCommander':dict.fromkeys(('curveVer','curveLog')) if version_present else {}}
             ctrl.cf.param.get_value.return_value='1'
-            with patch('Interaction.log_manager.InteractionLogger'),patch('Interaction.curve_logging.CurveRecorder') as recorder,patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters') as confirm:
+            with patch('Interaction.log_manager.InteractionLogger'),patch('Interaction.curve_logging.CurveRecorder') as recorder,patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters') as confirm, patch(
+                    'Interaction.calibration_contact_logging.configure_calibration_capture',
+                    side_effect=lambda logs, cf, selected, mission, args: selected) as capture:
                 if not version_present:
                     with self.assertRaisesRegex(RuntimeError,'curve event logging protocol'):setup(ctrl)
                     recorder.assert_not_called();ctrl.cf.param.set_value.assert_not_called();continue
                 setup(ctrl)
                 self.assertEqual(recorder.call_args.kwargs['events_enabled'],not calibrate)
+                self.assertEqual(capture.call_count, int(calibrate))
                 self.assertEqual(ctrl.cf.param.set_value.call_args_list[0].args,('hlCommander.curveLog','0'))
                 if calibrate:
                     confirm.assert_not_called();self.assertEqual(ctrl.cf.param.set_value.call_count,1)

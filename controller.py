@@ -1799,6 +1799,13 @@ class Controller:
                                                     acceleration_residual=residual_logging)
                 elif 'curveLog' in self.cf.param.toc.toc.get('hlCommander', {}):
                     self.cf.param.set_value('hlCommander.curveLog', '0')
+                from Interaction.calibration_contact_logging import (
+                    is_plain_xyz_calibration, configure_calibration_capture,
+                )
+                if is_plain_xyz_calibration(self.args):
+                    selected = configure_calibration_capture(
+                        self.log_manager, self.cf, selected, self.mission, self.args,
+                    )
                 self.log_manager.init_cf_logger(
                     self.cf, selected,
                     self.args.cf_log_period,
