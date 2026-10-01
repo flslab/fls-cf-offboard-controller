@@ -67,12 +67,11 @@ def _calibration_snapshot(mission, drone_id):
             'sha256': hashlib.sha256(contents).hexdigest(), 'entry': entry}
 
 
-def configure_calibration_capture(log_manager, cf, selected, mission, args):
-    """Validate subscriptions and save the pre-fit model before takeoff."""
-    selected = calibration_log_vars(selected)
+def capture_group_manifest(cf, selected, default_period_ms, *, label='calibration'):
+    """Check a read-only capture's existing subscriptions before starting them."""
     # Firmware supports 16 blocks; reserve one for controller battery polling.
     if len(selected) > 15:
-        raise ValueError('calibration capture exceeds the 15-block log budget')
+        raise ValueError(f'{label} capture exceeds the 15-block log budget')
     toc = cf.log.toc.toc
     groups = {}
     missing = []
@@ -81,24 +80,31 @@ def configure_calibration_capture(log_manager, cf, selected, mission, args):
                      if key != 'log_period_ms'}
         payload = sum(_WIRE_BYTES[value['type']] for value in variables.values())
         if payload > 26:
-            raise ValueError(f'calibration log block {name} exceeds 26 bytes')
+            raise ValueError(f'{label} log block {name} exceeds 26 bytes')
         for field in variables:
             prefix, variable = field.split('.', 1)
             if variable not in toc.get(prefix, {}):
                 missing.append(field)
         groups[name] = {
-            'requested_period_ms': group.get('log_period_ms', args.cf_log_period),
+            'requested_period_ms': group.get('log_period_ms', default_period_ms),
             'payload_bytes': payload,
             'variables': {key: {k: v for k, v in value.items() if k != 'data'}
                           for key, value in variables.items()},
         }
     if missing:
-        raise RuntimeError('calibration capture needs missing firmware log variables: '
+        raise RuntimeError(f'{label} capture needs missing firmware log variables: '
                            + ', '.join(sorted(set(missing))))
     # Log operations are per variable subscription, including duplicates.
     variable_count = sum(len(group['variables']) for group in groups.values())
     if variable_count > 127:
-        raise ValueError('calibration capture exceeds the 127-variable log budget')
+        raise ValueError(f'{label} capture exceeds the 127-variable log budget')
+    return groups, variable_count
+
+
+def configure_calibration_capture(log_manager, cf, selected, mission, args):
+    """Validate subscriptions and save the pre-fit model before takeoff."""
+    selected = calibration_log_vars(selected)
+    groups, variable_count = capture_group_manifest(cf, selected, args.cf_log_period)
     manifest = {
         'schema_version': 1,
         'capture_only': True,

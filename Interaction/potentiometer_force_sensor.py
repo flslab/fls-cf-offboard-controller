@@ -756,6 +756,7 @@ class PotentiometerForceSensor:
             read_timeout_s: float = 0.1,
             serial_factory: Callable[..., serial.Serial] = serial.Serial,
             info_log_interval_s: float = 0.1,
+            sample_callback: Callable[[PotentiometerForceSample], None] | None = None,
     ):
         self.port = str(port)
         self.baud = int(baud)
@@ -763,6 +764,9 @@ class PotentiometerForceSensor:
         self.max_extension_mm = float(max_extension_mm)
         self.read_timeout_s = float(read_timeout_s)
         self.info_log_interval_s = float(info_log_interval_s)
+        if sample_callback is not None and not callable(sample_callback):
+            raise ValueError('sample_callback must be callable or None')
+        self.sample_callback = sample_callback
         if self.baud <= 0:
             raise ValueError("baud must be positive")
         if self.spring_constant_n_per_mm <= 0.0:
@@ -878,7 +882,19 @@ class PotentiometerForceSensor:
                     self._latest = sample
                 self._sample_event.set()
                 self._log_sample_info(sample)
+                self._capture_sample(sample)
         except Exception as error:
             self._reader_error = error
             logger.exception("Force-sensor serial reader stopped unexpectedly")
             self._sample_event.set()
+
+    def _capture_sample(self, sample):
+        # Diagnostics must never kill the UART reader or modify its latest sample.
+        # The configured callback only enqueues a small record; it never fits or
+        # evaluates the experimental detector. Disable once on writer failure.
+        if self.sample_callback is not None:
+            try:
+                self.sample_callback(sample)
+            except Exception:
+                self.sample_callback = None
+                logger.exception('Raw potentiometer capture failed; disabled, sensor control unchanged')
