@@ -72,3 +72,264 @@ the localizer JSON. The controller accepts only synchronized HyperGrid PnP
 solutions that pass the configured reprojection, feature-count, image-span,
 innovation, and temporal gates. The packet carries `FC EKF yaw - PnP yaw` in
 radians and never forwards PnP roll or pitch.
+
+### Model-contact calibration and parallel diagnostics
+
+Ordinary `--calibrate --log` also records contact-free detector evaluation data
+automatically; no extra flag or mission change is needed. Fly the usual XYZ
+excitation **without hand contact**. This does not enable the experimental IMU
+detector, change flight commands, or add the optional multi-trial braking sweep.
+Normal interaction runs keep their existing subscriptions.
+
+The flight JSON includes `FORCE_IMU` (body `acc.x/y/z` in g and `gyro.x/y/z`
+in degrees/s), with a requested 10 ms period. State, motor/battery and attitude
+target groups are also requested at 10 ms. Packet records retain FC log ticks,
+host wall/monotonic receipt times and receipt sequence numbers. These are not
+individual IMU sampling timestamps or an atomic cross-group snapshot; actual
+rates and gaps must be checked after the flight. Log payloads are checked before
+takeoff (24 bytes for IMU, at most 26 per block; one block reserved for battery).
+
+`calibration_contact_capture` in that JSON saves the pre-flight mission and the
+previous per-drone calibration entry/hash before the ordinary fit can overwrite
+it. Missing previous calibration is marked explicitly. The existing effective
+runtime configuration, commands, Vicon frames and wrench records remain logged.
+Calibration disables live contact decisions, so zero live onsets is **not** a
+false-positive result: replay must enable detector decisions offline using frozen
+thresholds/model. A new fit evaluated on the same flight is an in-sample check,
+not independent validation. Keep the complete log for the offline comparison.
+
+Normal FC-owned braking now also loads the offboard XYZ wrench alignment
+(`model_delay_s`, `model_time_constant_s`, `model_acceleration_scale`) from the
+per-drone wrench calibration file. This does not load retired Pi braking fits
+or replace the separate FC attitude-response calibration. The effective
+configuration records `wrench_detection_calibration` and its source. Missing
+files keep mission defaults with a warning; malformed saved vectors are rejected.
+
+Onboard wrench logs include `model_contact_diagnostics` (schema 2): raw and
+baseline-corrected **30 ms short-window** model contact decisions, baseline
+readiness/offset, and invalid-gap markers. The original 80 ms force path remains
+unchanged; its comparison decisions are stored under `long_window`. Saved XYZ
+delay/gain/response calibration is also used by the independent short estimator.
+The short path requires at least 20 ms of history and 30 ms of continuous
+above-threshold evidence, in addition to the existing strength-weighted CUSUM.
+This stops a single velocity-estimate step from triggering just because its
+short-window residual is large. Force thresholds and release dwell are unchanged.
+`window_s` and `minimum_window_s` in the diagnostic configuration override the
+short history lengths; continuous confirmation follows `window_s`.
+The estimator retains the sample preceding the window boundary: actual duration
+can exceed 30 ms by a sampling interval and is logged as `actual_window_s`.
+Neither 30 ms nor the minimum history is a promise of total detection latency.
+These are **shadow results only** and never change the selected detector,
+rendered force, release command or S-curve. Potentiometer detection stays selected.
+The bounded XY baseline uses only past idle/stationary samples and freezes on
+force changes, motion or contact evidence; it does not consume potentiometer
+labels or claim to measure absolute force. Missing windows are not no-contact
+evidence. Baseline learning is conservative and may remain unavailable.
+
+Diagnostics are enabled by default for the onboard path. To disable only this
+comparison, set `wrench_interaction.model_contact_diagnostics.enabled: false`.
+They run on the offboard computer, not the FC. During a blocking firmware-brake
+wait, this existing wrench stream still has a gap; do not use it to claim
+continuous release/re-contact validation. No active-detector replacement or
+physical-flight validation is implied by these logs.
+
+### Repeated level-attitude interaction
+
+`Interaction.config.behavior: level_coast` selects an independent timed behavior.
+Omitting it (or using `standard`) preserves the existing interaction/EKF and
+firmware braking path. The separate LightBender mission is
+`Interaction/SFL/translation_level_coast.yaml`; select that mission in the swarm
+manifest to use it. The original `translation_inertia.yaml` remains available.
+
+The mission selects `wrench_interaction_profile: level_coast`. Its shared settings
+live in this offboard repository at `Interaction/profiles/level_coast.yaml`.
+The controller expands that profile immediately after downloading the mission,
+before preflight and log setup. An optional inline `wrench_interaction` mapping
+overrides individual settings recursively; saved XYZ calibration is loaded after
+that. The runtime config log records the profile name and full effective settings.
+Unknown or missing profiles fail during mission loading. Deploy the offboard code
+and profile together when using a mission that references it.
+
+Keep `detection_method: momentum_impulse` for synchronized onboard state logging;
+the profile supplies `state_source: onboard`. Select the actual contact detector with
+`level_coast.detector: vel`, `model`, or `potentiometer` (`--sense` required).
+The model and potentiometer choices reuse the existing contact/release detectors
+and saved XYZ detection calibration. Velocity uses XY speed hysteresis and dwell;
+a low-speed release is a heuristic, not a separate measurement of hand contact.
+
+After the existing stationary arming gate, contact sends
+`send_zdistance_setpoint(0, 0, 0, nominal_z)` continuously. Confirmed release
+keeps that same command until `hypot(vx, vy) < level_coast.stop_speed_m_s`
+(default `0.03`), or a newly detected interaction preempts coast as described below.
+Low speed captures current XY at nominal Z and resets position/velocity integrators.
+`grace_time` specifies seconds (default `0.5`), and `level_coast.grace_start` selects:
+
+- `speed_threshold` (default): start grace at low-speed capture, hold position,
+  then reset detectors and repeat stationary arming. Coast/grace ignore onsets.
+- `release`: start grace at each **confirmed** release. At expiry, clear detector
+  evidence and the release latch, then allow a fresh onset even during coast.
+  That onset immediately enters contact; the next confirmed release restarts grace.
+  There is no repeated stationary arming in this mode. If low speed arrives before
+  expiry, hold the captured position for the remaining grace; if it arrives later,
+  hold position and remain ready. Initial startup still requires stationary arming.
+
+For example, `grace_time: 0.3` with `level_coast.grace_start: release` reopens
+detection 300 ms after confirmed release. Detection still requires fresh onset
+evidence; velocity/potentiometer detectors retain their unloaded baseline rule.
+This is a refractory interval, not proof that residual model force has decayed.
+Logs record the grace origin, detection enablement, and `coast_preempted` transitions.
+
+`Interaction/level_coast.py` hardcodes `DETECTION_TO_ORI_DELAY_S = 0.10`
+(seconds). After a confirmed onset, keep sending the existing position target
+until this interval expires, then send the level-attitude command. Set it to
+`0.0` for immediate switching. Release detection, safety checks and the mission
+duration continue during the delay; an early release keeps its original grace
+start and switches to the level coasting command when the delay ends. If a new contact preempts coast,
+capture current XY for the new position-delay interval. Logs keep contact and
+release times separate from `Level Coast Command Mode Changed`, and the console
+prints `pos delay`, `pos -> ori`, and `ori -> pos`.
+
+`level_coast.yaw_rate_damping: true` uses the original firmware and standard
+position/z-distance packets. Offboard temporarily sets the four existing
+`pid_attitude.yaw_kp/ki/kd/kff` parameters to zero once the initial interaction
+stability gate is satisfied and confirms them by fresh reads. Preflight only
+checks and backs up the original gains; takeoff and stability waiting retain
+normal yaw control. Position commands continue during asynchronous confirmation,
+and interaction becomes ready only after confirmation succeeds. The yaw-rate PID
+gains stay unchanged: both position and
+attitude commands then target zero rate without a heading-restoring term.
+Once enabled, this applies through interaction and landing. It requires PID control,
+grounded startup and normal landing; it is incompatible with `follow_yaw`.
+Original gains are restored only after landing/stop. A recovery record in
+`cache/yaw-gains-*.json` is retained if restoration fails, and is restored at the
+next grounded startup, even when the option is disabled. No firmware source,
+packet format, flash or persistent parameter storage is changed. Existing yaw
+rate-loop damping remains active; this does not make yaw torque-free.
+
+`level_coast.follow_yaw: true` updates position-hold yaw from the current onboard
+estimate during preparation, ready, and grace. Disabled or omitted sends absolute
+`yaw=0` in those phases, regardless of mission target yaw. Contact/coast always
+send zero yaw **rate**, with zero roll/pitch and nominal height. No firmware change
+or yaw-contact detector is required. Following waits for the first fresh yaw sample;
+it does not substitute a zero heading while awaiting startup state.
+
+`duration` covers the entire repeated loop after observer startup, including
+preparation and grace. At expiry in any phase, control returns to the ordinary
+mission landing lifecycle. The new mode requires `firmware_auto_brake.enabled:
+false`; it does not submit release events or braking curves. Existing configured
+PID attitude-source switching is reused at contact and hold capture. State/motor
+freshness, measured boundaries, battery and operator-abort checks remain active.
+The example is an offline-tested configuration, not flight validation.
+
+### Distance and deceleration inputs for onboard braking
+
+Paired firmware 26092803 exposes these `hlCommander` parameters:
+
+| Firmware parameter | Mission key under `firmware_auto_brake` | Meaning |
+| --- | --- | --- |
+| `pRelScD` | `stop_distance_m` | Requested distance along the fixed release-velocity direction, in metres; default `0` means free stop. |
+| `pRelScA` | `stop_deceleration_m_s2` | Positive reference peak-deceleration cap, in m/s^2; omitted means `3.6`. Currently limited to `3.6` by the existing reference envelope. |
+
+For example, add `stop_distance_m: 0.4` and `stop_deceleration_m_s2: 1.5` to
+the existing `firmware_auto_brake` mapping. Both values latch at release.
+Distance has priority: the FC solves the existing ramp/seventh-order tail
+reference so its velocity integral equals the requested distance and its
+terminal velocity is zero. It may use a lower peak than requested. The
+configured `tail_s` is preferred; distance/time constraints can shorten it
+to no less than 0.15 s. The existing maximum duration remains in force.
+An infeasible request is reported, not replaced by a different distance or
+a stronger deceleration. No distance uses free stop; omitting both inputs
+preserves the old 3.6 m/s^2 reference planner.
+
+Distance mode requires `velocity_scurve`, compensated `attitude` execution,
+positive `position_tracking_bandwidth` (the current P/V/A/J setting is `3.0`),
+`handoff: curve_endpoint_forward`, and `state_matched_start: false`.
+Startup checks `pRelReqVer=1` before enabling the mode, not a firmware build
+allowlist. Omission explicitly restores `pRelScA=3.6` on capable firmware.
+Version-4 curve events include the requested inputs, actual reference peak,
+integrated distance, duration and solver failure reason; older logs still read.
+
+Distance is relative to the FC curve-activation position. Exact reference
+area does not guarantee exact physical stopping: delay, initial attitude and
+tracking error still matter. The cap is for the reference, not a new hard
+limit on corrective acceleration. Existing compensation, actuator bounds,
+and forward-only handoff protection are unchanged; an overshoot/reversal can
+still cause the hold target to use the current point rather than fly backward
+to the reference endpoint. No online replanning is enabled.
+
+### Per-interaction friction for onboard braking
+
+The compensated attitude S-curve can use the kinetic friction selected for the
+current interaction (including its randomized 2AFC condition). In the existing
+`firmware_auto_brake.analytic_profile` mapping, opt in with:
+
+```yaml
+friction_from_interaction: true
+```
+
+This requires `mode: scurve`, `shape: velocity_scurve`, `execution: attitude`,
+`response_compensation: true`, `rate_feedforward: false`, and
+`state_matched_start: false`. Keep the existing tail, handoff, feedback and
+calibration settings. `position_tracking_bandwidth: 3.0` selects the paired
+P/V/A/J tracker; zero or omission retains velocity/acceleration/jerk tracking.
+
+Use paired firmware exposing `hlCommander.pRelMuVer=1` and `pRelFric` (the
+26092802 candidate includes these). Startup checks capabilities rather than a
+build-number allowlist. Pulling this repository does not flash firmware or
+change the separate mission YAML. The friction opt-in is off when omitted;
+older firmware continues to use the legacy release packet.
+
+The release packet atomically carries the selected kinetic coefficient with
+the interaction identity. The FC latches it for that release and uses `mu*9.81`
+as the requested deceleration bound. It preserves the fixed smooth tail and
+existing maximum duration/acceleration envelope; it does not enable repeated
+replanning. In 26092803 this bound is also capped by `pRelScA`; the firmware
+rejects a duration-infeasible request instead of increasing the cap to stop
+sooner. Lower friction generally gives a longer free-stop reference at the
+same release speed, but the smooth-tail duration can make different
+coefficients produce the same curve. With a requested distance, that distance
+takes priority and friction is an additional peak cap. This is not exact
+Coulomb motion throughout the smooth tail. Static friction is not used for
+this post-release distance calculation.
+
+Version-3 curve events record requested friction, applied deceleration bound,
+peak reference deceleration, planned time/distance and limitation flags alongside
+the coefficients and computation timing. Readers remain compatible with event
+versions 1 and 2. Continuous state-log rates are unchanged.
+
+### Independent frozen contact-detector validation (capture only)
+
+Normal `--interaction --sense` can opt into `Interaction.config.contact_validation_capture`
+in the mission YAML. It adds a 100 Hz raw accelerometer/gyro block, receipt/device
+timestamps, every valid raw UART potentiometer sample, and the frozen experimental
+profile to the log. The primary detector, yaw behavior, force rendering, release
+behavior, firmware and existing calibration files are unchanged. The experimental
+model is **not executed in the live control loop** and has no command authority.
+
+```yaml
+contact_validation_capture:
+  enabled: true
+  command_authority: false
+  profile_path: Interaction/profiles/contact_validation_lb11_20260930.json
+  profile_sha256: 7078ab9d78fa80543a26c17aff89b794113fc61ef89b1082482379f054f1a4b7
+  initial_no_touch_s: 10.0
+```
+
+The packaged profile above is a frozen **lb11-only offline-validation sample**,
+not a live flight calibration. A complete mission example is provided in
+`Interaction/examples/contact_validation_lb11.yaml`; select it from the
+orchestrator instead of the normal level-coast mission to enable this capture.
+It ships with Git so a normal Pi pull also obtains its pinned parameters.
+Private local profiles (`Interaction/contact_diagnostic_profile.json`),
+`wrench_calibration.json` and `attitude_response.json` remain ignored and untouched.
+Profiles include frozen coefficients, detector/filter settings, source-data hash,
+drone identity and mass. Do not reuse lb11 coefficients for another aircraft.
+Missing/changed profiles, missing telemetry and incompatible modes fail before
+takeoff. Require `--log`; do not use `--calibrate` for this independent validation.
+
+After the initial contact detector arms, do not touch for the first 10 seconds.
+Then perform separated light contacts, waiting for normal rearming between them.
+This is an operator protocol, not an automated flight or asserted ground truth.
+Potentiometer threshold crossings are a reference proxy; they are not exact
+physical contact times. The offline verifier reports coverage, misses and
+unmatched onsets, and never treats missing data as zero false positives.

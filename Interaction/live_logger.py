@@ -25,7 +25,8 @@ class LiveLoggerQueueFull(LiveLoggerError):
 
 class LiveLogger:
     def __init__(self, file_dir, logger_function=None, limit=20, *,
-                 queue_capacity=20000, flush_timeout_s=5.0):
+                 queue_capacity=20000, flush_timeout_s=5.0, json_lines=False,
+                 exclusive=False):
         for name, value in (("limit", limit), ("queue_capacity", queue_capacity)):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
@@ -34,7 +35,8 @@ class LiveLogger:
 
         self.buffer_limit = limit
         self.logger_function = logger_function
-        self.log_file = open(file_dir, "w")
+        self.log_file = open(file_dir, "x" if exclusive else "w")
+        self.json_lines = json_lines
         self.first_item = True
         self._queue = deque()
         self._queue_capacity = queue_capacity
@@ -164,7 +166,8 @@ class LiveLogger:
 
     def _writer_main(self):
         try:
-            self.log_file.write("[\n")
+            if not self.json_lines:
+                self.log_file.write("[\n")
             self.log_file.flush()
             with self._condition:
                 self._header_ready = True
@@ -191,8 +194,11 @@ class LiveLogger:
                     self._in_flight = len(batch)
 
                 # No producer or stats lock is held across file operations.
-                prefix = "" if self.first_item else ",\n"
-                self.log_file.write(prefix + ",\n".join(batch))
+                if self.json_lines:
+                    self.log_file.write("\n".join(batch) + "\n")
+                else:
+                    prefix = "" if self.first_item else ",\n"
+                    self.log_file.write(prefix + ",\n".join(batch))
                 self.log_file.flush()
                 self.first_item = False
                 with self._condition:
@@ -200,7 +206,8 @@ class LiveLogger:
                     self._in_flight = 0
                     self._condition.notify_all()
 
-            self.log_file.write("\n]")
+            if not self.json_lines:
+                self.log_file.write("\n]")
             self.log_file.flush()
         except Exception as error:
             self._record_writer_error(error)

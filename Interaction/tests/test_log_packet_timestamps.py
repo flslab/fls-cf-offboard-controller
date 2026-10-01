@@ -1,6 +1,9 @@
 """Packet clock metadata is additive logging, never a control-time change."""
 
 import collections
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import threading
 import unittest
@@ -16,6 +19,43 @@ from Interaction.log_manager import (
 
 
 class LogPacketTimestampTests(unittest.TestCase):
+    def test_log_block_stop_failure_still_closes_local_writer(self):
+        from Interaction.live_logger import LiveLogger
+        logger = self.make_logger()
+        failure = OSError('USB disconnected')
+        logger.cf_var_logger = [Mock(), Mock()]
+        logger.cf_var_logger[0].stop.side_effect = failure
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'trial.json'
+            logger.live_logger = LiveLogger(str(path))
+            logger.live_logger.write({'type': 'test', 'value': 1})
+            with self.assertRaises(OSError) as caught:
+                logger.stop()
+            self.assertIs(caught.exception, failure)
+            logger.cf_var_logger[1].stop.assert_called_once()
+            self.assertEqual(json.loads(path.read_text()), [{'type': 'test', 'value': 1}])
+            self.assertTrue(logger.live_logger.stats_snapshot()['closed'])
+
+    def test_type_only_curve_status_config_delivers_first_callback(self):
+        from Interaction.curve_logging import curve_state_log_vars
+        from cflib.crazyflie.log import LogConfig
+        logger = self.make_logger()
+        selected = {'CURVE_STATUS': curve_state_log_vars({})['CURVE_STATUS']}
+        received = []
+        logger.add_cf_packet_listener(received.append)
+        data = {name: 0 for name in selected['CURVE_STATUS']
+                if name != 'log_period_ms'}
+        def start(config):
+            config.data_received_cb.call(1234, dict(data), config)
+        with patch.object(LogConfig, 'start', start):
+            logger.init_cf_logger(Mock(), selected)
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0].group, 'CURVE_STATUS')
+        for name in data:
+            self.assertEqual(logger.cf_log_data['CURVE_STATUS'][name]['data'], [0])
+            self.assertNotIn('data', selected['CURVE_STATUS'][name])
+        self.assertEqual(logger.live_logger.write.call_args.args[0]['group'], 'CURVE_STATUS')
+
     def make_logger(self, *, enabled=True):
         logger = InteractionLogger.__new__(InteractionLogger)
         logger.cf_log_group_times = {}

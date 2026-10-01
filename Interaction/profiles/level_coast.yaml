@@ -1,0 +1,105 @@
+# Shared offboard settings for the level_coast behavior.
+# Mission wrench_interaction overrides take precedence; XYZ calibration is applied later.
+state_source: onboard
+shadow_mode: false
+mass: 0.17
+inertia:
+- 0.002
+- 0.002
+- 0.003
+motor_model:
+  hover_pwm: 31900
+  hover_voltage: 7.8
+  roll_sign_for_world_thrust: 1
+  pitch_sign_for_world_thrust: -1
+  angular_accel_scale:
+  - 0.0
+  - 0.0
+  - 0.0
+  yaw_command_model:
+    enabled: false
+    accel_per_command: 0.0
+    damping_per_s: 0.0
+    bias_rad_s2: 0.0
+momentum_observer:
+  linear_gain:
+  - 8.0
+  - 8.0
+  - 8.0
+  angular_gain:
+  - 12.0
+  - 12.0
+  - 12.0
+  force_measurement_std:
+  - 0.02
+  - 0.02
+  - 0.03
+  torque_measurement_std:
+  - 0.0002
+  - 0.0002
+  - 0.00025
+  max_dt_s: 0.05
+impulse_estimator:
+  window_s: 0.08
+  minimum_window_s: 0.05
+  max_dt_s: 0.05
+detection:
+  translation:
+    component_thresholds:
+    - 0.08
+    - 0.08
+    - 0.12
+    covariance_floor:
+    - 0.015
+    - 0.015
+    - 0.025
+    confidence_sigma: 2.5
+    onset_evidence_s: 0.05
+    release_time_s: 0.15
+    release_ratio: 0.55
+    onset_axes:
+    - 0
+    - 1
+    release_projection_axes:
+    - 0
+    - 1
+    release_direction_min_norm: 0.02
+  yaw:
+    enabled: false
+    component_thresholds:
+    - 0.001
+    covariance_floor:
+    - 0.00015
+    confidence_sigma: 2.5
+    onset_evidence_s: 0.05
+    release_time_s: 0.15
+    release_ratio: 0.55
+initial_contact_arming:
+  enabled: true
+  apply_after_each_interaction: true
+  max_xy_speed_m_s: 0.03
+  stationary_dwell_s: 0.5
+  max_sample_gap_s: 0.1
+observer_settle_s: 1.0
+bias_calibration_s: 1.0
+bias_calibration_timeout_s: 12.0
+calibration_max_speed_m_s: 0.06
+calibration_max_angular_rate_rad_s: 0.25
+minimum_bias_samples: 30
+safety:
+  max_frame_age_s: 0.1
+  max_state_age_s: 0.1
+  enforce_state_group_skew: false
+  calibration_state_dropout_timeout_s: 0.25
+  calibration_state_group_skew_timeout_s: 0.25
+  calibration_max_protocol_clock_lag_s: 10.0
+  max_motor_age_s: 0.15
+  max_motor_pose_skew_s: 0.03
+  max_state_group_skew_s: 0.03
+  max_motor_state_skew_s: 0.03
+  startup_timeout_s: 5.0
+  require_motor_data: true
+  require_calibrated_angular_model_when_active: true
+firmware_auto_brake:
+  enabled: false
+startup_bias_calibration_enabled: true

@@ -1949,6 +1949,36 @@ class WrenchInteractionLoopTests(unittest.TestCase):
         self.assertEqual([name for name, _ in calls], ['velocity'])
         self.assertEqual(calls[0][1]['vel_threshold'], 0.2)
 
+    def test_firmware_translation_dispatch_loads_detection_calibration(self):
+        controller = InteractionsControl.__new__(InteractionsControl)
+        controller.drone_id = 'lb11'
+        controller.lo_commander = FakeCommander()
+        original = {'state_source': 'onboard', 'shadow_mode': False,
+                    'firmware_auto_brake': {'enabled': True, 'mode': 'scurve'}}
+        controller.mission = {
+            'drones': {'lb11': {'target': [0, 0, 1]}},
+            'Interaction': {'config': {
+                'detection_method': 'momentum_impulse', 'duration': 60,
+                'wrench_calibration_file': '/tmp/xyz-only-test.json',
+                'wrench_interaction': original}}}
+        calls = []
+        controller.interaction_onboard_wrench_admittance = (
+            lambda **kwargs: calls.append(kwargs))
+        calibrated = {**original, 'impulse_estimator': {
+            'model_acceleration_scale': [.8, .796, .706]},
+            'wrench_detection_calibration': {'status': 'loaded',
+                                            'parameters': {}}}
+        with patch('Interaction.interactions.apply_detection_calibration',
+                   return_value=calibrated) as load:
+            controller._run_translation()
+        load.assert_called_once_with(original, 'lb11', '/tmp/xyz-only-test.json')
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]['config']['impulse_estimator'][
+            'model_acceleration_scale'], [.8, .796, .706])
+        self.assertEqual(calls[0]['duration'], 60)
+        self.assertFalse(calls[0]['config']['control_handoff'][
+            'coast_jerk_limited_free_stop_enabled'])
+
     def test_task_detection_method_selects_momentum_impulse(self):
         controller = InteractionsControl.__new__(InteractionsControl)
         controller.drone_id = 'lb11'
@@ -10557,6 +10587,11 @@ class WrenchInteractionLoopTests(unittest.TestCase):
             observer_rows[-1]['state_source'],
             'crazyflie_state_estimate',
         )
+        self.assertIn('model_contact_diagnostics', observer_rows[-1])
+        self.assertFalse(observer_rows[-1]['model_contact_diagnostics'][
+            'command_authority'])
+        self.assertEqual(observer_rows[-1]['model_contact_diagnostics'][
+            'schema_version'], 2)
         self.assertTrue(observer_rows[-1]['shadow_mode'])
         self.assertFalse(
             observer_rows[-1]['initial_contact_detector_armed']

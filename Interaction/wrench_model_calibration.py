@@ -1491,6 +1491,42 @@ def load_required_xyz_calibration(drone_id, path=DEFAULT_CALIBRATION_PATH):
     return entry
 
 
+def apply_detection_calibration(config, drone_id, path=DEFAULT_CALIBRATION_PATH):
+    """Load only XYZ actuator/velocity alignment, never a braking controller.
+
+    FC-owned braking still needs the offboard force model's calibration.
+    Keep this independent of retired planar fits and FC attitude-response fits.
+    An absent file preserves mission defaults; a corrupt fit is not used.
+    """
+    resolved = deepcopy(config)
+    entry = load_drone_calibration(drone_id, path)
+    provenance = {'status': 'not_found', 'drone_id': str(drone_id),
+                  'path': str(path)}
+    if entry is not None:
+        fitted = {}
+        try:
+            for key in ('model_delay_s', 'model_time_constant_s',
+                        'model_acceleration_scale'):
+                raw = entry['impulse_estimator'][key]
+                if not isinstance(raw, (list, tuple)) or any(
+                        isinstance(v, bool) for v in raw):
+                    raise ValueError(key)
+                values = np.asarray(raw, dtype=float)
+                if (values.shape != (3,) or not np.all(np.isfinite(values))
+                        or np.any(values < 0)
+                        or (key == 'model_acceleration_scale'
+                            and np.any(values <= 0))):
+                    raise ValueError(key)
+                fitted[key] = values.tolist()
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError('invalid saved wrench XYZ calibration') from exc
+        resolved.setdefault('impulse_estimator', {}).update(fitted)
+        provenance.update(status='loaded', updated_at=entry.get('updated_at'),
+                          parameters=deepcopy(fitted))
+    resolved['wrench_detection_calibration'] = provenance
+    return resolved
+
+
 def apply_drone_calibration(
         config,
         drone_id,

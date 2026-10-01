@@ -161,6 +161,7 @@ class InteractionLogger(LogManager):
         self._accepting_cf_log_callbacks = True
         self._cf_log_packet_sequence = 0
         self._cf_log_packet_listeners = []
+        self.capture_packet_timing = False
         self._mocap_frame_sequence = 0
         self._mocap_frame_listeners = []
         self.args = kwargs.get('controller_args', False)
@@ -182,6 +183,12 @@ class InteractionLogger(LogManager):
         self.live_logger.mark_start()
 
     def stop(self, *args, **kwargs):
+        curve_error = None
+        if getattr(self, 'curve_recorder', None) is not None:
+            try:
+                self.curve_recorder.close()
+            except Exception as error:
+                curve_error = error
         with self.cf_log_callback_lock:
             self._accepting_cf_log_callbacks = False
             self._cf_log_packet_listeners = []
@@ -189,12 +196,26 @@ class InteractionLogger(LogManager):
 
         if self.cf_var_logger is not None:
             for log_config in self.cf_var_logger:
-                log_config.stop()
+                try:
+                    log_config.stop()
+                except Exception as error:
+                    if curve_error is None:
+                        curve_error = error
+                    logger.exception('Log block stop failed; still closing local log file.')
 
         self.live_logger.close()
+        if curve_error is not None:
+            raise curve_error
 
     def init_cf_logger(self, cf, cf_log_vars, cf_log_period=100):
         self.cf_log_data = copy.deepcopy(cf_log_vars)
+
+        # Runtime storage belongs to this logger, not the configuration. New
+        # diagnostic groups may specify only their wire types.
+        for group in self.cf_log_data.values():
+            for name, variable in group.items():
+                if name != 'log_period_ms':
+                    variable['data'] = []
 
         self.cf_var_logger = []
         for name, log_group in self.cf_log_data.items():
@@ -543,6 +564,9 @@ class InteractionLogger(LogManager):
                 return
 
             cur_time = time.time()
+            capture_timing = getattr(self, 'capture_packet_timing', False)
+            listeners = tuple(getattr(self, '_cf_log_packet_listeners', ()))
+            cur_monotonic = time.monotonic() if capture_timing or listeners else None
             group_name = log_conf.name
             transport_timestamp = int(timestamp)
             effective_timestamp = transport_timestamp
@@ -600,15 +624,13 @@ class InteractionLogger(LogManager):
                         var_info['data'].append(data[var_name])
 
             packet_sequence = None
-            if getattr(self, '_cf_log_packet_listeners', None):
-                listeners = tuple(self._cf_log_packet_listeners)
-                # Preserve the exact default-disabled callback path: immutable
-                # packet allocation and global sequencing exist only while an
-                # opt-in shadow listener is registered.
+            if capture_timing or listeners:
+                # Capture-only calibration needs packet order and monotonic
+                # receipt times, but must not run a live experimental observer.
                 sequence = getattr(self, '_cf_log_packet_sequence', 0)
                 self._cf_log_packet_sequence = sequence + 1
                 packet_sequence = sequence
-                cur_monotonic = time.monotonic()
+            if listeners:
                 packet_data = MappingProxyType({
                     key: value for key, value in data.items() if key != 'time'
                 })

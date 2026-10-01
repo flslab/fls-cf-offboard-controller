@@ -1,9 +1,9 @@
 """Fit the inner roll/pitch response from the ordinary XYZ calibration log.
 
 The calibration motion remains one continuous position-reference excitation.
-Firmware ``controller.roll/pitch`` are the inputs and the isolated 15-state
-``kalmanPRel`` quaternion is the measured output.  No targeted attitude trial
-or braking pulse is required.
+Firmware ``controller.roll/pitch`` are the inputs. The measurement source is
+explicit: ordinary firmware roll/pitch by default, or the isolated 15-state
+quaternion when requested and logged. No targeted braking pulse is required.
 """
 
 from __future__ import annotations
@@ -25,12 +25,12 @@ def _sample_clock(rows):
         raw = np.asarray(
             [float(row["cf_timestamp_ms"]) for row in rows], dtype=float
         )
-        # Handle the uint32 millisecond wrap in long-lived sessions.
+        # CRTP log timestamps wrap at 24 bits, not uint32.
         unwrapped = raw.copy()
         offset = 0.0
         for index in range(1, len(unwrapped)):
-            if raw[index] + offset < unwrapped[index-1] - 2**31:
-                offset += 2**32
+            if raw[index] + offset < unwrapped[index-1] - 2**23:
+                offset += 2**24
             unwrapped[index] = raw[index] + offset
         return 0.001 * unwrapped, "firmware_timestamp_ms"
     return (
@@ -205,7 +205,7 @@ def identify_second_order_axis(
     }
 
 
-def identify_attitude_response_from_log_records(records):
+def identify_attitude_response_from_log_records(records, *, attitude_source="ordinary"):
     """Fit roll/pitch using only the plain calibration excitation interval."""
     if not isinstance(records, list):
         raise ValueError("calibration log must contain a list of records")
@@ -218,20 +218,25 @@ def identify_attitude_response_from_log_records(records):
         end = float(events["Wrench Calibration Excitation Complete"])
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("plain XYZ calibration excitation is incomplete") from error
+    if attitude_source not in ("ordinary", "post_release15"):
+        raise ValueError("unknown attitude response measurement source")
+    desired_group = ("ATT_DES" if any(r.get("group") == "ATT_DES" for r in records)
+                     else "ATT_RATE_CTL")
+    actual_group = "P_REL_ATT" if attitude_source == "post_release15" else "VEL_ORI"
     desired_rows = [
         record["data"] for record in records
         if record.get("type") == "state"
-        and record.get("group") == "ATT_DES"
+        and record.get("group") == desired_group
         and start <= float(record.get("data", {}).get("time", -math.inf)) <= end
     ]
     attitude_rows = [
         record["data"] for record in records
         if record.get("type") == "state"
-        and record.get("group") == "P_REL_ATT"
+        and record.get("group") == actual_group
         and start <= float(record.get("data", {}).get("time", -math.inf)) <= end
     ]
     if len(desired_rows) < 100 or len(attitude_rows) < 100:
-        raise ValueError("plain calibration is missing 100 Hz command/15-state attitude")
+        raise ValueError("plain calibration is missing command/" + actual_group + " attitude")
 
     desired_time, desired_clock = _sample_clock(desired_rows)
     actual_time, actual_clock = _sample_clock(attitude_rows)
@@ -245,6 +250,9 @@ def identify_attitude_response_from_log_records(records):
             row["kalmanPRel.q2"], row["kalmanPRel.q3"],
         ])
         for row in attitude_rows
+    ], dtype=float) if attitude_source == "post_release15" else np.asarray([
+        [row["stateEstimate.roll"], row["stateEstimate.pitch"]]
+        for row in attitude_rows
     ], dtype=float)
     desired_unique = np.r_[True, np.diff(desired_time) > 0.0]
     actual_unique = np.r_[True, np.diff(actual_time) > 0.0]
@@ -253,25 +261,33 @@ def identify_attitude_response_from_log_records(records):
     actual_time = actual_time[actual_unique]
     actual = actual[actual_unique]
     # Crazyflie setpoint pitch and estimator Euler pitch use opposite signs.
-    estimator_angle_sign = np.array([1.0, -1.0])
+    estimator_angle_sign = np.array([1.0, -1.0] if attitude_source == "post_release15" else [1.0, 1.0])
     axes = {}
     for index, name in enumerate(("roll", "pitch")):
-        measured = np.interp(desired_time, actual_time, actual[:, index])
+        # Do not invent response outside overlapping telemetry or across stalls.
+        selected = (desired_time >= actual_time[0]) & (desired_time <= actual_time[-1])
+        fit_time = desired_time[selected]
+        if (len(fit_time) < 100 or np.max(np.diff(fit_time)) > .05
+                or np.max(np.diff(actual_time)) > .05):
+            raise ValueError("attitude response has insufficient overlap or >50 ms telemetry gap")
+        measured = np.interp(fit_time, actual_time, actual[:, index])
         axes[name] = identify_second_order_axis(
-            desired_time-desired_time[0],
-            desired[:, index],
+            fit_time-fit_time[0],
+            desired[selected, index],
             estimator_angle_sign[index]*measured,
         )
-    usable = all(axis["usable"] for axis in axes.values())
+    usable = (all(axis["usable"] for axis in axes.values())
+              and desired_clock == actual_clock == "firmware_timestamp_ms")
     return {
         "fit_schema_version": ATTITUDE_RESPONSE_SCHEMA_VERSION,
-        "source": "plain_xyz_calibration_controller_setpoint_to_firmware_15_state",
+        "source": "plain_xyz_calibration_controller_setpoint_to_" + attitude_source,
+        "attitude_source": attitude_source,
         "clock_basis": (
             "firmware_timestamp_ms"
             if desired_clock == actual_clock == "firmware_timestamp_ms"
             else "host_receive_time_fallback"
         ),
-        "estimator_angle_sign": {"roll": 1, "pitch": -1},
+        "estimator_angle_sign": dict(zip(("roll", "pitch"), estimator_angle_sign.tolist())),
         "axes": axes,
         "usable": usable,
         "targeted_trials_used": False,

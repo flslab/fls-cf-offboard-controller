@@ -1,0 +1,56 @@
+# Capture-only validation. Potentiometer remains the live contact/release detector.
+# Run through orchestrator --interaction --sense; do not add --calibrate.
+# After the initial detector-armed message: 10 s without contact, then contacts.
+name: translation_level_coast_contact_validation
+drones:
+  lb11:
+    target: [0, 0, 1]
+    interaction: single
+Interaction:
+  action: translation
+  config:
+    behavior: level_coast
+    detection_method: momentum_impulse
+    vicon_source_metadata: true
+    duration: 60
+    contact_validation_capture:
+      enabled: true
+      command_authority: false
+      profile_path: Interaction/profiles/contact_validation_lb11_20260930.json
+      profile_sha256: 7078ab9d78fa80543a26c17aff89b794113fc61ef89b1082482379f054f1a4b7
+      initial_no_touch_s: 10.0
+    grace_time: 0.3
+    level_coast:
+      detector: potentiometer
+      grace_start: release
+      follow_yaw: false
+      yaw_rate_damping: true
+      stop_speed_m_s: 0.03
+      velocity:
+        onset_speed_m_s: 0.1
+        release_speed_m_s: 0.08
+        onset_dwell_s: 0.03
+        release_dwell_s: 0.05
+        max_sample_gap_s: 0.1
+    virtual_object:
+      contact_detection:
+        force_threshold_n: 0.18
+        onset_dwell_s: 0.03
+      release_behavior:
+        force_drop_n: 0.04
+        candidate_lead_drop_n: 0.005
+        decrease_rate_n_s: 0.05
+        unloaded_force_n: 0.17
+        unloaded_dwell_s: 0.05
+        max_sample_gap_s: 0.15
+        candidate_sensor_stale_timeout_s: 0.25
+        candidate_stall_timeout_s: 0.15
+        force_memory_s: 0.02
+    wrench_interaction_profile: level_coast
+boundary_limits:
+  x_min: -1.5
+  x_max: 1.5
+  y_min: -1.5
+  y_max: 1.5
+  z_min: 0.3
+  z_max: 1.5

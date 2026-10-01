@@ -34,6 +34,7 @@ from Interaction.commander_handoff import HandoffError, handoff_to_high_level
 from Interaction.braking_repeat_test import validate_repeat_test_options
 from Interaction.post_release_firmware_control_event import send_vicon_position_mirror
 from Interaction.config import onboard_yaw_log_required
+from Interaction.mission_profiles import resolve_mission_profiles
 from Interaction.compressed_state_logs import (
     MAX_PAIR_SKEW_S,
     decode_kinematic_packet,
@@ -55,7 +56,6 @@ from pid_autotuner import PIDAutotuner
 setup_logging()
 
 logger = logging.getLogger(__name__)
-
 
 pos_update_time_log = []
 pos_update_profile_log = []
@@ -118,6 +118,9 @@ def create_trajectory_from_file(file_path, takeoff_altitude):
 
 
 class Controller:
+    # Optional build metadata, never an admission/arming condition.
+    firmware_auto_brake_scurve_version = None
+
     def __init__(self, args):
         self.args = args
         if self._is_interaction_application():
@@ -184,6 +187,11 @@ class Controller:
         self.send_vicon_to_cf = True
         self.firmware_auto_brake_enabled = False
         self.firmware_auto_brake_response_time_s = None
+        self.firmware_auto_brake_stop_distance_m = 0.0
+        self.firmware_auto_brake_stop_deceleration_m_s2 = 3.6
+        self._firmware_stop_deceleration_explicit = False
+        self.firmware_auto_brake_stop_max_time_s = 6.0
+        self.firmware_auto_brake_stop_min_peak = 0.3
         self.firmware_auto_brake_mode = 'two_phase'
         self._firmware_vicon_last_send_s = None
         self._firmware_vicon_mirror_error = None
@@ -224,7 +232,14 @@ class Controller:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()
+        try:
+            self.stop()
+        except Exception:
+            if exc_type is None:
+                raise
+            # Cleanup must not replace the mission/link exception that caused
+            # us to exit. stop() has already attempted every resource.
+            logger.exception('Cleanup also failed; preserving original mission error.')
 
     def connect(self):
         logger.info(f"Connecting to {self.uri}...")
@@ -294,6 +309,15 @@ class Controller:
         self.run_mission()
 
     def prepare_firmware_auto_brake(self):
+        # Calibration produces the model; it cannot require that model or arm
+        # the contact/release policy before its first calibration flight.
+        if getattr(self.args, 'calibrate', False):
+            self.firmware_auto_brake_enabled = False
+            return
+        translation = (self.mission or {}).get('Interaction', {}).get('config', {})
+        if translation.get('behavior') == 'level_coast':
+            from Interaction.level_coast import validate_level_coast
+            validate_level_coast(translation, sensor_available=getattr(self.args, 'sense', False))
         wrench = ((self.mission or {}).get('Interaction', {})
                   .get('config', {}).get('wrench_interaction') or {})
         mode = wrench.get('firmware_auto_brake') or {}
@@ -306,10 +330,38 @@ class Controller:
         if not enabled:
             return
         brake_mode = mode.get('mode', 'two_phase')
-        if brake_mode not in ('two_phase', 'zero_velocity', 'pi_joint'):
+        if brake_mode not in ('two_phase', 'zero_velocity', 'pi_joint', 'scurve'):
             raise ValueError('firmware_auto_brake.mode must be two_phase, '
-                             'zero_velocity or pi_joint')
+                             'zero_velocity, pi_joint or scurve')
         self.firmware_auto_brake_mode = brake_mode
+        command_mode = mode.get('command_mode', 'attitude')
+        if command_mode not in ('attitude', 'velocity', 'position'):
+            raise ValueError('firmware_auto_brake.command_mode must be attitude, velocity or position')
+        if command_mode in ('velocity', 'position') and brake_mode != 'scurve':
+            raise ValueError('velocity/position curve commands require mode: scurve')
+        self.firmware_brake_command_mode = command_mode
+        from Interaction.firmware_analytic_profile import profile_parameters
+        self.firmware_analytic_profile = mode.get('analytic_profile')
+        self._firmware_analytic_expected = profile_parameters(self.firmware_analytic_profile)
+        if self._firmware_analytic_expected and (brake_mode != 'scurve' or
+                self.firmware_analytic_profile['execution'] != command_mode):
+            raise ValueError('analytic_profile requires scurve and execution matching command_mode')
+        if command_mode == 'position' and not self._firmware_analytic_expected:
+            raise ValueError('position curve execution requires analytic_profile')
+        response = mode.get('response_model', {})
+        if (not isinstance(response, dict)
+                or type(response.get('enabled', False)) is not bool):
+            raise ValueError('firmware_auto_brake.response_model needs boolean enabled')
+        self.firmware_response_model_config = response
+        compensated = bool(self._firmware_analytic_expected.get('hlCommander.pRelComp'))
+        if compensated and not response.get('enabled', False):
+            raise ValueError('response_compensation requires response_model.enabled: true')
+        if self._firmware_analytic_expected and response.get('enabled', False) and not compensated:
+            raise ValueError('analytic_profile model upload requires response_compensation')
+        if response.get('enabled', False) and brake_mode != 'scurve':
+            raise ValueError('calibrated response_model requires mode: scurve')
+        if response.get('enabled', False) and command_mode == 'velocity':
+            raise ValueError('velocity PID execution requires response_model.enabled: false; attitude fit is not a velocity-loop model')
         response_time = mode.get('response_time_s')
         if (isinstance(response_time, bool) or
                 not isinstance(response_time, (int, float)) or
@@ -318,6 +370,45 @@ class Controller:
             raise ValueError('firmware_auto_brake.response_time_s must be a '
                              'measured 0.02–0.20 s hardware response fit')
         self.firmware_auto_brake_response_time_s = float(response_time)
+        # Optional S-curve target stop distance. Absent or 0 keeps the free
+        # stop, whose distance is whatever the release state produces.
+        stop = mode.get('stop_distance_m', 0.0)
+        if (isinstance(stop, bool) or not isinstance(stop, (int, float)) or
+                not math.isfinite(stop) or not 0.0 <= stop <= 10.0):
+            raise ValueError('firmware_auto_brake.stop_distance_m must be '
+                             '0 (free stop) or a distance up to 10 m')
+        if stop and brake_mode != 'scurve':
+            raise ValueError('firmware_auto_brake.stop_distance_m requires mode: scurve')
+        self.firmware_auto_brake_stop_distance_m = float(stop)
+        decel = mode.get('stop_deceleration_m_s2', 3.6)
+        if (isinstance(decel, bool) or not isinstance(decel, (int, float)) or
+                not math.isfinite(decel) or not 0 < decel <= 3.6):
+            raise ValueError('firmware_auto_brake.stop_deceleration_m_s2 must be > 0 and <= 3.6 m/s^2')
+        self.firmware_auto_brake_stop_deceleration_m_s2 = float(decel)
+        self._firmware_stop_deceleration_explicit = 'stop_deceleration_m_s2' in mode
+        profile = self.firmware_analytic_profile or {}
+        distance_profile = (profile.get('shape') == 'velocity_scurve' and
+            profile.get('execution') == 'attitude' and compensated and
+            not profile.get('state_matched_start', False) and
+            profile.get('position_tracking_bandwidth', 0) > 0 and
+            profile.get('handoff') == 'curve_endpoint_forward')
+        if stop > 0 and (response.get('enabled', False) or profile) and not distance_profile:
+            raise ValueError('stop_distance_m requires compensated velocity_scurve attitude '
+                'P/V/A/J tracking, curve_endpoint_forward and state_matched_start: false')
+        if self._firmware_stop_deceleration_explicit and (brake_mode != 'scurve' or
+                profile.get('shape') != 'velocity_scurve' or profile.get('state_matched_start', False)):
+            raise ValueError('stop_deceleration_m_s2 requires velocity_scurve analytic_profile '
+                'with state_matched_start: false')
+        max_time = mode.get('stop_max_time_s', 6.0)
+        if (isinstance(max_time, bool) or not isinstance(max_time, (int, float)) or
+                not math.isfinite(max_time) or not 0.5 <= max_time <= 12.0):
+            raise ValueError('firmware_auto_brake.stop_max_time_s must be 0.5–12 s')
+        self.firmware_auto_brake_stop_max_time_s = float(max_time)
+        min_peak = mode.get('stop_min_decel', 0.3)
+        if (isinstance(min_peak, bool) or not isinstance(min_peak, (int, float)) or
+                not math.isfinite(min_peak) or not 0.05 <= min_peak <= 3.9):
+            raise ValueError('firmware_auto_brake.stop_min_decel must be 0.05–3.9 m/s^2')
+        self.firmware_auto_brake_stop_min_peak = float(min_peak)
         if not (self.args.interaction and self.args.sense and self.args.vicon
                 and self.args.vicon_mode in ('rigidbody', 'pointcloud')
                 and not self.args.vicon_full_pose and self.args.log
@@ -333,6 +424,38 @@ class Controller:
     def verify_firmware_auto_brake_ready(self):
         if not getattr(self, 'firmware_auto_brake_enabled', False):
             return
+        curve_recorder = getattr(getattr(self, 'log_manager', None), 'curve_recorder', None)
+        if curve_recorder is not None:
+            curve_recorder.check()
+            if curve_recorder.events_enabled:
+                from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+                confirm_firmware_mode_parameters(self.cf.param, expected={
+                    'hlCommander.curveVer':curve_recorder.protocol_version, 'hlCommander.curveLog':1})
+        response_expected = getattr(self, '_firmware_response_expected', None)
+        if response_expected is not None:
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            confirm_firmware_mode_parameters(self.cf.param, expected=response_expected)
+            confirm_firmware_mode_parameters(self.cf.param, expected=self._firmware_response_pid)
+        if self.firmware_auto_brake_mode == 'scurve':
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            expected_mode = {
+                'hlCommander.pRelMode': 2,
+                'hlCommander.pRelScD': self.firmware_auto_brake_stop_distance_m,
+                'hlCommander.pRelScT': self.firmware_auto_brake_stop_max_time_s,
+                'hlCommander.pRelScB': self.firmware_auto_brake_stop_min_peak,
+                'hlCommander.pRelJoint': 0,
+                'hlCommander.pRelHost': 0,
+                'kalmanPRel.scEnable': 1,
+            }
+            if (getattr(self, 'firmware_brake_command_mode', 'attitude') == 'velocity'
+                    or getattr(self, '_firmware_analytic_expected', {})):
+                expected_mode.update({'hlCommander.pRelVelCmd': 1, 'hlCommander.pRelAdapt': 0})
+            expected_mode.update(getattr(self, '_firmware_curve_expected',
+                                         getattr(self, '_firmware_analytic_expected', {})))
+            if expected_mode.get('hlCommander.pRelHold') == 3:
+                expected_mode['hlCommander.pRelEnd'] = 1
+            confirmed = confirm_firmware_mode_parameters(self.cf.param, expected=expected_mode)
+            logger.info('Experimental FC S-curve mode confirmed: %s', confirmed)
         if self.firmware_auto_brake_mode == 'pi_joint':
             planner = getattr(self.cf, '_post_release_pi_planner', None)
             if planner is None or not planner.status().get('ready', False):
@@ -356,7 +479,7 @@ class Controller:
                     values.get('hlCommander.pRelEvtVer') == 1 and
                     values.get('hlCommander.pRelMode') == (
                         1 if self.firmware_auto_brake_mode == 'zero_velocity'
-                        else 0) and
+                        else 2 if self.firmware_auto_brake_mode == 'scurve' else 0) and
                     isinstance(values.get('hlCommander.pRelTau'), (int, float)) and
                     abs(values['hlCommander.pRelTau'] -
                         self.firmware_auto_brake_response_time_s) < 0.001 and
@@ -377,15 +500,160 @@ class Controller:
             'hlCommander': ('pRelAuto', 'pRelMode', 'pRelTau'),
         }
         host_mode = self.firmware_auto_brake_mode == 'pi_joint'
+        scurve_mode = self.firmware_auto_brake_mode == 'scurve'
+        # pRelVelCmd is the legacy firmware selector for this bounded runtime;
+        # pRelExec now selects its actual velocity/position/attitude execution.
+        velocity_mode = scurve_mode and (getattr(self, 'firmware_brake_command_mode', 'attitude') == 'velocity'
+                                        or bool(getattr(self, '_firmware_analytic_expected', {})))
         if host_mode:
-            required['hlCommander'] += ('pRelJoint', 'pRelHost', 'pRelJVer')
+            required['hlCommander'] += ('pRelJoint', 'pRelHost')
+        if scurve_mode:
+            required['hlCommander'] += ('pRelJoint', 'pRelHost',
+                                        'pRelScD', 'pRelScT', 'pRelScB')
+            required['kalmanPRel'] += ('scEnable',)
+        if velocity_mode:
+            required['hlCommander'] += ('pRelVelCmd', 'pRelAdapt')
         toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
-        if any(name not in toc.get(group, {})
-               for group, names in required.items() for name in names):
-            raise RuntimeError('connected Bolt lacks firmware auto-brake parameters')
-        if host_mode and int(self.cf.param.get_value(
-                'hlCommander.pRelJVer')) != 26092101:
-            raise RuntimeError('pi_joint v3 requires paired firmware pRelJVer = 26092101')
+        analytic = getattr(self, '_firmware_analytic_expected', {})
+        curve_expected = dict(analytic)
+        capabilities = {'hlCommander.pRelEnd': 1} if analytic.get('hlCommander.pRelHold') == 3 else {}
+        request_opt_in = (getattr(self, '_firmware_stop_deceleration_explicit', False) or
+                          (bool(analytic) and self.firmware_auto_brake_stop_distance_m > 0))
+        if request_opt_in:
+            capabilities['hlCommander.pRelReqVer'] = 1
+        if request_opt_in or 'pRelScA' in toc.get('hlCommander', {}):
+            curve_expected['hlCommander.pRelScA'] = (
+                getattr(self, 'firmware_auto_brake_stop_deceleration_m_s2', 3.6) if velocity_mode else 3.6)
+        if request_opt_in:
+            curve_expected.update({'hlCommander.pRelScD':self.firmware_auto_brake_stop_distance_m,
+                'hlCommander.pRelScT':self.firmware_auto_brake_stop_max_time_s})
+        if analytic.get('hlCommander.pRelFric'):
+            capabilities['hlCommander.pRelMuVer'] = 1
+        if 'pRelComp' in toc.get('hlCommander', {}):
+            # A prior compensated mission must never leak into another mode.
+            curve_expected.setdefault('hlCommander.pRelComp', 0)
+        if 'pRelCompB' in toc.get('hlCommander', {}):
+            curve_expected.setdefault('hlCommander.pRelCompB', 0)
+        if 'pRelSeed' in toc.get('hlCommander', {}):
+            curve_expected.setdefault('hlCommander.pRelSeed', 0)
+        if 'pRelCompP' in toc.get('hlCommander', {}):
+            # Omitted opt-in must clear an earlier experiment on the same FC.
+            curve_expected.setdefault('hlCommander.pRelCompP', 0)
+        if 'pRelFric' in toc.get('hlCommander', {}):
+            curve_expected.setdefault('hlCommander.pRelFric', 0)
+        if velocity_mode and not analytic:
+            # New firmware separates reference shape from command execution.
+            # pRelVelCmd alone can otherwise retain the default attitude path
+            # (or a previous experiment's polynomial/bypass). Older velocity-
+            # only firmware has no such selectors and keeps its original path.
+            for name in ('pRelExec', 'pRelShape', 'pRelLite'):
+                if name in toc.get('hlCommander', {}):
+                    curve_expected['hlCommander.' + name] = 0
+        for key in {**curve_expected, **capabilities}:
+            group, name = key.split('.', 1)
+            required[group] = required.get(group, ()) + (name,)
+        missing=[group+'.'+name for group,names in required.items()
+                 for name in names if name not in toc.get(group,{})]
+        if missing:
+            raise RuntimeError('connected Bolt lacks firmware auto-brake parameters: '+', '.join(missing))
+        if velocity_mode and not analytic and self.firmware_auto_brake_stop_distance_m > 0:
+            raise ValueError('velocity curve requires free-stop distance 0')
+        self._firmware_curve_expected = curve_expected
+        if velocity_mode:
+            self.cf.param.set_value('hlCommander.pRelAuto', '0')
+        if capabilities:
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            confirm_firmware_mode_parameters(self.cf.param, expected=capabilities)
+        self.firmware_build_info = {}
+        for name in ('pRelSVer', 'pRelAdVer', 'pRelJVer'):
+            if name in toc.get('hlCommander', {}):
+                try:
+                    self.firmware_build_info['hlCommander.'+name] = int(
+                        self.cf.param.get_value('hlCommander.'+name))
+                except (KeyError, TypeError, ValueError, RuntimeError):
+                    logger.warning('Firmware build metadata unavailable: %s', name)
+        self.firmware_auto_brake_scurve_version = self.firmware_build_info.get('hlCommander.pRelSVer')
+        logger.info('Firmware build metadata (diagnostic only): %s', self.firmware_build_info)
+        response = getattr(self, 'firmware_response_model_config', {})
+        if response.get('enabled', False):
+            from Interaction.firmware_response_model import (
+                DEFAULT_PATH, confirm_pid_context, load_model, upload_model,
+            )
+            from pathlib import Path
+            configured = self.cfg.PID_VALUES_FLOWDECK if self.use_flowdeck else self.cfg.PID_VALUES
+            current_pid = confirm_pid_context(self.cf.param, configured)
+            path = Path(response.get('calibration_file', DEFAULT_PATH))
+            if not path.is_absolute():
+                path = Path(__file__).resolve().parent / path
+            model = load_model(self.args.drone_id, path=path, pid_values=current_pid)
+            if 'pRelAdapt' not in toc.get('hlCommander', {}):
+                raise RuntimeError('firmware lacks calibrated response runtime')
+            # Disable authority before the parameter transaction. Never enable
+            # from cached values or leave an old model armed after failure.
+            self.cf.param.set_value('hlCommander.pRelAuto', '0')
+            self.cf.param.set_value('hlCommander.pRelAdapt', '0')
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            runtime_identity = {'pRelResp.runtime': 1}
+            confirm_firmware_mode_parameters(self.cf.param, expected=runtime_identity)
+            expected = upload_model(self.cf.param, model)
+            expected.update(runtime_identity)
+            # Upload/commit is independent of enabling the heavy replan worker.
+            adaptive = 0 if analytic else 1
+            self.cf.param.set_value('hlCommander.pRelAdapt', str(adaptive))
+            expected['hlCommander.pRelAdapt'] = adaptive
+            self._firmware_response_expected = expected
+            self._firmware_response_pid = current_pid
+            curve_recorder = getattr(getattr(self, 'log_manager', None), 'curve_recorder', None)
+            if curve_recorder is not None:
+                curve_recorder.events.write(dict(type='runtime_configuration',
+                    **curve_recorder.ids,firmware=self.firmware_build_info,uploaded=expected,
+                    calibration=model,pid_values=current_pid))
+            logger.info('Calibrated response uploaded: source=%s id=%s file=%s',
+                        model['source_log'], expected['pRelResp.id'], path)
+        elif 'pRelAdapt' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelAdapt', '0')
+            if 'commit' in toc.get('pRelResp', {}):
+                self.cf.param.set_value('pRelResp.commit', '0')
+            self._firmware_response_expected = None
+        if 'pRelVelCmd' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelVelCmd', '1' if velocity_mode else '0')
+        if not velocity_mode and 'pRelComp' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelComp', '0')
+        if not velocity_mode and 'pRelCompB' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelCompB', '0')
+        if not velocity_mode and 'pRelSeed' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelSeed', '0')
+        if not velocity_mode and 'pRelCompP' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelCompP', '0')
+        if not velocity_mode and 'pRelFric' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelFric', '0')
+        if not velocity_mode and 'pRelScA' in toc.get('hlCommander', {}):
+            self.cf.param.set_value('hlCommander.pRelScA', '3.6')
+        if velocity_mode:
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            for key, value in curve_expected.items():
+                self.cf.param.set_value(key, str(value))
+            confirmed_curve = confirm_firmware_mode_parameters(self.cf.param, expected={
+                'hlCommander.pRelVelCmd': 1, 'hlCommander.pRelAdapt': 0, **curve_expected, **capabilities})
+            execution = {0: 'velocity', 1: 'position', 2: 'attitude'}[
+                curve_expected.get('hlCommander.pRelExec', 0)]
+            logger.info('Bounded firmware curve selected: execution=%s, profile=%s, '
+                        'confirmed=%s; no adaptive worker', execution,
+                        getattr(self, 'firmware_analytic_profile', None) or 'velocity_scurve',
+                        confirmed_curve)
+            recorder = getattr(getattr(self, 'log_manager', None), 'curve_recorder', None)
+            if recorder is not None:
+                recorder.events.write(dict(type='runtime_configuration', **recorder.ids,
+                    firmware=self.firmware_build_info,
+                    command_mode=execution,
+                    analytic_profile=getattr(self, 'firmware_analytic_profile', None), confirmed_parameters=confirmed_curve,
+                    velocity_source={1: 'ordinary_firmware_state', 2: 'unified_vicon15'}.get(
+                        analytic.get('kalmanPRel.feedback'), 'firmware_configured'),
+                    response_model_used=bool(analytic.get('hlCommander.pRelComp')),
+                    replanning=False,
+                    requested_stop_distance_m=self.firmware_auto_brake_stop_distance_m,
+                    nominal_deceleration_m_s2=getattr(self, 'firmware_auto_brake_stop_deceleration_m_s2', 3.6),
+                    velocity_tail_s=analytic.get('hlCommander.pRelTail')))
         # Preparation happens before arming, never on the release critical path.
         # If startup fails, do not enable the firmware host-planning mode.
         planner = getattr(self.cf, '_post_release_pi_planner', None)
@@ -409,7 +677,18 @@ class Controller:
                                 str(self.firmware_auto_brake_response_time_s))
         self.cf.param.set_value('hlCommander.pRelMode',
                                 '1' if self.firmware_auto_brake_mode ==
-                                'zero_velocity' else '0')
+                                'zero_velocity' else '2' if scurve_mode else '0')
+        if scurve_mode:
+            # Latched by firmware when the release plan is built; a later write
+            # does not replan an accepted event.
+            self.cf.param.set_value('hlCommander.pRelScD',
+                                    str(self.firmware_auto_brake_stop_distance_m))
+            self.cf.param.set_value('hlCommander.pRelScT',
+                                    str(self.firmware_auto_brake_stop_max_time_s))
+            self.cf.param.set_value('hlCommander.pRelScB',
+                                    str(self.firmware_auto_brake_stop_min_peak))
+        if 'scEnable' in toc.get('kalmanPRel', {}):
+            self.cf.param.set_value('kalmanPRel.scEnable', '1' if scurve_mode else '0')
         # Clear stale experimental switches when selecting either legacy mode.
         # Old firmware without these optional parameters remains supported.
         for name in ('pRelJoint', 'pRelHost'):
@@ -727,20 +1006,39 @@ class Controller:
         self.verify_contact_attitude_mocap_ready()
 
     def stop(self):
+        if getattr(self, '_stop_started', False):
+            return
+        self._stop_started = True
         self.mission_duration = time.time() - self.mission_start_time
+        cleanup_errors = []
+
+        def attempt(name, action):
+            try:
+                action()
+            except Exception as error:
+                cleanup_errors.append(error)
+                logger.exception('%s failed; continuing resource cleanup.', name)
 
         if self.servo:
-            self._set_safe_servo_angles()
+            attempt('Servo safe position', self._set_safe_servo_angles)
             if self.args.ground_test:
                 time.sleep(1)
 
-        self.land()
+        attempt('Landing (not confirmed on error)', self.land)
+
+        yaw_damping = getattr(self, '_offboard_yaw_damping', None)
+        if yaw_damping is not None:
+            if getattr(self, 'flying', True):
+                cleanup_errors.append(RuntimeError(
+                    'Yaw gains not restored while still flying; recovery backup retained'))
+            else:
+                attempt('Yaw-angle PID restore', yaw_damping.restore)
 
         if self.bat_logger:
-            self.bat_logger.stop()
+            attempt('Battery logger stop', self.bat_logger.stop)
 
         if self.mocap:
-            self.mocap.stop()
+            attempt('Mocap stop', self.mocap.stop)
 
         handle = getattr(self, '_contact_attitude_shadow_prearm', None)
         if handle is not None:
@@ -752,12 +1050,11 @@ class Controller:
                 )
 
         if self.force_sensor:
-            self.force_sensor.stop()
+            attempt('Force sensor stop', self.force_sensor.stop)
 
         if self.rpi_power_monitor:
-            self.rpi_power_monitor.stop()
+            attempt('Power monitor stop', self.rpi_power_monitor.stop)
 
-        logging_shutdown_error = None
         if self.log_manager:
             try:
                 self.log_manager.stop(
@@ -772,7 +1069,7 @@ class Controller:
                     args=vars(self.args),
                 )
             except Exception as error:
-                logging_shutdown_error = error
+                cleanup_errors.append(error)
                 logger.exception('Log shutdown failed; continuing resource cleanup and disconnect.')
             
         if getattr(self, "tracker", None):
@@ -796,17 +1093,39 @@ class Controller:
                 logger.error(f"Failed to terminate blinker process: {e}")
 
         if self.smooth_controller:
-            self.smooth_controller.stop()
+            attempt('Smooth controller stop', self.smooth_controller.stop)
 
         if self.led:
-            self.led.stop()
+            attempt('LED stop', self.led.stop)
 
         if self.servo:
             del self.servo
 
-        self.disconnect()
-        if logging_shutdown_error is not None:
-            raise logging_shutdown_error
+        attempt('Disconnect', self.disconnect)
+        # Fit only after landing, logger closure and disconnect: never run an
+        # optimizer in the flight/control or sensor callback thread.
+        calibration_pid = getattr(self, '_response_calibration_pid', None)
+        if calibration_pid is not None and not cleanup_errors:
+            try:
+                from pathlib import Path
+                from Interaction.firmware_response_model import fit_completed_calibration
+                response_config = (((self.mission or {}).get('Interaction', {}).get('config', {})
+                                    .get('wrench_interaction', {}).get('firmware_auto_brake', {})
+                                    .get('response_model', {})))
+                from Interaction.firmware_response_model import DEFAULT_PATH
+                output_path = Path(response_config.get('calibration_file', DEFAULT_PATH))
+                if not output_path.is_absolute():
+                    output_path = Path(__file__).resolve().parent / output_path
+                result = fit_completed_calibration(
+                    self.args.drone_id,
+                    Path(self.args.log_dir) / (self.args.tag + '.json'), calibration_pid,
+                    path=output_path)
+                logger.info('Attitude response calibration saved: accepted=%s reason=%s',
+                            result['accepted'], result.get('reason', 'passed'))
+            except Exception:
+                logger.exception('Attitude response fit not saved; existing calibration preserved')
+        if cleanup_errors:
+            raise cleanup_errors[0]
 
     def load_manifest(self):
         if not self.args.orchestrated:
@@ -837,7 +1156,7 @@ class Controller:
                     data = response.read().decode('utf-8')
                     _mission = yaml.safe_load(data)
                     if self.args.drone_id in _mission['drones']:
-                        self.missions.append(_mission)
+                        self.missions.append(resolve_mission_profiles(_mission))
                 logger.info(f"  > Download successful: {filename}")
 
             except urllib.error.URLError as e:
@@ -1175,6 +1494,10 @@ class Controller:
         logger.info(f"MyGrid mode -> {mode}")
 
     def land(self):
+        if getattr(getattr(self, 'cf', None), 'link', True) is None:
+            # cflib clears both the link and parameter TOC after link loss.
+            # Do not send commands or claim a landing acknowledgement then.
+            raise ConnectionError('Cannot command or confirm landing: Crazyflie link is disconnected')
         if self.args.skip_landing:
             self._send_landing_confirmation(self.voltage)
             return
@@ -1393,6 +1716,8 @@ class Controller:
         time.sleep(2)
 
     def setup_logging(self):
+        from Interaction.contact_validation_capture import validate_capture_request
+        validate_capture_request(getattr(self, 'mission', None), self.args)
         if not self.args.log:
             return
 
@@ -1437,8 +1762,58 @@ class Controller:
                     ),
                     lambda _mission: self.cfg.LOG_VARS,
                 )
+                selected = select_log_vars(self.mission)
+                from Interaction.curve_logging import curve_log_config, curve_state_log_vars
+                curve_config = curve_log_config(self.mission)
+                if curve_config.get('enabled', False):
+                    events_enabled = not getattr(self.args, 'calibrate', False)
+                    if events_enabled and (not getattr(self, 'firmware_auto_brake_enabled', False)
+                            or self.firmware_auto_brake_mode != 'scurve'
+                            or (not self.firmware_response_model_config.get('enabled', False)
+                                and getattr(self, 'firmware_brake_command_mode', 'attitude') != 'velocity'
+                                and not getattr(self, '_firmware_analytic_expected', {}))):
+                        raise ValueError('curve events require enabled firmware scurve braking '
+                                         'with velocity, analytic_profile, or calibrated attitude execution')
+                    from Interaction.curve_logging import CurveRecorder, curve_protocol_version, VERSION
+                    from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+                    protocol_version = VERSION
+                    if events_enabled:
+                        if 'curveVer' not in self.cf.param.toc.toc.get('hlCommander', {}):
+                            raise RuntimeError('firmware lacks curve event logging protocol')
+                        protocol_version = curve_protocol_version(self.cf)
+                        confirm_firmware_mode_parameters(self.cf.param, expected={
+                            'hlCommander.curveVer':protocol_version})
+                    if 'curveLog' in self.cf.param.toc.toc.get('hlCommander', {}):
+                        self.cf.param.set_value('hlCommander.curveLog', '0')
+                    self.log_manager.curve_recorder = CurveRecorder(self.cf,self.log_manager,
+                        directory=self.args.log_dir,tag=self.args.tag,
+                        user_id=curve_config.get('user_id'),trial_id=curve_config.get('trial_id'),
+                        events_enabled=events_enabled,protocol_version=protocol_version)
+                    if events_enabled:
+                        self.cf.param.set_value('hlCommander.curveLog', '1')
+                    residual_logging = events_enabled and bool(getattr(
+                        self, '_firmware_analytic_expected', {}).get('hlCommander.pRelCompB'))
+                    if residual_logging:
+                        toc = getattr(getattr(self.cf.log, 'toc', None), 'toc', {})
+                        if any(k not in toc.get('pRelComp', {}) for k in ('bx', 'by')):
+                            raise RuntimeError('firmware lacks acceleration residual telemetry')
+                    selected = curve_state_log_vars(selected, events_enabled=events_enabled,
+                                                    acceleration_residual=residual_logging)
+                elif 'curveLog' in self.cf.param.toc.toc.get('hlCommander', {}):
+                    self.cf.param.set_value('hlCommander.curveLog', '0')
+                from Interaction.calibration_contact_logging import (
+                    is_plain_xyz_calibration, configure_calibration_capture,
+                )
+                if is_plain_xyz_calibration(self.args):
+                    selected = configure_calibration_capture(
+                        self.log_manager, self.cf, selected, self.mission, self.args,
+                    )
+                from Interaction.contact_validation_capture import configure_contact_validation_capture
+                selected = configure_contact_validation_capture(
+                    self.log_manager, self.cf, selected, self.mission, self.args,
+                )
                 self.log_manager.init_cf_logger(
-                    self.cf, select_log_vars(self.mission),
+                    self.cf, selected,
                     self.args.cf_log_period,
                 )
             # Legacy interactions use Vicon-derived velocity. The onboard
@@ -1484,6 +1859,7 @@ class Controller:
             baud=self.args.sense_baud,
             spring_constant_n_per_mm=self.args.sense_spring_constant,
             max_extension_mm=self.args.sense_max_extension,
+            sample_callback=getattr(self.log_manager, 'contact_validation_pot_callback', None),
         )
         self.force_sensor.start(startup_timeout_s=self.args.sense_startup_timeout)
         if not getattr(self.args, 'crazysim', False):
@@ -1677,8 +2053,50 @@ class Controller:
 
         logger.debug("logging activated")
 
+    def _prepare_offboard_yaw_damping(self, *, recover_only=False):
+        from pathlib import Path
+        import hashlib
+        from Interaction.offboard_yaw_damping import OffboardYawDamping
+        translation = (self.mission or {}).get('Interaction', {}).get('config', {})
+        selected = translation.get('behavior') == 'level_coast'
+        enabled = selected and (translation.get('level_coast') or {}).get('yaw_rate_damping', False)
+        if type(enabled) is not bool:
+            raise ValueError('level_coast.yaw_rate_damping must be boolean')
+        identity = getattr(self.args, 'drone_id', None)
+        if identity is None:
+            if enabled:
+                raise ValueError('yaw damping requires a drone_id for parameter recovery')
+            return
+        identity = str(identity)
+        key = hashlib.sha256(identity.encode()).hexdigest()[:16]
+        path = Path(__file__).resolve().parent / 'cache' / f'yaw-gains-{key}.json'
+        guard = OffboardYawDamping(self.cf, path)
+        if enabled or path.exists():
+            if (getattr(self, 'flying', False) or getattr(self.args, 'skip_takeoff', False)
+                    or getattr(self.args, 'skip_landing', False)):
+                raise ValueError('yaw damping setup/recovery requires grounded startup and normal landing')
+            # Recover an interrupted previous run before applying any new mode.
+            guard.restore()
+        self.cf._offboard_yaw_damping_active = False
+        if not enabled or recover_only:
+            return
+        if (self.args.controller_type != 'pid' or getattr(self.args, 'calibrate', False)
+                or not getattr(self.args, 'interaction', False)):
+            raise ValueError('yaw_rate_damping requires a PID interaction run, not calibration')
+        self._offboard_yaw_damping = guard
+        guard.prepare()
+        self.cf._offboard_yaw_damping_guard = guard
+        self.log_manager.add_log_entry('configs', {
+            'enabled': True, 'original_yaw_angle_gains': guard.original,
+            'yaw_angle_gains': dict.fromkeys(guard.original, 0.0),
+            'yaw_rate_pid': 'unchanged',
+            'activation': 'stable_interaction_ready',
+        }, name='Offboard Yaw Rate Damping')
+
     def setup_params(self):
         logger.info("Setting up parameters...")
+
+        self._prepare_offboard_yaw_damping(recover_only=True)
 
         self._activate_kalman_estimator()
         if not getattr(self.args, 'crazysim', False):
@@ -1698,6 +2116,16 @@ class Controller:
             self._set_pid_values(self.cfg.PID_VALUES_FLOWDECK)
         else:
             self._set_pid_values(self.cfg.PID_VALUES)
+
+        if (getattr(self.args, 'calibrate', False)
+                and not getattr(self.args, 'planar_braking_calibration', False)
+                and self.args.controller_type == 'pid'):
+            from Interaction.firmware_response_model import confirm_pid_context
+            configured = self.cfg.PID_VALUES_FLOWDECK if self.use_flowdeck else self.cfg.PID_VALUES
+            self._response_calibration_pid = confirm_pid_context(self.cf.param, configured)
+            self.log_manager.add_log_entry('events', {
+                'time': time.time(), 'pid_values': self._response_calibration_pid,
+            }, name='Attitude Response Calibration Context')
 
         if (self.args.vicon or self.use_flowdeck or getattr(self.args, 'crazysim', False)) and (not self.args.ground_test) and not (self.args.skip_landing and self.args.skip_takeoff):
             self._set_initial_position(self.init_coord[0], self.init_coord[1], self.init_coord[2], self.args.init_yaw)
@@ -1719,13 +2147,16 @@ class Controller:
         if getattr(self, 'firmware_auto_brake_enabled', False):
             self._setup_firmware_auto_brake_params()
 
+        self._prepare_offboard_yaw_damping()
+
     def arm(self):
         if self.args.ground_test or self.args.skip_arm:
             return
 
         self.verify_contact_attitude_final_prearm_ready()
         if (getattr(self, 'firmware_auto_brake_enabled', False) and
-                self.firmware_auto_brake_mode == 'pi_joint'):
+                (self.firmware_auto_brake_mode == 'pi_joint'
+                 or getattr(self, '_firmware_response_expected', None) is not None)):
             # The orchestrator handshake may take time after setup_params.
             # Refuse arming if the prewarmed worker died while waiting.
             self.verify_firmware_auto_brake_ready()
@@ -2306,6 +2737,7 @@ class Controller:
         except Exception as e:
             logging.error(f"Interaction Error: {e}\n")
             if (getattr(self, 'firmware_auto_brake_enabled', False) or
+                    (self.mission or {}).get('Interaction', {}).get('config', {}).get('behavior') == 'level_coast' or
                     getattr(self.args, 'contact_attitude_run', None) is not None):
                 raise
         finally:
@@ -2378,6 +2810,8 @@ class Controller:
                 calibration_mission = deepcopy(self.mission)
                 wrench_config = calibration_mission.setdefault('Interaction', {}).setdefault(
                     'config', {}).setdefault('wrench_interaction', {})
+                if 'firmware_auto_brake' in wrench_config:
+                    wrench_config['firmware_auto_brake']['enabled'] = False
                 wrench_config.setdefault('adaptive_braking_calibration', {})[
                     'enabled'
                 ] = adaptive_braking

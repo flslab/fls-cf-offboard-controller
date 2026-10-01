@@ -21,6 +21,8 @@ COMMAND_TYPE = 15
 VERSION = 1
 MAX_PI_EVENT_AGE_US = 250_000
 PACKET = struct.Struct('<BBHIII')
+FRICTION_VERSION = 2
+FRICTION_PACKET = struct.Struct('<BBHIIIf')
 VICON_POSITION_TYPE = 16
 VICON_POSITION_PACKET = struct.Struct('<BIIfff')
 HOLD_NOTICE_TYPE = 17
@@ -29,6 +31,98 @@ HOLD_NOTICE_PACKET = struct.Struct('<BBHIffffI')
 HOLD_ACK_PACKET = struct.Struct('<BBHI')
 FIRMWARE_BRAKE_LOG_WARN_AGE_S = 0.35
 FIRMWARE_BRAKE_LOG_FAIL_AGE_S = 0.80
+
+
+_RELEASE_REJECTION_REASONS = {
+    1: 'general firmware admission gate failed',
+    2: 'duplicate release event',
+    3: 'S-curve prediction unavailable',
+    4: 'S-curve initial plan infeasible',
+    5: 'current attitude/body-rate estimate unavailable',
+    6: 'trusted Vicon15 state unavailable',
+    7: 'release state outside configured bounds',
+    8: 'brake attitude could not be constructed',
+    9: 'brake delay calculation infeasible',
+    10: 'requested stop distance/deceleration is infeasible',
+}
+
+
+def firmware_release_rejection_diagnostics(brake_log):
+    """Decode the sticky reason/detail exported by the paired firmware."""
+    reason = brake_log.get('hlCommander.pRelRejR')
+    detail = brake_log.get('hlCommander.pRelRejD')
+    try:
+        reason = int(reason) if reason is not None else None
+        detail = int(detail) if detail is not None else None
+    except (TypeError, ValueError):
+        reason, detail = None, None
+
+    description = _RELEASE_REJECTION_REASONS.get(
+        reason, 'reason not yet available' if not reason else 'unknown reason')
+    detail_description = None
+    if reason == 10:
+        detail_description = {1:'invalid distance/deceleration request',
+            2:'distance too short for the deceleration cap and smooth tail',
+            3:'cannot stop within the configured duration without violating the deceleration cap',
+            4:'no forward speed',5:'unsupported curve execution mode'}.get(detail, 'unknown request failure')
+    if reason == 3 and detail is not None:
+        detail_description = (
+            'trusted state available but predictor not ready'
+            if detail & 1 else 'trusted state unavailable')
+    elif reason == 4 and detail is not None:
+        detail_description = (
+            'horizontal speed below 1 mm/s'
+            if detail & 1 else 'profile solver rejected the release state')
+    elif reason == 6 and detail is not None:
+        detail_description = (
+            'current trusted sample failed cache validation'
+            if detail & 1 else 'no current trusted sample')
+    elif reason == 7 and detail is not None:
+        labels = (
+            (1, 'non-finite input'),
+            (2, 'trusted state older than 60 ms'),
+            (4, 'speed below configured minimum'),
+            (8, 'vertical speed above limit'),
+            (16, 'height below configured floor'),
+            (32, 'no horizontal direction'),
+        )
+        failures = [label for bit, label in labels if detail & bit]
+        detail_description = ', '.join(failures) if failures else 'no bound bit set'
+    return {
+        'firmware_reject_reason': reason,
+        'firmware_reject_detail': detail,
+        'firmware_reject_description': description,
+        'firmware_reject_detail_description': detail_description,
+    }
+
+
+class FirmwareReleaseRejectedError(RuntimeError):
+    """Firmware returned an ACK but refused to claim release ownership."""
+
+    def __init__(self, ack_errno, diagnostics=None):
+        self.ack_errno = int(ack_errno)
+        self.diagnostics = dict(diagnostics or {})
+        super().__init__(self._message())
+
+    def _message(self):
+        description = self.diagnostics.get('firmware_reject_description')
+        reason = self.diagnostics.get('firmware_reject_reason')
+        detail = self.diagnostics.get('firmware_reject_detail')
+        detail_description = self.diagnostics.get(
+            'firmware_reject_detail_description')
+        message = f'firmware rejected release event (errno={self.ack_errno}'
+        if reason:
+            message += f', reason={reason}: {description}'
+            if detail is not None:
+                message += f', detail={detail}'
+            if detail_description:
+                message += f': {detail_description}'
+        return message + ')'
+
+    def add_firmware_diagnostics(self, brake_log):
+        self.diagnostics = firmware_release_rejection_diagnostics(brake_log)
+        self.args = (self._message(),)
+        return self
 
 
 def firmware_brake_abort_message(brake_log):
@@ -40,6 +134,11 @@ def firmware_brake_abort_message(brake_log):
         3: 'attitude/body-rate feedback unavailable',
         4: 'rate-aware unwind plan infeasible',
         11: 'Pi plan unavailable after bounded local return; not a stable hold',
+        12: 'calibrated attitude compensation model, state or command history unavailable',
+        13: 'state-matched S-curve has no feasible bounded release-time plan',
+        14: 'friction S-curve request is invalid or outside the existing time/acceleration envelope',
+        15: 'distance/deceleration request requires supported fixed-curve execution',
+        16: 'distance/deceleration request infeasible at curve activation; no executable initial curve',
     }.get(reason, 'reason not reported' if reason is None else 'unknown reason')
     return 'firmware brake aborted (stage 6; %s; reason=%s)' % (
         description, 'unavailable' if reason is None else reason)
@@ -95,6 +194,7 @@ class FirmwareBrakeMonitor:
         self.delayed_reported = False
         self.fault = None
         self.accepted_plan_end_s = None
+        self.imu_bridge_reported = False
 
     def track_accepted_plan(self, status):
         """Use confirmed FC acceptance, not a receipt-relative renewable grace."""
@@ -156,6 +256,14 @@ class FirmwareBrakeMonitor:
                        'firmware brake status log exceeded bounded grace '
                        '(age %.3f s)' % age_s)
         events = []
+        if (post_release_packet and not self.imu_bridge_reported
+                and brake_log.get('hlCommander.pRelMode') == 2
+                and brake_log.get('hlCommander.pRelStale0') == 1):
+            self.imu_bridge_reported = True
+            events.append(('Firmware Release Using IMU Prediction', {
+                'vicon_age_at_release_s': brake_log.get('hlCommander.pRelGap0'),
+                'warning_only': True,
+            }))
         if health == 'delayed' and not self.delayed_reported:
             self.delayed_reported = True
             events.append(('Firmware Brake Status Log Delayed', {'age_s': age_s}))
@@ -289,8 +397,27 @@ def send_vicon_position_mirror(cf, position_m, *,
             'pi_receive_to_send_us': age_us}
 
 
+def friction_release_options(brake_config, kinetic_mu):
+    """Bind this interaction's selected mu to its release, never a shared FC parameter."""
+    profile = brake_config.get('analytic_profile') or {}
+    enabled = profile.get('friction_from_interaction', False)
+    if type(enabled) is not bool:
+        raise ValueError('friction_from_interaction must be boolean')
+    if not enabled:
+        return {}
+    from Interaction.firmware_analytic_profile import profile_parameters
+    profile_parameters(profile)
+    if brake_config.get('mode') != 'scurve':
+        raise ValueError('friction release requires scurve')
+    if (isinstance(kinetic_mu, bool) or not isinstance(kinetic_mu, (int, float))
+            or not math.isfinite(kinetic_mu) or not 0 <= kinetic_mu <= 10):
+        raise ValueError('kinetic friction coefficient must be finite in [0, 10]')
+    return {'kinetic_friction_coefficient': float(kinetic_mu)}
+
+
 def encode_pi_release_command(*, session_id, sequence, arduino_sample_ms,
-                              pi_receive_monotonic_ns, send_monotonic_ns):
+                              pi_receive_monotonic_ns, send_monotonic_ns,
+                              kinetic_friction_coefficient=None):
     for name, value, limit in (
         ('session_id', session_id, 0xFFFFFFFF),
         ('sequence', sequence, 0xFFFF),
@@ -305,6 +432,13 @@ def encode_pi_release_command(*, session_id, sequence, arduino_sample_ms,
     if not 0 <= elapsed_ns <= MAX_PI_EVENT_AGE_US * 1000:
         raise ValueError('Pi release receive event is future-dated or stale')
     elapsed_us = elapsed_ns // 1000
+    if kinetic_friction_coefficient is not None:
+        mu = kinetic_friction_coefficient
+        if (isinstance(mu, bool) or not isinstance(mu, (int, float)) or
+                not math.isfinite(mu) or not 0 <= mu <= 10):
+            raise ValueError('kinetic friction coefficient must be finite in [0, 10]')
+        return FRICTION_PACKET.pack(COMMAND_TYPE, FRICTION_VERSION, sequence,
+            session_id, arduino_sample_ms, elapsed_us, mu), elapsed_us
     return PACKET.pack(COMMAND_TYPE, VERSION, sequence, session_id,
                        arduino_sample_ms, elapsed_us), elapsed_us
 
@@ -312,7 +446,7 @@ def encode_pi_release_command(*, session_id, sequence, arduino_sample_ms,
 def send_pi_release_command_once(
         cf, *, session_id, sequence, arduino_sample_ms,
         pi_receive_monotonic_ns, firmware_auto_brake_armed=False,
-        monotonic_ns=time.monotonic_ns):
+        monotonic_ns=time.monotonic_ns, kinetic_friction_coefficient=None):
     """Send once only after explicit firmware capability/arming validation.
 
     The HLC acknowledgement is separate; losing it must not cause automatic
@@ -326,6 +460,7 @@ def send_pi_release_command_once(
         arduino_sample_ms=arduino_sample_ms,
         pi_receive_monotonic_ns=pi_receive_monotonic_ns,
         send_monotonic_ns=send_ns,
+        kinetic_friction_coefficient=kinetic_friction_coefficient,
     )
     packet = CRTPPacket()
     packet.set_header(CRTPPort.SETPOINT_HL, 0)
@@ -337,6 +472,8 @@ def send_pi_release_command_once(
         'sequence': sequence,
         'release_event_arduino_time_ms': arduino_sample_ms,
         'request_payload_hex': payload.hex(),
+        'release_wire_version': payload[1],
+        'kinetic_friction_coefficient': kinetic_friction_coefficient,
         'pi_release_receive_monotonic_ns': pi_receive_monotonic_ns,
         'pi_send_start_monotonic_ns': send_ns,
         'pi_send_return_monotonic_ns': send_return_ns,
@@ -358,8 +495,10 @@ def parse_pi_release_ack(packet, *, request_payload_hex,
     except (TypeError, ValueError):
         return None
     data = bytes(packet.data)
-    if (len(request) != PACKET.size or
-            len(data) != PACKET.size + 1 or data[:-1] != request):
+    if (len(request) not in (PACKET.size, FRICTION_PACKET.size) or
+            request[0] != COMMAND_TYPE or
+            request[1] != (VERSION if len(request)==PACKET.size else FRICTION_VERSION) or
+            len(data) != len(request) + 1 or data[:-1] != request):
         return None
     return {
         'ack_errno': data[-1],
@@ -373,7 +512,8 @@ def parse_pi_release_ack(packet, *, request_payload_hex,
 def handoff_pi_release_to_firmware(
         cf, *, session_id, sequence, arduino_sample_ms,
         pi_receive_monotonic_ns, firmware_auto_brake_armed=False,
-        ack_timeout_s=0.15, monotonic_ns=time.monotonic_ns):
+        ack_timeout_s=0.15, monotonic_ns=time.monotonic_ns,
+        kinetic_friction_coefficient=None):
     """Confirm a firmware-owned LL-to-HLC transfer using the matching ACK.
 
     A timeout is ambiguous: this function never retries the release event or
@@ -410,6 +550,7 @@ def handoff_pi_release_to_firmware(
             arduino_sample_ms=arduino_sample_ms,
             pi_receive_monotonic_ns=pi_receive_monotonic_ns,
             send_monotonic_ns=send_ns,
+            kinetic_friction_coefficient=kinetic_friction_coefficient,
         )
         request = payload.hex()
         packet = CRTPPacket()
@@ -419,13 +560,13 @@ def handoff_pi_release_to_firmware(
         if not received.wait(ack_timeout_s):
             raise RuntimeError('firmware release event ACK timed out; LL ownership retained')
         if not matched['event_queued_by_firmware']:
-            raise RuntimeError(
-                f"firmware rejected release event (errno={matched['ack_errno']})"
-            )
+            raise FirmwareReleaseRejectedError(matched['ack_errno'])
         return {
             'session_id': session_id,
             'sequence': sequence,
             'release_event_arduino_time_ms': arduino_sample_ms,
+            'release_wire_version': payload[1],
+            'kinetic_friction_coefficient': kinetic_friction_coefficient,
             'pi_release_receive_monotonic_ns': pi_receive_monotonic_ns,
             'pi_send_start_monotonic_ns': send_ns,
             'pi_receive_to_send_elapsed_us': elapsed_us,

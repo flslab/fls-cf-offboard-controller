@@ -17,6 +17,23 @@ from Interaction.onboard_wrench_interaction_pipeline import (
 
 
 class FirmwareAutoBrakePreflightTests(unittest.TestCase):
+    def test_firmware_owned_brake_loads_xyz_without_enabling_pi_braking(self):
+        original = {'firmware_auto_brake': {'enabled': True, 'mode': 'scurve'},
+                    'control_handoff': {'coast_jerk_limited_free_stop_enabled': True}}
+        calibrated = {**original, 'impulse_estimator': {
+            'model_acceleration_scale': [.8, .796, .706]},
+            'wrench_detection_calibration': {'status': 'loaded',
+                                            'parameters': {'test': True}}}
+        with patch('Interaction.interactions.apply_detection_calibration',
+                   return_value=calibrated) as load:
+            resolved = configure_firmware_owned_brake(
+                original, drone_id='lb11', calibration_path='test-wrench.json')
+        load.assert_called_once_with(original, 'lb11', 'test-wrench.json')
+        self.assertEqual(resolved['impulse_estimator']['model_acceleration_scale'],
+                         [.8, .796, .706])
+        self.assertEqual(resolved['firmware_auto_brake'], original['firmware_auto_brake'])
+        self.assertFalse(resolved['control_handoff']['coast_jerk_limited_free_stop_enabled'])
+
     def test_firmware_monitor_uses_sticky_battery_abort(self):
         controller = Controller.__new__(Controller)
         controller.battery_critical = Event()
@@ -65,9 +82,10 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
                        'Interaction.interactions.time.time',
                        side_effect=lambda: 1000.0 + clock['now']):
             if expected_error is None:
-                control._wait_for_firmware_brake_hold(
+                notice = control._wait_for_firmware_brake_hold(
                     completion, brake_mode='two_stage',
                     baseline_receipt_s=999.9, baseline_timeouts=7)
+                self.assertEqual(notice, {'session_id': 99, 'sequence': 7})
             else:
                 with self.assertRaisesRegex(*expected_error):
                     control._wait_for_firmware_brake_hold(
@@ -105,6 +123,81 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
         )
         self.assertEqual(control._firmware_brake_status_snapshot(),
                          (packet, 1000.0))
+
+    def test_release_rejection_capture_uses_new_status_packet(self):
+        control = InteractionsControl.__new__(InteractionsControl)
+        control._firmware_brake_status_snapshot = lambda: ({
+            'hlCommander.pRelRejR': 3,
+            'hlCommander.pRelRejD': 1,
+        }, 1000.02)
+        control._safe_sleep = Mock()
+
+        brake_log, diagnostics = (
+            control._capture_firmware_release_rejection(1000.0))
+
+        self.assertEqual(brake_log['hlCommander.pRelRejR'], 3)
+        self.assertTrue(diagnostics['fresh_post_release_packet'])
+        self.assertIn('predictor not ready',
+                      diagnostics['firmware_reject_detail_description'])
+        control._safe_sleep.assert_not_called()
+
+    def test_release_rejection_capture_does_not_reuse_sticky_old_reason(self):
+        control = InteractionsControl.__new__(InteractionsControl)
+        clock = {'now': 0.0}
+        control._firmware_brake_status_snapshot = lambda: ({
+            'hlCommander.pRelRejR': 5,
+            'hlCommander.pRelRejD': 0,
+        }, 1000.0)
+
+        def safe_sleep(duration):
+            clock['now'] += duration
+
+        control._safe_sleep = safe_sleep
+        with patch('Interaction.interactions.time.monotonic',
+                   side_effect=lambda: clock['now']):
+            brake_log, diagnostics = (
+                control._capture_firmware_release_rejection(1000.0))
+
+        self.assertEqual(brake_log, {})
+        self.assertFalse(diagnostics['fresh_post_release_packet'])
+        self.assertIsNone(diagnostics['firmware_reject_reason'])
+
+    def test_firmware_hold_health_check_does_not_block_contact_detection(self):
+        control = InteractionsControl.__new__(InteractionsControl)
+        control._safe_sleep = Mock()
+        control._firmware_brake_status_snapshot = lambda: ({
+            'hlCommander.pRelAutoSt': 4,
+        }, 102.)
+        with patch('Interaction.interactions.time.monotonic',
+                   return_value=2.), patch('Interaction.interactions.time.time',
+                                          return_value=102.):
+            control._check_firmware_hold_for_reinteraction(1.)
+        control._safe_sleep.assert_called_once_with(0.)
+
+    def test_firmware_hold_health_check_preserves_stale_log_fault(self):
+        control = InteractionsControl.__new__(InteractionsControl)
+        control._safe_sleep = Mock()
+        control._firmware_brake_status_snapshot = lambda: ({
+            'hlCommander.pRelAutoSt': 4,
+        }, 100.)
+        with patch('Interaction.interactions.time.monotonic', return_value=2.), \
+             patch('Interaction.interactions.time.time', return_value=102.):
+            with self.assertRaisesRegex(StaleLocalizationError, 'status log'):
+                control._check_firmware_hold_for_reinteraction(1.)
+
+    def test_firmware_hold_observation_fails_if_firmware_leaves_hold(self):
+        control = InteractionsControl.__new__(InteractionsControl)
+        control._safe_sleep = Mock()
+        control._log_event = Mock()
+        control._firmware_brake_status_snapshot = lambda: ({
+            'hlCommander.pRelAutoSt': 0,
+        }, 102.0)
+        with patch('Interaction.interactions.time.monotonic',
+                   return_value=2.0), patch(
+                       'Interaction.interactions.time.time',
+                       return_value=102.0):
+            with self.assertRaisesRegex(RuntimeError, 'left post-release hold'):
+                control._check_firmware_hold_for_reinteraction(1.)
 
     def test_wait_loop_checks_battery_during_telemetry_gap_and_pending_notice(self):
         elapsed, completion, _, checked_at = self.run_firmware_wait(
@@ -329,16 +422,11 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
             set_value=Mock(), get_value=lambda key: values[key],
         )
 
-    def test_pi_joint_requires_new_firmware_and_prewarms_before_enable(self):
+    def test_pi_joint_build_number_is_diagnostic_and_prewarms_before_enable(self):
         controller = self.controller({
             'enabled': True, 'response_time_s': 0.14, 'mode': 'pi_joint'})
         controller.prepare_firmware_auto_brake()
         controller.cf = SimpleNamespace(param=self.firmware_params(26091804))
-        with self.assertRaisesRegex(RuntimeError, '26092101'):
-            controller._setup_firmware_auto_brake_params()
-        controller.cf.param.set_value.assert_not_called()
-
-        controller.cf.param = self.firmware_params()
         planner = Mock()
         planner.status.return_value = {'ready': True}
         def assert_not_enabled():

@@ -1,15 +1,43 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from Interaction.calibration_attitude_response import (
     identify_attitude_acceleration_axis,
     identify_second_order_axis,
+    identify_attitude_response_from_log_records,
+    _sample_clock,
 )
 from Interaction.model_based_braking import _second_order_transition
 
 
 class CalibrationAttitudeResponseTests(unittest.TestCase):
+    def test_device_clock_uses_24_bit_wrap(self):
+        times, basis = _sample_clock([{'cf_timestamp_ms': (1<<24)-2}, {'cf_timestamp_ms': 8}])
+        self.assertAlmostEqual(times[1]-times[0], .01)
+        self.assertEqual(basis, 'firmware_timestamp_ms')
+
+    def test_ordinary_hardware_log_group_and_pitch_sign(self):
+        records = [{'type':'events','name':name,'data':{'time':when}} for name,when in (
+            ('Wrench Calibration Excitation Started',0),('Wrench Calibration Excitation Complete',5))]
+        for i in range(501):
+            records += [
+                {'type':'state','group':'ATT_RATE_CTL','data':{'time':i*.01,'cf_timestamp_ms':i*10,
+                    'controller.roll':2.,'controller.pitch':3.}},
+                {'type':'state','group':'VEL_ORI','data':{'time':i*.01,'cf_timestamp_ms':i*10,
+                    'stateEstimate.roll':2.,'stateEstimate.pitch':3.}}]
+        with patch('Interaction.calibration_attitude_response.identify_second_order_axis',
+                   return_value={'usable':True}) as fit:
+            result = identify_attitude_response_from_log_records(records)
+        self.assertTrue(result['usable'])
+        np.testing.assert_equal(fit.call_args.args[2], np.full(501,3.))
+        self.assertEqual(result['attitude_source'], 'ordinary')
+
+    def test_incomplete_log_rejected_and_no_silent_estimator_fallback(self):
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            identify_attitude_response_from_log_records([])
+
     def test_recovers_tilt_to_acceleration_gain(self):
         dt = 0.01
         times = np.arange(0.0, 12.0, dt)
