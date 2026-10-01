@@ -89,10 +89,20 @@ if __name__ == '__main__':
     ap.add_argument("-t", type=int, default=5, help="duration of test")
     ap.add_argument("--brightness", type=float, default=1.0, help="LED brightness")
     ap.add_argument("--color", type=float, nargs=3, default=(227, 253, 255), help="LED color (R, G, B)")
+    ap.add_argument("--rgb-test", action="store_true", help="Run RGB test")
     args = ap.parse_args()
 
     led = LED(num_pixels=args.n, brightness=args.brightness, color=args.color)
-    led.show_single_color(color=args.color)
 
-    time.sleep(args.t)
+    if args.rgb_test:
+        led.show_single_color(color=(255, 0, 0))
+        time.sleep(1)
+        led.show_single_color(color=(255, 0, 0))
+        time.sleep(1)
+        led.show_single_color(color=(255, 0, 0))
+        time.sleep(1)
+    else:
+        led.show_single_color(color=args.color)
+        time.sleep(args.t)
+    
     led.stop()
