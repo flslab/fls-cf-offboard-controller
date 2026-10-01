@@ -97,9 +97,9 @@ if __name__ == '__main__':
     if args.rgb_test:
         led.show_single_color(color=(255, 0, 0))
         time.sleep(1)
-        led.show_single_color(color=(255, 0, 0))
+        led.show_single_color(color=(0, 255, 0))
         time.sleep(1)
-        led.show_single_color(color=(255, 0, 0))
+        led.show_single_color(color=(0, 0, 255))
         time.sleep(1)
     else:
         led.show_single_color(color=args.color)
