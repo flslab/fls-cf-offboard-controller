@@ -7,6 +7,9 @@ import time
 import numpy as np
 
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
+from Interaction.offboard_yaw_damping import (
+    DEFAULT_YAW_RATE_DEADBAND_DEG_S, validate_yaw_deadband,
+)
 from Interaction.potentiometer_force_sensor import (
     PotentiometerContactDetector, PotentiometerReleaseDetector,
 )
@@ -16,7 +19,7 @@ from Interaction.wrench_model_calibration import (
 
 # Seconds from confirmed interaction detection to the first ori command.
 # Keep sending pos commands during this interval; 0.0 restores immediate ori.
-DETECTION_TO_ORI_DELAY_S = 0.20
+DETECTION_TO_ORI_DELAY_S = 0.0
 
 
 def _number(value, name, *, positive=False):
@@ -63,6 +66,8 @@ def validate_level_coast(config, *, sensor_available):
         raise ValueError('level_coast.yaw_rate_damping must be boolean')
     if options['yaw_rate_damping'] and options['follow_yaw']:
         raise ValueError('yaw_rate_damping and follow_yaw cannot both be enabled')
+    options['yaw_rate_deadband_deg_s'] = validate_yaw_deadband(
+        options.get('yaw_rate_deadband_deg_s', DEFAULT_YAW_RATE_DEADBAND_DEG_S))
     options['stop_speed_m_s'] = _number(
         options.get('stop_speed_m_s', .03), 'stop_speed_m_s', positive=True)
     options['detector'] = detector
@@ -347,12 +352,16 @@ def run_level_coast(owner, config):
             if cycle.phase == 'prepare':
                 gate.update(state['velocity'], state['time'])
                 if gate.armed and not yaw_ready:
-                    yaw_ready = yaw_guard.request_enable()
+                    yaw_ready = yaw_guard.request_enable(state['angular_velocity'][2])
                     if yaw_ready:
                         owner._log_event('Level Coast Yaw Damping Enabled', {})
                         print('[interaction] yaw damping enabled', flush=True)
+            yaw_status = (yaw_guard.update(state['angular_velocity'][2])
+                          if options['yaw_rate_damping'] and yaw_ready else {})
             started = released = False
-            sensor = {}
+            # Optional sensing remains diagnostic for model/velocity detection.
+            sensor = (owner._force_sensor_log_fields(output.estimate, now)
+                      if getattr(owner, 'force_sensor', None) is not None else {})
             if options['detector'] == 'model' and output.contacts is not None:
                 started = output.contacts.translation.started
                 released = output.contacts.translation.ended
@@ -360,7 +369,6 @@ def run_level_coast(owner, config):
                 started, released = velocity_detector.update(
                     float(np.linalg.norm(state['velocity'][:2])), state['time'], enabled)
             elif options['detector'] == 'potentiometer':
-                sensor = owner._force_sensor_log_fields(output.estimate, now)
                 if not sensor.get('force_sensor_fresh'):
                     raise RuntimeError('Level coast requires fresh potentiometer samples')
                 sensor_time = sensor.get('force_sensor_sample_monotonic_time')
@@ -438,6 +446,7 @@ def run_level_coast(owner, config):
                 'yaw_rate_target_deg_s': 0. if cycle.level else None,
                 'yaw_rate_damping': options['yaw_rate_damping'],
                 'yaw_rate_damping_active': options['yaw_rate_damping'] and yaw_ready,
+                **yaw_status,
                 'effective_yaw_rate_target_deg_s': (
                     0. if options['yaw_rate_damping'] and yaw_ready else None),
                 **sensor,
@@ -449,4 +458,6 @@ def run_level_coast(owner, config):
         })
         print('[interaction] done', flush=True)
     finally:
+        if options['yaw_rate_damping']:
+            yaw_guard.finish()
         owner._set_contact_pid_attitude_authority(False)

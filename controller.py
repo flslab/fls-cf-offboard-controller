@@ -2049,7 +2049,10 @@ class Controller:
     def _prepare_offboard_yaw_damping(self, *, recover_only=False):
         from pathlib import Path
         import hashlib
-        from Interaction.offboard_yaw_damping import OffboardYawDamping
+        from Interaction.offboard_yaw_damping import (
+            OffboardYawDamping, YAW_ANGLE_GAINS, YAW_RATE_GAINS,
+            DEFAULT_YAW_RATE_DEADBAND_DEG_S,
+        )
         translation = (self.mission or {}).get('Interaction', {}).get('config', {})
         selected = translation.get('behavior') == 'level_coast'
         enabled = selected and (translation.get('level_coast') or {}).get('yaw_rate_damping', False)
@@ -2063,7 +2066,10 @@ class Controller:
         identity = str(identity)
         key = hashlib.sha256(identity.encode()).hexdigest()[:16]
         path = Path(__file__).resolve().parent / 'cache' / f'yaw-gains-{key}.json'
-        guard = OffboardYawDamping(self.cf, path)
+        deadband = (translation.get('level_coast') or {}).get(
+            'yaw_rate_deadband_deg_s', DEFAULT_YAW_RATE_DEADBAND_DEG_S)
+        guard = OffboardYawDamping(self.cf, path,
+            deadband_deg_s=deadband if enabled and not recover_only else 0.)
         if enabled or path.exists():
             if (getattr(self, 'flying', False) or getattr(self.args, 'skip_takeoff', False)
                     or getattr(self.args, 'skip_landing', False)):
@@ -2080,9 +2086,12 @@ class Controller:
         guard.prepare()
         self.cf._offboard_yaw_damping_guard = guard
         self.log_manager.add_log_entry('configs', {
-            'enabled': True, 'original_yaw_angle_gains': guard.original,
-            'yaw_angle_gains': dict.fromkeys(guard.original, 0.0),
-            'yaw_rate_pid': 'unchanged',
+            'enabled': True,
+            'original_yaw_angle_gains': {k: guard.original[k] for k in YAW_ANGLE_GAINS},
+            'original_yaw_rate_gains': {k: guard.original[k] for k in YAW_RATE_GAINS if k in guard.original},
+            'yaw_angle_gains': dict.fromkeys(YAW_ANGLE_GAINS, 0.0),
+            'yaw_rate_deadband_deg_s': guard.deadband_deg_s,
+            'yaw_rate_pid': 'threshold_gated_p_only' if guard.deadband_deg_s else 'unchanged',
             'activation': 'stable_interaction_ready',
         }, name='Offboard Yaw Rate Damping')
 

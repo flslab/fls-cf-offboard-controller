@@ -154,6 +154,8 @@ class LevelCoastStateTests(unittest.TestCase):
             ('grace_start', lambda c: c['level_coast'].update(grace_start='unknown')),
             ('follow_yaw', lambda c: c['level_coast'].update(follow_yaw='false')),
             ('yaw_rate_damping', lambda c: c['level_coast'].update(yaw_rate_damping='true')),
+            ('yaw_deadband', lambda c: c['level_coast'].update(yaw_rate_deadband_deg_s=-1)),
+            ('yaw_deadband_nan', lambda c: c['level_coast'].update(yaw_rate_deadband_deg_s=float('nan'))),
             ('yaw_conflict', lambda c: c['level_coast'].update(yaw_rate_damping=True, follow_yaw=True)),
             ('detector', lambda c: c['level_coast'].update(detector='unknown')),
         ]
@@ -178,7 +180,8 @@ class LevelCoastLoopTests(unittest.TestCase):
                      grace_start='speed_threshold', grace_time=.10,
                      pressed_fn=None, speed_fn=None, follow_yaw=False,
                      yaw_fn=None, state_delay=0., target_yaw=0., yaw_rate_damping=False,
-                     ori_delay=0., yaw_confirm_delay=0.):
+                     ori_delay=0., yaw_confirm_delay=0., yaw_rate_fn=None,
+                     sensor_present=True, sensor_fresh=True):
         config = configuration(detector)
         config['duration'] = duration
         config['grace_time'] = grace_time
@@ -198,19 +201,31 @@ class LevelCoastLoopTests(unittest.TestCase):
         control.cf = SimpleNamespace(param=SimpleNamespace(set_value=Mock(), set_value_raw=Mock()))
         control.cf._offboard_yaw_damping_active = False
         yaw_requests = []
-        def request_yaw():
+        yaw_samples = []
+        def request_yaw(rate):
             yaw_requests.append(clock['t'])
             if fault == 'yaw':
                 raise RuntimeError('yaw activation failed')
             ready = clock['t'] - yaw_requests[0] >= yaw_confirm_delay
             control.cf._offboard_yaw_damping_active = ready
             return ready
+        def update_yaw(rate):
+            yaw_samples.append((clock['t'], rate))
+            if fault == 'yaw_switch' and clock['t'] >= .2:
+                raise RuntimeError('yaw switching failed')
+            active = abs(np.degrees(rate)) >= 10.
+            return dict(yaw_rate_measured_deg_s=np.degrees(rate),
+                        yaw_rate_damping_requested=active,
+                        yaw_rate_damping_output_enabled=active,
+                        yaw_rate_damping_switch_pending=False)
         control.cf._offboard_yaw_damping_guard = SimpleNamespace(
-            prepared=True, request_enable=Mock(side_effect=request_yaw))
+            prepared=True, request_enable=Mock(side_effect=request_yaw),
+            update=Mock(side_effect=update_yaw), finish=Mock())
         control.yaw_requests = yaw_requests
+        control.yaw_samples = yaw_samples
         control.pid_attitude_source = 'post-release-15state'
         control._pid_15state_control_active = False
-        control.force_sensor = object()
+        control.force_sensor = object() if sensor_present else None
         control._unsubscribe_contact_attitude_shadow = Mock()
         control.log_manager = FakeOnboardLogManager(1000.)
         control._log_event = Mock()
@@ -246,7 +261,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                 position=np.array([2. if fault == 'boundary' and t >= .2 else t/10, 0., 1.]),
                 velocity=np.array([speed, 0., 0.]),
                 attitude_rpy=np.array([0., 0., np.radians(yaw_fn(t) if yaw_fn else 0.)]),
-                angular_velocity=np.zeros(3),
+                angular_velocity=np.array([0., 0., np.radians(yaw_rate_fn(t) if yaw_rate_fn else 0.)]),
                 position_skew_s=0., angular_rate_skew_s=0., yaw_control_skew_s=None,
                 yaw_control_command=None, motor_skew_s=0., motor_state={
                     'time':1000.+t-(.2 if fault == 'motor' and t >= .2 else 0),
@@ -254,7 +269,7 @@ class LevelCoastLoopTests(unittest.TestCase):
 
         def sensor(*_):
             t = clock['t']
-            return dict(force_sensor_fresh=not (fault == 'sensor' and t >= .2),
+            return dict(force_sensor_fresh=sensor_fresh and not (fault == 'sensor' and t >= .2),
                         force_sensor_sample_monotonic_time=t, force_sensor_sample_time=1000.+t,
                         force_sensor_compression_force_N=.3 if pressed() else 0.)
 
@@ -277,7 +292,8 @@ class LevelCoastLoopTests(unittest.TestCase):
             return replace(result, contacts=pipeline.detector.update(estimate))
 
         expected = {'battery':LowBatteryException, 'state':StaleLocalizationError,
-                    'boundary':BoundaryExceededError, 'motor':RuntimeError, 'sensor':RuntimeError, 'yaw':RuntimeError}
+                    'boundary':BoundaryExceededError, 'motor':RuntimeError, 'sensor':RuntimeError,
+                    'yaw':RuntimeError, 'yaw_switch':RuntimeError}
         with patch('Interaction.level_coast.time.time', side_effect=lambda:1000.+clock['t']), \
                 patch('Interaction.level_coast.DETECTION_TO_ORI_DELAY_S', ori_delay), \
                 patch('Interaction.level_coast.time.monotonic', side_effect=lambda:clock['t']), \
@@ -354,6 +370,22 @@ class LevelCoastLoopTests(unittest.TestCase):
                 self.assertTrue(all(a == (0.,0.,0.,1.) for _, n, a in commands
                                     if n == 'send_zdistance_setpoint'))
 
+    def test_optional_sensing_is_logged_without_changing_model_or_velocity_decisions(self):
+        for detector in ('model', 'vel'):
+            baseline, commands, phases, _ = self.run_scenario(detector, sensor_present=False)
+            self.assertTrue(all('force_sensor_fresh' not in row
+                for row in baseline.log_manager.groups['wrench_observer']))
+            for fresh in (True, False):
+                with self.subTest(detector=detector, fresh=fresh):
+                    control, sensed_commands, sensed_phases, _ = self.run_scenario(
+                        detector, sensor_fresh=fresh)
+                    self.assertEqual(commands, sensed_commands)
+                    self.assertEqual(phases, sensed_phases)
+                    rows = control.log_manager.groups['wrench_observer']
+                    self.assertTrue(rows)
+                    self.assertTrue(all(row['force_sensor_fresh'] == fresh for row in rows))
+                    self.assertTrue(all('force_sensor_compression_force_N' in row for row in rows))
+
     def test_follow_yaw_updates_all_hold_phases_but_never_becomes_a_yaw_rate(self):
         def yaw(t):
             return 170. + 50*t if t < .2 else -180. + 50*(t-.2)
@@ -397,6 +429,28 @@ class LevelCoastLoopTests(unittest.TestCase):
             control, _, _, _ = self.run_scenario(yaw_rate_damping=enabled,
                 speed_fn=lambda t: speed)
             self.assertEqual(control.yaw_requests, [])
+            self.assertEqual(control.yaw_samples, [])
+
+    def test_yaw_deadband_receives_body_z_rate_in_every_phase_after_activation(self):
+        rate = lambda t: -20. if .15 <= t < .35 else 5.
+        control, commands, phases, _ = self.run_scenario(
+            yaw_rate_damping=True, yaw_rate_fn=rate, yaw_confirm_delay=.01, ori_delay=.02)
+        ready = next(p['elapsed_s'] for p in phases if p['phase'] == 'ready')
+        self.assertTrue(control.yaw_samples)
+        for t, rate_rad_s in control.yaw_samples:
+            self.assertGreaterEqual(t, ready)
+            self.assertAlmostEqual(np.degrees(rate_rad_s), rate(t))
+        # Both position and level commands share the same rate gating, including
+        # delay, coast, grace, and the repeated preparation phase.
+        self.assertEqual([t for t, _ in control.yaw_samples],
+                         [t for t, _, _ in commands if t >= ready])
+        control.cf._offboard_yaw_damping_guard.finish.assert_called_once_with()
+
+    def test_yaw_switch_failure_exits_to_landing_and_clears_attitude_authority(self):
+        control, commands, _, _ = self.run_scenario(yaw_rate_damping=True, fault='yaw_switch')
+        self.assertLess(commands[-1][0], .2)
+        self.assertFalse(control._pid_15state_control_active)
+        control.cf._offboard_yaw_damping_guard.finish.assert_called_once_with()
 
     def test_yaw_confirmation_failure_never_arms_detection(self):
         control, commands, phases, _ = self.run_scenario(yaw_rate_damping=True, fault='yaw')

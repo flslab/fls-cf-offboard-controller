@@ -195,16 +195,36 @@ position/z-distance packets. Offboard temporarily sets the four existing
 stability gate is satisfied and confirms them by fresh reads. Preflight only
 checks and backs up the original gains; takeoff and stability waiting retain
 normal yaw control. Position commands continue during asynchronous confirmation,
-and interaction becomes ready only after confirmation succeeds. The yaw-rate PID
-gains stay unchanged: both position and
-attitude commands then target zero rate without a heading-restoring term.
-Once enabled, this applies through interaction and landing. It requires PID control,
+and interaction becomes ready only after confirmation succeeds. Both position
+and attitude commands then target zero rate without a heading-restoring term.
+
+`level_coast.yaw_rate_deadband_deg_s` defaults to `10.0` when damping is enabled.
+The latest synchronized onboard body-Z angular rate is converted from rad/s to
+deg/s. Below the threshold in either direction, all four `pid_rate.yaw_*` gains
+are zero, giving zero yaw PID output once the write takes effect. At or above
+the threshold, restore only the original `pid_rate.yaw_kp` for proportional
+rate damping. Keep yaw rate I/D/feedforward gains zero throughout this mode:
+in particular, the firmware still accumulates its integral with zero gain, so
+restoring I in flight could cause an unwanted turn. Roll/pitch control is unchanged.
+Set the deadband to `0` to retain the previous full yaw-rate PID continuously.
+
+Only threshold crossings write the rate P gain. A worker coalesces changes to
+the latest requested state and confirms each switch without blocking flight
+commands; failed confirmation aborts the interaction. This is an offboard gate,
+so measurement/radio/parameter latency still applies, not a hard real-time
+firmware deadband. Observer logs include `yaw_rate_measured_deg_s`,
+`yaw_rate_damping_requested`, `yaw_rate_damping_output_enabled` (last confirmed
+state), and `yaw_rate_damping_switch_pending`. Passive yaw drift below the
+threshold is allowed; this is not heading hold.
+
+On interaction exit, asynchronously enable continuous P damping for landing;
+do not restore the accumulated integral while airborne. It requires PID control,
 grounded startup and normal landing; it is incompatible with `follow_yaw`.
 Original gains are restored only after landing/stop. A recovery record in
 `cache/yaw-gains-*.json` is retained if restoration fails, and is restored at the
-next grounded startup, even when the option is disabled. No firmware source,
-packet format, flash or persistent parameter storage is changed. Existing yaw
-rate-loop damping remains active; this does not make yaw torque-free.
+next grounded startup, even when the option is disabled. Both the earlier
+angle-only backups and the new angle/rate backups are supported. No firmware
+source, packet format, flash or persistent parameter storage is changed.
 
 `level_coast.follow_yaw: true` updates position-hold yaw from the current onboard
 estimate during preparation, ready, and grace. Disabled or omitted sends absolute
