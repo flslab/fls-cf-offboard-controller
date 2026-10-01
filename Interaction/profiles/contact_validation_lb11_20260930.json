@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "drone_id": "lb11",
+  "source": "translation_level_coast_2026-09-30_15-41-49/lb11_translation_level_coast_2026-09-30_15-41-49.json",
+  "source_sha256": "41673093caf448483a7e2a760cabd94a97fdca8698e56e53cf0ba71b03f4daf6",
+  "mass_kg": 0.17,
+  "baseline": {
+    "specific_force_xy_m_s2": [0.07246044596191496, -0.3143163099512458],
+    "samples": 199,
+    "start_s": -2.082854747772217,
+    "end_s": -0.20471405982971191,
+    "spread_p95_m_s2": 0.2844511160655074
+  },
+  "rotational": {
+    "effective_offset_m": [0.02308003816014666, 0.02883532128032958, -0.01853856417807502],
+    "sample_count": 1541,
+    "condition_number": 5.039266103409234,
+    "training_rmse_m_s2": 0.1800402897195375
+  },
+  "command_authority": false,
+  "deployment_ready": false,
+  "geometry_verified": false,
+  "sensor_frame": "raw logged body sensor; identity mounting assumed",
+  "clock": "FC 24-bit log timestamp",
+  "force_std_N": [0.04, 0.04, 0.15],
+  "onset": {
+    "onset_mode": "continuous",
+    "onset_dwell_s": 0.03,
+    "onset_max_gap_s": 0.025
+  },
+  "evaluation": "single-flight blocked holdout; not independent-flight validation",
+  "filter_tau_s": 0.015,
+  "detector": {
+    "component_thresholds": [0.08, 0.08, 0.12],
+    "covariance_floor": [0.015, 0.015, 0.025],
+    "confidence_sigma": 2.5,
+    "onset_evidence_s": 0.05,
+    "release_time_s": 0.15,
+    "release_ratio": 0.55,
+    "onset_axes": [0, 1],
+    "release_projection_axes": [0, 1],
+    "release_direction_min_norm": 0.02
+  },
+  "packaging_note": "Frozen offline-validation sample for lb11 only. Coefficients and detector settings unchanged from the 2026-09-30 verified candidate. Not a live calibration or control input.",
+  "parent_profile_sha256": "5aa9d26f1e94d4db08cdb5eaefb10609ad409390029bb48fd71c19f707212a2e"
+}

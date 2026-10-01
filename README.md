@@ -296,3 +296,40 @@ Version-3 curve events record requested friction, applied deceleration bound,
 peak reference deceleration, planned time/distance and limitation flags alongside
 the coefficients and computation timing. Readers remain compatible with event
 versions 1 and 2. Continuous state-log rates are unchanged.
+
+### Independent frozen contact-detector validation (capture only)
+
+Normal `--interaction --sense` can opt into `Interaction.config.contact_validation_capture`
+in the mission YAML. It adds a 100 Hz raw accelerometer/gyro block, receipt/device
+timestamps, every valid raw UART potentiometer sample, and the frozen experimental
+profile to the log. The primary detector, yaw behavior, force rendering, release
+behavior, firmware and existing calibration files are unchanged. The experimental
+model is **not executed in the live control loop** and has no command authority.
+
+```yaml
+contact_validation_capture:
+  enabled: true
+  command_authority: false
+  profile_path: Interaction/profiles/contact_validation_lb11_20260930.json
+  profile_sha256: 7078ab9d78fa80543a26c17aff89b794113fc61ef89b1082482379f054f1a4b7
+  initial_no_touch_s: 10.0
+```
+
+The packaged profile above is a frozen **lb11-only offline-validation sample**,
+not a live flight calibration. A complete mission example is provided in
+`Interaction/examples/contact_validation_lb11.yaml`; select it from the
+orchestrator instead of the normal level-coast mission to enable this capture.
+It ships with Git so a normal Pi pull also obtains its pinned parameters.
+Private local profiles (`Interaction/contact_diagnostic_profile.json`),
+`wrench_calibration.json` and `attitude_response.json` remain ignored and untouched.
+Profiles include frozen coefficients, detector/filter settings, source-data hash,
+drone identity and mass. Do not reuse lb11 coefficients for another aircraft.
+Missing/changed profiles, missing telemetry and incompatible modes fail before
+takeoff. Require `--log`; do not use `--calibrate` for this independent validation.
+
+After the initial contact detector arms, do not touch for the first 10 seconds.
+Then perform separated light contacts, waiting for normal rearming between them.
+This is an operator protocol, not an automated flight or asserted ground truth.
+Potentiometer threshold crossings are a reference proxy; they are not exact
+physical contact times. The offline verifier reports coverage, misses and
+unmatched onsets, and never treats missing data as zero false positives.

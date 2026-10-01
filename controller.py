@@ -1716,6 +1716,8 @@ class Controller:
         time.sleep(2)
 
     def setup_logging(self):
+        from Interaction.contact_validation_capture import validate_capture_request
+        validate_capture_request(getattr(self, 'mission', None), self.args)
         if not self.args.log:
             return
 
@@ -1806,6 +1808,10 @@ class Controller:
                     selected = configure_calibration_capture(
                         self.log_manager, self.cf, selected, self.mission, self.args,
                     )
+                from Interaction.contact_validation_capture import configure_contact_validation_capture
+                selected = configure_contact_validation_capture(
+                    self.log_manager, self.cf, selected, self.mission, self.args,
+                )
                 self.log_manager.init_cf_logger(
                     self.cf, selected,
                     self.args.cf_log_period,
@@ -1853,6 +1859,7 @@ class Controller:
             baud=self.args.sense_baud,
             spring_constant_n_per_mm=self.args.sense_spring_constant,
             max_extension_mm=self.args.sense_max_extension,
+            sample_callback=getattr(self.log_manager, 'contact_validation_pot_callback', None),
         )
         self.force_sensor.start(startup_timeout_s=self.args.sense_startup_timeout)
         if not getattr(self.args, 'crazysim', False):
