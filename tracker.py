@@ -124,6 +124,14 @@ class LocalizerOutput:
 class Tracker:
     """Own the controller side of the version-3 localizer ABI."""
 
+    ATTITUDE_LOG_GROUP = "QUAT"
+    # IlluminationLogger applies the deployed-firmware x10 compensation, so
+    # this produces the same LogConfig(period_in_ms=10) used by the old stream.
+    ATTITUDE_LOG_PERIOD_MS = 1
+    ATTITUDE_VARIABLES = tuple(
+        f"stateEstimate.{name}" for name in ("qx", "qy", "qz", "qw")
+    )
+
     MAGIC = 0x334C5346
     ABI_VERSION = 3
     LAYOUT_SIZE = 1280
@@ -137,7 +145,7 @@ class Tracker:
     LOCALIZER = struct.Struct("<IIQd3f4f4fIH4B2xii3fB3xII16x")
 
     def __init__(self, controller, shm_name="/fls_localizer_v3", timeout=5.0,
-                 yaw_correction=None):
+                 yaw_correction=None, log_manager=None):
         self.controller = controller
         self._lock = Lock()
         self._callback_lock = Lock()
@@ -155,13 +163,48 @@ class Tracker:
         self._attitude_sequence, = struct.unpack_from(
             "<I", self._mapping, self.CONTROLLER_OFFSET + 4
         )
+        self._unsubscribe_attitude = None
+        self._attitude_log = None
+        if log_manager is None:
+            log_manager = getattr(controller, "log_manager", None)
+        try:
+            self._start_attitude_stream(log_manager)
+        except Exception:
+            self._mapping.close()
+            self._file.close()
+            raise
 
-        self._attitude_log = LogConfig(name="LocalizerAttitude", period_in_ms=10)
-        for name in ("qx", "qy", "qz", "qw"):
-            self._attitude_log.add_variable(f"stateEstimate.{name}", "float")
-        self.controller.cf.log.add_config(self._attitude_log)
-        self._attitude_log.data_received_cb.add_callback(self._on_attitude)
-        self._attitude_log.start()
+    def _start_attitude_stream(self, log_manager):
+        """Use the managed QUAT packet stream, with a no-logging fallback."""
+        register = getattr(log_manager, "register_cf_log_callback", None)
+        if callable(register):
+            unsubscribe = register(
+                self.ATTITUDE_LOG_GROUP, self._on_attitude
+            )
+            if not callable(unsubscribe):
+                raise TypeError(
+                    "log manager callback registration must return an "
+                    "unsubscribe function"
+                )
+            self._unsubscribe_attitude = unsubscribe
+            return
+
+        # Preserve tracker-only and interaction runs whose logger does not
+        # expose the shared QUAT group yet.  Normal illumination/hover runs use
+        # the manager path above and therefore allocate no duplicate log block.
+        attitude_log = LogConfig(name="LocalizerAttitude", period_in_ms=10)
+        for name in self.ATTITUDE_VARIABLES:
+            attitude_log.add_variable(name, "float")
+        self.controller.cf.log.add_config(attitude_log)
+        attitude_log.data_received_cb.add_callback(self._on_attitude)
+        self._attitude_log = attitude_log
+        try:
+            attitude_log.start()
+        except Exception:
+            attitude_log.data_received_cb.remove_callback(self._on_attitude)
+            attitude_log.stop()
+            self._attitude_log = None
+            raise
 
     @staticmethod
     def _checksum(data):
@@ -204,8 +247,8 @@ class Tracker:
         with self._callback_lock:
             if self._closed:
                 return
-            quaternion = tuple(float(data[f"stateEstimate.{name}"])
-                               for name in ("qx", "qy", "qz", "qw"))
+            quaternion = tuple(float(data[name])
+                               for name in self.ATTITUDE_VARIABLES)
             norm = math.sqrt(sum(value * value for value in quaternion))
             if not math.isfinite(norm) or norm < 1e-6:
                 return
@@ -347,7 +390,19 @@ class Tracker:
             if self._closed:
                 return
             self._closed = True
-        self._attitude_log.data_received_cb.remove_callback(self._on_attitude)
-        self._attitude_log.stop()
-        self._mapping.close()
-        self._file.close()
+        try:
+            unsubscribe_attitude = getattr(
+                self, "_unsubscribe_attitude", None
+            )
+            if unsubscribe_attitude is not None:
+                unsubscribe_attitude()
+                self._unsubscribe_attitude = None
+            attitude_log = getattr(self, "_attitude_log", None)
+            if attitude_log is not None:
+                attitude_log.data_received_cb.remove_callback(
+                    self._on_attitude
+                )
+                attitude_log.stop()
+        finally:
+            self._mapping.close()
+            self._file.close()

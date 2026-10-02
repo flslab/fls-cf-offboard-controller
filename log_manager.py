@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import bisect
+from threading import Lock
 
 from log_manager_abs import LogManager
 from cflib.crazyflie.log import LogConfig
@@ -18,6 +19,7 @@ class IlluminationLogger(LogManager):
         self.cf_log_times = {}
         self.cf_log_data = None
         self.cf_log_callbacks = {}
+        self._cf_log_callbacks_lock = Lock()
         self.verbose = kwargs.get('verbose', False)
 
     def start(self, *args, **kwargs):
@@ -102,17 +104,47 @@ class IlluminationLogger(LogManager):
         self.cf_log_times[group_name].append(cur_time)
         for par in self.cf_log_data[group_name].keys():
             self.cf_log_data[group_name][par]["data"].append(data[par])
-            if self.verbose:
+
+        with self._cf_log_callbacks_lock:
+            callbacks = tuple(self.cf_log_callbacks.get(group_name, ()))
+        for callback in callbacks:
+            try:
+                callback(timestamp, data, log_conf)
+            except Exception:
+                logger.exception(
+                    "Crazyflie log callback failed for %s; ignored",
+                    group_name,
+                )
+
+        # A subscribed group can be part of a real-time control path. Avoid
+        # synchronous per-variable logging on that callback thread.
+        if self.verbose and not callbacks:
+            for par in self.cf_log_data[group_name].keys():
                 logger.info(f"{par} = {data[par]}")
 
-        if group_name in self.cf_log_callbacks:
-            for callback in self.cf_log_callbacks[group_name]:
-                callback(timestamp, data, log_conf)
-
     def register_cf_log_callback(self, group_name, callback):
-        if group_name not in self.cf_log_callbacks:
-            self.cf_log_callbacks[group_name] = []
-        self.cf_log_callbacks[group_name].append(callback)
+        """Subscribe to complete packets from one configured log group.
+
+        The returned function is safe to call more than once.  The log block
+        remains owned by this manager; consumers only own their subscription.
+        """
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        if self.cf_log_data is None or group_name not in self.cf_log_data:
+            raise ValueError(f"Crazyflie log group is not configured: {group_name}")
+
+        with self._cf_log_callbacks_lock:
+            self.cf_log_callbacks.setdefault(group_name, []).append(callback)
+
+        def unsubscribe():
+            with self._cf_log_callbacks_lock:
+                callbacks = self.cf_log_callbacks.get(group_name)
+                if callbacks is not None and callback in callbacks:
+                    callbacks.remove(callback)
+                    if not callbacks:
+                        self.cf_log_callbacks.pop(group_name, None)
+
+        return unsubscribe
 
     def add_log_group(self, name, *args, **kwargs):
         self.groups[name] = []
@@ -161,4 +193,3 @@ class IlluminationLogger(LogManager):
             
         
         return smaller_res, larger_res
-

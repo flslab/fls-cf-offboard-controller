@@ -1063,6 +1063,12 @@ class Controller:
         if self.rpi_power_monitor:
             attempt('Power monitor stop', self.rpi_power_monitor.stop)
 
+        if getattr(self, "tracker", None):
+            try:
+                self.tracker.close()
+            except Exception as e:
+                logger.error(f"Failed to close localizer bridge: {e}")
+
         if self.log_manager:
             try:
                 self.log_manager.stop(
@@ -1079,12 +1085,6 @@ class Controller:
             except Exception as error:
                 cleanup_errors.append(error)
                 logger.exception('Log shutdown failed; continuing resource cleanup and disconnect.')
-            
-        if getattr(self, "tracker", None):
-            try:
-                self.tracker.close()
-            except Exception as e:
-                logger.error(f"Failed to close localizer bridge: {e}")
 
         if self.tracker_process:
             try:
@@ -1323,6 +1323,7 @@ class Controller:
                     shm_name=shm_name,
                     timeout=self.args.localizer_timeout,
                     yaw_correction=yaw_correction,
+                    log_manager=self.log_manager,
                 )
             except Exception:
                 self.tracker_process.terminate()
@@ -1735,7 +1736,12 @@ class Controller:
             self.log_manager = IlluminationLogger(verbose=self.args.verbose)
             self.log_manager.start()
             if not self.args.droneless:
-                log_vars = self.cfg.LOG_VARS
+                log_vars = dict(self.cfg.LOG_VARS)
+                if getattr(self.args, "tracker", False):
+                    log_vars[Tracker.ATTITUDE_LOG_GROUP] = {
+                        **log_vars[Tracker.ATTITUDE_LOG_GROUP],
+                        "log_period_ms": Tracker.ATTITUDE_LOG_PERIOD_MS,
+                    }
                 if self.use_flowdeck:
                     log_vars["MOTION"] = self.cfg.MOTION
                     log_vars["KAL_FLOW"] = self.cfg.KAL_FLOW
@@ -1750,8 +1756,14 @@ class Controller:
             self.log_manager = IlluminationLogger(verbose=self.args.verbose)
             self.log_manager.start()
             if not self.args.droneless:
+                log_vars = dict(self.cfg.LOG_VARS)
+                if getattr(self.args, "tracker", False):
+                    log_vars[Tracker.ATTITUDE_LOG_GROUP] = {
+                        **log_vars[Tracker.ATTITUDE_LOG_GROUP],
+                        "log_period_ms": Tracker.ATTITUDE_LOG_PERIOD_MS,
+                    }
                 self.log_manager.init_cf_logger(
-                    self.cf, self.cfg.LOG_VARS, self.args.cf_log_period
+                    self.cf, log_vars, self.args.cf_log_period
                 )
             self.log_manager.add_log_group("frames")
             self.log_manager.add_log_group("commands")
