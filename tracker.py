@@ -19,25 +19,46 @@ class CrazyflieLogClockMapper:
     """Map wrapping Crazyflie log ticks onto host ``CLOCK_MONOTONIC``.
 
     A Crazyflie log packet contains the low 24 bits of the millisecond clock
-    since the flight controller booted.  Callback receipt is necessarily later
-    than that sample time, so the minimum observed receipt-minus-device offset
-    is a causal estimate of the two clocks' offset.  Samples are withheld for a
-    short calibration window so a transient first-packet delay is not published
-    as clock alignment.  Without a two-way time exchange, the estimate retains
-    the minimum one-way transport delay observed during that window.
+    since the flight controller booted.  A rolling affine fit estimates the FC
+    clock rate from callback receipts, while an initial lower-envelope phase
+    estimate keeps published samples causal.  Subsequent timestamps advance by
+    FC elapsed time at the fitted rate, so transport jitter does not distort the
+    intervals used for attitude interpolation.  If causality requires a
+    material phase correction, ``history_revision`` changes so the caller can
+    prevent prediction across that clock boundary.
     """
 
     TIMESTAMP_MODULUS_MS = 1 << 24
     DEFAULT_WARMUP_SAMPLES = 16
+    DEFAULT_WARMUP_DURATION_S = 0.5
+    DEFAULT_RATE_WINDOW_S = 1.0
     DEFAULT_MAXIMUM_CONTINUITY_ERROR_S = 0.5
+    MAXIMUM_CLOCK_RATE_ERROR = 0.01
+    HISTORY_RESET_ABSOLUTE_ERROR_S = 10e-6
+    HISTORY_RESET_RELATIVE_ERROR = 0.01
 
     def __init__(self, warmup_samples=DEFAULT_WARMUP_SAMPLES,
+                 warmup_duration_s=DEFAULT_WARMUP_DURATION_S,
+                 rate_window_s=DEFAULT_RATE_WINDOW_S,
                  maximum_continuity_error_s=
                  DEFAULT_MAXIMUM_CONTINUITY_ERROR_S):
         if (isinstance(warmup_samples, bool)
                 or not isinstance(warmup_samples, int)
                 or warmup_samples < 1):
             raise ValueError("warmup_samples must be a positive integer")
+        warmup_duration_s = float(warmup_duration_s)
+        if not math.isfinite(warmup_duration_s) or warmup_duration_s < 0.0:
+            raise ValueError(
+                "warmup_duration_s must be finite and non-negative"
+            )
+        rate_window_s = float(rate_window_s)
+        if (not math.isfinite(rate_window_s)
+                or rate_window_s <= 0.0
+                or rate_window_s < warmup_duration_s):
+            raise ValueError(
+                "rate_window_s must be finite, positive, and no shorter "
+                "than warmup_duration_s"
+            )
         maximum_continuity_error_s = float(maximum_continuity_error_s)
         if (not math.isfinite(maximum_continuity_error_s)
                 or maximum_continuity_error_s <= 0.0):
@@ -45,26 +66,91 @@ class CrazyflieLogClockMapper:
                 "maximum_continuity_error_s must be finite and positive"
             )
         self._warmup_samples = warmup_samples
+        self._warmup_duration_s = warmup_duration_s
+        self._rate_window_s = rate_window_s
         self._maximum_continuity_error_s = maximum_continuity_error_s
+        self._history_revision = 0
+        self._last_mapped_time_s = None
         self._clear_epoch()
 
     def _clear_epoch(self):
         self._last_raw_timestamp_ms = None
         self._unwrapped_timestamp_ms = None
         self._last_receive_time_s = None
-        self._minimum_offset_s = None
+        self._epoch_unwrapped_timestamp_ms = None
+        self._epoch_receive_time_s = None
         self._sample_count = 0
-        self._last_mapped_time_s = None
+        self._last_published_device_time_s = None
+        self._clock_rate = 1.0
+        self._rate_samples = deque()
+        self._sum_device = 0.0
+        self._sum_receive = 0.0
+        self._sum_device_squared = 0.0
+        self._sum_device_receive = 0.0
 
     def _start_epoch(self, raw_timestamp_ms, receive_time_s):
+        restarting = self._last_raw_timestamp_ms is not None
+        self._clear_epoch()
         self._last_raw_timestamp_ms = raw_timestamp_ms
         self._unwrapped_timestamp_ms = raw_timestamp_ms
         self._last_receive_time_s = receive_time_s
-        self._minimum_offset_s = (
-            receive_time_s - raw_timestamp_ms / 1000.0
-        )
+        self._epoch_unwrapped_timestamp_ms = raw_timestamp_ms
+        self._epoch_receive_time_s = receive_time_s
         self._sample_count = 1
-        self._last_mapped_time_s = None
+        self._append_rate_sample(0.0, 0.0)
+        if restarting:
+            self._history_revision += 1
+
+    @property
+    def history_revision(self):
+        """Generation of the timestamp history used for interpolation."""
+        return self._history_revision
+
+    def _append_rate_sample(self, device_time_s, receive_time_s):
+        sample = (device_time_s, receive_time_s)
+        self._rate_samples.append(sample)
+        self._sum_device += device_time_s
+        self._sum_receive += receive_time_s
+        self._sum_device_squared += device_time_s * device_time_s
+        self._sum_device_receive += device_time_s * receive_time_s
+
+        cutoff = receive_time_s - self._rate_window_s
+        while (len(self._rate_samples) > 2
+               and self._rate_samples[0][1] < cutoff):
+            old_device, old_receive = self._rate_samples.popleft()
+            self._sum_device -= old_device
+            self._sum_receive -= old_receive
+            self._sum_device_squared -= old_device * old_device
+            self._sum_device_receive -= old_device * old_receive
+
+    def _update_clock_rate(self):
+        count = len(self._rate_samples)
+        if count < 2:
+            return
+        denominator = (
+            count * self._sum_device_squared
+            - self._sum_device * self._sum_device
+        )
+        if denominator <= 1e-15:
+            return
+        rate = (
+            count * self._sum_device_receive
+            - self._sum_device * self._sum_receive
+        ) / denominator
+        if (math.isfinite(rate)
+                and abs(rate - 1.0) <= self.MAXIMUM_CLOCK_RATE_ERROR):
+            self._clock_rate = rate
+
+    def _initial_mapped_time(self, device_time_s):
+        phase_s = min(
+            receive_time_s - self._clock_rate * sample_time_s
+            for sample_time_s, receive_time_s in self._rate_samples
+        )
+        return (
+            self._epoch_receive_time_s
+            + self._clock_rate * device_time_s
+            + phase_s
+        )
 
     @classmethod
     def _validate_raw_timestamp(cls, raw_timestamp_ms):
@@ -92,8 +178,6 @@ class CrazyflieLogClockMapper:
 
         if self._last_raw_timestamp_ms is None:
             self._start_epoch(raw_timestamp_ms, receive_time_s)
-            if self._warmup_samples > 1:
-                return None
         else:
             device_delta_ms = (
                 raw_timestamp_ms - self._last_raw_timestamp_ms
@@ -117,32 +201,52 @@ class CrazyflieLogClockMapper:
             self._last_receive_time_s = receive_time_s
             self._sample_count += 1
 
-        # Freeze the epoch offset before publishing the first sample. Updating
-        # it afterward would put new samples on a shifted time base while old
-        # samples are still present in the shared-memory ring, compressing the
-        # interval used by attitude extrapolation.
-        if self._sample_count <= self._warmup_samples:
-            candidate_offset_s = (
-                receive_time_s - self._unwrapped_timestamp_ms / 1000.0
-            )
-            self._minimum_offset_s = min(
-                self._minimum_offset_s, candidate_offset_s
-            )
-        if self._sample_count < self._warmup_samples:
+            device_time_s = (
+                self._unwrapped_timestamp_ms
+                - self._epoch_unwrapped_timestamp_ms
+            ) / 1000.0
+            receive_elapsed_s = receive_time_s - self._epoch_receive_time_s
+            self._append_rate_sample(device_time_s, receive_elapsed_s)
+
+        device_time_s = (
+            self._unwrapped_timestamp_ms
+            - self._epoch_unwrapped_timestamp_ms
+        ) / 1000.0
+        receive_elapsed_s = receive_time_s - self._epoch_receive_time_s
+        self._update_clock_rate()
+        if (self._sample_count < self._warmup_samples
+                or receive_elapsed_s < self._warmup_duration_s):
             return None
 
-        mapped_time_s = (
-            self._unwrapped_timestamp_ms / 1000.0
-            + self._minimum_offset_s
-        )
-        # A receive time earlier than the frozen causal estimate means the
-        # warmup did not observe the true delay floor. Drop that sample rather
-        # than rebasing timestamps while older samples remain in the ring.
-        if (mapped_time_s > receive_time_s
-                or (self._last_mapped_time_s is not None
-                    and mapped_time_s <= self._last_mapped_time_s)):
+        if self._last_published_device_time_s is None:
+            mapped_time_s = min(
+                self._initial_mapped_time(device_time_s), receive_time_s
+            )
+        else:
+            device_delta_s = (
+                device_time_s - self._last_published_device_time_s
+            )
+            expected_interval_s = device_delta_s * self._clock_rate
+            predicted_time_s = (
+                self._last_mapped_time_s + expected_interval_s
+            )
+            mapped_time_s = min(predicted_time_s, receive_time_s)
+            correction_s = predicted_time_s - mapped_time_s
+            reset_threshold_s = max(
+                self.HISTORY_RESET_ABSOLUTE_ERROR_S,
+                expected_interval_s * self.HISTORY_RESET_RELATIVE_ERROR,
+            )
+            if correction_s > reset_threshold_s:
+                self._history_revision += 1
+
+        # A callback clock that does not advance cannot safely place another
+        # sample. Keep the previous published device epoch so the next usable
+        # packet covers the complete FC interval.
+        if (self._last_mapped_time_s is not None
+                and mapped_time_s <= self._last_mapped_time_s):
             return None
         self._last_mapped_time_s = mapped_time_s
+        self._last_published_device_time_s = device_time_s
         return mapped_time_s
 
 
@@ -297,6 +401,7 @@ class Tracker:
         self._unsubscribe_attitude = None
         self._attitude_log = None
         self._attitude_clock = CrazyflieLogClockMapper()
+        self._attitude_clock_revision = self._attitude_clock.history_revision
         if log_manager is None:
             log_manager = getattr(controller, "log_manager", None)
         try:
@@ -379,21 +484,39 @@ class Tracker:
         with self._callback_lock:
             if self._closed:
                 return
+            sample_time = None
             try:
                 sample_time = self._attitude_clock.map(
                     timestamp, received_at
                 )
             except (TypeError, ValueError, OverflowError):
-                return
-            if sample_time is None:
-                return
-            quaternion = tuple(float(data[name])
-                               for name in self.ATTITUDE_VARIABLES)
-            norm = math.sqrt(sum(value * value for value in quaternion))
-            if not math.isfinite(norm) or norm < 1e-6:
-                return
-            quaternion = tuple(value / norm for value in quaternion)
-            self._write_controller(sample_time, quaternion)
+                pass
+            clock_revision = getattr(
+                self._attitude_clock, "history_revision", 0
+            )
+            previous_revision = getattr(
+                self, "_attitude_clock_revision", clock_revision
+            )
+            if clock_revision != previous_revision:
+                self._clear_attitude_history()
+                self._attitude_clock_revision = clock_revision
+            if sample_time is not None:
+                try:
+                    quaternion = tuple(
+                        float(data[name]) for name in self.ATTITUDE_VARIABLES
+                    )
+                    norm = math.sqrt(
+                        sum(value * value for value in quaternion)
+                    )
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    norm = math.nan
+                if math.isfinite(norm) and norm >= 1e-6:
+                    quaternion = tuple(value / norm for value in quaternion)
+                    self._write_controller(sample_time, quaternion)
+
+            # Localizer output is independent of whether this particular FC
+            # tick was publishable (for example during mapper warmup or on a
+            # duplicate tick).  Keep acknowledgements and pose forwarding live.
             output = self._read_localizer()
             if output is None or not self._is_fresh(output):
                 return
@@ -422,6 +545,12 @@ class Tracker:
                 self.controller._send_position_no_log({"tvec": output.position})
             if yaw_correction is not None:
                 self.controller._send_yaw_error(yaw_correction)
+
+    def _clear_attitude_history(self):
+        """Invalidate interpolation samples from an older clock alignment."""
+        for index in range(self.ATTITUDE_COUNT):
+            offset = self.ATTITUDE_OFFSET + index * self.ATTITUDE_SIZE
+            struct.pack_into("<I", self._mapping, offset, 0)
 
     def _write_controller(self, timestamp, quaternion):
         with self._lock:
