@@ -15,6 +15,137 @@ from cflib.crazyflie.log import LogConfig
 from yaw_error import YawCorrectionConfig, YawCorrectionGate
 
 
+class CrazyflieLogClockMapper:
+    """Map wrapping Crazyflie log ticks onto host ``CLOCK_MONOTONIC``.
+
+    A Crazyflie log packet contains the low 24 bits of the millisecond clock
+    since the flight controller booted.  Callback receipt is necessarily later
+    than that sample time, so the minimum observed receipt-minus-device offset
+    is a causal estimate of the two clocks' offset.  Samples are withheld for a
+    short calibration window so a transient first-packet delay is not published
+    as clock alignment.  Without a two-way time exchange, the estimate retains
+    the minimum one-way transport delay observed during that window.
+    """
+
+    TIMESTAMP_MODULUS_MS = 1 << 24
+    DEFAULT_WARMUP_SAMPLES = 16
+    DEFAULT_MAXIMUM_CONTINUITY_ERROR_S = 0.5
+
+    def __init__(self, warmup_samples=DEFAULT_WARMUP_SAMPLES,
+                 maximum_continuity_error_s=
+                 DEFAULT_MAXIMUM_CONTINUITY_ERROR_S):
+        if (isinstance(warmup_samples, bool)
+                or not isinstance(warmup_samples, int)
+                or warmup_samples < 1):
+            raise ValueError("warmup_samples must be a positive integer")
+        maximum_continuity_error_s = float(maximum_continuity_error_s)
+        if (not math.isfinite(maximum_continuity_error_s)
+                or maximum_continuity_error_s <= 0.0):
+            raise ValueError(
+                "maximum_continuity_error_s must be finite and positive"
+            )
+        self._warmup_samples = warmup_samples
+        self._maximum_continuity_error_s = maximum_continuity_error_s
+        self._clear_epoch()
+
+    def _clear_epoch(self):
+        self._last_raw_timestamp_ms = None
+        self._unwrapped_timestamp_ms = None
+        self._last_receive_time_s = None
+        self._minimum_offset_s = None
+        self._sample_count = 0
+        self._last_mapped_time_s = None
+
+    def _start_epoch(self, raw_timestamp_ms, receive_time_s):
+        self._last_raw_timestamp_ms = raw_timestamp_ms
+        self._unwrapped_timestamp_ms = raw_timestamp_ms
+        self._last_receive_time_s = receive_time_s
+        self._minimum_offset_s = (
+            receive_time_s - raw_timestamp_ms / 1000.0
+        )
+        self._sample_count = 1
+        self._last_mapped_time_s = None
+
+    @classmethod
+    def _validate_raw_timestamp(cls, raw_timestamp_ms):
+        if isinstance(raw_timestamp_ms, bool):
+            raise ValueError("Crazyflie log timestamp must be an integer")
+        try:
+            numeric = float(raw_timestamp_ms)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError(
+                "Crazyflie log timestamp must be an integer"
+            ) from error
+        if not math.isfinite(numeric) or not numeric.is_integer():
+            raise ValueError("Crazyflie log timestamp must be an integer")
+        raw_timestamp_ms = int(numeric)
+        if not 0 <= raw_timestamp_ms < cls.TIMESTAMP_MODULUS_MS:
+            raise ValueError("Crazyflie log timestamp is outside 24-bit range")
+        return raw_timestamp_ms
+
+    def map(self, raw_timestamp_ms, receive_time_s):
+        """Return source time in host-monotonic seconds, or ``None`` while unsafe."""
+        raw_timestamp_ms = self._validate_raw_timestamp(raw_timestamp_ms)
+        receive_time_s = float(receive_time_s)
+        if not math.isfinite(receive_time_s):
+            raise ValueError("receive_time_s must be finite")
+
+        if self._last_raw_timestamp_ms is None:
+            self._start_epoch(raw_timestamp_ms, receive_time_s)
+            if self._warmup_samples > 1:
+                return None
+        else:
+            device_delta_ms = (
+                raw_timestamp_ms - self._last_raw_timestamp_ms
+            ) % self.TIMESTAMP_MODULUS_MS
+            if device_delta_ms == 0:
+                return None
+            receive_delta_s = receive_time_s - self._last_receive_time_s
+            device_delta_s = device_delta_ms / 1000.0
+            discontinuity = (
+                receive_delta_s < 0.0
+                or device_delta_ms >= self.TIMESTAMP_MODULUS_MS // 2
+                or abs(device_delta_s - receive_delta_s)
+                > self._maximum_continuity_error_s
+            )
+            if discontinuity:
+                self._start_epoch(raw_timestamp_ms, receive_time_s)
+                return None
+
+            self._last_raw_timestamp_ms = raw_timestamp_ms
+            self._unwrapped_timestamp_ms += device_delta_ms
+            self._last_receive_time_s = receive_time_s
+            self._sample_count += 1
+
+        # Freeze the epoch offset before publishing the first sample. Updating
+        # it afterward would put new samples on a shifted time base while old
+        # samples are still present in the shared-memory ring, compressing the
+        # interval used by attitude extrapolation.
+        if self._sample_count <= self._warmup_samples:
+            candidate_offset_s = (
+                receive_time_s - self._unwrapped_timestamp_ms / 1000.0
+            )
+            self._minimum_offset_s = min(
+                self._minimum_offset_s, candidate_offset_s
+            )
+        if self._sample_count < self._warmup_samples:
+            return None
+
+        mapped_time_s = (
+            self._unwrapped_timestamp_ms / 1000.0
+            + self._minimum_offset_s
+        )
+        # A receive time earlier than the frozen causal estimate means the
+        # warmup did not observe the true delay floor. Drop that sample rather
+        # than rebasing timestamps while older samples remain in the ring.
+        if (mapped_time_s > receive_time_s
+                or (self._last_mapped_time_s is not None
+                    and mapped_time_s <= self._last_mapped_time_s)):
+            return None
+        self._last_mapped_time_s = mapped_time_s
+        return mapped_time_s
+
+
 def reset_estimator_and_acknowledge(cf, generation, acknowledge):
     """Reset the EKF, then allow localizer positions to reach it."""
     cf.param.set_value('kalman.resetEstimation', '1')
@@ -165,6 +296,7 @@ class Tracker:
         )
         self._unsubscribe_attitude = None
         self._attitude_log = None
+        self._attitude_clock = CrazyflieLogClockMapper()
         if log_manager is None:
             log_manager = getattr(controller, "log_manager", None)
         try:
@@ -242,10 +374,18 @@ class Tracker:
                     ) from error
                 time.sleep(0.05)
 
-    def _on_attitude(self, _timestamp, data, _log_config):
+    def _on_attitude(self, timestamp, data, _log_config):
         received_at = time.monotonic()
         with self._callback_lock:
             if self._closed:
+                return
+            try:
+                sample_time = self._attitude_clock.map(
+                    timestamp, received_at
+                )
+            except (TypeError, ValueError, OverflowError):
+                return
+            if sample_time is None:
                 return
             quaternion = tuple(float(data[name])
                                for name in self.ATTITUDE_VARIABLES)
@@ -253,7 +393,7 @@ class Tracker:
             if not math.isfinite(norm) or norm < 1e-6:
                 return
             quaternion = tuple(value / norm for value in quaternion)
-            self._write_controller(received_at, quaternion)
+            self._write_controller(sample_time, quaternion)
             output = self._read_localizer()
             if output is None or not self._is_fresh(output):
                 return
