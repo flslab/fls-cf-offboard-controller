@@ -59,7 +59,7 @@ class CaptureTests(unittest.TestCase):
         options=dict(enabled=True,profile_path=str(path),
             profile_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
         mission={'Interaction':{'config':{'contact_validation_capture':options,
-            'wrench_interaction':{'mass':.17},'level_coast':{'detector':'potentiometer'}}}}
+            'wrench_interaction':{'mass':.17},'detection_method':'potentiometer'}}}
         args=SimpleNamespace(interaction=True,sense=True,log=True,drone_id='lb11',cf_log_period=10)
         logs=SimpleNamespace(live_logger=Mock(),capture_packet_timing=False)
         cf=fake_cf(calibration_log_vars(config.LOG_VARS))

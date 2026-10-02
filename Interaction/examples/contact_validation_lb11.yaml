@@ -1,5 +1,5 @@
 # Capture-only validation. Potentiometer remains the live contact/release detector.
-# Run through orchestrator --interaction --sense; do not add --calibrate.
+# Run through orchestrator --interaction; sensing starts automatically. Do not add --calibrate.
 # After the initial detector-armed message: 10 s without contact, then contacts.
 name: translation_level_coast_contact_validation
 drones:
@@ -10,7 +10,7 @@ Interaction:
   action: translation
   config:
     behavior: level_coast
-    detection_method: momentum_impulse
+    detection_method: potentiometer  # potentiometer | model | vel
     vicon_source_metadata: true
     duration: 60
     contact_validation_capture:
@@ -21,7 +21,6 @@ Interaction:
       initial_no_touch_s: 10.0
     grace_time: 0.3
     level_coast:
-      detector: potentiometer
       grace_start: release
       follow_yaw: false
       yaw_rate_damping: true

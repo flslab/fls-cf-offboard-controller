@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -17,14 +17,47 @@ from Interaction.mission_profiles import PROFILES, resolve_mission_profiles
 def mission():
     return {'drones': {'lb11': {'target': [0, -1, 1]}}, 'Interaction': {
         'action': 'translation', 'config': {
-            'behavior': 'level_coast', 'detection_method': 'momentum_impulse',
+            'behavior': 'level_coast', 'detection_method': 'potentiometer',
             'duration': 60, 'grace_time': .5,
-            'level_coast': {'detector': 'potentiometer', 'stop_speed_m_s': .03},
+            'level_coast': {'stop_speed_m_s': .03},
             'wrench_interaction_profile': 'level_coast',
         }}}
 
 
 class MissionProfileTests(unittest.TestCase):
+    def test_all_detection_methods_keep_onboard_logging_and_both_command_modes(self):
+        for method in ('potentiometer', 'model', 'vel'):
+            for command in ('position', 'orientation'):
+                with self.subTest(method=method, command=command):
+                    resolved = resolve_mission_profiles(mission())
+                    config = resolved['Interaction']['config']
+                    config['detection_method'] = method
+                    config['level_coast']['command_mode'] = command
+                    options = validate_level_coast(config, sensor_available=method == 'potentiometer')
+                    self.assertEqual(options['detection_method'], method)
+                    self.assertEqual(options['command_mode'], command)
+                    control = Controller.__new__(Controller)
+                    control.args = SimpleNamespace(interaction=True)
+                    control.mission = resolved
+                    self.assertTrue(control._uses_onboard_wrench_state())
+                    self.assertTrue({'VEL_ORI', 'POS_ACC', 'RATE_EST', 'MOT_BAT'}
+                                    .issubset(log_vars_for_mission(resolved)))
+
+    def test_level_coast_calibration_keeps_onboard_pipeline_for_all_methods(self):
+        from Interaction.interactions import InteractionsControl
+        from Interaction.tests.test_wrench_interactions_integration import FakeCommander
+        for method in ('potentiometer', 'model', 'vel'):
+            with self.subTest(method=method):
+                control = InteractionsControl.__new__(InteractionsControl)
+                control.drone_id = 'lb11'
+                control.lo_commander = FakeCommander()
+                control.mission = resolve_mission_profiles(mission())
+                control.mission['Interaction']['config']['detection_method'] = method
+                control.interaction_onboard_wrench_admittance = Mock()
+                control._run_translation(calibration_mode=True)
+                control.interaction_onboard_wrench_admittance.assert_called_once()
+                self.assertTrue(control.interaction_onboard_wrench_admittance.call_args.kwargs['calibration_mode'])
+
     def test_profile_is_portable_and_retains_baseline_values(self):
         raw = mission()
         before = deepcopy(raw)
