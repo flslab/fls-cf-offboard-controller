@@ -37,14 +37,14 @@ def validate_level_coast(config, *, sensor_available):
     if options['command_mode'] not in ('orientation', 'position'):
         raise ValueError('level_coast.command_mode must be orientation or position')
     options['position_control'] = validate_position_follow(options.get('position_control', {}))
-    detector = options.get('detector', 'potentiometer')
+    if 'detector' in options:
+        raise ValueError('level_coast.detector was removed; use config.detection_method')
+    detector = config.get('detection_method', 'potentiometer')
     if detector not in ('vel', 'model', 'potentiometer'):
-        raise ValueError('level_coast.detector must be vel, model or potentiometer')
+        raise ValueError('level_coast detection_method must be vel, model or potentiometer')
     wrench = config.get('wrench_interaction') or {}
-    if (config.get('detection_method') != 'momentum_impulse'
-            or wrench.get('state_source') != 'onboard'):
-        raise ValueError('level_coast requires momentum_impulse / onboard state logging; '
-                         'select the contact detector with level_coast.detector')
+    if wrench.get('state_source') != 'onboard':
+        raise ValueError('level_coast requires onboard state logging')
     if wrench.get('shadow_mode', True):
         raise ValueError('level_coast requires wrench_interaction.shadow_mode: false')
     if (wrench.get('firmware_auto_brake') or {}).get('enabled', False):
@@ -75,7 +75,7 @@ def validate_level_coast(config, *, sensor_available):
         options.get('yaw_rate_deadband_deg_s', DEFAULT_YAW_RATE_DEADBAND_DEG_S))
     options['stop_speed_m_s'] = _number(
         options.get('stop_speed_m_s', .03), 'stop_speed_m_s', positive=True)
-    options['detector'] = detector
+    options['detection_method'] = detector
     velocity = dict(options.get('velocity') or {})
     for key, default, positive in (
             ('onset_speed_m_s', .10, True), ('release_speed_m_s', .08, True),
@@ -279,7 +279,7 @@ def run_level_coast(owner, config):
     position_command = nominal.copy()
     velocity_detector = VelocityContactDetector(**options['velocity'])
     pot_contact, pot_release = (_potentiometer_detectors(config)
-        if options['detector'] == 'potentiometer' else (None, None))
+        if options['detection_method'] == 'potentiometer' else (None, None))
     rate = _number(owner.ctrl_rate, 'ctrl_rate', positive=True)
     dt = 1 / rate
     last_state_time = None
@@ -349,7 +349,7 @@ def run_level_coast(owner, config):
                     print('[interaction] coast: detection ready', flush=True)
             detection_was_enabled = enabled
             pipeline.detector.translation.enabled = (
-                options['detector'] == 'model' and enabled)
+                options['detection_method'] == 'model' and enabled)
             output = pipeline.update(
                 position=state['position'], velocity=state['velocity'],
                 attitude_rpy=state['attitude_rpy'], angular_velocity=state['angular_velocity'],
@@ -376,13 +376,13 @@ def run_level_coast(owner, config):
             # Optional sensing remains diagnostic for model/velocity detection.
             sensor = (owner._force_sensor_log_fields(output.estimate, now)
                       if getattr(owner, 'force_sensor', None) is not None else {})
-            if options['detector'] == 'model' and output.contacts is not None:
+            if options['detection_method'] == 'model' and output.contacts is not None:
                 started = output.contacts.translation.started
                 released = output.contacts.translation.ended
-            elif options['detector'] == 'vel':
+            elif options['detection_method'] == 'vel':
                 started, released = velocity_detector.update(
                     float(np.linalg.norm(state['velocity'][:2])), state['time'], enabled)
-            elif options['detector'] == 'potentiometer':
+            elif options['detection_method'] == 'potentiometer':
                 if not sensor.get('force_sensor_fresh'):
                     raise RuntimeError('Level coast requires fresh potentiometer samples')
                 sensor_time = sensor.get('force_sensor_sample_monotonic_time')

@@ -16140,7 +16140,10 @@ class InteractionsControl:
                 (wrench_config or {}).get('firmware_auto_brake', {})
                 .get('enabled', False)
             )
-            detection_method = translation_setting.get('detection_method')
+            # Level-coast detection_method selects contact/release only. Its
+            # contact-free calibration still uses the onboard momentum pipeline.
+            detection_method = ('momentum_impulse' if behavior == 'level_coast'
+                                else translation_setting.get('detection_method'))
             if detection_method is None:
                 # Preserve old missions: a wrench block selected model-based
                 # detection, while its absence selected legacy velocity mode.

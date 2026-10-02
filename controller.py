@@ -1924,7 +1924,8 @@ class Controller:
             )
         return (
             wrench_config is not None
-            and detection_method == 'momentum_impulse'
+            and (translation_config.get('behavior') == 'level_coast'
+                 or detection_method == 'momentum_impulse')
             and wrench_config.get('state_source') == 'onboard'
         )
 

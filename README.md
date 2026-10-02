@@ -150,9 +150,26 @@ that. The runtime config log records the profile name and full effective setting
 Unknown or missing profiles fail during mission loading. Deploy the offboard code
 and profile together when using a mission that references it.
 
-Keep `detection_method: momentum_impulse` for synchronized onboard state logging;
-the profile supplies `state_source: onboard`. Select the actual contact detector with
-`level_coast.detector: vel`, `model`, or `potentiometer` (`--sense` required).
+For `behavior: level_coast`, `detection_method` selects the contact/release
+detector directly: `potentiometer`, `model`, or `vel` (default: `potentiometer`).
+Remove the old `level_coast.detector` field; it is rejected to avoid ambiguous
+selection. The shared onboard momentum observer, startup calibration and state
+logging remain active for all three methods; the profile supplies
+`state_source: onboard`. The LightBender
+orchestrator starts the sensor only for `potentiometer` in ordinary level-coast
+runs; no `sensing` field or manual CLI flag is needed. Legacy `sensing` and
+`--sense` overrides cannot change that selection. Direct controller launches
+still require `--sense` for potentiometer hardware setup.
+For the separate `standard` behavior, the existing `momentum_impulse`,
+`mocap_wrench` and `velocity` method names keep their original meaning.
+
+```yaml
+behavior: level_coast
+detection_method: potentiometer  # potentiometer | model | vel
+wrench_interaction_profile: level_coast
+level_coast:
+  command_mode: position  # position | orientation
+```
 
 Set `level_coast.command_mode: position` to use moving **position packets** in
 both contact and coast. Omitting this field retains `orientation`. Detector,

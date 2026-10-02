@@ -17,9 +17,9 @@ from Interaction.tests.test_wrench_interactions_integration import FakeCommander
 
 def configuration(detector='potentiometer'):
     return {
-        'behavior': 'level_coast', 'detection_method': 'momentum_impulse',
+        'behavior': 'level_coast', 'detection_method': detector,
         'duration': .85, 'grace_time': .10,
-        'level_coast': {'detector': detector, 'stop_speed_m_s': .03,
+        'level_coast': {'stop_speed_m_s': .03,
             'velocity': {'onset_dwell_s': .01, 'release_dwell_s': .01}},
         'virtual_object': {
             'contact_detection': {'force_threshold_n': .18, 'onset_dwell_s': .01},
@@ -157,7 +157,9 @@ class LevelCoastStateTests(unittest.TestCase):
             ('yaw_deadband', lambda c: c['level_coast'].update(yaw_rate_deadband_deg_s=-1)),
             ('yaw_deadband_nan', lambda c: c['level_coast'].update(yaw_rate_deadband_deg_s=float('nan'))),
             ('yaw_conflict', lambda c: c['level_coast'].update(yaw_rate_damping=True, follow_yaw=True)),
-            ('detector', lambda c: c['level_coast'].update(detector='unknown')),
+            ('detection_method', lambda c: c.update(detection_method='unknown')),
+            ('old_pipeline_name', lambda c: c.update(detection_method='momentum_impulse')),
+            ('old_detector_key', lambda c: c['level_coast'].update(detector='model')),
         ]
         for name, mutate in variants:
             with self.subTest(name=name):

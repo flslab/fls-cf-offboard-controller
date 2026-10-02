@@ -100,7 +100,7 @@ def configure_contact_validation_capture(log_manager, cf, selected, mission, arg
             separators=(',',':'),allow_nan=False).encode()).hexdigest(),
         initial_no_touch_s=no_touch,
         no_contact_is_operator_requirement_not_measured_ground_truth=True,
-        primary_detector=config.get('level_coast',{}).get('detector','unchanged'),
+        primary_detector=config.get('detection_method','unchanged'),
         mission_snapshot=deepcopy(mission),groups=groups,variable_subscriptions=count,
         imu_requested_rate_hz=100,imu_timestamp_basis='24-bit FC CRTP log tick, not sensor epoch',
         imu_atomic_sensor_snapshot=False,
