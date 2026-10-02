@@ -3929,18 +3929,7 @@ if __name__ == '__main__':
     ap.add_argument("--landing-tile", type=int, nargs=2)
     # Accepted while deployment manifests migrate from the deprecated tracker.
     ap.add_argument("--track-aruco", action="store_true", help=argparse.SUPPRESS)
-    ap.add_argument("--save-tracker-video", action="store_true", help=argparse.SUPPRESS)
-    ap.add_argument("--save-tracker-images", action="store_true", help=argparse.SUPPRESS)
-    ap.add_argument("--stream-tracker", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--tracker-encoder-rate", type=int, default=50, help="id encoder rate")
-    ap.add_argument("--tracker-camera-rate", type=int, default=120, help=argparse.SUPPRESS)
-    ap.add_argument("--tracker-res", type=int, choices=[400, 800], default=400,
-                    help=argparse.SUPPRESS)
-    ap.add_argument("--tracker-static-marker", action="store_true", help=argparse.SUPPRESS)
-    ap.add_argument("--enable-tracker-kf", action="store_true", help=argparse.SUPPRESS)
-    ap.add_argument("--tracker-grid-map", help=argparse.SUPPRESS)
-    ap.add_argument("--tracker-grid-distance", help=argparse.SUPPRESS)
-    ap.add_argument("--tracker-grid-window-size", help=argparse.SUPPRESS)
     ap.add_argument("--marker-id", type=int, default=0, help="ID of the blinking marker")
     ap.add_argument("--target-id", type=int, default=0, help="ID of the anchor to track")
     ap.add_argument("--payload-size", type=int, default=4, help="size of the payload")
