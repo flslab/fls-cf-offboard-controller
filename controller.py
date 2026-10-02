@@ -1034,6 +1034,14 @@ class Controller:
             else:
                 attempt('Yaw-angle PID restore', yaw_damping.restore)
 
+        position_pid = getattr(self, '_offboard_position_pid', None)
+        if position_pid is not None:
+            if getattr(self, 'flying', True):
+                cleanup_errors.append(RuntimeError(
+                    'XY PID gains not restored while still flying; recovery backup retained'))
+            else:
+                attempt('Position-follow XY PID restore', position_pid.restore)
+
         if self.bat_logger:
             attempt('Battery logger stop', self.bat_logger.stop)
 
@@ -2102,10 +2110,45 @@ class Controller:
             'activation': 'stable_interaction_ready',
         }, name='Offboard Yaw Rate Damping')
 
+    def _prepare_offboard_position_control(self, *, recover_only=False):
+        from pathlib import Path
+        import hashlib
+        from Interaction.position_follow import PositionFollowPidContext
+        translation = (self.mission or {}).get('Interaction', {}).get('config', {})
+        enabled = (translation.get('behavior') == 'level_coast'
+                   and (translation.get('level_coast') or {}).get('command_mode') == 'position')
+        identity = getattr(self.args, 'drone_id', None)
+        if identity is None:
+            if enabled:
+                raise ValueError('position-follow requires drone_id for parameter recovery')
+            return
+        key = hashlib.sha256(str(identity).encode()).hexdigest()[:16]
+        path = Path(__file__).resolve().parent / 'cache' / f'position-follow-gains-{key}.json'
+        guard = PositionFollowPidContext(self.cf, path)
+        if enabled or path.exists():
+            if (getattr(self, 'flying', False) or getattr(self.args, 'skip_takeoff', False)
+                    or getattr(self.args, 'skip_landing', False)):
+                raise ValueError('position-follow setup/recovery requires grounded startup and normal landing')
+            guard.restore()
+        if not enabled or recover_only:
+            return
+        if (self.args.controller_type != 'pid' or getattr(self.args, 'calibrate', False)
+                or not getattr(self.args, 'interaction', False)):
+            raise ValueError('position-follow requires a PID interaction run')
+        # Store before prepare so partial parameter writes are also recovered.
+        self._offboard_position_pid = guard
+        guard.prepare()
+        self.cf._offboard_position_pid = guard
+        self.log_manager.add_log_entry('configs', {
+            'command_mode': 'position', 'confirmed_pid_parameters': guard.parameters,
+            'xy_control': 'P-only position and velocity; ordinary Z and attitude/rate PID',
+        }, name='Offboard Position Follow PID')
+
     def setup_params(self):
         logger.info("Setting up parameters...")
 
         self._prepare_offboard_yaw_damping(recover_only=True)
+        self._prepare_offboard_position_control(recover_only=True)
 
         self._activate_kalman_estimator()
         if not getattr(self.args, 'crazysim', False):
@@ -2157,12 +2200,16 @@ class Controller:
             self._setup_firmware_auto_brake_params()
 
         self._prepare_offboard_yaw_damping()
+        self._prepare_offboard_position_control()
 
     def arm(self):
         if self.args.ground_test or self.args.skip_arm:
             return
 
         self.verify_contact_attitude_final_prearm_ready()
+        position_pid = getattr(self, '_offboard_position_pid', None)
+        if position_pid is not None:
+            position_pid.verify()
         if (getattr(self, 'firmware_auto_brake_enabled', False) and
                 (self.firmware_auto_brake_mode == 'pi_joint'
                  or getattr(self, '_firmware_response_expected', None) is not None)):

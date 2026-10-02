@@ -181,13 +181,17 @@ class LevelCoastLoopTests(unittest.TestCase):
                      pressed_fn=None, speed_fn=None, follow_yaw=False,
                      yaw_fn=None, state_delay=0., target_yaw=0., yaw_rate_damping=False,
                      ori_delay=0., yaw_confirm_delay=0., yaw_rate_fn=None,
-                     sensor_present=True, sensor_fresh=True):
+                     sensor_present=True, sensor_fresh=True, command_mode='orientation',
+                     position_options=None):
         config = configuration(detector)
         config['duration'] = duration
         config['grace_time'] = grace_time
         config['level_coast']['grace_start'] = grace_start
         config['level_coast']['follow_yaw'] = follow_yaw
         config['level_coast']['yaw_rate_damping'] = yaw_rate_damping
+        config['level_coast']['command_mode'] = command_mode
+        if position_options is not None:
+            config['level_coast']['position_control'] = position_options
         original = copy.deepcopy(config)
         clock = {'t': 0.}
         control = InteractionsControl.__new__(InteractionsControl)
@@ -200,6 +204,9 @@ class LevelCoastLoopTests(unittest.TestCase):
         control.hl_commander = FakeCommander()
         control.cf = SimpleNamespace(param=SimpleNamespace(set_value=Mock(), set_value_raw=Mock()))
         control.cf._offboard_yaw_damping_active = False
+        if command_mode == 'position':
+            from Interaction.tests.test_position_follow import parameters
+            control.cf._offboard_position_pid = SimpleNamespace(prepared=True, parameters=parameters())
         yaw_requests = []
         yaw_samples = []
         def request_yaw(rate):
@@ -293,7 +300,9 @@ class LevelCoastLoopTests(unittest.TestCase):
 
         expected = {'battery':LowBatteryException, 'state':StaleLocalizationError,
                     'boundary':BoundaryExceededError, 'motor':RuntimeError, 'sensor':RuntimeError,
-                    'yaw':RuntimeError, 'yaw_switch':RuntimeError}
+                    'yaw':RuntimeError, 'yaw_switch':RuntimeError, 'target':BoundaryExceededError}
+        if fault == 'target':
+            control.bounds['x_max'] = .05
         with patch('Interaction.level_coast.time.time', side_effect=lambda:1000.+clock['t']), \
                 patch('Interaction.level_coast.DETECTION_TO_ORI_DELAY_S', ori_delay), \
                 patch('Interaction.level_coast.time.monotonic', side_effect=lambda:clock['t']), \
@@ -311,6 +320,47 @@ class LevelCoastLoopTests(unittest.TestCase):
         phases = [c.args[1] for c in control._log_event.call_args_list
                   if c.args[0] == 'Level Coast Phase Changed']
         return control, commands, phases, clock['t']
+
+    def test_position_mode_only_sends_position_in_contact_and_coast_for_all_detectors(self):
+        def speed(t):
+            if .08 <= t < .16 or .52 <= t < .60:
+                return .12
+            if .16 <= t < .30 or .60 <= t < .66:
+                return .05  # Below velocity release, above position-capture gate.
+            return .02 if t >= .30 else 0.
+        for detector in ('potentiometer','model','vel'):
+            with self.subTest(detector=detector):
+                control, commands, phases, _ = self.run_scenario(
+                    detector, command_mode='position', speed_fn=speed)
+                self.assertTrue(all(n=='send_position_setpoint' for _,n,_ in commands))
+                rows=control.log_manager.groups['wrench_observer']
+                moving=[r for r in rows if r['command_mode']=='position_follow']
+                self.assertEqual({r['phase'] for r in moving},{'contact','coast'})
+                for row in moving:
+                    self.assertGreaterEqual(row['position_command_m'][0],row['position_m'][0])
+                    self.assertEqual(row['position_command_m'][2],1.)
+                self.assertFalse(control._pid_15state_control_active)
+                control.cf.param.set_value_raw.assert_not_called()  # No in-flight PID reset/write.
+
+    def test_position_capture_freezes_forward_target_without_changing_grace_semantics(self):
+        control, commands, phases, _=self.run_scenario(command_mode='position',grace_start='release')
+        capture=next(r for r in phases if r['previous']=='coast' and r['phase']=='grace')
+        t=capture['elapsed_s']
+        target=capture['hold_position_m']
+        self.assertGreater(target[0],t/10)
+        self.assertTrue(any(np.allclose(a[:3],target) for ct,_,a in commands if ct>=t))
+        self.assertTrue(any(r['phase']=='ready' for r in phases))
+
+    def test_position_delay_yaw_and_safety_use_existing_lifecycle(self):
+        control,commands,phases,_=self.run_scenario(command_mode='position',ori_delay=.1,
+                                                  follow_yaw=True,yaw_fn=lambda t:30*t)
+        rows=control.log_manager.groups['wrench_observer']
+        self.assertTrue(any(r['ori_delay_pending'] for r in rows))
+        self.assertTrue(all(r['command_mode']=='position_hold' for r in rows if r['ori_delay_pending']))
+        for t,_,a in commands:
+            self.assertAlmostEqual(a[3],30*t)
+        for fault in ('state','motor','sensor','battery','boundary','target'):
+            self.run_scenario(command_mode='position',fault=fault)
 
     def test_delay_sends_only_pos_until_deadline_for_all_detectors(self):
         for detector in ('potentiometer', 'vel', 'model'):

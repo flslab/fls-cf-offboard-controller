@@ -153,6 +153,56 @@ and profile together when using a mission that references it.
 Keep `detection_method: momentum_impulse` for synchronized onboard state logging;
 the profile supplies `state_source: onboard`. Select the actual contact detector with
 `level_coast.detector: vel`, `model`, or `potentiometer` (`--sense` required).
+
+Set `level_coast.command_mode: position` to use moving **position packets** in
+both contact and coast. Omitting this field retains `orientation`. Detector,
+release/grace timing and coast preemption are shared; the existing hardcoded
+`DETECTION_TO_ORI_DELAY_S` now means the delay before the selected movement
+policy (fixed position hold during the delay).
+
+The paper's `p + v * 0.01` is not a velocity command: the FC position loop
+turns its small position error into approximately `Kp * v * 0.01`, which can
+make the velocity loop brake almost the entire current speed. The new mode
+instead computes a desired velocity and inverts the confirmed position P gains
+in the FC's body-yaw frame, then rotates the offset back into world XY:
+`p_cmd = p_measured + R * diag(1 / Kp_xy) * R.T * v_reference`.
+Each fresh state re-anchors the target; duplicate states resend the last packet
+without advancing the target or timers. Z stays at mission height; yaw retains
+the selected `follow_yaw` / offboard damping behavior.
+
+Contact follows measured XY velocity. After release, a smooth 0.5 s transition
+reduces the retained velocity fraction from 1 to 0. The confirmed velocity P
+gains bound the nominal braking tilt to an equivalent 0.8 m/s² horizontal
+acceleration. This is a setpoint bound, not a guarantee about actual acceleration
+or stopping time. At low speed, freeze a short forward stopping projection for
+hover using the nominal velocity-P decay (`v_body / (g * radians(Kv_xy))`),
+retaining any farther current follow target. This accounts for residual motion
+instead of locking directly onto the current point; it does not promise zero
+overshoot with real attitude lag. A new contact discards the
+coast ramp and follows the new measured direction.
+
+This mode temporarily sets **only XY position/velocity I, D and feedforward
+gains to zero before takeoff**, after saving and freshly confirming originals.
+It leaves P, Z, attitude/rate PID and estimator settings unchanged. This makes
+the inversion defined and prevents interaction-induced XY integral windup;
+normal XY integral rejection is consequently unavailable during this experiment.
+There are no gain writes or blocking parameter reads in the interaction loop.
+Original gains are restored only after confirmed landing/stop; an interrupted
+run retains a per-drone recovery file for the next grounded startup. Startup
+and pre-arm confirmation require the existing PID parameters; no firmware patch
+is needed. Missing parameters or unconfirmed gains prevent arming.
+
+Defaults live in `Interaction/position_follow.py`; optional overrides belong in
+`level_coast.position_control`: `contact_velocity_retention` (1.0),
+`coast_velocity_retention` (0.0), `coast_transition_s` (0.5),
+`max_brake_acceleration_m_s2` (0.8), and `max_offset_m` (0.6).
+Generated targets must satisfy the existing flight boundaries, maximum offset
+and confirmed FC velocity limits; infeasible targets abort through the existing
+landing lifecycle instead of clipping to an unmodelled braking command.
+Logs include the confirmed PID context, commanded position, velocity reference,
+requested retention and nominal pitch/roll. Validate these against FC
+`posCtl.targetVX/VY` and actual attitude in flight; network delay, FC filtering
+and attitude response are not exactly inverted by the offboard calculation.
 The model and potentiometer choices reuse the existing contact/release detectors
 and saved XYZ detection calibration. Velocity uses XY speed hysteresis and dwell;
 a low-speed release is a heuristic, not a separate measurement of hand contact.

@@ -13,12 +13,13 @@ from Interaction.offboard_yaw_damping import (
 from Interaction.potentiometer_force_sensor import (
     PotentiometerContactDetector, PotentiometerReleaseDetector,
 )
+from Interaction.position_follow import PositionVelocityFollower, validate_position_follow
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH, apply_detection_calibration,
 )
 
-# Seconds from confirmed interaction detection to the first ori command.
-# Keep sending pos commands during this interval; 0.0 restores immediate ori.
+# Historical name: delay before the selected contact/coast command policy.
+# Keep the fixed position hold during this interval; 0.0 switches immediately.
 DETECTION_TO_ORI_DELAY_S = 0.0
 
 
@@ -32,6 +33,10 @@ def _number(value, name, *, positive=False):
 def validate_level_coast(config, *, sensor_available):
     """Validate this opt-in behavior before any flight commands are sent."""
     options = dict(config.get('level_coast') or {})
+    options['command_mode'] = options.get('command_mode', 'orientation')
+    if options['command_mode'] not in ('orientation', 'position'):
+        raise ValueError('level_coast.command_mode must be orientation or position')
+    options['position_control'] = validate_position_follow(options.get('position_control', {}))
     detector = options.get('detector', 'potentiometer')
     if detector not in ('vel', 'model', 'potentiometer'):
         raise ValueError('level_coast.detector must be vel, model or potentiometer')
@@ -251,6 +256,12 @@ def run_level_coast(owner, config):
     if options['yaw_rate_damping'] and not getattr(yaw_guard, 'prepared', False):
         raise RuntimeError('offboard yaw damping was not prepared before takeoff')
     yaw_ready = not options['yaw_rate_damping']
+    position_pid = getattr(owner.cf, '_offboard_position_pid', None)
+    position_follower = None
+    if options['command_mode'] == 'position':
+        if not getattr(position_pid, 'prepared', False):
+            raise RuntimeError('position-follow PID was not prepared before takeoff')
+        position_follower = PositionVelocityFollower(position_pid.parameters, options['position_control'])
     calibrated_config = apply_detection_calibration(
         deepcopy(config['wrench_interaction']), owner.drone_id,
         config.get('wrench_calibration_file', DEFAULT_CALIBRATION_PATH))
@@ -265,6 +276,7 @@ def run_level_coast(owner, config):
     owner.check_interaction_boundary(nominal)
     cycle = LevelCoastCycle(nominal, options['stop_speed_m_s'], options['grace_s'],
                             options['grace_start'], options['detection_to_ori_delay_s'])
+    position_command = nominal.copy()
     velocity_detector = VelocityContactDetector(**options['velocity'])
     pot_contact, pot_release = (_potentiometer_detectors(config)
         if options['detector'] == 'potentiometer' else (None, None))
@@ -284,7 +296,9 @@ def run_level_coast(owner, config):
     }, name='Level Coast Config')
 
     def send():
-        if cycle.level:
+        if cycle.level and position_follower is not None:
+            owner.lo_commander.send_position_setpoint(*position_command, yaw)
+        elif cycle.level:
             owner.lo_commander.send_zdistance_setpoint(0., 0., 0., float(nominal[2]))
         elif yaw is not None:
             owner.lo_commander.send_position_setpoint(*cycle.hold_position, yaw)
@@ -396,12 +410,31 @@ def run_level_coast(owner, config):
                 armed=gate.armed and yaw_ready, started=started, released=released)
             # Authority follows the transmitted command, not contact detection:
             # contact/release bookkeeping continues while the pos delay runs.
-            if not was_level and cycle.level:
-                owner._set_contact_pid_attitude_authority(True)
-                owner._translation_high_level_active = False
-            elif was_level and not cycle.level:
+            position_status = {}
+            if position_follower is not None:
+                if cycle.level or (was_level and cycle.phase in ('grace', 'ready')):
+                    position_command, position_status = position_follower.target(
+                        state['position'], state['velocity'], state['attitude_rpy'][2],
+                        state['time'], cycle.phase if cycle.level else 'coast', nominal[2],
+                        capture=not cycle.level)
+                    owner.check_interaction_boundary(position_command)
+                    if not cycle.level:
+                        # Freeze a short PID-based stop projection rather than
+                        # asking a still-moving drone to return to this point.
+                        cycle.hold_position[:] = position_command
+                if not cycle.level:
+                    position_follower.reset()
                 owner._set_contact_pid_attitude_authority(False)
-                reset_pid_integrators_without_ack(owner.cf, ('posCtlPid.resetI', 'velCtlPid.resetI'))
+                if cycle.level:
+                    owner._translation_high_level_active = False
+            else:
+                if not was_level and cycle.level:
+                    owner._set_contact_pid_attitude_authority(True)
+                    owner._translation_high_level_active = False
+                elif was_level and not cycle.level:
+                    owner._set_contact_pid_attitude_authority(False)
+                    reset_pid_integrators_without_ack(owner.cf, ('posCtlPid.resetI', 'velCtlPid.resetI'))
+            command_mode = ('position_follow' if position_follower is not None else 'level_zdistance') if cycle.level else 'position_hold'
             if changed:
                 if cycle.phase == 'prepare':
                     gate.reset(after_interaction=True)
@@ -419,13 +452,16 @@ def run_level_coast(owner, config):
                 print(f'[interaction] pos delay: {cycle.detection_to_ori_delay_s:g}s', flush=True)
             if was_level != cycle.level:
                 owner._log_event('Level Coast Command Mode Changed', {
-                    'command_mode': 'level_zdistance' if cycle.level else 'position_hold',
+                    'command_mode': command_mode,
                     'phase': cycle.phase,
                     'detection_to_ori_delay_s': cycle.detection_to_ori_delay_s,
                     'since_detection_s': (None if cycle.detected_at is None
                                           else sample_now - cycle.detected_at),
                 })
-                print(f'[interaction] {"pos -> ori" if cycle.level else "ori -> pos"}', flush=True)
+                if position_follower is not None:
+                    print(f'[interaction] {"hold -> position follow" if cycle.level else "position follow -> hold"}', flush=True)
+                else:
+                    print(f'[interaction] {"pos -> ori" if cycle.level else "ori -> pos"}', flush=True)
             if released:
                 detection_was_enabled = False  # Also rearm when grace is zero.
             send()
@@ -441,9 +477,10 @@ def run_level_coast(owner, config):
                 'grace_start': options['grace_start'],
                 'grace_elapsed_s': (None if cycle.grace_started is None
                                     else sample_now - cycle.grace_started),
-                'command_mode': 'level_zdistance' if cycle.level else 'position_hold',
-                'yaw_target_deg': None if cycle.level else yaw,
-                'yaw_rate_target_deg_s': 0. if cycle.level else None,
+                'command_mode': command_mode,
+                'yaw_target_deg': None if command_mode == 'level_zdistance' else yaw,
+                'yaw_rate_target_deg_s': 0. if command_mode == 'level_zdistance' else None,
+                **position_status,
                 'yaw_rate_damping': options['yaw_rate_damping'],
                 'yaw_rate_damping_active': options['yaw_rate_damping'] and yaw_ready,
                 **yaw_status,
