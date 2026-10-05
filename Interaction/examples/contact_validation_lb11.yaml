@@ -21,10 +21,12 @@ Interaction:
       initial_no_touch_s: 10.0
     grace_time: 0.3
     level_coast:
+      command_mode: orientation  # orientation | position; during interaction
+      coast_command_mode: orientation  # orientation | position; after release; omitted inherits command_mode
       grace_start: release
       follow_yaw: false
       yaw_rate_damping: true
-      stop_speed_m_s: 0.03
+      stop_speed_m_s: 0.03  # ori coast: signed speed along interaction; pos coast: XY speed
       velocity:
         onset_speed_m_s: 0.1
         release_speed_m_s: 0.08

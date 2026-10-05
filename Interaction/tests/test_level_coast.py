@@ -30,12 +30,28 @@ def configuration(detector='potentiometer'):
             'firmware_auto_brake': {'enabled': False},
             'initial_contact_arming': {'stationary_dwell_s': .02},
             'detection': {'yaw': {'enabled': False}, 'translation': {
-                'onset_evidence_s': .001, 'release_time_s': .01}},
+                'onset_evidence_s': .001, 'release_time_s': .01,
+                'release_projection_axes': [0, 1]}},
         },
     }
 
 
 class LevelCoastStateTests(unittest.TestCase):
+    def test_coast_mode_inherits_contact_and_rejects_invalid_values(self):
+        config = configuration()
+        options = validate_level_coast(config, sensor_available=True)
+        self.assertEqual(options['command_mode'], 'orientation')
+        self.assertEqual(options['coast_command_mode'], 'orientation')
+        config['level_coast']['command_mode'] = 'position'
+        self.assertEqual(validate_level_coast(config, sensor_available=True)['coast_command_mode'], 'position')
+        for key in ('command_mode', 'coast_command_mode'):
+            for bad in ('ori', 'pos', '', None, True, ['position']):
+                with self.subTest(key=key, bad=bad):
+                    invalid = configuration()
+                    invalid['level_coast'][key] = bad
+                    with self.assertRaisesRegex(ValueError, key):
+                        validate_level_coast(invalid, sensor_available=True)
+
     def test_delay_keeps_position_and_remembers_early_release(self):
         cycle = LevelCoastCycle([0, 0, 1], .03, .03, 'release', .1)
         cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
@@ -116,8 +132,8 @@ class LevelCoastStateTests(unittest.TestCase):
         self.assertEqual(cycle.phase, 'ready')
         np.testing.assert_allclose(cycle.hold_position, [.2, 0, 1])
 
-    def test_release_is_required_and_full_xy_norm_controls_grace(self):
-        cycle = LevelCoastCycle([0, 0, 1], .03, .5)
+    def test_position_coast_requires_release_and_full_xy_speed_below_threshold(self):
+        cycle = LevelCoastCycle([0, 0, 1], .03, .5, coast_command_mode='position')
         cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
         cycle.update([0, 0, 1], [0, 0, 0], .1, started=True)
         cycle.update([0, 0, 1], [0, 0, 0], 1.)
@@ -133,6 +149,57 @@ class LevelCoastStateTests(unittest.TestCase):
         self.assertEqual(cycle.phase, 'grace')
         cycle.update([.7, .8, 1], [0, 0, 0], 4.5, started=True)
         self.assertEqual(cycle.phase, 'prepare')
+
+    def test_orientation_stop_uses_signed_projection_and_ignores_lateral_speed(self):
+        for direction in ([1, 0], [0, -1], [3, 4]):
+            d = np.asarray(direction, dtype=float) / np.linalg.norm(direction)
+            lateral = np.array([-d[1], d[0]]) * .2
+            for final_speed in (.02, -.2):
+                with self.subTest(direction=direction, final_speed=final_speed):
+                    cycle = LevelCoastCycle([0, 0, 1], .03, .5)
+                    cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
+                    cycle.update([0, 0, 1], [0, 0, 0], .1, started=True,
+                                 interaction_direction=direction, interaction_direction_source='test_force')
+                    cycle.update([0, 0, 1], [*d * .04 + lateral, 0], 1, released=True)
+                    self.assertEqual(cycle.phase, 'coast')
+                    velocity = [*(d * final_speed + lateral), 0]
+                    cycle.update([.2, .3, 1], velocity, 1.1)
+                    self.assertEqual(cycle.phase, 'grace')
+                    self.assertEqual(cycle.grace_started, 1.1)
+                    status = cycle.stop_status(velocity)
+                    self.assertAlmostEqual(status['interaction_velocity_m_s'], final_speed)
+                    self.assertEqual(status['stop_speed_metric'], 'interaction_projection')
+                    np.testing.assert_allclose(cycle.hold_position, [.2, .3, 1])
+
+    def test_direction_stays_fixed_until_accepted_coast_preemption(self):
+        cycle = LevelCoastCycle([0, 0, 1], .03, .1, 'release')
+        cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
+        cycle.update([0, 0, 1], [.2, 0, 0], .1, started=True)
+        cycle.update([0, 0, 1], [.1, .4, 0], 1, released=True,
+                     interaction_direction=[0, 1])
+        cycle.update([0, 0, 1], [.1, .4, 0], 1.05, started=True,
+                     interaction_direction=[0, -1])  # Grace has not expired.
+        np.testing.assert_allclose(cycle.interaction_direction_xy, [1, 0])
+        cycle.update([0, 0, 1], [.2, -.2, 0], 1.2, started=True,
+                     interaction_direction=[0, -3], interaction_direction_source='new_force')
+        self.assertEqual(cycle.phase, 'contact')
+        np.testing.assert_allclose(cycle.interaction_direction_xy, [0, -1])
+        cycle.update([0, 0, 1], [.2, -.05, 0], 2, released=True)
+        self.assertEqual(cycle.phase, 'coast')
+        cycle.update([0, 0, 1], [.2, -.02, 0], 2.02)
+        self.assertEqual(cycle.phase, 'grace')
+        self.assertEqual(cycle.grace_started, 2)
+
+    def test_missing_direction_uses_full_speed_without_inventing_an_axis(self):
+        cycle = LevelCoastCycle([0, 0, 1], .03, .1)
+        cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
+        cycle.update([0, 0, 1], [0, 0, 0], .1, started=True, interaction_direction=[0, 0, 1])
+        cycle.update([0, 0, 1], [.1, .2, 0], .2, released=True)
+        self.assertEqual(cycle.phase, 'coast')
+        self.assertIsNone(cycle.interaction_direction_xy)
+        self.assertEqual(cycle.stop_status([.1, .2, 0])['stop_speed_metric'], 'xy_norm_no_direction')
+        cycle.update([0, 0, 1], [.01, .01, 0], .3)
+        self.assertEqual(cycle.phase, 'grace')
 
     def test_velocity_release_requires_continuous_evidence(self):
         detector = VelocityContactDetector(**validate_level_coast(
@@ -184,14 +251,18 @@ class LevelCoastLoopTests(unittest.TestCase):
                      yaw_fn=None, state_delay=0., target_yaw=0., yaw_rate_damping=False,
                      ori_delay=0., yaw_confirm_delay=0., yaw_rate_fn=None,
                      sensor_present=True, sensor_fresh=True, command_mode='orientation',
-                     position_options=None):
+                     position_options=None, coast_command_mode=None, duplicate_times=(),
+                     velocity_fn=None, force_direction_fn=None, record_potentiometer=False):
         config = configuration(detector)
+        config['record_potentiometer'] = record_potentiometer
         config['duration'] = duration
         config['grace_time'] = grace_time
         config['level_coast']['grace_start'] = grace_start
         config['level_coast']['follow_yaw'] = follow_yaw
         config['level_coast']['yaw_rate_damping'] = yaw_rate_damping
         config['level_coast']['command_mode'] = command_mode
+        if coast_command_mode is not None:
+            config['level_coast']['coast_command_mode'] = coast_command_mode
         if position_options is not None:
             config['level_coast']['position_control'] = position_options
         original = copy.deepcopy(config)
@@ -206,9 +277,9 @@ class LevelCoastLoopTests(unittest.TestCase):
         control.hl_commander = FakeCommander()
         control.cf = SimpleNamespace(param=SimpleNamespace(set_value=Mock(), set_value_raw=Mock()))
         control.cf._offboard_yaw_damping_active = False
-        if command_mode == 'position':
+        if 'position' in (command_mode, coast_command_mode):
             from Interaction.tests.test_position_follow import parameters
-            control.cf._offboard_position_pid = SimpleNamespace(prepared=True, parameters=parameters())
+            control.cf._offboard_position_pid = SimpleNamespace(prepared=fault != 'pid', parameters=parameters())
         yaw_requests = []
         yaw_samples = []
         def request_yaw(rate):
@@ -240,10 +311,12 @@ class LevelCoastLoopTests(unittest.TestCase):
         control._log_event = Mock()
         control._handoff_translation_hold = Mock()
         commands = []
+        control.command_authorities = []
         for name in ('send_position_setpoint', 'send_zdistance_setpoint'):
             original_sender = getattr(control.lo_commander, name)
             def send(*args, name=name, original_sender=original_sender):
                 commands.append((clock['t'], name, args))
+                control.command_authorities.append(control._pid_15state_control_active)
                 original_sender(*args)
             setattr(control.lo_commander, name, send)
 
@@ -261,6 +334,8 @@ class LevelCoastLoopTests(unittest.TestCase):
 
         def state():
             t = clock['t']
+            if t in duplicate_times:
+                t = round(t - .01, 6)
             if t < state_delay:
                 return None
             speed = .12 if .08 <= t < .3 or .52 <= t < .66 else .02 if t >= .3 else 0.
@@ -268,7 +343,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                 speed = speed_fn(t)
             return dict(time=1000.+t-(.2 if fault == 'state' and t >= .2 else 0),
                 position=np.array([2. if fault == 'boundary' and t >= .2 else t/10, 0., 1.]),
-                velocity=np.array([speed, 0., 0.]),
+                velocity=np.asarray(velocity_fn(t) if velocity_fn else [speed, 0., 0.], dtype=float),
                 attitude_rpy=np.array([0., 0., np.radians(yaw_fn(t) if yaw_fn else 0.)]),
                 angular_velocity=np.array([0., 0., np.radians(yaw_rate_fn(t) if yaw_rate_fn else 0.)]),
                 position_skew_s=0., angular_rate_skew_s=0., yaw_control_skew_s=None,
@@ -276,11 +351,16 @@ class LevelCoastLoopTests(unittest.TestCase):
                     'time':1000.+t-(.2 if fault == 'motor' and t >= .2 else 0),
                     'motor.m1':30000, 'motor.m2':30000, 'motor.m3':30000, 'motor.m4':30000, 'pm.vbat':8.})
 
+        def force_world():
+            direction = force_direction_fn(clock['t']) if force_direction_fn else [1., 0., 0.]
+            return np.asarray(direction, dtype=float) * (.3 if pressed() else 0.)
+
         def sensor(*_):
             t = clock['t']
             return dict(force_sensor_fresh=sensor_fresh and not (fault == 'sensor' and t >= .2),
                         force_sensor_sample_monotonic_time=t, force_sensor_sample_time=1000.+t,
-                        force_sensor_compression_force_N=.3 if pressed() else 0.)
+                        force_sensor_compression_force_N=.3 if pressed() else 0.,
+                        force_sensor_external_force_N=force_world().tolist())
 
         control._get_synchronized_onboard_wrench_state = state
         control._safe_sleep = sleep
@@ -295,14 +375,14 @@ class LevelCoastLoopTests(unittest.TestCase):
             pipeline.detector.translation.enabled = False
             result = real_update(pipeline, **kwargs)
             pipeline.detector = detector_state
-            estimate = replace(result.estimate, external_force=np.array([
-                .3 if pressed() else 0., 0., 0.]), force_covariance=np.eye(3)*.0001,
+            estimate = replace(result.estimate, external_force=force_world(), force_covariance=np.eye(3)*.0001,
                 measurement_rejected=False)
-            return replace(result, contacts=pipeline.detector.update(estimate))
+            return replace(result, estimate=estimate, contacts=pipeline.detector.update(estimate))
 
         expected = {'battery':LowBatteryException, 'state':StaleLocalizationError,
                     'boundary':BoundaryExceededError, 'motor':RuntimeError, 'sensor':RuntimeError,
-                    'yaw':RuntimeError, 'yaw_switch':RuntimeError, 'target':BoundaryExceededError}
+                    'yaw':RuntimeError, 'yaw_switch':RuntimeError, 'target':BoundaryExceededError,
+                    'pid':RuntimeError}
         if fault == 'target':
             control.bounds['x_max'] = .05
         with patch('Interaction.level_coast.time.time', side_effect=lambda:1000.+clock['t']), \
@@ -322,6 +402,178 @@ class LevelCoastLoopTests(unittest.TestCase):
         phases = [c.args[1] for c in control._log_event.call_args_list
                   if c.args[0] == 'Level Coast Phase Changed']
         return control, commands, phases, clock['t']
+
+    def test_pot_and_model_orientation_capture_ignores_lateral_drift_but_position_does_not(self):
+        def velocity(t):
+            if t < .08:
+                return [0, 0, 0]
+            if t < .16:
+                return [.12, .2, 0]
+            if t < .30:
+                return [.06, .2, 0]
+            return [.02, .2, 0] if t < .6 else [.01, .01, 0]
+
+        for detector in ('potentiometer', 'model'):
+            for contact in ('orientation', 'position'):
+                for coast in ('orientation', 'position'):
+                    with self.subTest(detector=detector, contact=contact, coast=coast):
+                        control, commands, phases, _ = self.run_scenario(
+                            detector, command_mode=contact, coast_command_mode=coast,
+                            pressed_fn=lambda t: .08 <= t < .16, velocity_fn=velocity,
+                            force_direction_fn=lambda t: [1, 0, 0] if t < .12 else [0, 1, 0])
+                        capture = next(p for p in phases if p['previous'] == 'coast' and p['phase'] == 'grace')
+                        self.assertAlmostEqual(capture['elapsed_s'], .3 if coast == 'orientation' else .6)
+                        self.assertEqual(capture['interaction_direction_xy'], [1., 0.])
+                        expected_source = 'potentiometer_force_world' if detector == 'potentiometer' else 'model_force'
+                        self.assertEqual(capture['interaction_direction_source'], expected_source)
+                        if coast == 'orientation':
+                            self.assertGreater(capture['xy_speed_m_s'], .2)
+                            self.assertAlmostEqual(capture['stop_speed_value_m_s'], .02)
+                            self.assertTrue(any(t == .3 and n == 'send_position_setpoint' for t, n, _ in commands))
+                        else:
+                            self.assertEqual(capture['stop_speed_metric'], 'xy_norm')
+
+    def test_velocity_detector_locks_onset_axis_for_orientation_coast(self):
+        def velocity(t):
+            if t < .08:
+                return [0, 0, 0]
+            if t < .16:
+                return [0, -.15, 0]
+            return [.06, -.05, 0] if t < .3 else [.06, -.02, 0]
+
+        _, commands, phases, _ = self.run_scenario('vel', velocity_fn=velocity)
+        capture = next(p for p in phases if p['previous'] == 'coast' and p['phase'] == 'grace')
+        self.assertAlmostEqual(capture['elapsed_s'], .3)
+        self.assertEqual(capture['interaction_direction_xy'], [0., -1.])
+        self.assertEqual(capture['interaction_direction_source'], 'onset_velocity')
+        self.assertAlmostEqual(capture['stop_speed_value_m_s'], .02)
+        self.assertTrue(any(t == .3 and n == 'send_position_setpoint' for t, n, _ in commands))
+
+    def test_all_phase_mode_pairs_send_selected_packets_and_preempt_for_every_detector(self):
+        def pressed(t):
+            return .08 <= t < .16 or .34 <= t < .42
+
+        def speed(t):
+            return .12 if pressed(t) else .06 if .16 <= t < .6 else .02
+
+        for detector in ('model', 'potentiometer', 'vel'):
+            for contact_mode in ('orientation', 'position'):
+                for coast_mode in ('orientation', 'position'):
+                    with self.subTest(detector=detector, contact=contact_mode, coast=coast_mode):
+                        control, commands, phases, _ = self.run_scenario(
+                            detector, command_mode=contact_mode, coast_command_mode=coast_mode,
+                            grace_start='release', pressed_fn=pressed, speed_fn=speed)
+                        self.assertEqual([p['phase'] for p in phases],
+                                         ['ready', 'contact', 'coast', 'contact', 'coast', 'ready'])
+                        self.assertEqual(sum(p['coast_preempted'] for p in phases), 1)
+                        sent = {round(t, 6): (name, args) for t, name, args in commands}
+                        for row in control.log_manager.groups['wrench_observer']:
+                            phase = row['phase']
+                            selected = coast_mode if phase == 'coast' else contact_mode
+                            name, args = sent[round(row['time'] - 1000., 6)]
+                            if phase in ('contact', 'coast') and selected == 'orientation':
+                                self.assertEqual(row['command_mode'], 'level_zdistance')
+                                self.assertEqual((name, args), ('send_zdistance_setpoint', (0., 0., 0., 1.)))
+                                self.assertNotIn('position_velocity_retention_requested', row)
+                            else:
+                                self.assertEqual(name, 'send_position_setpoint')
+                                self.assertEqual(args[2:], (1., 0.))
+                                if phase in ('contact', 'coast'):
+                                    self.assertEqual(row['command_mode'], 'position_follow')
+                                    np.testing.assert_allclose(args[:3], row['position_command_m'])
+                        for (_, name, _), authority in zip(commands, control.command_authorities):
+                            self.assertEqual(authority, name == 'send_zdistance_setpoint')
+                        transitions = [c.args[1] for c in control._log_event.call_args_list
+                                       if c.args[0] == 'Level Coast Command Mode Changed']
+                        if contact_mode != coast_mode:
+                            self.assertEqual(sum(r['phase'] == 'coast' for r in transitions), 2)
+                            self.assertEqual(sum(r['phase'] == 'contact' for r in transitions), 2)
+                        if coast_mode == 'position':
+                            for phase in (p for p in phases if p['phase'] == 'coast'):
+                                first = next(r for r in control.log_manager.groups['wrench_observer']
+                                             if abs(r['time'] - 1000. - phase['elapsed_s']) < 1e-6)
+                                self.assertEqual(first['position_velocity_retention_requested'], 1.)
+                        if 'position' in (contact_mode, coast_mode):
+                            control.cf.param.set_value_raw.assert_not_called()
+
+    def test_mixed_modes_early_release_and_preemption_preserve_position_delay(self):
+        for detector in ('potentiometer', 'model'):
+            for contact, coast in (('position', 'orientation'), ('orientation', 'position')):
+                with self.subTest(detector=detector, contact=contact):
+                    control, commands, phases, _ = self.run_scenario(
+                        detector, command_mode=contact, coast_command_mode=coast,
+                        grace_start='release', ori_delay=.1,
+                        pressed_fn=lambda t: .08 <= t < .16 or .40 <= t < .48,
+                        speed_fn=lambda t: .12 if .08 <= t < .7 else .02)
+                    self.assertTrue(any(p['coast_preempted'] for p in phases))
+                    rows = control.log_manager.groups['wrench_observer']
+                    self.assertTrue(any(r['phase'] == 'coast' and r['ori_delay_pending'] for r in rows))
+                    sent = {round(t, 6): (name, args) for t, name, args in commands}
+                    for row in rows:
+                        if row['ori_delay_pending']:
+                            self.assertEqual(row['command_mode'], 'position_hold')
+                            self.assertEqual(sent[round(row['time']-1000., 6)][0], 'send_position_setpoint')
+                    active = [r for r in rows if r['command_mode'] != 'position_hold']
+                    self.assertTrue(active)
+                    self.assertEqual({r['phase'] for r in active}, {'coast'})
+                    self.assertEqual({r['command_mode'] for r in active},
+                                     {'position_follow' if coast == 'position' else 'level_zdistance'})
+
+    def test_low_speed_release_captures_using_coast_policy_even_without_coast_packet(self):
+        for detector in ('potentiometer', 'model'):
+            for contact, coast in (('position', 'orientation'), ('orientation', 'position')):
+                with self.subTest(detector=detector, contact=contact):
+                    control, _, phases, _ = self.run_scenario(
+                        detector, command_mode=contact, coast_command_mode=coast,
+                        pressed_fn=lambda t: .08 <= t < .16,
+                        speed_fn=lambda t: .12 if .08 <= t < .16 else .01)
+                    release = next(r for r in control.log_manager.groups['wrench_observer']
+                                   if r['release_confirmed'])
+                    self.assertEqual(release['phase'], 'grace')
+                    capture = next(p for p in phases if p['released'])
+                    if coast == 'position':
+                        self.assertTrue(release['position_capture_projected'])
+                        self.assertGreater(capture['hold_position_m'][0], release['position_m'][0])
+                    else:
+                        self.assertNotIn('position_capture_projected', release)
+                        np.testing.assert_allclose(capture['hold_position_m'], release['position_m'])
+
+    def test_duplicate_state_resends_selected_coast_packet_without_advancing(self):
+        for contact, coast in (('position', 'orientation'), ('orientation', 'position')):
+            with self.subTest(contact=contact):
+                control, commands, _, _ = self.run_scenario(
+                    command_mode=contact, coast_command_mode=coast, duplicate_times=(.24,))
+                sent = {t: (name, args) for t, name, args in commands}
+                self.assertEqual(sent[.24], sent[.23])
+                self.assertEqual(sent[.24][0], 'send_position_setpoint' if coast == 'position'
+                                 else 'send_zdistance_setpoint')
+                self.assertFalse(any(abs(r['time'] - 1000.24) < 1e-6
+                                     for r in control.log_manager.groups['wrench_observer']))
+
+    def test_mixed_mode_faults_abort_and_clear_authority(self):
+        for contact, coast in (('position', 'orientation'), ('orientation', 'position')):
+            for fault in ('state', 'motor', 'sensor', 'battery', 'boundary', 'target', 'pid'):
+                with self.subTest(contact=contact, fault=fault):
+                    control, _, _, _ = self.run_scenario(
+                        command_mode=contact, coast_command_mode=coast, fault=fault)
+                    self.assertFalse(control._pid_15state_control_active)
+
+    def test_mixed_modes_preserve_yaw_packet_semantics(self):
+        for contact, coast in (('position', 'orientation'), ('orientation', 'position')):
+            for follow in (False, True):
+                with self.subTest(contact=contact, follow_yaw=follow):
+                    control, commands, _, _ = self.run_scenario(
+                        command_mode=contact, coast_command_mode=coast,
+                        follow_yaw=follow, yaw_rate_damping=not follow,
+                        yaw_fn=lambda t: 30*t)
+                    for t, name, args in commands:
+                        if name == 'send_zdistance_setpoint':
+                            self.assertEqual(args, (0., 0., 0., 1.))
+                        else:
+                            self.assertAlmostEqual(args[3], 30*t if follow else 0.)
+                    if not follow:
+                        self.assertTrue(control.yaw_requests)
+                        control.cf._offboard_yaw_damping_guard.finish.assert_called_once()
 
     def test_position_mode_only_sends_position_in_contact_and_coast_for_all_detectors(self):
         def speed(t):
@@ -430,7 +682,7 @@ class LevelCoastLoopTests(unittest.TestCase):
             for fresh in (True, False):
                 with self.subTest(detector=detector, fresh=fresh):
                     control, sensed_commands, sensed_phases, _ = self.run_scenario(
-                        detector, sensor_fresh=fresh)
+                        detector, sensor_fresh=fresh, record_potentiometer=True)
                     self.assertEqual(commands, sensed_commands)
                     self.assertEqual(phases, sensed_phases)
                     rows = control.log_manager.groups['wrench_observer']

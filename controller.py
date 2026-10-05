@@ -1726,7 +1726,9 @@ class Controller:
 
     def setup_logging(self):
         from Interaction.contact_validation_capture import validate_capture_request
+        from Interaction.potentiometer_logging import validate_potentiometer_recording
         validate_capture_request(getattr(self, 'mission', None), self.args)
+        validate_potentiometer_recording(getattr(self, 'mission', None), self.args)
         if not self.args.log:
             return
 
@@ -1867,6 +1869,9 @@ class Controller:
 
     def setup_force_sensor(self):
         """Start the Arduino potentiometer reader for sensor-backed runs."""
+        from Interaction.potentiometer_logging import configure_potentiometer_recording
+        sample_callback = configure_potentiometer_recording(
+            self.log_manager, getattr(self, 'mission', None), self.args)
         if not getattr(self.args, 'sense', False):
             return
 
@@ -1879,7 +1884,7 @@ class Controller:
             baud=self.args.sense_baud,
             spring_constant_n_per_mm=self.args.sense_spring_constant,
             max_extension_mm=self.args.sense_max_extension,
-            sample_callback=getattr(self.log_manager, 'contact_validation_pot_callback', None),
+            sample_callback=sample_callback,
         )
         self.force_sensor.start(startup_timeout_s=self.args.sense_startup_timeout)
         if not getattr(self.args, 'crazysim', False):
@@ -2127,9 +2132,11 @@ class Controller:
         from pathlib import Path
         import hashlib
         from Interaction.position_follow import PositionFollowPidContext
+        from Interaction.level_coast import resolve_command_modes
         translation = (self.mission or {}).get('Interaction', {}).get('config', {})
-        enabled = (translation.get('behavior') == 'level_coast'
-                   and (translation.get('level_coast') or {}).get('command_mode') == 'position')
+        modes = (resolve_command_modes(translation.get('level_coast') or {})
+                 if translation.get('behavior') == 'level_coast' else {})
+        enabled = 'position' in modes.values()
         identity = getattr(self.args, 'drone_id', None)
         if identity is None:
             if enabled:
@@ -2153,7 +2160,7 @@ class Controller:
         guard.prepare()
         self.cf._offboard_position_pid = guard
         self.log_manager.add_log_entry('configs', {
-            'command_mode': 'position', 'confirmed_pid_parameters': guard.parameters,
+            **modes, 'confirmed_pid_parameters': guard.parameters,
             'xy_control': 'P-only position and velocity; ordinary Z and attitude/rate PID',
         }, name='Offboard Position Follow PID')
 
