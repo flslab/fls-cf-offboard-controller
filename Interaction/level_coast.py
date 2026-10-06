@@ -223,8 +223,10 @@ class LevelCoastCycle:
             and not self.delay_pending and self.grace_expired(now))
 
     def update(self, position, velocity, now, *, armed=False, started=False, released=False,
-               interaction_direction=None, interaction_direction_source=None):
+               interaction_direction=None, interaction_direction_source=None,
+               stop_velocity=None):
         previous = self.phase
+        handoff_velocity = velocity if stop_velocity is None else stop_velocity
         delay_finished = (self.delay_pending
             and now - self.detected_at >= self.detection_to_ori_delay_s)
         if delay_finished:
@@ -247,7 +249,7 @@ class LevelCoastCycle:
                 self.grace_started = now
         # A release already below threshold can capture hold in this sample.
         if (self.phase == 'coast' and not self.delay_pending and not delay_finished
-                and self.stop_status(velocity)['stop_speed_value_m_s'] < self.stop_speed):
+                and self.stop_status(handoff_velocity)['stop_speed_value_m_s'] < self.stop_speed):
             self.hold_position[:2] = np.asarray(position)[:2]
             if self.grace_start == 'speed_threshold':
                 self.grace_started = now
@@ -342,6 +344,7 @@ def run_level_coast(owner, config):
         'wrench_interaction': deepcopy(pipeline.config),
         'wrench_detection_calibration': calibrated_config.get('wrench_detection_calibration'),
         'velocity_source': 'crazyflie_state_estimate',
+        'handoff_velocity_source': 'vicon_position_kf',
     }, name='Level Coast Config')
 
     def send():
@@ -466,12 +469,30 @@ def run_level_coast(owner, config):
                 # Velocity detection uses the cycle's onset-velocity fallback.
             # Start the command delay after evaluating the detector, not before
             # potentially expensive model/sensor work at the start of the loop.
+            # Keep onboard velocity for detection, direction locking and position
+            # following. Only the coast-to-hold gate uses the checked Vicon KF.
+            stop_velocity = None
+            stop_reference = {'stop_velocity_source': 'crazyflie_state_estimate'}
+            if cycle.phase in ('contact', 'coast'):
+                stop_velocity, vicon_time, vicon_skew = (
+                    owner._vicon_velocity_reference_for_onboard_state(state))
+                stop_reference = {
+                    'stop_velocity_source': 'vicon_position_kf',
+                    'stop_velocity_m_s': stop_velocity.tolist(),
+                    'stop_velocity_time': vicon_time,
+                    'stop_velocity_state_skew_s': vicon_skew,
+                }
             sample_now = time.monotonic()
             changed = cycle.update(
                 state['position'], state['velocity'], sample_now,
                 armed=gate.armed and yaw_ready, started=started, released=released,
-                interaction_direction=direction, interaction_direction_source=direction_source)
-            stop_status = cycle.stop_status(state['velocity'])
+                interaction_direction=direction, interaction_direction_source=direction_source,
+                stop_velocity=stop_velocity)
+            stop_status = cycle.stop_status(
+                state['velocity'] if stop_velocity is None else stop_velocity)
+            stop_status.update(stop_reference)
+            stop_status['onboard_stop_speed_value_m_s'] = (
+                cycle.stop_status(state['velocity'])['stop_speed_value_m_s'])
             # Authority follows the transmitted command, not contact detection:
             # contact/release bookkeeping continues while the pos delay runs.
             selected_mode = options['coast_command_mode' if cycle.phase == 'coast' else 'command_mode']

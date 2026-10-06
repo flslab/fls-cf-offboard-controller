@@ -252,7 +252,8 @@ class LevelCoastLoopTests(unittest.TestCase):
                      ori_delay=0., yaw_confirm_delay=0., yaw_rate_fn=None,
                      sensor_present=True, sensor_fresh=True, command_mode='orientation',
                      position_options=None, coast_command_mode=None, duplicate_times=(),
-                     velocity_fn=None, force_direction_fn=None, record_potentiometer=False):
+                     velocity_fn=None, force_direction_fn=None, record_potentiometer=False,
+                     vicon_velocity_fn=None):
         config = configuration(detector)
         config['record_potentiometer'] = record_potentiometer
         config['duration'] = duration
@@ -363,6 +364,13 @@ class LevelCoastLoopTests(unittest.TestCase):
                         force_sensor_external_force_N=force_world().tolist())
 
         control._get_synchronized_onboard_wrench_state = state
+        def vicon_velocity(reference_state):
+            if fault == 'vicon' and clock['t'] >= .2:
+                raise StaleLocalizationError('test stale Vicon velocity')
+            velocity = (vicon_velocity_fn(clock['t']) if vicon_velocity_fn
+                        else reference_state['velocity'])
+            return np.asarray(velocity, dtype=float), reference_state['time'], 0.
+        control._vicon_velocity_reference_for_onboard_state = vicon_velocity
         control._safe_sleep = sleep
         control._force_sensor_log_fields = sensor
         real_update = OnboardMomentumWrenchPipeline.update
@@ -382,7 +390,7 @@ class LevelCoastLoopTests(unittest.TestCase):
         expected = {'battery':LowBatteryException, 'state':StaleLocalizationError,
                     'boundary':BoundaryExceededError, 'motor':RuntimeError, 'sensor':RuntimeError,
                     'yaw':RuntimeError, 'yaw_switch':RuntimeError, 'target':BoundaryExceededError,
-                    'pid':RuntimeError}
+                    'pid':RuntimeError, 'vicon':StaleLocalizationError}
         if fault == 'target':
             control.bounds['x_max'] = .05
         with patch('Interaction.level_coast.time.time', side_effect=lambda:1000.+clock['t']), \
@@ -402,6 +410,36 @@ class LevelCoastLoopTests(unittest.TestCase):
         phases = [c.args[1] for c in control._log_event.call_args_list
                   if c.args[0] == 'Level Coast Phase Changed']
         return control, commands, phases, clock['t']
+
+    def test_handoff_uses_vicon_velocity_while_detector_retains_onboard_velocity(self):
+        for detector in ('potentiometer', 'model', 'vel'):
+            for coast in ('orientation', 'position'):
+                with self.subTest(detector=detector, coast=coast):
+                    _, _, phases, _ = self.run_scenario(
+                        detector, coast_command_mode=coast,
+                        pressed_fn=lambda t: .08 <= t < .16,
+                        speed_fn=lambda t: .12 if .08 <= t < .25 else .02,
+                        vicon_velocity_fn=lambda t: [.2 if t < .4 else .02, 0., 0.])
+                    capture = next(p for p in phases if p['previous'] == 'coast')
+                    self.assertAlmostEqual(capture['elapsed_s'], .4)
+                    self.assertEqual(capture['stop_velocity_source'], 'vicon_position_kf')
+                    self.assertAlmostEqual(capture['onboard_stop_speed_value_m_s'], .02)
+                    self.assertAlmostEqual(capture['stop_speed_value_m_s'], .02)
+
+    def test_stale_vicon_does_not_fall_back_to_onboard_handoff(self):
+        self.run_scenario('potentiometer', fault='vicon')
+
+    def test_vicon_low_speed_can_capture_while_onboard_velocity_is_still_high(self):
+        for detector in ('potentiometer', 'model'):
+            with self.subTest(detector=detector):
+                _, _, phases, _ = self.run_scenario(
+                    detector, pressed_fn=lambda t: .08 <= t < .16,
+                    speed_fn=lambda t: .12 if t >= .08 else 0.,
+                    vicon_velocity_fn=lambda t: [.12 if t < .3 else .02, 0., 0.])
+                capture = next(p for p in phases if p['previous'] == 'coast')
+                self.assertAlmostEqual(capture['elapsed_s'], .3)
+                self.assertAlmostEqual(capture['onboard_stop_speed_value_m_s'], .12)
+                self.assertAlmostEqual(capture['stop_speed_value_m_s'], .02)
 
     def test_pot_and_model_orientation_capture_ignores_lateral_drift_but_position_does_not(self):
         def velocity(t):
