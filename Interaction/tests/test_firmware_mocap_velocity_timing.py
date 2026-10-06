@@ -96,6 +96,54 @@ class FirmwareMocapVelocityTimingTests(unittest.TestCase):
             self.assertEqual(frames_call.kwargs,
                              {'kf': True, 'kf_use_mocap_elapsed_dt': enabled})
 
+    def test_level_coast_setup_generates_velocity_for_all_detectors_and_modes(self):
+        from Interaction.tests.test_controller_logging_cleanup import methods
+        from Interaction.interactions import InteractionsControl
+        setup = methods({'setup_logging'}, logger=Mock())['setup_logging']
+        for detector in ('potentiometer', 'model', 'vel'):
+            for contact in ('position', 'orientation'):
+                for coast in ('position', 'orientation'):
+                    with self.subTest(detector=detector, contact=contact, coast=coast):
+                        fake = SimpleNamespace(
+                            args=SimpleNamespace(log=True, illumination=False, hover=False, droneless=True),
+                            mission={'Interaction': {'config': {
+                                'behavior': 'level_coast', 'detection_method': detector,
+                                'level_coast': {'command_mode': contact, 'coast_command_mode': coast}}}},
+                            firmware_auto_brake_enabled=False,
+                            _is_interaction_application=lambda: True,
+                            _uses_onboard_wrench_state=lambda: True,
+                            _uses_vicon_velocity_for_free_stop=lambda: False)
+                        sink = self.make_logger(False)
+                        sink.group_kfs.clear()
+                        with patch('Interaction.log_manager.InteractionLogger', return_value=sink):
+                            setup(fake)
+                        self.assertIn('frames', sink.group_kfs)
+                        for index in range(12):
+                            sink.add_log_entry('frames', {
+                                'time': 1000. + index * .01, 'tvec': [0., 0., 1.]})
+                        control = InteractionsControl.__new__(InteractionsControl)
+                        control.log_manager, control.pos_group_name = sink, 'frames'
+                        velocity, _, skew = control._vicon_velocity_reference_for_onboard_state(
+                            {'time': 1000.11, 'position': np.array([0., 0., 1.])})
+                        np.testing.assert_allclose(velocity, [0., 0., 0.], atol=1e-8)
+                        self.assertAlmostEqual(skew, 0.)
+
+    def test_other_onboard_behavior_keeps_vicon_kf_opt_in(self):
+        from Interaction.tests.test_controller_logging_cleanup import methods
+        setup = methods({'setup_logging'}, logger=Mock())['setup_logging']
+        fake = SimpleNamespace(
+            args=SimpleNamespace(log=True, illumination=False, hover=False, droneless=True),
+            mission={'Interaction': {'config': {'behavior': 'existing'}}},
+            firmware_auto_brake_enabled=False,
+            _is_interaction_application=lambda: True,
+            _uses_onboard_wrench_state=lambda: True,
+            _uses_vicon_velocity_for_free_stop=lambda: False)
+        sink = Mock()
+        with patch('Interaction.log_manager.InteractionLogger', return_value=sink):
+            setup(fake)
+        frames_call = next(c for c in sink.add_log_group.call_args_list if c.args[0] == 'frames')
+        self.assertFalse(frames_call.kwargs['kf'])
+
 
 if __name__ == '__main__':
     unittest.main()

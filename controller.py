@@ -1838,13 +1838,15 @@ class Controller:
                     self.cf, selected,
                     self.args.cf_log_period,
                 )
-            # Legacy interactions use Vicon-derived velocity. The onboard
-            # wrench path enables that same filter only when its opt-in
-            # seventh-order free stop explicitly selects Vicon velocity.
+            # level_coast needs Vicon KF for its handoff gate and position
+            # motion policy, even though its detector uses onboard state.
+            # The other onboard wrench paths opt in through free-stop config.
             self.log_manager.add_log_group(
                 "frames", kf=(
                     not self._uses_onboard_wrench_state()
                     or self._uses_vicon_velocity_for_free_stop()
+                    or (getattr(self, 'mission', None) or {}).get(
+                        'Interaction', {}).get('config', {}).get('behavior') == 'level_coast'
                 ),
                 # Only firmware-owned interaction opts into the same Pi
                 # receipt-time basis as its onboard Vicon mirror. Preserve
