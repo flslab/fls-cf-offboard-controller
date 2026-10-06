@@ -345,6 +345,7 @@ def run_level_coast(owner, config):
         'wrench_detection_calibration': calibrated_config.get('wrench_detection_calibration'),
         'velocity_source': 'crazyflie_state_estimate',
         'handoff_velocity_source': 'vicon_position_kf',
+        'vicon_velocity_age_limit_s': None,
         'position_motion_velocity_source': 'vicon_position_kf',
         'position_pid_velocity_source': 'crazyflie_state_estimate',
     }, name='Level Coast Config')
@@ -478,7 +479,8 @@ def run_level_coast(owner, config):
             if cycle.phase in ('contact', 'coast') or (
                     started and options['command_mode'] == 'position'):
                 stop_velocity, vicon_time, vicon_skew = (
-                    owner._vicon_velocity_reference_for_onboard_state(state))
+                    owner._vicon_velocity_reference_for_onboard_state(
+                        state, max_time_skew_s=None))
                 stop_reference = {
                     'stop_velocity_source': 'vicon_position_kf',
                     'stop_velocity_m_s': stop_velocity.tolist(),

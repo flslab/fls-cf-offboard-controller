@@ -17386,8 +17386,8 @@ class InteractionsControl:
 
         self._log_event('Wrench Interaction Complete')
 
-    def _vicon_velocity_reference_for_onboard_state(self, state):
-        """Read the existing position-only Vicon KF at a nearby state epoch."""
+    def _vicon_velocity_reference_for_onboard_state(self, state, *, max_time_skew_s=0.035):
+        """Read Vicon KF near the state epoch; None disables the age limit."""
         frames = self.log_manager.groups.get(self.pos_group_name, [])
         if len(frames) < 10:
             raise StaleLocalizationError(
@@ -17412,7 +17412,7 @@ class InteractionsControl:
         velocity = np.asarray(frame['vel'], dtype=float)
         position = np.asarray(frame['tvec'], dtype=float)
         if (
-            abs(skew_s) > 0.035
+            (max_time_skew_s is not None and abs(skew_s) > max_time_skew_s)
             or velocity.shape != (3,)
             or position.shape != (3,)
             or not np.all(np.isfinite(velocity))
@@ -17420,7 +17420,9 @@ class InteractionsControl:
             or np.linalg.norm(position-np.asarray(state['position'])) > 0.10
         ):
             raise StaleLocalizationError(
-                'Vicon velocity is stale, invalid, or disagrees with position'
+                ('Vicon velocity is invalid or disagrees with position'
+                 if max_time_skew_s is None else
+                 'Vicon velocity is stale, invalid, or disagrees with position')
             )
         return velocity, float(frame['time']), skew_s
 

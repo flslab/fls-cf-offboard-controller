@@ -364,7 +364,8 @@ class LevelCoastLoopTests(unittest.TestCase):
                         force_sensor_external_force_N=force_world().tolist())
 
         control._get_synchronized_onboard_wrench_state = state
-        def vicon_velocity(reference_state):
+        def vicon_velocity(reference_state, *, max_time_skew_s):
+            self.assertIsNone(max_time_skew_s)
             if fault == 'vicon' and clock['t'] >= .2:
                 raise StaleLocalizationError('test stale Vicon velocity')
             velocity = (vicon_velocity_fn(clock['t']) if vicon_velocity_fn
