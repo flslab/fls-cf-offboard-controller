@@ -429,6 +429,42 @@ class LevelCoastLoopTests(unittest.TestCase):
     def test_stale_vicon_does_not_fall_back_to_onboard_handoff(self):
         self.run_scenario('potentiometer', fault='vicon')
 
+    def test_position_packets_use_vicon_motion_and_onboard_pid_compensation(self):
+        for detector in ('potentiometer', 'model'):
+            for contact_mode in ('position', 'orientation'):
+                with self.subTest(detector=detector, contact=contact_mode):
+                    control, _, _, _ = self.run_scenario(
+                        detector, command_mode=contact_mode, coast_command_mode='position',
+                        pressed_fn=lambda t: .08 <= t < .16,
+                        speed_fn=lambda t: .12 if .08 <= t < .7 else .02,
+                        vicon_velocity_fn=lambda t: [.2 if t < .7 else .01, 0., 0.])
+                    rows = control.log_manager.groups['wrench_observer']
+                    following = [r for r in rows if r['command_mode'] == 'position_follow']
+                    self.assertTrue(following)
+                    for row in following:
+                        self.assertEqual(row['position_motion_velocity_source'], 'vicon_position_kf')
+                        self.assertEqual(row['position_pid_velocity_source'], 'crazyflie_state_estimate')
+                        np.testing.assert_allclose(row['position_motion_velocity_m_s'], [.2, 0., 0.])
+                        np.testing.assert_allclose(row['position_onboard_velocity_m_s'], [.12, 0., 0.])
+                        # Reproduce the actual FC cascade from the transmitted
+                        # position target, rather than trusting derived metadata.
+                        fc_error = 1.9 * (row['position_command_m'][0] - row['position_m'][0]) - .12
+                        if row['phase'] == 'contact':
+                            self.assertAlmostEqual(fc_error, 0.)
+                        elif row['position_velocity_retention_requested'] < 1.:
+                            self.assertLess(fc_error, 0.)
+                    capture = next(r for r in rows if r.get('position_capture_projected'))
+                    projection = .01 / (9.81 * np.radians(30.))
+                    self.assertAlmostEqual(capture['position_capture_stop_projection_m'][0], projection)
+                    self.assertAlmostEqual(capture['position_offset_m'][0], projection + (.02 - .01) / 1.9)
+
+    def test_position_modes_abort_on_stale_vicon_without_velocity_fallback(self):
+        for contact, coast in (('position', 'position'), ('position', 'orientation'),
+                               ('orientation', 'position')):
+            with self.subTest(contact=contact, coast=coast):
+                self.run_scenario('potentiometer', command_mode=contact,
+                                  coast_command_mode=coast, fault='vicon')
+
     def test_vicon_low_speed_can_capture_while_onboard_velocity_is_still_high(self):
         for detector in ('potentiometer', 'model'):
             with self.subTest(detector=detector):

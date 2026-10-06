@@ -73,6 +73,64 @@ class PositionFollowerTests(unittest.TestCase):
         self.assertTrue(log['position_capture_projected'])
         self.assertLess(log['position_velocity_target_m_s'][0],.02)
 
+    def test_contact_cancels_fc_damping_despite_different_vicon_velocity(self):
+        for yaw in (0., .7, math.pi / 2):
+            f = PositionVelocityFollower(parameters(), {})
+            p = np.array([.1, -.2, 1.])
+            onboard, motion = [.12, -.08, 0.], [.8, .3, 0.]
+            target, log = f.target(p, onboard, yaw, 1., 'contact', 1.,
+                                   motion_velocity=motion)
+            c, s = math.cos(yaw), math.sin(yaw)
+            rotation = np.array([[c, s], [-s, c]])
+            fc_reference = f.kp * (rotation @ (target[:2] - p[:2]))
+            np.testing.assert_allclose(fc_reference - rotation @ np.array(onboard[:2]),
+                                       [0., 0.], atol=1e-12)
+            np.testing.assert_allclose(log['position_motion_velocity_m_s'], motion)
+
+    def test_coast_brakes_vicon_motion_even_when_ekf_has_opposite_sign(self):
+        for yaw in (0., .7, math.pi / 2):
+            f = PositionVelocityFollower(parameters(), {})
+            p, onboard, motion = np.array([.1, -.2, 1.]), [-.08, .06, 0.], [.04, -.03, 0.]
+            f.target(p, onboard, yaw, 1., 'coast', 1., motion_velocity=motion)
+            target, log = f.target(p, onboard, yaw, 2., 'coast', 1., motion_velocity=motion)
+            c, s = math.cos(yaw), math.sin(yaw)
+            rotation = np.array([[c, s], [-s, c]])
+            # Firmware's actual velocity error must oppose physical Vicon motion,
+            # not the oppositely signed onboard estimate.
+            fc_error = f.kp * (rotation @ (target[:2] - p[:2])) - rotation @ np.array(onboard[:2])
+            np.testing.assert_allclose(fc_error, -rotation @ np.array(motion[:2]), atol=1e-12)
+            self.assertLess(np.dot(rotation.T @ fc_error, motion[:2]), 0.)
+            self.assertLessEqual(np.linalg.norm(log['position_nominal_pitch_roll_deg']),
+                                 math.degrees(math.atan(.8 / 9.81)))
+
+    def test_capture_uses_vicon_stop_projection_and_compensates_fc_velocity_bias(self):
+        f = PositionVelocityFollower(parameters(), {})
+        p, onboard, motion = np.array([.1, 0., 1.]), [.12, 0., 0.], [-.02, 0., 0.]
+        f.target(p, onboard, 0., 0., 'coast', 1., motion_velocity=motion)
+        target, log = f.target(p, onboard, 0., 1., 'coast', 1.,
+                               capture=True, motion_velocity=motion)
+        projection = motion[0] / (9.81 * math.radians(30.))
+        self.assertAlmostEqual(log['position_capture_stop_projection_m'][0], projection)
+        self.assertAlmostEqual(target[0] - p[0], projection + (onboard[0] - motion[0]) / 1.9)
+        fc_error = 1.9 * (target[0] - p[0]) - onboard[0]
+        self.assertGreater(fc_error, 0.)  # Brake physical negative motion.
+
+    def test_invalid_motion_reference_is_rejected(self):
+        for motion in ([1., 0.], [float('nan'), 0., 0.], [0., float('inf'), 0.]):
+            with self.subTest(motion=motion), self.assertRaises(ValueError):
+                PositionVelocityFollower(parameters(), {}).target(
+                    [0., 0., 1.], [0., 0., 0.], 0., 1., 'contact', 1., motion_velocity=motion)
+
+    def test_large_vicon_motion_clips_braking_correction_not_ekf_compensation(self):
+        f = PositionVelocityFollower(parameters(), {'contact_velocity_retention': .5})
+        onboard, motion = [.01, .02, 0.], [.9, -.7, 0.]
+        _, log = f.target([0., 0., 1.], onboard, .6, 1., 'contact', 1., motion_velocity=motion)
+        correction = np.asarray(log['position_velocity_target_m_s']) - onboard[:2]
+        self.assertLess(np.dot(correction, motion[:2]), 0.)
+        self.assertAlmostEqual(np.linalg.norm(log['position_nominal_pitch_roll_deg']),
+                               math.degrees(math.atan(.8 / 9.81)))
+        np.testing.assert_allclose(correction, log['position_velocity_correction_m_s'], atol=1e-12)
+
     def test_invalid_state_history_integrals_and_limits_are_rejected(self):
         bad = parameters(); bad[SUPPRESSED_GAINS[0]] = .1
         with self.assertRaisesRegex(ValueError,'zero XY'): PositionVelocityFollower(bad,{})

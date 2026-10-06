@@ -127,8 +127,9 @@ class PositionFollowPidContext:
 class PositionVelocityFollower:
     """Re-anchor every fresh command to measured XY; never integrate a stale path.
 
-    Contact follows measured velocity. Coast smoothly lowers the retained
-    fraction; the P-only velocity loop then damps motion on BOTH horizontal
+    Onboard velocity compensates the FC velocity PID; motion_velocity supplies
+    the physical motion reference (checked Vicon KF in level_coast). Coast
+    smoothly lowers the retained fraction to damp motion on BOTH horizontal
     axes. Limit the nominal braking tilt via its equivalent acceleration.
     These are setpoint bounds, not a guarantee about physical acceleration.
     """
@@ -151,10 +152,18 @@ class PositionVelocityFollower:
         self.coast_started = None
         self.last_time = None
 
-    def target(self, position, velocity, yaw_rad, timestamp, phase, height, *, capture=False):
+    def target(self, position, velocity, yaw_rad, timestamp, phase, height, *, capture=False,
+               motion_velocity=None):
+        """Invert FC PID using onboard velocity and a separate motion reference.
+
+        Omitting motion_velocity preserves the single-estimate API for callers
+        outside level_coast. The flight loop always supplies checked Vicon KF.
+        """
         p, v = np.asarray(position, dtype=float), np.asarray(velocity, dtype=float)
+        motion = v if motion_velocity is None else np.asarray(motion_velocity, dtype=float)
         if (p.shape != (3,) or v.shape != (3,) or not np.all(np.isfinite(p))
-                or not np.all(np.isfinite(v))
+                or not np.all(np.isfinite(v)) or motion.shape != (3,)
+                or not np.all(np.isfinite(motion))
                 or not all(math.isfinite(x) for x in (yaw_rad, timestamp, height))):
             raise ValueError('position-follow requires finite position, velocity and yaw')
         if phase not in ('contact', 'coast'):
@@ -168,28 +177,33 @@ class PositionVelocityFollower:
         c, s = math.cos(yaw_rad), math.sin(yaw_rad)
         world_to_body = np.array([[c, s], [-s, c]])
         body_velocity = world_to_body @ v[:2]
+        body_motion_velocity = world_to_body @ motion[:2]
         retention = self.options['contact_velocity_retention']
         if phase == 'coast':
             fraction = min(1., (timestamp - self.coast_started) / self.options['coast_transition_s'])
             blend = fraction * fraction * (3. - 2. * fraction)
             retention += blend * (self.options['coast_velocity_retention'] - retention)
-        delta_v = (retention - 1.) * body_velocity
+        delta_v = (retention - 1.) * body_motion_velocity
         nominal_tilt = -self.kv * delta_v
         tilt_limit = math.degrees(math.atan(self.options['max_brake_acceleration_m_s2'] / 9.81))
         magnitude = float(np.linalg.norm(nominal_tilt))
         if magnitude > tilt_limit:
             delta_v *= tilt_limit / magnitude
-        desired_body_velocity = body_velocity + delta_v
+        motion_target = body_motion_velocity + delta_v
+        stop_projection = None
         if capture:
             # Low-speed hold: a P-only velocity loop has the small-angle decay
             # rate g * radians(Kv). Its free-stop projection v / rate avoids
             # putting a fixed target immediately behind a still-moving drone.
             # This is a nominal capture approximation; attitude lag is not zero.
-            stop_projection = body_velocity / (9.81 * np.radians(self.kv))
-            capture_velocity = np.minimum(np.abs(body_velocity), np.abs(self.kp * stop_projection))
-            desired_body_velocity = np.sign(body_velocity) * np.maximum(
-                np.abs(desired_body_velocity), capture_velocity)
-            delta_v = desired_body_velocity - body_velocity
+            stop_projection = body_motion_velocity / (9.81 * np.radians(self.kv))
+            capture_velocity = np.minimum(np.abs(body_motion_velocity), np.abs(self.kp * stop_projection))
+            motion_target = np.sign(body_motion_velocity) * np.maximum(
+                np.abs(motion_target), capture_velocity)
+            delta_v = motion_target - body_motion_velocity
+        # FC computes its velocity error against onboard EKF, even when Vicon
+        # measures different motion. Invert that loop to request only delta_v.
+        desired_body_velocity = body_velocity + delta_v
         if np.any(np.abs(desired_body_velocity) > self.velocity_limit):
             raise ValueError('position-follow target exceeds confirmed FC velocity limit')
         offset = world_to_body.T @ (desired_body_velocity / self.kp)
@@ -200,6 +214,12 @@ class PositionVelocityFollower:
             'position_command_m': target.tolist(),
             'position_offset_m': offset.tolist(),
             'position_velocity_target_m_s': (world_to_body.T @ desired_body_velocity).tolist(),
+            'position_onboard_velocity_m_s': v.tolist(),
+            'position_motion_velocity_m_s': motion.tolist(),
+            'position_motion_velocity_target_m_s': (world_to_body.T @ motion_target).tolist(),
+            'position_velocity_correction_m_s': (world_to_body.T @ delta_v).tolist(),
+            'position_capture_stop_projection_m': (
+                (world_to_body.T @ stop_projection).tolist() if stop_projection is not None else None),
             'position_velocity_retention_requested': retention,
             'position_nominal_pitch_roll_deg': (-self.kv * delta_v).tolist(),
             'position_capture_projected': bool(capture),

@@ -345,6 +345,8 @@ def run_level_coast(owner, config):
         'wrench_detection_calibration': calibrated_config.get('wrench_detection_calibration'),
         'velocity_source': 'crazyflie_state_estimate',
         'handoff_velocity_source': 'vicon_position_kf',
+        'position_motion_velocity_source': 'vicon_position_kf',
+        'position_pid_velocity_source': 'crazyflie_state_estimate',
     }, name='Level Coast Config')
 
     def send():
@@ -469,11 +471,12 @@ def run_level_coast(owner, config):
                 # Velocity detection uses the cycle's onset-velocity fallback.
             # Start the command delay after evaluating the detector, not before
             # potentially expensive model/sensor work at the start of the loop.
-            # Keep onboard velocity for detection, direction locking and position
-            # following. Only the coast-to-hold gate uses the checked Vicon KF.
+            # Keep onboard velocity for detection, direction locking and FC PID
+            # compensation. Use checked Vicon KF for motion policy and handoff.
             stop_velocity = None
             stop_reference = {'stop_velocity_source': 'crazyflie_state_estimate'}
-            if cycle.phase in ('contact', 'coast'):
+            if cycle.phase in ('contact', 'coast') or (
+                    started and options['command_mode'] == 'position'):
                 stop_velocity, vicon_time, vicon_skew = (
                     owner._vicon_velocity_reference_for_onboard_state(state))
                 stop_reference = {
@@ -506,14 +509,18 @@ def run_level_coast(owner, config):
                     and cycle.phase in ('grace', 'ready')
                     and options['coast_command_mode'] == 'position')
                 if command_mode == 'position_follow' or capture_position:
+                    if stop_velocity is None:
+                        raise StaleLocalizationError('Position following requires checked Vicon velocity')
                     position_command, position_status = position_follower.target(
                         state['position'], state['velocity'], state['attitude_rpy'][2],
                         state['time'], cycle.phase if cycle.level else 'coast', nominal[2],
-                        capture=capture_position)
+                        capture=capture_position, motion_velocity=stop_velocity)
+                    position_status['position_motion_velocity_source'] = 'vicon_position_kf'
+                    position_status['position_pid_velocity_source'] = 'crazyflie_state_estimate'
                     owner.check_interaction_boundary(position_command)
                     if not cycle.level:
-                        # Freeze a short PID-based stop projection rather than
-                        # asking a still-moving drone to return to this point.
+                        # Freeze the Vicon stop projection with the onboard
+                        # velocity-PID compensation offset applied.
                         cycle.hold_position[:] = position_command
                 if command_mode != 'position_follow':
                     position_follower.reset()
