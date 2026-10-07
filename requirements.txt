@@ -5,3 +5,5 @@ pyserial
 fabric
 invoke
 joblib
+numpy
+opencv-python-headless

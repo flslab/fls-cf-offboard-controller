@@ -420,3 +420,74 @@ This is an operator protocol, not an automated flight or asserted ground truth.
 Potentiometer threshold crossings are a reference proxy; they are not exact
 physical contact times. The offline verifier reports coverage, misses and
 unmatched onsets, and never treats missing data as zero false positives.
+
+## External RGB camera pose from PixyTile
+
+`camera_node.py` can localize the fixed recording camera before a mission by
+detecting only the always-on HyperGrid LEDs in an RGB video frame. It does not
+decode MyGrid IDs; the orchestrator turns MyGrid off for this preflight. The
+user supplies a rough world position to resolve the
+integer-cell ambiguity of the unlabeled lattice; keep rough XY within roughly
+half a HyperGrid cell (7.75 cm for the 0.155 m grid) and express it in the same
+`world_FLU` frame as the grid file.
+
+Enable `camera_node.pose_estimation` in the swarm manifest and provide paths
+that exist on the camera computer:
+
+```yaml
+camera_node:
+  ip: 192.168.1.90
+  user: fls
+  pose_estimation:
+    enabled: true
+    grid_file: /home/fls/fls-marker-localization/high_rate_localizer/config/hypergrid-mygrid-4x4.json
+    calibration_file: /home/fls/fls-cf-offboard-controller/config/rgb_camera.json
+    rough_position_xyz: [2.336, -0.040, 0.85]
+    look_at_xyz: [0.0, 0.0, 0.0]
+    timeout_s: 20.0
+```
+
+The calibration must be for the recording camera at exactly 1920x1080 and the
+same fixed focus/crop used for recording. Preflight captures a short MJPEG
+burst through the same `rpicam-vid`/`libcamera-vid` pipeline as the mission and
+uses its final frame, avoiding a still-mode crop change. Its JSON schema is:
+
+```json
+{
+  "image_size": [1920, 1080],
+  "camera_matrix": [["fx", 0, "cx"], [0, "fy", "cy"], [0, 0, 1]],
+  "distortion_coefficients": ["k1", "k2", "p1", "p2", "k3"],
+  "capture": {
+    "lens_position": 0.5,
+    "camera_model": "recording camera model/serial"
+  }
+}
+```
+
+Replace every quoted calibration symbol above with the numeric value produced
+by calibration; the loader intentionally rejects placeholders and non-finite
+values.
+
+The node rejects a calibration without an image size and fixed lens position,
+or one whose lens position differs from the camera command. It accepts a pose
+only after three independent captures agree within 2.5 cm and 0.03 rad by
+default. Because HyperGrid has no IDs, rough XY is part of the correspondence:
+an operator value on the wrong side of a half-cell boundary cannot be repaired
+from the image alone. The orchestrator also compares the camera's grid-file
+SHA-256 with the grid file loaded by the physical marker-grid controller.
+
+By default, detection searches the bottom 35% of an upright frame. Override
+`pose_estimation.detector.roi_normalized` with normalized
+`[left, top, right, bottom]` values if the floor grid is framed elsewhere.
+The camera sends its world XYZ and viewing yaw to the orchestrator. The
+orchestrator computes actual-minus-authored XYZ/yaw offsets before booting the
+drones; each controller rotates its SFL targets and waypoints about the
+authored camera and then translates the whole swarm. Pose failure or timeout
+prevents the drones from booting, and recording is confirmed before the drones
+receive `START`. This correction intentionally uses XYZ plus world yaw; keep
+the recording camera upright and at the pitch assumed by the authored shot.
+Preflight rejects pitch or roll differences above the configured residual
+attitude limits because an XYZ+yaw-only swarm transform cannot correct them.
+SFL yaw values are radians and remain unwrapped across multi-turn trajectories.
+The body-fixed light-module offset follows each drone's corrected yaw, while a
+legacy per-drone `position_offset` remains an additional world-axis correction.

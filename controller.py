@@ -52,6 +52,12 @@ from tracker import (
 from yaw_error import send_yaw_error
 from logger import setup_logging
 from pid_autotuner import PIDAutotuner
+from viewpoint_transform import (
+    affine_translation,
+    transform_position,
+    transform_yaw_rad,
+    wrap_radians,
+)
 
 setup_logging()
 
@@ -2421,28 +2427,108 @@ class Controller:
             self.hl_commander.go_to(*p, 0, 1 / fps)
             self._safe_sleep(1 / fps)
 
-    def _compute_viewpoint_offset(self, mission):
-        if not getattr(self.args, 'viewpoint', None):
-            return [0.0, 0.0, 0.0]
-            
-        camera = mission.get('camera', None)
-        if not camera:
-            return [0.0, 0.0, 0.0]
+    def _compute_viewpoint_transform(self, mission):
+        """Return the preflight RGB-camera correction, or ``None``.
+
+        New orchestrators pass the measured camera delta directly.  The
+        legacy ``--viewpoint`` form remains supported and is converted to the
+        same actual-minus-authored delta here.
+        """
+        camera = mission.get('camera')
+        explicit_offset = getattr(self.args, 'viewpoint_offset', None)
+        actual_viewpoint = getattr(self.args, 'viewpoint', None)
+        yaw_offset = wrap_radians(
+            getattr(self.args, 'viewpoint_yaw_offset', 0.0) or 0.0
+        )
+
+        if explicit_offset is None and actual_viewpoint is None:
+            return None
+        if not camera or len(camera) < 3:
+            logger.warning(
+                "Ignoring camera viewpoint correction because the mission "
+                "does not define camera: [x, y, z]"
+            )
+            return None
+
+        if explicit_offset is not None:
+            position_offset = [float(value) for value in explicit_offset]
+            actual = [camera[index] + position_offset[index] for index in range(3)]
+            source = "preflight RGB PnP"
+        else:
+            actual = [float(value) for value in actual_viewpoint]
+            position_offset = [
+                actual[index] - float(camera[index]) for index in range(3)
+            ]
+            source = "legacy viewpoint"
 
         light_module_offset = self.args.light_module_offset
-            
-        vp_offset = [
-            self.args.viewpoint[0] - camera[0] - light_module_offset[0],
-            self.args.viewpoint[1] - camera[1] - light_module_offset[1],
-            self.args.viewpoint[2] - camera[2] - light_module_offset[2]
-        ]
-
-        logger.info(f"Camera: {camera}")
-        logger.info(f"Viewpoint: {self.args.viewpoint}")
+        translation = affine_translation(
+            camera,
+            position_offset,
+            yaw_offset,
+            light_module_offset,
+        )
+        logger.info(f"Camera correction source: {source}")
+        logger.info(f"Authored camera position: {camera}")
+        logger.info(f"Actual camera position: {actual}")
+        logger.info(f"Camera position offset: {position_offset}")
+        logger.info(
+            "Camera yaw offset: %.6f rad (%.3f deg)",
+            yaw_offset,
+            math.degrees(yaw_offset),
+        )
         logger.info(f"Light module offset: {light_module_offset}")
-        logger.info(f"Viewpoint offset: {vp_offset}")
+        logger.info(
+            "Reference affine translation (zero authored yaw): %s",
+            translation,
+        )
+        return {
+            'camera': [float(value) for value in camera[:3]],
+            'position_offset': position_offset,
+            'yaw_offset_rad': yaw_offset,
+            'affine_translation': translation,
+        }
 
-        return vp_offset
+    def _compute_viewpoint_offset(self, mission):
+        """Compatibility accessor for logging the affine translation term."""
+        transform = self._compute_viewpoint_transform(mission)
+        if transform is None:
+            return [0.0, 0.0, 0.0]
+        return transform['affine_translation']
+
+    def _apply_viewpoint_transform(
+            self, mission, target, waypoints, position_offset=None):
+        """Apply one camera-frame correction to authored mission points.
+
+        SFL yaw values are unwrapped radians.  Legacy per-drone
+        ``position_offset`` values remain world-axis corrections and are
+        returned for the caller to add after this global camera transform.
+        """
+        transform = self._compute_viewpoint_transform(mission)
+        base_offset = list(position_offset or [0.0, 0.0, 0.0])
+        if transform is None:
+            return None, base_offset
+
+        camera = transform['camera']
+        camera_offset = transform['position_offset']
+        camera_yaw = transform['yaw_offset_rad']
+        for point in [target, *waypoints]:
+            authored_yaw = float(point[3]) if len(point) > 3 else 0.0
+            final_yaw = transform_yaw_rad(authored_yaw, camera_yaw)
+            point[:3] = transform_position(
+                point[:3],
+                camera,
+                camera_offset,
+                camera_yaw,
+                self.args.light_module_offset,
+                light_module_yaw_rad=final_yaw,
+            )
+            if len(point) == 3:
+                point.append(final_yaw)
+            else:
+                point[3] = final_yaw
+
+        return transform, base_offset
 
     def _compute_reference_offset(self, mission):
         if not getattr(self.args, 'reference', None):
@@ -2482,12 +2568,23 @@ class Controller:
         interaction_mode = mission_setting.get('interaction', None)
         execution = False if self.args.droneless else True
 
-        if position_offset:
+        viewpoint_transform, base_offset = self._apply_viewpoint_transform(
+            self.mission,
+            target,
+            waypoints,
+            position_offset,
+        )
+        self.viewpoint_offsets.append(
+            viewpoint_transform['affine_translation']
+            if viewpoint_transform is not None
+            else [0.0, 0.0, 0.0]
+        )
+        if any(abs(value) > 1e-6 for value in base_offset):
             for i in range(3):
-                target[i] += position_offset[i]
+                target[i] += base_offset[i]
             for j in range(len(waypoints)):
                 for i in range(3):
-                    waypoints[j][i] += position_offset[i]
+                    waypoints[j][i] += base_offset[i]
 
         if len(target) == 3:
             target.append(0.0)
@@ -2972,14 +3069,23 @@ class Controller:
         led_setting = mission_setting.get('led', {})
         autotune = mission_setting.get('autotune', {'enabled': False})
 
-        vp_offset = self._compute_viewpoint_offset(mission)
+        viewpoint_transform, base_offset = self._apply_viewpoint_transform(
+            mission,
+            target,
+            waypoints,
+            position_offset,
+        )
+        vp_offset = (
+            viewpoint_transform['affine_translation']
+            if viewpoint_transform is not None
+            else [0.0, 0.0, 0.0]
+        )
         ref_offset = self._compute_reference_offset(mission)
         self.viewpoint_offsets.append(vp_offset)
         self.reference_offsets.append(ref_offset)
-        base_offset = position_offset if position_offset else [0.0, 0.0, 0.0]
-        total_offset = [base_offset[0] + vp_offset[0] + ref_offset[0],
-                        base_offset[1] + vp_offset[1] + ref_offset[1],
-                        base_offset[2] + vp_offset[2] + ref_offset[2]]
+        total_offset = [base_offset[0] + ref_offset[0],
+                        base_offset[1] + ref_offset[1],
+                        base_offset[2] + ref_offset[2]]
         if self.use_flowdeck:
             total_offset[2] -= 0.09
 
@@ -3979,6 +4085,27 @@ if __name__ == '__main__':
     ap.add_argument("--radio", type=str, help="specify the CrazyRadio URI (e.g., 'radio://0/6/1M/E7E7E7E704')")
     ap.add_argument("--droneless", action="store_true", help="run mission without connecting to fc")
     ap.add_argument("--viewpoint", type=float, nargs=3, help="actual camera viewpoint coordinates x y z which will be used to offset the waypoints", default=None)
+    ap.add_argument(
+        "--viewpoint-offset",
+        type=float,
+        nargs=3,
+        default=None,
+        metavar=("DX", "DY", "DZ"),
+        help=(
+            "preflight RGB-camera position correction actual-minus-authored "
+            "in world metres; takes precedence over --viewpoint"
+        ),
+    )
+    ap.add_argument(
+        "--viewpoint-yaw-offset",
+        type=float,
+        default=0.0,
+        metavar="RADIANS",
+        help=(
+            "preflight RGB-camera viewing-yaw correction in world radians; "
+            "rotates mission XY about the authored camera"
+        ),
+    )
     ap.add_argument("--reference", type=float, nargs=3, help="actual reference coordinates x y z which will be used to offset the waypoints", default=None)
     ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
     ap.add_argument("--light-module-offset", type=float, nargs=3, help="light module offset from marker coordinates x y z", default=[0.075, 0.0, -0.040])
