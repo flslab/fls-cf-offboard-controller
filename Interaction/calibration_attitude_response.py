@@ -223,6 +223,10 @@ def identify_attitude_response_from_log_records(records, *, attitude_source="ord
     desired_group = ("ATT_DES" if any(r.get("group") == "ATT_DES" for r in records)
                      else "ATT_RATE_CTL")
     actual_group = "P_REL_ATT" if attitude_source == "post_release15" else "VEL_ORI"
+    if attitude_source == "ordinary" and not any(
+            r.get("type") == "state" and r.get("group") == "VEL_ORI"
+            for r in records):
+        actual_group = "FIRMWARE_KIN"
     desired_rows = [
         record["data"] for record in records
         if record.get("type") == "state"
@@ -244,16 +248,27 @@ def identify_attitude_response_from_log_records(records, *, attitude_source="ord
         [row["controller.roll"], row["controller.pitch"]]
         for row in desired_rows
     ], dtype=float)
-    actual = np.asarray([
-        _quaternion_wxyz_to_roll_pitch_deg([
-            row["kalmanPRel.q0"], row["kalmanPRel.q1"],
-            row["kalmanPRel.q2"], row["kalmanPRel.q3"],
-        ])
-        for row in attitude_rows
-    ], dtype=float) if attitude_source == "post_release15" else np.asarray([
-        [row["stateEstimate.roll"], row["stateEstimate.pitch"]]
-        for row in attitude_rows
-    ], dtype=float)
+    if actual_group == "FIRMWARE_KIN":
+        from cflib.utils.encoding import decompress_quaternion
+        def compressed_angles(row):
+            x, y, z, w = decompress_quaternion(int(row['stateEstimateZ.quat']))
+            angles = _quaternion_wxyz_to_roll_pitch_deg([w, x, y, z])
+            # Native quaternion pitch has the opposite sign to legacy
+            # stateEstimate.pitch and controller.pitch.
+            return angles * np.array([1., -1.])
+        actual = np.asarray([compressed_angles(row) for row in attitude_rows])
+    elif attitude_source == "post_release15":
+        actual = np.asarray([
+            _quaternion_wxyz_to_roll_pitch_deg([
+                row["kalmanPRel.q0"], row["kalmanPRel.q1"],
+                row["kalmanPRel.q2"], row["kalmanPRel.q3"],
+            ]) for row in attitude_rows
+        ], dtype=float)
+    else:
+        actual = np.asarray([
+            [row["stateEstimate.roll"], row["stateEstimate.pitch"]]
+            for row in attitude_rows
+        ], dtype=float)
     desired_unique = np.r_[True, np.diff(desired_time) > 0.0]
     actual_unique = np.r_[True, np.diff(actual_time) > 0.0]
     desired_time = desired_time[desired_unique]

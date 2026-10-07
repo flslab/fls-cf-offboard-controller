@@ -38,6 +38,31 @@ class CalibrationAttitudeResponseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'incomplete'):
             identify_attitude_response_from_log_records([])
 
+    def test_compressed_ordinary_quaternion_retains_legacy_pitch_sign(self):
+        from cflib.utils.encoding import compress_quaternion
+        from Interaction.contact_attitude_observer import quaternion_from_native_rpy
+        w, x, y, z = quaternion_from_native_rpy(*np.radians([8., -6., 4.]))
+        packed = compress_quaternion([x, y, z, w])
+        records = [{'type': 'events', 'name': name, 'data': {'time': when}}
+                   for name, when in [('Wrench Calibration Excitation Started', 0),
+                                      ('Wrench Calibration Excitation Complete', 5)]]
+        for i in range(501):
+            records.extend([
+                {'type': 'state', 'group': 'ATT_DES', 'data': {
+                    'time': i*.01, 'cf_timestamp_ms': i*10,
+                    'controller.roll': 8., 'controller.pitch': 6.}},
+                {'type': 'state', 'group': 'FIRMWARE_KIN', 'data': {
+                    'time': i*.01, 'cf_timestamp_ms': i*10, 'stateEstimateZ.quat': packed}},
+            ])
+        with patch('Interaction.calibration_attitude_response.identify_second_order_axis',
+                   return_value={'usable': True}) as fit:
+            result = identify_attitude_response_from_log_records(records)
+        self.assertTrue(result['usable'])
+        np.testing.assert_allclose(fit.call_args_list[0].args[2], 8., atol=.2)
+        np.testing.assert_allclose(fit.call_args_list[1].args[2], 6., atol=.2)
+        with self.assertRaisesRegex(ValueError, 'P_REL_ATT'):
+            identify_attitude_response_from_log_records(records, attitude_source='post_release15')
+
     def test_recovers_tilt_to_acceleration_gain(self):
         dt = 0.01
         times = np.arange(0.0, 12.0, dt)
