@@ -40,5 +40,9 @@ def resolve_mission_profiles(mission):
         profile = yaml.safe_load(stream)
     if not isinstance(profile, dict):
         raise ValueError(f'Interaction profile {name!r} must be a mapping')
+    if (name == 'level_coast' and config.get('behavior') == 'level_coast'
+            and (config.get('level_coast') or {}).get('coast_command_mode') == 'scurve'):
+        with PROFILES[name].with_name('level_coast_scurve.yaml').open() as stream:
+            profile = _merge(profile, yaml.safe_load(stream))
     config['wrench_interaction'] = _merge(profile, overrides)
     return resolved

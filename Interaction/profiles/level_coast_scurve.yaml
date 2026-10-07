@@ -1,0 +1,28 @@
+# Overlay for level_coast.coast_command_mode: scurve.
+# Reuse translation_inertia's existing, calibrated firmware curve.
+firmware_auto_brake:
+  enabled: true
+  mode: scurve
+  command_mode: attitude
+  response_time_s: 0.14
+  hold_gate: false  # Complete at the curve endpoint; no measured-speed gate.
+  response_model:
+    enabled: true
+    calibration_file: Interaction/attitude_response.json
+  analytic_profile:
+    shape: velocity_scurve
+    execution: attitude
+    tail_s: 1.2
+    single_s: 1.2
+    handoff: curve_endpoint_forward
+    feedback: unified_vicon15
+    attitude_kp: 0.0
+    attitude_kv: 3.0
+    rate_feedforward: false
+    response_compensation: true
+    response_bandwidth: 12.0
+    position_tracking_bandwidth: 3.0
+    acceleration_residual: true
+    state_matched_start: false
+    friction_from_interaction: false
+  stop_distance_m: 0.0

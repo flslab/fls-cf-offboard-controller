@@ -409,12 +409,16 @@ class Controller:
                 not math.isfinite(min_peak) or not 0.05 <= min_peak <= 3.9):
             raise ValueError('firmware_auto_brake.stop_min_decel must be 0.05–3.9 m/s^2')
         self.firmware_auto_brake_stop_min_peak = float(min_peak)
-        if not (self.args.interaction and self.args.sense and self.args.vicon
+        level_scurve = (translation.get('behavior') == 'level_coast'
+                        and (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve')
+        if level_scurve and self.args.controller_type != 'pid':
+            raise ValueError('S-curve coast requires the PID controller')
+        if not (self.args.interaction and (self.args.sense or level_scurve) and self.args.vicon
                 and self.args.vicon_mode in ('rigidbody', 'pointcloud')
                 and not self.args.vicon_full_pose and self.args.log
                 and not self.args.crazysim and not self.args.ground_test):
             raise ValueError('firmware auto brake requires hardware --interaction '
-                             '--sense --log and rigidbody or pointcloud '
+                             '--log, --sense (unless using level_coast scurve), and rigidbody or pointcloud '
                              'position-only Vicon')
         if (wrench.get('contact_attitude_shadow_enabled', False) or
                 (wrench.get('post_release_estimator_control') or {}).get(
@@ -516,6 +520,11 @@ class Controller:
         toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
         analytic = getattr(self, '_firmware_analytic_expected', {})
         curve_expected = dict(analytic)
+        translation = (self.mission or {}).get('Interaction', {}).get('config', {})
+        if (translation.get('behavior') == 'level_coast'
+                and (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve'):
+            # Explicitly clear a previous measured-speed gate on the same FC.
+            curve_expected['hlCommander.pRelHoldG'] = 0
         capabilities = {'hlCommander.pRelEnd': 1} if analytic.get('hlCommander.pRelHold') == 3 else {}
         request_opt_in = (getattr(self, '_firmware_stop_deceleration_explicit', False) or
                           (bool(analytic) and self.firmware_auto_brake_stop_distance_m > 0))
@@ -1023,6 +1032,10 @@ class Controller:
             attempt('Servo safe position', self._set_safe_servo_angles)
             if self.args.ground_test:
                 time.sleep(1)
+
+        selector = getattr(getattr(self, 'cf', None), '_level_coast_estimator_selector', None)
+        if selector is not None and selector.prepared:
+            attempt('Restore default S-curve estimator', selector.close)
 
         attempt('Landing (not confirmed on error)', self.land)
 
@@ -2220,6 +2233,13 @@ class Controller:
             )
         if getattr(self, 'firmware_auto_brake_enabled', False):
             self._setup_firmware_auto_brake_params()
+            translation = (self.mission or {}).get('Interaction', {}).get('config', {})
+            if (translation.get('behavior') == 'level_coast'
+                    and (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve'):
+                from Interaction.level_coast_scurve import ContactEstimatorSelector
+                selector = ContactEstimatorSelector(self.cf)
+                selector.prepare()
+                self.cf._level_coast_estimator_selector = selector
 
         self._prepare_offboard_yaw_damping()
         self._prepare_offboard_position_control()

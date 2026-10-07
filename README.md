@@ -229,7 +229,7 @@ detection_method: potentiometer  # potentiometer | model | vel
 wrench_interaction_profile: level_coast
 level_coast:
   command_mode: position        # position | orientation; during contact
-  coast_command_mode: orientation  # position | orientation; after confirmed release
+  coast_command_mode: orientation  # position | orientation | scurve; after confirmed release
 ```
 
 `level_coast.command_mode` selects the contact policy (default `orientation`).
@@ -396,12 +396,59 @@ it does not substitute a zero heading while awaiting startup state.
 
 `duration` covers the entire repeated loop after observer startup, including
 preparation and grace. At expiry in any phase, control returns to the ordinary
-mission landing lifecycle. The new mode requires `firmware_auto_brake.enabled:
-false`; it does not submit release events or braking curves. Existing configured
+mission landing lifecycle. Orientation/position coast requires `firmware_auto_brake.enabled:
+false`; those options do not submit release events or braking curves. Existing configured
 PID attitude-source switching follows entry into and exit from orientation
 packets. State/motor freshness, measured boundaries, battery and operator-abort
 checks remain active.
 The example is an offline-tested configuration, not flight validation.
+
+### S-curve coast with contact estimator switching
+
+With `wrench_interaction_profile: level_coast`, select:
+
+```yaml
+level_coast:
+  command_mode: orientation  # orientation | position
+  coast_command_mode: scurve # orientation | position | scurve
+  grace_start: release       # release | speed_threshold
+```
+
+This automatically overlays `Interaction/profiles/level_coast_scurve.yaml`;
+mission `wrench_interaction` overrides still win. The overlay reuses the existing
+`translation_inertia` compensated firmware `velocity_scurve`, attitude execution,
+Vicon15 feedback and forward curve-endpoint hold. Keep the existing calibration
+file `Interaction/attitude_response.json`. No firmware source change or flashing
+is performed by this option; the connected paired build must already expose the
+existing runtime and endpoint capabilities, which are checked before arming.
+
+At confirmed interaction onset, request `stabilizer.estimator=3` (the existing
+PostReleaseVicon15 view), including during a position-command detection delay.
+Default preparation/hover uses `2` (ordinary Kalman). Both share the running
+Kalman task in the paired firmware; neither transition resets the estimator.
+Fresh parameter confirmation is polled without blocking the command stream;
+an unconfirmed switch fails after 0.5 s. Release waits for contact estimator
+confirmation, then submits one acknowledged firmware release event. The firmware
+owns the full curve; offboard sends no low-level position/orientation packets
+while it runs. All three detection methods work, and only potentiometer detection
+requires the sensor (or enable `record_potentiometer` for diagnostic logging).
+
+The matching firmware endpoint notice and fresh stage-4 status complete the
+curve. `pRelHoldG=0` is explicitly written/read back pre-arm: neither the offboard
+`stop_speed_m_s` nor a measured terminal-speed window gates this transition.
+Fresh firmware state and existing abort/admission checks still apply. Request
+the default estimator (`2`), wait for its confirmation while retaining firmware
+hold, then send low-level position packets at the exact firmware hold target.
+The endpoint target preserves the existing forward-only policy; this option
+does not recompute a speed-based stopping projection.
+
+`grace_start: release` retains its release-time origin and can preempt a running
+curve with a newly detected interaction after grace. `speed_threshold` retains
+the existing spelling, but in S-curve mode starts grace at curve completion and
+default-estimator confirmation. Duration expiry/faults restore the default
+estimator and use the existing mission landing lifecycle. Offline tests cover
+these transitions; physical timing, stopping quality and repeated flight remain
+unvalidated.
 
 ### Distance and deceleration inputs for onboard braking
 

@@ -13,6 +13,7 @@ from Interaction.level_coast import (
 )
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
 from Interaction.tests.test_wrench_interactions_integration import FakeCommander, FakeOnboardLogManager
+from Interaction.mission_profiles import resolve_mission_profiles
 
 
 def configuration(detector='potentiometer'):
@@ -37,6 +38,21 @@ def configuration(detector='potentiometer'):
 
 
 class LevelCoastStateTests(unittest.TestCase):
+    def test_scurve_completes_only_on_notice_regardless_of_speed(self):
+        for grace_start in ('release', 'speed_threshold'):
+            cycle = LevelCoastCycle([0, 0, 1], .03, .5, grace_start, coast_command_mode='scurve')
+            cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
+            cycle.update([0, 0, 1], [.2, 0, 0], .1, started=True)
+            cycle.update([.1, 0, 1], [0, 0, 0], .2, released=True)
+            self.assertEqual(cycle.phase, 'coast')  # Zero speed is not completion.
+            cycle.update([.2, 0, 1], [-.4, 0, 0], .3)
+            self.assertEqual(cycle.phase, 'coast')
+            cycle.update([.3, 0, 1], [.4, 0, 0], .4,
+                         curve_completed=True, curve_hold_position=[.5, .1, 1.1])
+            self.assertEqual(cycle.phase, 'grace')  # High speed cannot veto completion.
+            np.testing.assert_allclose(cycle.hold_position, [.5, .1, 1.1])
+            self.assertEqual(cycle.grace_started, .2 if grace_start == 'release' else .4)
+
     def test_coast_mode_inherits_contact_and_rejects_invalid_values(self):
         config = configuration()
         options = validate_level_coast(config, sensor_available=True)
@@ -245,6 +261,51 @@ class LevelCoastStateTests(unittest.TestCase):
 
 
 class LevelCoastLoopTests(unittest.TestCase):
+    def test_scurve_keeps_firmware_ownership_then_restores_estimator_before_position(self):
+        for detector in ('potentiometer', 'model', 'vel'):
+            for contact in ('orientation', 'position'):
+                with self.subTest(detector=detector, contact=contact):
+                    control, commands, phases, _ = self.run_scenario(
+                        detector, command_mode=contact, coast_command_mode='scurve',
+                        pressed_fn=lambda t: .08 <= t < .16,
+                        speed_fn=lambda t: .12 if t >= .08 else 0.,
+                        # VEL release uses a low sample, then velocity rises.
+                        velocity_fn=(lambda t: [0. if .16 <= t < .20 else .12 if t >= .08 else 0., 0., 0.]),
+                        estimator_delay_s=.02)
+                    self.assertEqual(len(control.curve_clock['releases']), 1)
+                    start = control.curve_clock['releases'][0][0]
+                    # One final neutral packet is sent at release; no LL stream
+                    # may cancel the FC plan before its terminal notice.
+                    self.assertFalse(any(start < t < start + .14 - 1e-6 for t, _, _ in commands))
+                    capture = next(p for p in phases if p['previous'] == 'coast' and p['phase'] == 'grace')
+                    self.assertGreater(capture['stop_speed_value_m_s'], .03)
+                    np.testing.assert_allclose(capture['hold_position_m'], [.25, .1, 1.])
+                    self.assertEqual(capture['command_mode'], 'position_hold')
+                    writes = [c.args for c in control.cf.param.set_value.call_args_list]
+                    self.assertIn(('stabilizer.estimator', '3'), writes)
+                    self.assertEqual(writes[-1], ('stabilizer.estimator', '2'))
+                    self.assertEqual(control.curve_clock['closed'], 1)
+
+    def test_scurve_release_grace_can_preempt_without_consuming_old_completion(self):
+        control, _, phases, _ = self.run_scenario(coast_command_mode='scurve',
+            grace_start='release', grace_time=.03, scurve_completion_s=.3,
+            pressed_fn=lambda t: .08 <= t < .16 or .23 <= t < .28)
+        self.assertTrue(any(p['coast_preempted'] for p in phases))
+        identities = [(event['session_id'], event['sequence'])
+                      for _, event in control.curve_clock['releases']]
+        self.assertEqual(len(identities), 2)
+        self.assertEqual(len(set(identities)), 2)
+
+    def test_scurve_abort_ack_failure_and_existing_safety_restore_default(self):
+        for fault in ('state', 'battery', 'boundary', 'motor'):
+            control, *_ = self.run_scenario(coast_command_mode='scurve', fault=fault)
+            self.assertEqual(control.curve_clock['closed'], 1)
+            self.assertEqual(control.cf.param.set_value.call_args_list[-1].args,
+                             ('stabilizer.estimator', '2'))
+        for curve_fault in ('release', 'abort'):
+            control, *_ = self.run_scenario(coast_command_mode='scurve', curve_fault=curve_fault)
+            self.assertEqual(control.curve_clock['closed'], 1)
+
     def run_scenario(self, detector='potentiometer', *, duration=.85, fault=None,
                      grace_start='speed_threshold', grace_time=.10,
                      pressed_fn=None, speed_fn=None, follow_yaw=False,
@@ -253,7 +314,8 @@ class LevelCoastLoopTests(unittest.TestCase):
                      sensor_present=True, sensor_fresh=True, command_mode='orientation',
                      position_options=None, coast_command_mode=None, duplicate_times=(),
                      velocity_fn=None, force_direction_fn=None, record_potentiometer=False,
-                     vicon_velocity_fn=None):
+                     vicon_velocity_fn=None, scurve_completion_s=.12, estimator_delay_s=0.,
+                     curve_fault=None):
         config = configuration(detector)
         config['record_potentiometer'] = record_potentiometer
         config['duration'] = duration
@@ -266,6 +328,10 @@ class LevelCoastLoopTests(unittest.TestCase):
             config['level_coast']['coast_command_mode'] = coast_command_mode
         if position_options is not None:
             config['level_coast']['position_control'] = position_options
+        if coast_command_mode == 'scurve':
+            config['wrench_interaction_profile'] = 'level_coast'
+            config['wrench_interaction'].pop('firmware_auto_brake')
+            config = resolve_mission_profiles({'Interaction': {'config': config}})['Interaction']['config']
         original = copy.deepcopy(config)
         clock = {'t': 0.}
         control = InteractionsControl.__new__(InteractionsControl)
@@ -278,6 +344,47 @@ class LevelCoastLoopTests(unittest.TestCase):
         control.hl_commander = FakeCommander()
         control.cf = SimpleNamespace(param=SimpleNamespace(set_value=Mock(), set_value_raw=Mock()))
         control.cf._offboard_yaw_damping_active = False
+        curve_clock = {'start': None, 'estimator': 2, 'requested': 2, 'due': 0., 'releases': [], 'closed': 0}
+        if coast_command_mode == 'scurve':
+            def request_estimator(contact, now=None):
+                value = 3 if contact else 2
+                if value != curve_clock['requested']:
+                    curve_clock.update(requested=value, due=clock['t'] + estimator_delay_s)
+                    control.cf.param.set_value('stabilizer.estimator', str(value))
+            def estimator_ready(now=None):
+                if clock['t'] >= curve_clock['due']:
+                    curve_clock['estimator'] = curve_clock['requested']
+                return curve_clock['estimator'] == curve_clock['requested']
+            def close_selector():
+                curve_clock['closed'] += 1
+                control.cf.param.set_value('stabilizer.estimator', '2')
+            control.cf._level_coast_estimator_selector = SimpleNamespace(
+                prepared=True, request=request_estimator, ready=estimator_ready, close=close_selector)
+            control.curve_clock = curve_clock
+            control._firmware_brake_status_snapshot = lambda: ({
+                'hlCommander.pRelAutoSt': (0 if curve_clock['start'] is None else
+                    6 if curve_fault == 'abort' else
+                    4 if clock['t'] >= curve_clock['start'] + scurve_completion_s else 2),
+                'hlCommander.pRelReady': 1, 'hlCommander.pRelAutoTime': 0,
+            }, 1000. + clock['t'])
+            def curve_release(_cf, **event):
+                curve_clock['start'] = clock['t']
+                curve_clock['releases'].append((clock['t'], event))
+                if curve_fault == 'release':
+                    raise RuntimeError('test release ACK failure')
+                return event
+            class Notice:
+                def __init__(self, _cf, **identity):
+                    self.identity = identity
+                def __enter__(self):
+                    return self
+                def __exit__(self, *_):
+                    pass
+                def acknowledge(self):
+                    pass
+                def wait(self, _):
+                    if clock['t'] >= curve_clock['start'] + scurve_completion_s:
+                        return dict(**self.identity, hold_position_m=[.25, .1, 1.], hold_yaw_rad=0.)
         if 'position' in (command_mode, coast_command_mode):
             from Interaction.tests.test_position_follow import parameters
             control.cf._offboard_position_pid = SimpleNamespace(prepared=fault != 'pid', parameters=parameters())
@@ -398,10 +505,14 @@ class LevelCoastLoopTests(unittest.TestCase):
                 patch('Interaction.level_coast.DETECTION_TO_ORI_DELAY_S', ori_delay), \
                 patch('Interaction.level_coast.time.monotonic', side_effect=lambda:clock['t']), \
                 patch('Interaction.level_coast.apply_detection_calibration', side_effect=lambda c,*_:c), \
+                patch('Interaction.level_coast_scurve.FirmwareHoldNotification',
+                      Notice if coast_command_mode == 'scurve' else Mock()), \
+                patch('Interaction.level_coast_scurve.handoff_pi_release_to_firmware',
+                      side_effect=curve_release if coast_command_mode == 'scurve' else None), \
                 patch.object(OnboardMomentumWrenchPipeline, 'update',
                              model_update if detector == 'model' else real_update):
-            if fault:
-                with self.assertRaises(expected[fault]):
+            if fault or curve_fault:
+                with self.assertRaises(expected[fault] if fault else RuntimeError):
                     control._run_translation()
             else:
                 control._run_translation()

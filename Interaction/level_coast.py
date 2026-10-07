@@ -1,4 +1,4 @@
-"""Timed, repeated level-attitude interaction, independent of firmware braking."""
+"""Timed, repeated interaction with selectable contact and release control."""
 
 from copy import deepcopy
 import math
@@ -36,8 +36,9 @@ def resolve_command_modes(options):
     modes = {'command_mode': contact,
              'coast_command_mode': options.get('coast_command_mode', contact)}
     for name, value in modes.items():
-        if value not in ('orientation', 'position'):
-            raise ValueError(f'level_coast.{name} must be orientation or position')
+        choices = ('orientation', 'position', 'scurve') if name == 'coast_command_mode' else ('orientation', 'position')
+        if value not in choices:
+            raise ValueError(f'level_coast.{name} must be one of {choices}')
     return modes
 
 
@@ -56,7 +57,21 @@ def validate_level_coast(config, *, sensor_available):
         raise ValueError('level_coast requires onboard state logging')
     if wrench.get('shadow_mode', True):
         raise ValueError('level_coast requires wrench_interaction.shadow_mode: false')
-    if (wrench.get('firmware_auto_brake') or {}).get('enabled', False):
+    scurve = options['coast_command_mode'] == 'scurve'
+    brake = wrench.get('firmware_auto_brake') or {}
+    if scurve:
+        profile = brake.get('analytic_profile') or {}
+        if (brake.get('enabled') is not True or brake.get('mode') != 'scurve'
+                or brake.get('command_mode') != 'attitude'
+                or profile.get('shape') != 'velocity_scurve'
+                or profile.get('execution') != 'attitude'
+                or profile.get('feedback') != 'unified_vicon15'
+                or profile.get('handoff') != 'curve_endpoint_forward'):
+            raise ValueError('scurve coast requires the enabled velocity_scurve attitude firmware profile '
+                             'with unified_vicon15 feedback and curve_endpoint_forward handoff')
+        if brake.get('hold_gate', False) is not False:
+            raise ValueError('scurve coast requires firmware_auto_brake.hold_gate: false')
+    elif brake.get('enabled', False):
         raise ValueError('level_coast requires firmware_auto_brake.enabled: false')
     if (wrench.get('contact_attitude_shadow_enabled', False)
             or (wrench.get('post_release_estimator_control') or {}).get('enabled', False)):
@@ -206,7 +221,7 @@ class LevelCoastCycle:
                                          else self.interaction_direction_xy.tolist()),
             'interaction_direction_source': self.interaction_direction_source,
             'interaction_velocity_m_s': projected,
-            'stop_speed_metric': metric,
+            'stop_speed_metric': 'firmware_curve_completion' if self.coast_command_mode == 'scurve' else metric,
             'stop_speed_value_m_s': projected if metric == 'interaction_projection' else xy_speed,
         }
 
@@ -224,7 +239,7 @@ class LevelCoastCycle:
 
     def update(self, position, velocity, now, *, armed=False, started=False, released=False,
                interaction_direction=None, interaction_direction_source=None,
-               stop_velocity=None):
+               stop_velocity=None, curve_completed=False, curve_hold_position=None):
         previous = self.phase
         handoff_velocity = velocity if stop_velocity is None else stop_velocity
         delay_finished = (self.delay_pending
@@ -247,10 +262,16 @@ class LevelCoastCycle:
             self.phase = 'coast'
             if self.grace_start == 'release':
                 self.grace_started = now
-        # A release already below threshold can capture hold in this sample.
-        if (self.phase == 'coast' and not self.delay_pending and not delay_finished
-                and self.stop_status(handoff_velocity)['stop_speed_value_m_s'] < self.stop_speed):
-            self.hold_position[:2] = np.asarray(position)[:2]
+        # Legacy coast can capture hold immediately at low speed; S-curve
+        # coast must instead receive its explicit terminal completion.
+        complete = (curve_completed if self.coast_command_mode == 'scurve' else
+                    self.stop_status(handoff_velocity)['stop_speed_value_m_s'] < self.stop_speed)
+        if (self.phase == 'coast' and not self.delay_pending and not delay_finished and complete):
+            hold = position if curve_hold_position is None else curve_hold_position
+            if self.coast_command_mode == 'scurve' and curve_hold_position is not None:
+                self.hold_position[:] = np.asarray(hold)
+            else:
+                self.hold_position[:2] = np.asarray(hold)[:2]
             if self.grace_start == 'speed_threshold':
                 self.grace_started = now
             self.phase = ('ready' if self.grace_start == 'release'
@@ -301,6 +322,15 @@ def run_level_coast(owner, config):
     )
     options = validate_level_coast(
         config, sensor_available=getattr(owner, 'force_sensor', None) is not None)
+    scurve_coast = options['coast_command_mode'] == 'scurve'
+    curve = selector = None
+    if scurve_coast:
+        from Interaction.level_coast_scurve import FirmwareSCurveCoast
+        selector = getattr(owner.cf, '_level_coast_estimator_selector', None)
+        if not getattr(selector, 'prepared', False):
+            raise RuntimeError('S-curve estimator was not prepared before takeoff')
+        curve = FirmwareSCurveCoast(owner, selector)
+        owner._firmware_brake_active = True
     yaw_guard = getattr(owner.cf, '_offboard_yaw_damping_guard', None)
     if options['yaw_rate_damping'] and not getattr(yaw_guard, 'prepared', False):
         raise RuntimeError('offboard yaw damping was not prepared before takeoff')
@@ -344,13 +374,17 @@ def run_level_coast(owner, config):
         'wrench_interaction': deepcopy(pipeline.config),
         'wrench_detection_calibration': calibrated_config.get('wrench_detection_calibration'),
         'velocity_source': 'crazyflie_state_estimate',
-        'handoff_velocity_source': 'vicon_position_kf',
+        'handoff_velocity_source': 'firmware_curve_endpoint' if scurve_coast else 'vicon_position_kf',
+        'handoff_condition': 'curve_complete' if scurve_coast else 'velocity_threshold',
         'vicon_velocity_age_limit_s': None,
         'position_motion_velocity_source': 'vicon_position_kf',
         'position_pid_velocity_source': 'crazyflie_state_estimate',
     }, name='Level Coast Config')
 
     def send():
+        if curve is not None and curve.active:
+            # An LL packet would stop the firmware's curve/terminal hold.
+            return
         if command_mode == 'position_follow':
             owner.lo_commander.send_position_setpoint(*position_command, yaw)
         elif command_mode == 'level_zdistance':
@@ -391,6 +425,8 @@ def run_level_coast(owner, config):
                 if not math.isfinite(yaw):
                     raise StaleLocalizationError('Level coast requires a finite onboard yaw')
             sample_now = time.monotonic()
+            if selector is not None:
+                selector.ready(sample_now)  # Check pending-switch failures on every sample.
             enabled = cycle.detection_enabled(sample_now)
             if enabled and not detection_was_enabled:
                 # Clear the projected-release latch and discard all evidence
@@ -476,7 +512,8 @@ def run_level_coast(owner, config):
             # compensation. Use checked Vicon KF for motion policy and handoff.
             stop_velocity = None
             stop_reference = {'stop_velocity_source': 'crazyflie_state_estimate'}
-            if cycle.phase in ('contact', 'coast') or (
+            if (not scurve_coast and cycle.phase in ('contact', 'coast')) or (
+                    scurve_coast and cycle.phase == 'contact' and options['command_mode'] == 'position') or (
                     started and options['command_mode'] == 'position'):
                 stop_velocity, vicon_time, vicon_skew = (
                     owner._vicon_velocity_reference_for_onboard_state(
@@ -488,20 +525,43 @@ def run_level_coast(owner, config):
                     'stop_velocity_state_skew_s': vicon_skew,
                 }
             sample_now = time.monotonic()
+            curve_completed = curve.poll(sample_now) if curve is not None else False
+            curve_hold = (curve.hold_notice['hold_position_m']
+                          if curve_completed else None)
             changed = cycle.update(
                 state['position'], state['velocity'], sample_now,
                 armed=gate.armed and yaw_ready, started=started, released=released,
                 interaction_direction=direction, interaction_direction_source=direction_source,
-                stop_velocity=stop_velocity)
+                stop_velocity=stop_velocity, curve_completed=curve_completed,
+                curve_hold_position=curve_hold)
+            if curve is not None:
+                if changed and cycle.phase == 'contact':
+                    if curve.active:
+                        curve.cancel()
+                    selector.request(True, sample_now)
+                    owner._log_event('Level Coast Estimator Changed', {
+                        'requested_estimator': 3, 'reason': 'confirmed_contact'})
+                    print('[interaction] estimator: contact', flush=True)
+                elif curve_completed and cycle.phase != 'coast':
+                    curve.cancel()
+                    owner._log_event('Level Coast Estimator Changed', {
+                        'confirmed_estimator': 2, 'reason': 'curve_complete'})
+                if (cycle.phase == 'coast' and cycle.level and not curve.active
+                        and selector.ready(sample_now)):
+                    # The event time is this confirmed release/dispatch epoch;
+                    # Arduino ID is optional metadata for vel/model detectors.
+                    curve.begin(height=nominal[2], release_monotonic_s=time.monotonic(),
+                                sample_id=sensor.get('force_sensor_arduino_time_ms', 0))
             stop_status = cycle.stop_status(
                 state['velocity'] if stop_velocity is None else stop_velocity)
             stop_status.update(stop_reference)
             stop_status['onboard_stop_speed_value_m_s'] = (
                 cycle.stop_status(state['velocity'])['stop_speed_value_m_s'])
-            # Authority follows the transmitted command, not contact detection:
-            # contact/release bookkeeping continues while the pos delay runs.
+            # Legacy attitude authority follows the transmitted command. The
+            # S-curve estimator was already requested on the contact edge.
             selected_mode = options['coast_command_mode' if cycle.phase == 'coast' else 'command_mode']
-            command_mode = (('position_follow' if selected_mode == 'position' else 'level_zdistance')
+            command_mode = ('firmware_scurve' if curve is not None and curve.active else
+                            ('position_follow' if selected_mode == 'position' else 'level_zdistance')
                             if cycle.level else 'position_hold')
             position_status = {}
             if position_follower is not None:
@@ -526,11 +586,12 @@ def run_level_coast(owner, config):
                         cycle.hold_position[:] = position_command
                 if command_mode != 'position_follow':
                     position_follower.reset()
-            owner._set_contact_pid_attitude_authority(command_mode == 'level_zdistance')
-            if cycle.level:
+            if not scurve_coast:
+                owner._set_contact_pid_attitude_authority(command_mode == 'level_zdistance')
+            if command_mode != 'firmware_scurve':
                 owner._translation_high_level_active = False
             if (previous_command_mode == 'level_zdistance' and command_mode != 'level_zdistance'
-                    and position_follower is None):
+                    and position_follower is None and not scurve_coast):
                 # Mixed/position runs already have zero XY I gains for the whole
                 # flight. Preserve the legacy reset for orientation-only runs.
                 reset_pid_integrators_without_ack(owner.cf, ('posCtlPid.resetI', 'velCtlPid.resetI'))
@@ -560,7 +621,8 @@ def run_level_coast(owner, config):
                     'since_detection_s': (None if cycle.detected_at is None
                                           else sample_now - cycle.detected_at),
                 })
-                labels = {'position_hold': 'hold', 'position_follow': 'pos', 'level_zdistance': 'ori'}
+                labels = {'position_hold': 'hold', 'position_follow': 'pos', 'level_zdistance': 'ori',
+                          'firmware_scurve': 's-curve'}
                 print(f'[interaction] cmd: {labels[previous_command_mode]} -> {labels[command_mode]}', flush=True)
             if released:
                 detection_was_enabled = False  # Also rearm when grace is zero.
@@ -579,6 +641,8 @@ def run_level_coast(owner, config):
                 'grace_elapsed_s': (None if cycle.grace_started is None
                                     else sample_now - cycle.grace_started),
                 'command_mode': command_mode,
+                'scurve_active': curve is not None and curve.active,
+                'scurve_endpoint_received': curve is not None and curve.hold_notice is not None,
                 'yaw_target_deg': None if command_mode == 'level_zdistance' else yaw,
                 'yaw_rate_target_deg_s': 0. if command_mode == 'level_zdistance' else None,
                 **position_status,
@@ -596,6 +660,14 @@ def run_level_coast(owner, config):
         })
         print('[interaction] done', flush=True)
     finally:
-        if options['yaw_rate_damping']:
-            yaw_guard.finish()
-        owner._set_contact_pid_attitude_authority(False)
+        try:
+            if curve is not None:
+                curve.cancel()
+        finally:
+            try:
+                if selector is not None:
+                    selector.close()
+            finally:
+                if options['yaw_rate_damping']:
+                    yaw_guard.finish()
+                owner._set_contact_pid_attitude_authority(False)
