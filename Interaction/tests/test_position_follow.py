@@ -230,6 +230,37 @@ class PositionPidRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'PID changed'): c.arm()
         c.cf.platform.send_arming_request.assert_not_called()
 
+    def test_calibration_skips_position_follow_and_recovers_previous_gains(self):
+        for previous_interrupted_run in (False, True):
+            with self.subTest(previous_interrupted_run=previous_interrupted_run):
+                if previous_interrupted_run:
+                    self.guard.prepare()
+                    self.assertTrue(self.path.exists())
+                c = Controller.__new__(Controller)
+                c.cf = self.cf
+                c.flying = False
+                c.log_manager = Mock()
+                c.args = SimpleNamespace(drone_id='unit-test', controller_type='pid',
+                    skip_takeoff=False, skip_landing=False, calibrate=True, interaction=False)
+                c.mission = {'Interaction': {'config': {'behavior': 'level_coast',
+                    'level_coast': {'command_mode': 'position', 'coast_command_mode': 'scurve'}}}}
+                original_exists = Path.exists
+                def exists(path):
+                    if path.name.startswith('position-follow-gains-'):
+                        return original_exists(self.path)
+                    return original_exists(path)
+                with patch('Interaction.position_follow.PositionFollowPidContext', return_value=self.guard), \
+                        patch('pathlib.Path.exists', autospec=True, side_effect=exists), \
+                        patch.object(self.guard, 'prepare', wraps=self.guard.prepare) as prepare:
+                    c._prepare_offboard_position_control(recover_only=True)
+                    c._prepare_offboard_position_control()
+                    prepare.assert_not_called()
+                self.assertEqual(self.param.values, self.original)
+                self.assertFalse(self.path.exists())
+                self.assertFalse(self.guard.prepared)
+                self.assertFalse(hasattr(c, '_offboard_position_pid'))
+                c.log_manager.add_log_entry.assert_not_called()
+
     def test_controller_prepares_pid_if_either_phase_uses_position(self):
         for contact in ('orientation', 'position'):
             for coast in ('orientation', 'position'):

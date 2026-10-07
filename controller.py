@@ -2157,7 +2157,11 @@ class Controller:
         translation = (self.mission or {}).get('Interaction', {}).get('config', {})
         modes = (resolve_command_modes(translation.get('level_coast') or {})
                  if translation.get('behavior') == 'level_coast' else {})
-        enabled = 'position' in modes.values()
+        # Calibration uses the ordinary position PID even when the mission's
+        # later interaction policy follows position. Still recover persisted
+        # gains from an interrupted interaction before configuring calibration.
+        enabled = ('position' in modes.values()
+                   and not getattr(self.args, 'calibrate', False))
         identity = getattr(self.args, 'drone_id', None)
         if identity is None:
             if enabled:
