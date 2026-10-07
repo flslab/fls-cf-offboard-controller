@@ -1518,6 +1518,28 @@ class WrenchInteractionLoopTests(unittest.TestCase):
                 'time': 1.0, 'position': np.array([0.0, 0.5, 1.0]),
             })
 
+    def test_vicon_reference_without_age_limit_reuses_last_velocity_but_checks_data(self):
+        interaction = InteractionsControl.__new__(InteractionsControl)
+        interaction.pos_group_name = 'frames'
+        frames = [{'time': .90 + .01 * i, 'tvec': [0., 0., 1.],
+                   'vel': [0., .85, 0.]} for i in range(12)]
+        interaction.log_manager = SimpleNamespace(groups={'frames': frames})
+        for timestamp in (1.06, 1.22, 3.):
+            state = {'time': timestamp, 'position': np.array([0., 0., 1.])}
+            velocity, frame_time, skew = interaction._vicon_velocity_reference_for_onboard_state(
+                state, max_time_skew_s=None)
+            np.testing.assert_allclose(velocity, [0., .85, 0.])
+            self.assertAlmostEqual(frame_time, 1.01)
+            self.assertAlmostEqual(skew, 1.01 - timestamp)
+        with self.assertRaisesRegex(StaleLocalizationError, 'disagrees with position'):
+            interaction._vicon_velocity_reference_for_onboard_state(
+                {'time': 3., 'position': np.array([0., .5, 1.])}, max_time_skew_s=None)
+        for velocity in ([float('nan'), 0., 0.], [0., 0.]):
+            frames[-1]['vel'] = velocity
+            with self.subTest(velocity=velocity), self.assertRaises(StaleLocalizationError):
+                interaction._vicon_velocity_reference_for_onboard_state(
+                    {'time': 3., 'position': np.array([0., 0., 1.])}, max_time_skew_s=None)
+
     def test_second_order_inverse_feedforward_recovers_reference(self):
         wn = 12.0
         zeta = 0.45

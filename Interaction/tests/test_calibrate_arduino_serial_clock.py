@@ -33,9 +33,9 @@ class ReceiveOnlyTests(unittest.TestCase):
         class FakeSerial:
             def __init__(self, *args, **kwargs):
                 self.lines = iter([
-                    b"100,500,500.0,2.0,10.0,5.0\n",
-                    b"120,500,500.0,2.0,10.0,5.0\n",
-                    b"140,500,500.0,2.0,10.0,5.0\n",
+                    b"100,550,550.0,2.0,10.4,5.0\n",
+                    b"120,550,550.0,2.0,10.4,5.0\n",
+                    b"140,550,550.0,2.0,10.4,5.0\n",
                 ])
 
             def __enter__(self):

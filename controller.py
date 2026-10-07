@@ -415,12 +415,16 @@ class Controller:
                 not math.isfinite(min_peak) or not 0.05 <= min_peak <= 3.9):
             raise ValueError('firmware_auto_brake.stop_min_decel must be 0.05–3.9 m/s^2')
         self.firmware_auto_brake_stop_min_peak = float(min_peak)
-        if not (self.args.interaction and self.args.sense and self.args.vicon
+        level_scurve = (translation.get('behavior') == 'level_coast'
+                        and (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve')
+        if level_scurve and self.args.controller_type != 'pid':
+            raise ValueError('S-curve coast requires the PID controller')
+        if not (self.args.interaction and (self.args.sense or level_scurve) and self.args.vicon
                 and self.args.vicon_mode in ('rigidbody', 'pointcloud')
                 and not self.args.vicon_full_pose and self.args.log
                 and not self.args.crazysim and not self.args.ground_test):
             raise ValueError('firmware auto brake requires hardware --interaction '
-                             '--sense --log and rigidbody or pointcloud '
+                             '--log, --sense (unless using level_coast scurve), and rigidbody or pointcloud '
                              'position-only Vicon')
         if (wrench.get('contact_attitude_shadow_enabled', False) or
                 (wrench.get('post_release_estimator_control') or {}).get(
@@ -522,6 +526,11 @@ class Controller:
         toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
         analytic = getattr(self, '_firmware_analytic_expected', {})
         curve_expected = dict(analytic)
+        translation = (self.mission or {}).get('Interaction', {}).get('config', {})
+        if (translation.get('behavior') == 'level_coast'
+                and (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve'):
+            # Explicitly clear a previous measured-speed gate on the same FC.
+            curve_expected['hlCommander.pRelHoldG'] = 0
         capabilities = {'hlCommander.pRelEnd': 1} if analytic.get('hlCommander.pRelHold') == 3 else {}
         request_opt_in = (getattr(self, '_firmware_stop_deceleration_explicit', False) or
                           (bool(analytic) and self.firmware_auto_brake_stop_distance_m > 0))
@@ -1029,6 +1038,10 @@ class Controller:
             attempt('Servo safe position', self._set_safe_servo_angles)
             if self.args.ground_test:
                 time.sleep(1)
+
+        selector = getattr(getattr(self, 'cf', None), '_level_coast_estimator_selector', None)
+        if selector is not None and selector.prepared:
+            attempt('Restore default S-curve estimator', selector.close)
 
         attempt('Landing (not confirmed on error)', self.land)
 
@@ -1732,7 +1745,9 @@ class Controller:
 
     def setup_logging(self):
         from Interaction.contact_validation_capture import validate_capture_request
+        from Interaction.potentiometer_logging import validate_potentiometer_recording
         validate_capture_request(getattr(self, 'mission', None), self.args)
+        validate_potentiometer_recording(getattr(self, 'mission', None), self.args)
         if not self.args.log:
             return
 
@@ -1842,13 +1857,15 @@ class Controller:
                     self.cf, selected,
                     self.args.cf_log_period,
                 )
-            # Legacy interactions use Vicon-derived velocity. The onboard
-            # wrench path enables that same filter only when its opt-in
-            # seventh-order free stop explicitly selects Vicon velocity.
+            # level_coast needs Vicon KF for its handoff gate and position
+            # motion policy, even though its detector uses onboard state.
+            # The other onboard wrench paths opt in through free-stop config.
             self.log_manager.add_log_group(
                 "frames", kf=(
                     not self._uses_onboard_wrench_state()
                     or self._uses_vicon_velocity_for_free_stop()
+                    or (getattr(self, 'mission', None) or {}).get(
+                        'Interaction', {}).get('config', {}).get('behavior') == 'level_coast'
                 ),
                 # Only firmware-owned interaction opts into the same Pi
                 # receipt-time basis as its onboard Vicon mirror. Preserve
@@ -1873,6 +1890,9 @@ class Controller:
 
     def setup_force_sensor(self):
         """Start the Arduino potentiometer reader for sensor-backed runs."""
+        from Interaction.potentiometer_logging import configure_potentiometer_recording
+        sample_callback = configure_potentiometer_recording(
+            self.log_manager, getattr(self, 'mission', None), self.args)
         if not getattr(self.args, 'sense', False):
             return
 
@@ -1885,7 +1905,7 @@ class Controller:
             baud=self.args.sense_baud,
             spring_constant_n_per_mm=self.args.sense_spring_constant,
             max_extension_mm=self.args.sense_max_extension,
-            sample_callback=getattr(self.log_manager, 'contact_validation_pot_callback', None),
+            sample_callback=sample_callback,
         )
         self.force_sensor.start(startup_timeout_s=self.args.sense_startup_timeout)
         if not getattr(self.args, 'crazysim', False):
@@ -2133,9 +2153,11 @@ class Controller:
         from pathlib import Path
         import hashlib
         from Interaction.position_follow import PositionFollowPidContext
+        from Interaction.level_coast import resolve_command_modes
         translation = (self.mission or {}).get('Interaction', {}).get('config', {})
-        enabled = (translation.get('behavior') == 'level_coast'
-                   and (translation.get('level_coast') or {}).get('command_mode') == 'position')
+        modes = (resolve_command_modes(translation.get('level_coast') or {})
+                 if translation.get('behavior') == 'level_coast' else {})
+        enabled = 'position' in modes.values()
         identity = getattr(self.args, 'drone_id', None)
         if identity is None:
             if enabled:
@@ -2159,7 +2181,7 @@ class Controller:
         guard.prepare()
         self.cf._offboard_position_pid = guard
         self.log_manager.add_log_entry('configs', {
-            'command_mode': 'position', 'confirmed_pid_parameters': guard.parameters,
+            **modes, 'confirmed_pid_parameters': guard.parameters,
             'xy_control': 'P-only position and velocity; ordinary Z and attitude/rate PID',
         }, name='Offboard Position Follow PID')
 
@@ -2217,6 +2239,13 @@ class Controller:
             )
         if getattr(self, 'firmware_auto_brake_enabled', False):
             self._setup_firmware_auto_brake_params()
+            translation = (self.mission or {}).get('Interaction', {}).get('config', {})
+            if (translation.get('behavior') == 'level_coast'
+                    and (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve'):
+                from Interaction.level_coast_scurve import ContactEstimatorSelector
+                selector = ContactEstimatorSelector(self.cf)
+                selector.prepare()
+                self.cf._level_coast_estimator_selector = selector
 
         self._prepare_offboard_yaw_damping()
         self._prepare_offboard_position_control()

@@ -26,30 +26,58 @@ import serial
 logger = logging.getLogger(__name__)
 
 
-# Bench measurements, 2026-09-17: (10-bit Arduino ADC raw, compression mm).
-# Keep the measured nonlinear response rather than fitting a single slope.
+# User bench measurements, 2026-10-05: (10-bit Arduino ADC raw, compression mm).
+# A monotone cubic curve passes through these points without overshoot.
 # Values outside this measured range are invalid; never extrapolate a force.
 RAW_COMPRESSION_CALIBRATION = (
-    (1001, 0.0),
-    (951, 1.4),
-    (935, 2.1),
-    (926, 3.1),
-    (919, 3.9),
-    (909, 5.0),
-    (880, 6.4),
-    (774, 7.9),
-    (760, 8.2),
-    (655, 9.3),
-    (571, 10.2),
-    (394, 11.0),
+    (1000, 0.0),
+    (931, 1.6),
+    (900, 4.5),
+    (860, 6.8),
+    (841, 7.9),
+    (731, 9.7),
+    (550, 10.4),
 )
+COMPRESSION_CALIBRATION_METHOD = 'monotone cubic (PCHIP)'
+
+
+def _calibration_curve_slopes(points):
+    """PCHIP slopes with respect to decreasing raw ADC (increasing compression).
+
+    Weighted harmonic means preserve monotonicity and continuous first
+    derivatives. Compute once at import, without a SciPy runtime dependency.
+    Reference: scipy.interpolate.PchipInterpolator algorithm notes.
+    """
+    if len(points) < 2 or any(not math.isfinite(v) for point in points for v in point):
+        raise ValueError('compression calibration needs at least two finite points')
+    widths = [a[0] - b[0] for a, b in zip(points, points[1:])]
+    rises = [b[1] - a[1] for a, b in zip(points, points[1:])]
+    if any(h <= 0 for h in widths) or any(dy < 0 for dy in rises):
+        raise ValueError('calibration ADC must decrease and compression must not decrease')
+    secants = [dy / h for dy, h in zip(rises, widths)]
+    if len(points) == 2:
+        return (secants[0], secants[0])
+
+    def endpoint(h0, h1, d0, d1):
+        # All secants are nonnegative; clipping the one-sided estimate at
+        # zero is the PCHIP endpoint rule for these monotone measurements.
+        return max(0., ((2*h0 + h1)*d0 - h0*d1) / (h0 + h1))
+
+    slopes = [endpoint(widths[0], widths[1], secants[0], secants[1])]
+    for h0, h1, d0, d1 in zip(widths, widths[1:], secants, secants[1:]):
+        w1, w2 = 2*h1 + h0, h1 + 2*h0
+        slopes.append(0. if d0 == 0 or d1 == 0 else (w1 + w2) / (w1/d0 + w2/d1))
+    slopes.append(endpoint(widths[-1], widths[-2], secants[-1], secants[-2]))
+    return tuple(slopes)
+
+
+_RAW_COMPRESSION_SLOPES = _calibration_curve_slopes(RAW_COMPRESSION_CALIBRATION)
 
 
 def compression_mm_from_raw(raw: int) -> float | None:
-    """Piecewise-linear bench calibration; return None beyond measured ADCs."""
-    # The installed Arduino alternates between 1001 and 1002 while unloaded.
-    # Accept only that observed one-count zero-force jitter, not a wider
-    # extrapolation that could hide a disconnected or saturated sensor.
+    """Monotone cubic bench calibration; return None beyond measured ADCs."""
+    # Retain the existing one-count allowance above the calibrated zero point.
+    # Do not widen it or extrapolate force beyond the measured range.
     if raw == RAW_COMPRESSION_CALIBRATION[0][0] + 1:
         return 0.0
     if not (
@@ -58,10 +86,16 @@ def compression_mm_from_raw(raw: int) -> float | None:
         <= RAW_COMPRESSION_CALIBRATION[0][0]
     ):
         return None
-    for (raw_hi, mm_lo), (raw_lo, mm_hi) in zip(
-            RAW_COMPRESSION_CALIBRATION, RAW_COMPRESSION_CALIBRATION[1:]):
+    for index, ((raw_hi, mm_lo), (raw_lo, mm_hi)) in enumerate(zip(
+            RAW_COMPRESSION_CALIBRATION, RAW_COMPRESSION_CALIBRATION[1:])):
         if raw_lo <= raw <= raw_hi:
-            return mm_lo + (raw_hi - raw) * (mm_hi - mm_lo) / (raw_hi - raw_lo)
+            width = raw_hi - raw_lo
+            t = (raw_hi - raw) / width
+            # Cubic Hermite basis; neighboring intervals share knot slopes.
+            return ((2*t**3 - 3*t**2 + 1)*mm_lo
+                    + (t**3 - 2*t**2 + t)*width*_RAW_COMPRESSION_SLOPES[index]
+                    + (-2*t**3 + 3*t**2)*mm_hi
+                    + (t**3 - t**2)*width*_RAW_COMPRESSION_SLOPES[index + 1])
     return None
 
 

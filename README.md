@@ -133,6 +133,66 @@ wait, this existing wrench stream still has a gap; do not use it to claim
 continuous release/re-contact validation. No active-detector replacement or
 physical-flight validation is implied by these logs.
 
+### Potentiometer compression display
+
+With the aircraft grounded and the flight sensor reader / serial monitor stopped,
+run from the offboard repository:
+
+```bash
+python -m Interaction.monitor_potentiometer --port /dev/serial0
+```
+
+This reads the Arduino at 115200 baud and prints raw ADC plus compression in mm
+using the flight reader's current `RAW_COMPRESSION_CALIBRATION`, not the Arduino's
+already-converted mm column. Default output is five lines per second; use
+`--interval 0.5` to slow it down. Out-of-range ADCs display `compression=N/A`,
+and a serial-data timeout clears the displayed result with a notice. Stop with
+Ctrl+C. This viewer does not modify calibration or start the flight controller.
+
+The 2026-10-05 calibration uses a monotone cubic PCHIP curve through the seven
+measured ADC/compression pairs. Both the viewer and flight reader use this same
+curve. Its first derivative is continuous and compression stays within each
+pair's measured range; there is no high-order polynomial extrapolation. The
+existing one-count allowance above the zero-compression ADC remains. Slopes are
+precomputed at import using the PCHIP rule without adding a SciPy dependency.
+This smooths the static mapping, not the serial signal: ADC noise still changes
+the reported compression, and no averaging/filter delay is added. Check accuracy
+at additional measured positions; passing through the calibration points is not
+independent validation of physical measurement accuracy.
+
+### Potentiometer recording with any detector
+
+Set `Interaction.config.record_potentiometer: true` in the SFL to start the
+Arduino reader and record compression/force regardless of `detection_method`.
+The default is `false`; detector-required sensing and contact-validation capture
+still work as before. The orchestrator automatically supplies `--sense` and
+`--log`; direct controller launches need both flags. This option applies to
+interaction runs, not calibration, braking-test, baseline, MPC or hover modes.
+
+```yaml
+Interaction:
+  config:
+    behavior: level_coast
+    detection_method: model  # potentiometer | model | vel
+    record_potentiometer: true
+```
+
+The flight JSON contains a `potentiometer_raw` record for **every valid UART
+sample**, including while waiting, interacting, coasting and in grace. Fields
+include `raw`, `compression_mm`, `force_n`, `arduino_time_ms`, `host_time`,
+`host_monotonic_time` and `sample_sequence`. Capture runs independently of the
+control loop and the console print rate, using the existing asynchronous writer.
+If contact-validation capture is also enabled, both options share one callback
+and do not duplicate samples. A `potentiometer_recording` metadata record saves
+the detector, calibration method/points and sensor settings, including the spring
+constant. Invalid or out-of-calibration-range samples are not converted or saved
+as valid force measurements.
+
+`force_n = compression_mm * sense_spring_constant` estimates force along the
+spring (default coefficient: `0.16 N/mm`). It is a spring-force estimate, not a
+calibration of total user-applied force or damping. With `model` or `vel`, these
+extra measurements do not trigger contact/release or change phase transitions.
+
 ### Repeated level-attitude interaction
 
 `Interaction.config.behavior: level_coast` selects an independent timed behavior.
@@ -156,10 +216,10 @@ Remove the old `level_coast.detector` field; it is rejected to avoid ambiguous
 selection. The shared onboard momentum observer, startup calibration and state
 logging remain active for all three methods; the profile supplies
 `state_source: onboard`. The LightBender
-orchestrator starts the sensor only for `potentiometer` in ordinary level-coast
-runs; no `sensing` field or manual CLI flag is needed. Legacy `sensing` and
-`--sense` overrides cannot change that selection. Direct controller launches
-still require `--sense` for potentiometer hardware setup.
+orchestrator starts the sensor for `potentiometer`, or for any detector when
+`record_potentiometer: true`; no `sensing` field or manual CLI flag is needed.
+Legacy `sensing` and `--sense` overrides cannot change that selection. Direct
+controller launches still require `--sense` for potentiometer hardware setup.
 For the separate `standard` behavior, the existing `momentum_impulse`,
 `mocap_wrench` and `velocity` method names keep their original meaning.
 
@@ -168,12 +228,25 @@ behavior: level_coast
 detection_method: potentiometer  # potentiometer | model | vel
 wrench_interaction_profile: level_coast
 level_coast:
-  command_mode: position  # position | orientation
+  command_mode: position        # position | orientation; during contact
+  coast_command_mode: orientation  # position | orientation | scurve; after confirmed release
 ```
 
-Set `level_coast.command_mode: position` to use moving **position packets** in
-both contact and coast. Omitting this field retains `orientation`. Detector,
-release/grace timing and coast preemption are shared; the existing hardcoded
+`level_coast.command_mode` selects the contact policy (default `orientation`).
+`coast_command_mode` independently selects the policy after confirmed release;
+omitting it inherits `command_mode`, preserving existing missions. All four
+combinations work with `potentiometer`, `model`, and `vel`. `position` uses moving
+**position packets**; `orientation` sends zero roll/pitch and zero yaw rate at
+mission height. The example follows velocity with position commands during
+contact, then switches to level attitude after release. Orientation coast does
+not actively brake horizontal velocity and may travel farther.
+
+Detector, release/grace timing and coast preemption are shared. A fresh contact
+that preempts coast switches back to `command_mode`. The coast-specific speed
+threshold below enters position hold: position coast uses the stopping-position
+projection below, while orientation coast
+captures current XY. This also applies when release is already below the speed
+threshold and goes straight to hold. The existing hardcoded
 `DETECTION_TO_ORI_DELAY_S` now means the delay before the selected movement
 policy (fixed position hold during the delay).
 
@@ -187,7 +260,8 @@ Each fresh state re-anchors the target; duplicate states resend the last packet
 without advancing the target or timers. Z stays at mission height; yaw retains
 the selected `follow_yaw` / offboard damping behavior.
 
-Contact follows measured XY velocity. After release, a smooth 0.5 s transition
+With position selected, contact follows measured XY velocity. With position
+coast selected, a smooth 0.5 s transition from the first coast command
 reduces the retained velocity fraction from 1 to 0. The confirmed velocity P
 gains bound the nominal braking tilt to an equivalent 0.8 m/s² horizontal
 acceleration. This is a setpoint bound, not a guarantee about actual acceleration
@@ -198,8 +272,9 @@ instead of locking directly onto the current point; it does not promise zero
 overshoot with real attitude lag. A new contact discards the
 coast ramp and follows the new measured direction.
 
-This mode temporarily sets **only XY position/velocity I, D and feedforward
-gains to zero before takeoff**, after saving and freshly confirming originals.
+If either phase selects position, setup temporarily sets **only XY
+position/velocity I, D and feedforward gains to zero before takeoff**, after
+saving and freshly confirming originals.
 It leaves P, Z, attitude/rate PID and estimator settings unchanged. This makes
 the inversion defined and prevents interaction-induced XY integral windup;
 normal XY integral rejection is consequently unavailable during this experiment.
@@ -224,11 +299,27 @@ The model and potentiometer choices reuse the existing contact/release detectors
 and saved XYZ detection calibration. Velocity uses XY speed hysteresis and dwell;
 a low-speed release is a heuristic, not a separate measurement of hand contact.
 
-After the existing stationary arming gate, contact sends
+When both phases select orientation, after the existing stationary arming gate,
+contact sends
 `send_zdistance_setpoint(0, 0, 0, nominal_z)` continuously. Confirmed release
-keeps that same command until `hypot(vx, vy) < level_coast.stop_speed_m_s`
-(default `0.03`), or a newly detected interaction preempts coast as described below.
-Low speed captures current XY at nominal Z and resets position/velocity integrators.
+keeps that same command until `dot(velocity_xy, interaction_direction_xy) <
+level_coast.stop_speed_m_s` (default `0.03` m/s), or a newly detected interaction
+preempts coast as described below. The projection is signed: lateral drift does
+not delay capture, and reverse motion also satisfies the threshold. Capture holds
+current XY at nominal Z; orientation-only runs reset position/velocity integrators.
+
+The world-XY direction is normalized and locked at each accepted contact onset:
+model reuses its detector's force direction (or onset force if projection is
+disabled); potentiometer reuses the signed sensor force transformed to world
+coordinates; velocity detection uses onset velocity. A missing force direction
+falls back to onset velocity. The axis stays fixed through contact and coast,
+including detector resets at grace expiry; a new accepted interaction replaces
+it. If both direction and onset velocity are degenerate, use the full XY speed
+and log `xy_norm_no_direction`. Position coast continues to require
+`hypot(vx, vy) < stop_speed_m_s`. Logs include `interaction_direction_xy`, its
+source, signed `interaction_velocity_m_s`, `stop_speed_metric`, and the value
+compared against the threshold.
+
 `grace_time` specifies seconds (default `0.5`), and `level_coast.grace_start` selects:
 
 - `speed_threshold` (default): start grace at low-speed capture, hold position,
@@ -246,15 +337,18 @@ evidence; velocity/potentiometer detectors retain their unloaded baseline rule.
 This is a refractory interval, not proof that residual model force has decayed.
 Logs record the grace origin, detection enablement, and `coast_preempted` transitions.
 
-`Interaction/level_coast.py` hardcodes `DETECTION_TO_ORI_DELAY_S = 0.10`
+`Interaction/level_coast.py` hardcodes `DETECTION_TO_ORI_DELAY_S = 0.0`
 (seconds). After a confirmed onset, keep sending the existing position target
-until this interval expires, then send the level-attitude command. Set it to
+until this interval expires, then send the selected phase's command. Set it to
 `0.0` for immediate switching. Release detection, safety checks and the mission
 duration continue during the delay; an early release keeps its original grace
-start and switches to the level coasting command when the delay ends. If a new contact preempts coast,
+start and switches to `coast_command_mode` when the delay ends. If a new contact
+preempts coast,
 capture current XY for the new position-delay interval. Logs keep contact and
 release times separate from `Level Coast Command Mode Changed`, and the console
-prints `pos delay`, `pos -> ori`, and `ori -> pos`.
+prints phase changes and command changes such as `cmd: pos -> ori` and
+`cmd: ori -> hold`. Logs record the previous and current command modes, including
+switches at release and coast preemption.
 
 `level_coast.yaw_rate_damping: true` uses the original firmware and standard
 position/z-distance packets. Offboard temporarily sets the four existing
@@ -293,20 +387,68 @@ next grounded startup, even when the option is disabled. Both the earlier
 angle-only backups and the new angle/rate backups are supported. No firmware
 source, packet format, flash or persistent parameter storage is changed.
 
-`level_coast.follow_yaw: true` updates position-hold yaw from the current onboard
-estimate during preparation, ready, and grace. Disabled or omitted sends absolute
-`yaw=0` in those phases, regardless of mission target yaw. Contact/coast always
-send zero yaw **rate**, with zero roll/pitch and nominal height. No firmware change
+`level_coast.follow_yaw: true` updates yaw in all position packets from the current
+onboard estimate, including position contact/coast. Disabled or omitted sends
+absolute `yaw=0` in position packets, regardless of mission target yaw. Orientation
+packets always send zero yaw **rate**, with zero roll/pitch and nominal height. No firmware change
 or yaw-contact detector is required. Following waits for the first fresh yaw sample;
 it does not substitute a zero heading while awaiting startup state.
 
 `duration` covers the entire repeated loop after observer startup, including
 preparation and grace. At expiry in any phase, control returns to the ordinary
-mission landing lifecycle. The new mode requires `firmware_auto_brake.enabled:
-false`; it does not submit release events or braking curves. Existing configured
-PID attitude-source switching is reused at contact and hold capture. State/motor
-freshness, measured boundaries, battery and operator-abort checks remain active.
+mission landing lifecycle. Orientation/position coast requires `firmware_auto_brake.enabled:
+false`; those options do not submit release events or braking curves. Existing configured
+PID attitude-source switching follows entry into and exit from orientation
+packets. State/motor freshness, measured boundaries, battery and operator-abort
+checks remain active.
 The example is an offline-tested configuration, not flight validation.
+
+### S-curve coast with contact estimator switching
+
+With `wrench_interaction_profile: level_coast`, select:
+
+```yaml
+level_coast:
+  command_mode: orientation  # orientation | position
+  coast_command_mode: scurve # orientation | position | scurve
+  grace_start: release       # release | speed_threshold
+```
+
+This automatically overlays `Interaction/profiles/level_coast_scurve.yaml`;
+mission `wrench_interaction` overrides still win. The overlay reuses the existing
+`translation_inertia` compensated firmware `velocity_scurve`, attitude execution,
+Vicon15 feedback and forward curve-endpoint hold. Keep the existing calibration
+file `Interaction/attitude_response.json`. No firmware source change or flashing
+is performed by this option; the connected paired build must already expose the
+existing runtime and endpoint capabilities, which are checked before arming.
+
+At confirmed interaction onset, request `stabilizer.estimator=3` (the existing
+PostReleaseVicon15 view), including during a position-command detection delay.
+Default preparation/hover uses `2` (ordinary Kalman). Both share the running
+Kalman task in the paired firmware; neither transition resets the estimator.
+Fresh parameter confirmation is polled without blocking the command stream;
+an unconfirmed switch fails after 0.5 s. Release waits for contact estimator
+confirmation, then submits one acknowledged firmware release event. The firmware
+owns the full curve; offboard sends no low-level position/orientation packets
+while it runs. All three detection methods work, and only potentiometer detection
+requires the sensor (or enable `record_potentiometer` for diagnostic logging).
+
+The matching firmware endpoint notice and fresh stage-4 status complete the
+curve. `pRelHoldG=0` is explicitly written/read back pre-arm: neither the offboard
+`stop_speed_m_s` nor a measured terminal-speed window gates this transition.
+Fresh firmware state and existing abort/admission checks still apply. Request
+the default estimator (`2`), wait for its confirmation while retaining firmware
+hold, then send low-level position packets at the exact firmware hold target.
+The endpoint target preserves the existing forward-only policy; this option
+does not recompute a speed-based stopping projection.
+
+`grace_start: release` retains its release-time origin and can preempt a running
+curve with a newly detected interaction after grace. `speed_threshold` retains
+the existing spelling, but in S-curve mode starts grace at curve completion and
+default-estimator confirmation. Duration expiry/faults restore the default
+estimator and use the existing mission landing lifecycle. Offline tests cover
+these transitions; physical timing, stopping quality and repeated flight remain
+unvalidated.
 
 ### Distance and deceleration inputs for onboard braking
 

@@ -25,6 +25,40 @@ def mission():
 
 
 class MissionProfileTests(unittest.TestCase):
+    def test_scurve_selection_loads_existing_curve_but_preserves_mission_overrides(self):
+        raw = mission()
+        config = raw['Interaction']['config']
+        config['level_coast']['coast_command_mode'] = 'scurve'
+        config['wrench_interaction'] = {'firmware_auto_brake': {'analytic_profile': {'tail_s': .8}}}
+        before = deepcopy(raw)
+        resolved = resolve_mission_profiles(raw)
+        self.assertEqual(raw, before)
+        config = resolved['Interaction']['config']
+        brake = config['wrench_interaction']['firmware_auto_brake']
+        self.assertEqual(brake['analytic_profile']['tail_s'], .8)
+        self.assertEqual(brake['analytic_profile']['feedback'], 'unified_vicon15')
+        self.assertFalse(brake['hold_gate'])
+        self.assertEqual(validate_level_coast(config, sensor_available=True)['coast_command_mode'], 'scurve')
+        self.assertIn('FIRMWARE_BRAKE', log_vars_for_mission(resolved))
+        for method in ('model', 'vel', 'potentiometer'):
+            config['detection_method'] = method
+            control = Controller.__new__(Controller)
+            control.args = SimpleNamespace(calibrate=False, interaction=True, sense=method == 'potentiometer',
+                vicon=True, vicon_mode='pointcloud', vicon_full_pose=False, log=True,
+                crazysim=False, ground_test=False, controller_type='pid')
+            control.mission = resolved
+            control.prepare_firmware_auto_brake()
+            self.assertTrue(control.firmware_auto_brake_enabled)
+
+    def test_scurve_cannot_silently_run_a_conflicting_firmware_profile(self):
+        raw = mission()
+        raw['Interaction']['config']['level_coast']['coast_command_mode'] = 'scurve'
+        for field, value in (('enabled', False), ('mode', 'two_phase'), ('hold_gate', True)):
+            config = resolve_mission_profiles(raw)['Interaction']['config']
+            config['wrench_interaction']['firmware_auto_brake'][field] = value
+            with self.assertRaisesRegex(ValueError, 'scurve coast'):
+                validate_level_coast(config, sensor_available=True)
+
     def test_all_detection_methods_keep_onboard_logging_and_both_command_modes(self):
         for method in ('potentiometer', 'model', 'vel'):
             for command in ('position', 'orientation'):

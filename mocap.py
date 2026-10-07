@@ -406,7 +406,7 @@ class Mocap(threading.Thread):
             initial_point (list/array): [x, y, z] coordinates of the point to start tracking.
             callback (func): Function to call with frame data.
             name (str, optional): Unique identifier for this point to allow unsubscribing.
-            max_distance (float): Maximum allowed distance (units, e.g. mm) the point can move
+            max_distance (float): Maximum allowed distance (meters) the point can move
                                   between frames before being considered "lost".
         """
         with self._write_lock:
