@@ -46,6 +46,10 @@ def validate_level_coast(config, *, sensor_available):
     """Validate this opt-in behavior before any flight commands are sent."""
     options = dict(config.get('level_coast') or {})
     options.update(resolve_command_modes(options))
+    if type(options.get('roll_diagnostics', False)) is not bool:
+        raise ValueError('level_coast.roll_diagnostics must be boolean')
+    if options.get('roll_diagnostics') and options['coast_command_mode'] != 'scurve':
+        raise ValueError('roll_diagnostics requires scurve coasting')
     options['position_control'] = validate_position_follow(options.get('position_control', {}))
     if 'detector' in options:
         raise ValueError('level_coast.detector was removed; use config.detection_method')

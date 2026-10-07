@@ -1031,7 +1031,8 @@ def log_vars_for_mission(mission):
         elif onboard_yaw_log_required(mission):
             selected['YAW_CTL'] = YAW_CTL
         selected['FIRMWARE_BRAKE'] = firmware_brake_log_vars(mission)
-        return selected
+        from Interaction.roll_diagnostics import add_roll_diagnostics
+        return add_roll_diagnostics(selected, mission)
     # A dormant diagnostic must not make a legacy mission fail because it
     # happens to carry an old or misspelled shadow-mode value.  Mode validation
     # belongs exclusively to the explicitly enabled path.
