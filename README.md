@@ -635,7 +635,16 @@ By default, detection searches the bottom 35% of an upright frame. Override
 The camera sends its world XYZ and viewing yaw to the orchestrator. The
 orchestrator computes actual-minus-authored XYZ/yaw offsets before booting the
 drones; each controller rotates its SFL targets and waypoints about the
-authored camera and then translates the whole swarm. Pose failure or timeout
+authored camera and then translates the whole swarm.
+
+The last accepted pose can seed a fresh RANSAC fit when drones obscure enough LEDs
+to break the complete-rectangle detector. The new capture must still pass all
+pose quality gates and the usual three-frame consensus. A rejected capture is
+saved on the camera computer as `camera_pose_failed.jpeg` for diagnosis.
+Each successful pose also saves `camera_pose_overlay.jpeg`, showing projected
+tile outlines and matched LED centers; the orchestrator copies it into the
+experiment's `logs/<mission tag>/` folder.
+Pose failure or timeout
 prevents the drones from booting, and recording is confirmed before the drones
 receive `START`. This correction intentionally uses XYZ plus world yaw; keep
 the recording camera upright and at the pitch assumed by the authored shot.

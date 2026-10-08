@@ -92,6 +92,7 @@ class HyperGrid:
     grid_coordinates: tuple[tuple[int, int], ...]
     object_points: tuple[tuple[float, float, float], ...]
     tile_coordinates: tuple[tuple[int, int], ...]
+    tile_size_m: float
 
     @property
     def coordinate_to_index(self) -> dict[tuple[int, int], int]:
@@ -115,6 +116,7 @@ class PoseQuality:
     unmodeled_attitude_error_rad: float = 0.0
     camera_roll_rad: float = 0.0
     correspondence_score_margin_m: float | None = None
+    matching_method: str = "rectangle"
 
 
 @dataclass(frozen=True)
@@ -175,6 +177,7 @@ class CameraPoseEstimate:
                 "correspondence_score_margin_m": (
                     self.quality.correspondence_score_margin_m
                 ),
+                "matching_method": self.quality.matching_method,
             },
         }
 
@@ -387,7 +390,51 @@ def load_hypergrid(path: str | Path) -> HyperGrid:
             for item in ordered
         ),
         tile_coordinates=tuple(item[1][1] for item in ordered),
+        tile_size_m=tile_size,
     )
+
+
+def render_camera_pose_overlay(
+    image: np.ndarray,
+    estimate: CameraPoseEstimate,
+    grid: HyperGrid,
+    camera_matrix: np.ndarray,
+    distortion_coefficients: np.ndarray,
+) -> np.ndarray:
+    """Draw every installed tile's projected outline on a pose capture."""
+    overlay = np.asarray(image).copy()
+    rvec = np.asarray(estimate.rvec_world_to_camera, dtype=np.float64)
+    tvec = np.asarray(estimate.tvec_world_to_camera, dtype=np.float64)
+    tile_points: dict[tuple[int, int], list[np.ndarray]] = {}
+    for tile, point in zip(grid.tile_coordinates, grid.object_points):
+        tile_points.setdefault(tile, []).append(np.asarray(point))
+    matched = set(estimate.tile_coordinates)
+    half_size = grid.tile_size_m / 2.0
+    for tile, points in sorted(tile_points.items()):
+        center = np.mean(points, axis=0)
+        corners = np.asarray([
+            center + [-half_size, -half_size, 0],
+            center + [half_size, -half_size, 0],
+            center + [half_size, half_size, 0],
+            center + [-half_size, half_size, 0],
+        ], dtype=np.float64)
+        projected, _ = cv2.projectPoints(
+            corners, rvec, tvec, camera_matrix, distortion_coefficients
+        )
+        projected = np.rint(projected.reshape(-1, 2)).astype(np.int32)
+        color = (0, 220, 0) if tile in matched else (0, 190, 255)
+        cv2.polylines(overlay, [projected], True, color, 2, cv2.LINE_AA)
+        label = np.rint(np.mean(projected, axis=0)).astype(int)
+        cv2.putText(
+            overlay, f"{tile[0]},{tile[1]}", tuple(label),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA,
+        )
+    for point in estimate.image_points:
+        cv2.circle(
+            overlay, tuple(np.rint(point).astype(int)), 3,
+            (255, 0, 255), -1, cv2.LINE_AA,
+        )
+    return overlay
 
 
 def detect_hypergrid_markers(
@@ -698,6 +745,97 @@ def _coordinate_assignments(
             yield coordinates
 
 
+def _candidate_from_prior(
+    centers: np.ndarray,
+    image_shape: tuple[int, int],
+    grid: HyperGrid,
+    camera_matrix: np.ndarray,
+    distortion: np.ndarray,
+    prior_pose: Mapping[str, Any],
+    rough_position: np.ndarray,
+    rough_yaw: float,
+    target: np.ndarray,
+    desired_position: np.ndarray,
+    config: PoseSolverConfig,
+) -> _PoseCandidate | None:
+    """Fit visible grid points when occlusions break the rectangle finder.
+
+    The saved pose supplies correspondences only. RANSAC and the normal quality
+    gates must validate a new pose from the current image.
+    """
+    try:
+        prior_position = np.asarray(
+            prior_pose["position_xyz"], dtype=np.float64
+        ).reshape(3)
+        prior_rvec = np.asarray(
+            prior_pose["rvec_world_to_camera"], dtype=np.float64
+        ).reshape(3, 1)
+        prior_tvec = np.asarray(
+            prior_pose["tvec_world_to_camera"], dtype=np.float64
+        ).reshape(3, 1)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(np.all(np.isfinite(value)) for value in (
+        prior_position, prior_rvec, prior_tvec
+    )):
+        return None
+    if (
+        np.linalg.norm(prior_position - rough_position)
+        > config.max_rough_position_error_m
+        or np.linalg.norm(prior_position[:2] - rough_position[:2])
+        > config.max_rough_xy_error_m
+    ):
+        return None
+    rotation, _ = cv2.Rodrigues(prior_rvec)
+    if np.linalg.norm(-(rotation.T @ prior_tvec).reshape(3) - prior_position) > 1e-3:
+        return None
+
+    object_points = np.asarray(grid.object_points, dtype=np.float64)
+    projected, _ = cv2.projectPoints(
+        object_points, prior_rvec, prior_tvec, camera_matrix, distortion
+    )
+    projected = projected.reshape(-1, 2)
+    height, width = image_shape
+    match_radius_px = 22.0
+    possible_matches = sorted(
+        (float(np.linalg.norm(predicted - observed)), grid_index, image_index)
+        for grid_index, predicted in enumerate(projected)
+        if 0 <= predicted[0] < width and 0 <= predicted[1] < height
+        for image_index, observed in enumerate(centers)
+        if np.linalg.norm(predicted - observed) <= match_radius_px
+    )
+    used_grid: set[int] = set()
+    used_image: set[int] = set()
+    matches = []
+    for _, grid_index, image_index in possible_matches:
+        if grid_index in used_grid or image_index in used_image:
+            continue
+        used_grid.add(grid_index)
+        used_image.add(image_index)
+        matches.append((grid_index, image_index))
+    if len(matches) < config.min_matched_markers:
+        return None
+
+    matched_objects = object_points[[item[0] for item in matches]]
+    matched_images = centers[[item[1] for item in matches]]
+    solved, rvec, tvec, inliers = cv2.solvePnPRansac(
+        matched_objects, matched_images, camera_matrix, distortion,
+        rvec=prior_rvec.copy(), tvec=prior_tvec.copy(),
+        useExtrinsicGuess=True, iterationsCount=1000,
+        reprojectionError=3.0, confidence=0.999,
+        flags=cv2.SOLVEPNP_ITERATIVE,
+    )
+    if not solved or inliers is None or len(inliers) < config.min_matched_markers:
+        return None
+    indices = inliers.reshape(-1)
+    return _candidate_from_solution(
+        matched_objects[indices], matched_images[indices],
+        tuple(grid.grid_coordinates[matches[index][0]] for index in indices),
+        rvec, tvec, camera_matrix, distortion, rough_position, rough_yaw,
+        target, desired_position, float(grid.origin_xyz[2]), config,
+    )
+
+
 def _candidate_from_solution(
     object_points: np.ndarray,
     image_points: np.ndarray,
@@ -829,6 +967,7 @@ def estimate_camera_pose_from_markers(
     detected_marker_count: int | None = None,
     detector_config: MarkerDetectionConfig | None = None,
     solver_config: PoseSolverConfig | None = None,
+    prior_camera_pose: Mapping[str, Any] | None = None,
 ) -> CameraPoseEstimate:
     """Resolve unlabeled marker centers and estimate the camera world pose."""
 
@@ -884,7 +1023,7 @@ def estimate_camera_pose_from_markers(
         detector_config,
         solver_config,
     )
-    if not patterns:
+    if not patterns and prior_camera_pose is None:
         raise PoseEstimationError(
             "bright points did not form a complete HyperGrid rectangle"
         )
@@ -896,6 +1035,7 @@ def estimate_camera_pose_from_markers(
         )
     }
     candidates: list[_PoseCandidate] = []
+    prior_candidate = None
     for ordered_points, columns, rows in patterns:
         for coordinates in _coordinate_assignments(columns, rows, grid):
             object_points = np.asarray(
@@ -932,6 +1072,14 @@ def estimate_camera_pose_from_markers(
                 )
                 if candidate is not None:
                     candidates.append(candidate)
+    if prior_camera_pose is not None:
+        prior_candidate = _candidate_from_prior(
+            centers, (height, width), grid, camera_matrix, distortion,
+            prior_camera_pose, rough_position, rough_yaw, target,
+            desired_position, solver_config,
+        )
+        if prior_candidate is not None:
+            candidates.append(prior_candidate)
     if not candidates:
         raise PoseEstimationError("planar PnP produced no physical pose")
 
@@ -1031,6 +1179,9 @@ def estimate_camera_pose_from_markers(
         unmodeled_attitude_error_rad=best.unmodeled_attitude_error,
         camera_roll_rad=best.camera_roll,
         correspondence_score_margin_m=score_margin,
+        matching_method=(
+            "prior_seeded_ransac" if best is prior_candidate else "rectangle"
+        ),
     )
     return CameraPoseEstimate(
         position_xyz=tuple(float(item) for item in best.position),
@@ -1066,6 +1217,7 @@ def estimate_camera_pose(
     look_at: Sequence[float] | None = None,
     detector_config: MarkerDetectionConfig | None = None,
     solver_config: PoseSolverConfig | None = None,
+    prior_camera_pose: Mapping[str, Any] | None = None,
 ) -> CameraPoseEstimate:
     """Detect RGB HyperGrid points and return pose plus SFL pose offsets."""
 
@@ -1086,4 +1238,5 @@ def estimate_camera_pose(
         detected_marker_count=len(centers),
         detector_config=detection_config,
         solver_config=solver_config,
+        prior_camera_pose=prior_camera_pose,
     )

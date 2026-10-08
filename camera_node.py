@@ -18,6 +18,8 @@ from log import LoggerFactory
 MANIFEST_FILE = 'swarm_manifest.yaml'
 OUTPUT_FILENAME = 'mission_footage.mp4'
 POSE_OUTPUT_FILENAME = 'camera_pose_estimate.json'
+POSE_OVERLAY_FILENAME = 'camera_pose_overlay.jpeg'
+POSE_FAILED_FRAME_FILENAME = 'camera_pose_failed.jpeg'
 
 
 class CaptureError(RuntimeError):
@@ -185,6 +187,25 @@ class CameraNode:
                 )
             return image
 
+    def _load_pose_prior(self, config):
+        """Use a previous accepted pose only with matching grid and optics."""
+        if not os.path.isfile(POSE_OUTPUT_FILENAME):
+            return None
+        try:
+            with open(POSE_OUTPUT_FILENAME) as stream:
+                prior = json.load(stream)
+            provenance = prior['provenance']
+            if (
+                provenance['grid_sha256']
+                != self._sha256_file(config['grid_file'])
+                or provenance['calibration_sha256']
+                != self._sha256_file(config['calibration_file'])
+            ):
+                return None
+            return prior
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
     def estimate_pose(self):
         """Estimate the external RGB camera pose from the always-on lattice."""
         from camera_pose import (
@@ -193,6 +214,8 @@ class CameraNode:
             PoseSolverConfig,
             estimate_camera_pose,
             load_camera_calibration,
+            load_hypergrid,
+            render_camera_pose_overlay,
         )
 
         config = self.pose_config
@@ -235,6 +258,7 @@ class CameraNode:
             PoseSolverConfig, config.get('solver'),
             'camera_node.pose_estimation.solver',
         )
+        prior_camera_pose = self._load_pose_prior(config)
 
         # A newly opened camera can need more than one frame for exposure and
         # scaler state to settle. Retry transient capture/pattern failures;
@@ -285,6 +309,7 @@ class CameraNode:
         deadline = time.monotonic() + estimation_timeout
         attempt = 0
         consensus = []
+        images_by_estimate = {}
         last_retry_error = None
         while len(consensus) < consensus_frames:
             remaining = deadline - time.monotonic()
@@ -303,6 +328,7 @@ class CameraNode:
                     f"timeout{detail}"
                 ) from last_retry_error
             attempt += 1
+            image = None
             try:
                 image = self._capture_pose_image(
                     calibration,
@@ -330,8 +356,16 @@ class CameraNode:
                     look_at=config.get('look_at_xyz'),
                     detector_config=detector_config,
                     solver_config=solver_config,
+                    prior_camera_pose=prior_camera_pose,
                 )
             except (CaptureError, PoseEstimationError) as error:
+                if image is not None:
+                    import cv2
+                    if cv2.imwrite(POSE_FAILED_FRAME_FILENAME, image):
+                        self.logger.warning(
+                            'Saved rejected RGB pose frame: %s',
+                            POSE_FAILED_FRAME_FILENAME,
+                        )
                 if config.get('image_file') or time.monotonic() >= deadline:
                     raise
                 last_retry_error = error
@@ -343,6 +377,7 @@ class CameraNode:
                 continue
 
             candidate_consensus = consensus + [estimate]
+            images_by_estimate[id(estimate)] = image
             position_spread = max(
                 (
                     math.dist(first.position_xyz, second.position_xyz)
@@ -425,6 +460,17 @@ class CameraNode:
             'lens_position': calibration.lens_position,
             'camera_model': calibration.camera_model,
         }
+        import cv2
+        overlay = render_camera_pose_overlay(
+            images_by_estimate[id(estimate)], estimate,
+            load_hypergrid(config['grid_file']),
+            calibration.camera_matrix, calibration.distortion_coefficients,
+        )
+        if not cv2.imwrite(POSE_OVERLAY_FILENAME, overlay):
+            raise RuntimeError(
+                f"could not save camera pose overlay {POSE_OVERLAY_FILENAME}"
+            )
+        payload['overlay_file'] = POSE_OVERLAY_FILENAME
         with open(POSE_OUTPUT_FILENAME, 'w') as stream:
             json.dump(payload, stream, indent=2)
         return payload
