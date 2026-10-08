@@ -21,6 +21,7 @@ Interaction/wrench_calibration.json
 # Machine-specific calibration is preserved locally, never deployed via Git.
 /Interaction/attitude_response.json
 /Interaction/contact_diagnostic_profile.json
+/Interaction/estimator_calibrations/
 
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python

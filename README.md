@@ -75,6 +75,13 @@ radians and never forwards PnP roll or pitch.
 
 ### Model-contact calibration and parallel diagnostics
 
+For a separate **motors-off estimator IMU calibration** (six known fixture
+poses, residual gyro zero, independent validation), use
+`python -m Interaction.calibrate_estimator_imu collect --help` and follow
+[Estimator IMU calibration](Interaction/ESTIMATOR_IMU_CALIBRATION.md).
+This exports a checked calibration candidate; it does not modify the firmware
+or replace the existing flight/dynamics calibration below.
+
 Ordinary `--calibrate --log` also records contact-free detector evaluation data
 automatically; no extra flag or mission change is needed. Fly the usual XYZ
 excitation **without hand contact**. This does not enable the experimental IMU
