@@ -38,6 +38,15 @@ def configuration(detector='potentiometer'):
 
 
 class LevelCoastStateTests(unittest.TestCase):
+    def test_estimator_switch_defaults_to_release_and_rejects_unknown_edges(self):
+        config = configuration()
+        self.assertEqual(validate_level_coast(config, sensor_available=True)['estimator_switch_at'], 'release')
+        for value in ('contact', '', None, True, ['release']):
+            with self.subTest(value=value):
+                config['level_coast']['estimator_switch_at'] = value
+                with self.assertRaisesRegex(ValueError, 'estimator_switch_at'):
+                    validate_level_coast(config, sensor_available=True)
+
     def test_scurve_completes_only_on_notice_regardless_of_speed(self):
         for grace_start in ('release', 'speed_threshold'):
             cycle = LevelCoastCycle([0, 0, 1], .03, .5, grace_start, coast_command_mode='scurve')
@@ -261,6 +270,45 @@ class LevelCoastStateTests(unittest.TestCase):
 
 
 class LevelCoastLoopTests(unittest.TestCase):
+    def test_scurve_estimator_switch_uses_selected_edge_and_confirms_before_dispatch(self):
+        for switch_at in (None, 'release', 'detect'):
+            for detector in ('potentiometer', 'model', 'vel'):
+                for contact in ('orientation', 'position'):
+                    with self.subTest(switch_at=switch_at, detector=detector, contact=contact):
+                        control, commands, phases, _ = self.run_scenario(
+                            detector, command_mode=contact, coast_command_mode='scurve',
+                            estimator_switch_at=switch_at, estimator_delay_s=.04,
+                            pressed_fn=lambda t: .08 <= t < .16,
+                            velocity_fn=lambda t: [0. if .16 <= t < .20 else .12 if t >= .08 else 0., 0., 0.])
+                        onset = next(p['elapsed_s'] for p in phases if p['phase'] == 'contact')
+                        release = next(p['elapsed_s'] for p in phases if p['phase'] == 'coast')
+                        requested = next(t for t, value in control.curve_clock['requests'] if value == 3)
+                        self.assertAlmostEqual(requested, onset if switch_at == 'detect' else release)
+                        dispatch = control.curve_clock['releases'][0][0]
+                        self.assertGreaterEqual(dispatch + 1e-6, requested + .04)
+                        self.assertGreaterEqual(dispatch, release)
+                        if switch_at != 'detect':
+                            contact_estimators = [value for (t, _, _), value in
+                                zip(commands, control.command_estimators) if onset <= t < release]
+                            self.assertTrue(contact_estimators)
+                            self.assertEqual(set(contact_estimators), {2})
+                        # The persisted observer stream identifies the selected policy.
+                        self.assertEqual({r['estimator_switch_at'] for r in
+                            control.log_manager.groups['wrench_observer']}, {switch_at or 'release'})
+
+    def test_scurve_switch_edge_is_independent_of_position_command_delay(self):
+        for switch_at in ('detect', 'release'):
+            with self.subTest(switch_at=switch_at):
+                control, _, phases, _ = self.run_scenario(coast_command_mode='scurve',
+                    estimator_switch_at=switch_at, estimator_delay_s=.02, ori_delay=.25,
+                    pressed_fn=lambda t: .08 <= t < .16)
+                onset = next(p['elapsed_s'] for p in phases if p['phase'] == 'contact')
+                release = next(p['elapsed_s'] for p in phases if p['phase'] == 'coast')
+                self.assertLess(release, onset + .25)
+                requested = next(t for t, value in control.curve_clock['requests'] if value == 3)
+                self.assertAlmostEqual(requested, onset if switch_at == 'detect' else release)
+                self.assertGreaterEqual(control.curve_clock['releases'][0][0] + 1e-6, onset + .25)
+
     def test_scurve_keeps_firmware_ownership_then_restores_estimator_before_position(self):
         for detector in ('potentiometer', 'model', 'vel'):
             for contact in ('orientation', 'position'):
@@ -287,14 +335,26 @@ class LevelCoastLoopTests(unittest.TestCase):
                     self.assertEqual(control.curve_clock['closed'], 1)
 
     def test_scurve_release_grace_can_preempt_without_consuming_old_completion(self):
-        control, _, phases, _ = self.run_scenario(coast_command_mode='scurve',
-            grace_start='release', grace_time=.03, scurve_completion_s=.3,
-            pressed_fn=lambda t: .08 <= t < .16 or .23 <= t < .28)
-        self.assertTrue(any(p['coast_preempted'] for p in phases))
-        identities = [(event['session_id'], event['sequence'])
-                      for _, event in control.curve_clock['releases']]
-        self.assertEqual(len(identities), 2)
-        self.assertEqual(len(set(identities)), 2)
+        for switch_at in ('release', 'detect'):
+            with self.subTest(switch_at=switch_at):
+                control, commands, phases, _ = self.run_scenario(coast_command_mode='scurve',
+                    estimator_switch_at=switch_at, estimator_delay_s=.02,
+                    grace_start='release', grace_time=.03, scurve_completion_s=.3,
+                    pressed_fn=lambda t: .08 <= t < .16 or .25 <= t < .32)
+                preemption = next(p for p in phases if p['coast_preempted'])
+                identities = [(event['session_id'], event['sequence'])
+                              for _, event in control.curve_clock['releases']]
+                self.assertEqual(len(identities), 2)
+                self.assertEqual(len(set(identities)), 2)
+                requested = [value for _, value in control.curve_clock['requests']]
+                self.assertEqual(requested, [3, 2, 3, 2] if switch_at == 'release' else [3, 2])
+                onset = preemption['elapsed_s']
+                release = next(p['elapsed_s'] for p in phases
+                    if p['phase'] == 'coast' and p['elapsed_s'] > onset)
+                in_contact = [value for (t, _, _), value in zip(commands, control.command_estimators)
+                    if onset + .020001 <= t < release]
+                self.assertTrue(in_contact)
+                self.assertEqual(set(in_contact), {2 if switch_at == 'release' else 3})
 
     def test_scurve_abort_ack_failure_and_existing_safety_restore_default(self):
         for fault in ('state', 'battery', 'boundary', 'motor'):
@@ -315,7 +375,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                      position_options=None, coast_command_mode=None, duplicate_times=(),
                      velocity_fn=None, force_direction_fn=None, record_potentiometer=False,
                      vicon_velocity_fn=None, scurve_completion_s=.12, estimator_delay_s=0.,
-                     curve_fault=None):
+                     curve_fault=None, estimator_switch_at=None):
         config = configuration(detector)
         config['record_potentiometer'] = record_potentiometer
         config['duration'] = duration
@@ -324,6 +384,8 @@ class LevelCoastLoopTests(unittest.TestCase):
         config['level_coast']['follow_yaw'] = follow_yaw
         config['level_coast']['yaw_rate_damping'] = yaw_rate_damping
         config['level_coast']['command_mode'] = command_mode
+        if estimator_switch_at is not None:
+            config['level_coast']['estimator_switch_at'] = estimator_switch_at
         if coast_command_mode is not None:
             config['level_coast']['coast_command_mode'] = coast_command_mode
         if position_options is not None:
@@ -344,12 +406,14 @@ class LevelCoastLoopTests(unittest.TestCase):
         control.hl_commander = FakeCommander()
         control.cf = SimpleNamespace(param=SimpleNamespace(set_value=Mock(), set_value_raw=Mock()))
         control.cf._offboard_yaw_damping_active = False
-        curve_clock = {'start': None, 'estimator': 2, 'requested': 2, 'due': 0., 'releases': [], 'closed': 0}
+        curve_clock = {'start': None, 'estimator': 2, 'requested': 2, 'due': 0.,
+                       'releases': [], 'requests': [], 'closed': 0}
         if coast_command_mode == 'scurve':
             def request_estimator(contact, now=None):
                 value = 3 if contact else 2
                 if value != curve_clock['requested']:
                     curve_clock.update(requested=value, due=clock['t'] + estimator_delay_s)
+                    curve_clock['requests'].append((clock['t'], value))
                     control.cf.param.set_value('stabilizer.estimator', str(value))
             def estimator_ready(now=None):
                 if clock['t'] >= curve_clock['due']:
@@ -368,6 +432,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                 'hlCommander.pRelReady': 1, 'hlCommander.pRelAutoTime': 0,
             }, 1000. + clock['t'])
             def curve_release(_cf, **event):
+                self.assertEqual(curve_clock['estimator'], 3, 'S-curve started before estimator-3 confirmation')
                 curve_clock['start'] = clock['t']
                 curve_clock['releases'].append((clock['t'], event))
                 if curve_fault == 'release':
@@ -419,11 +484,13 @@ class LevelCoastLoopTests(unittest.TestCase):
         control._log_event = Mock()
         control._handoff_translation_hold = Mock()
         commands = []
+        control.command_estimators = []
         control.command_authorities = []
         for name in ('send_position_setpoint', 'send_zdistance_setpoint'):
             original_sender = getattr(control.lo_commander, name)
             def send(*args, name=name, original_sender=original_sender):
                 commands.append((clock['t'], name, args))
+                control.command_estimators.append(curve_clock['estimator'])
                 control.command_authorities.append(control._pid_15state_control_active)
                 original_sender(*args)
             setattr(control.lo_commander, name, send)

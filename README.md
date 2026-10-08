@@ -411,6 +411,7 @@ With `wrench_interaction_profile: level_coast`, select:
 level_coast:
   command_mode: orientation  # orientation | position
   coast_command_mode: scurve # orientation | position | scurve
+  estimator_switch_at: release # detect | release (default); S-curve mode only
   grace_start: release       # release | speed_threshold
 ```
 
@@ -422,12 +423,16 @@ file `Interaction/attitude_response.json`. No firmware source change or flashing
 is performed by this option; the connected paired build must already expose the
 existing runtime and endpoint capabilities, which are checked before arming.
 
-At confirmed interaction onset, request `stabilizer.estimator=3` (the existing
-PostReleaseVicon15 view), including during a position-command detection delay.
-Default preparation/hover uses `2` (ordinary Kalman). Both share the running
-Kalman task in the paired firmware; neither transition resets the estimator.
+`estimator_switch_at: release` (the default, including when omitted) keeps
+`stabilizer.estimator=2` (ordinary Kalman) during interaction and requests `3`
+(the existing PostReleaseVicon15 view) at confirmed release. Set
+`estimator_switch_at: detect` to retain the earlier behavior: request `3` at
+confirmed interaction onset, including during a position-command detection delay.
+This option only applies to S-curve coasting and works with either interaction
+command mode and all three detectors. Preparation/hover uses `2`. Both views
+share the running Kalman task in the paired firmware; neither transition resets it.
 Fresh parameter confirmation is polled without blocking the command stream;
-an unconfirmed switch fails after 0.5 s. Release waits for contact estimator
+an unconfirmed switch fails after 0.5 s. S-curve dispatch waits for estimator-3
 confirmation, then submits one acknowledged firmware release event. The firmware
 owns the full curve; offboard sends no low-level position/orientation packets
 while it runs. All three detection methods work, and only potentiometer detection
@@ -443,7 +448,9 @@ The endpoint target preserves the existing forward-only policy; this option
 does not recompute a speed-based stopping projection.
 
 `grace_start: release` retains its release-time origin and can preempt a running
-curve with a newly detected interaction after grace. `speed_threshold` retains
+curve with a newly detected interaction after grace. In `release` switch mode,
+that new contact requests estimator `2` again; its next release requests `3`.
+In `detect` mode, contact continues to request `3`. `speed_threshold` retains
 the existing spelling, but in S-curve mode starts grace at curve completion and
 default-estimator confirmation. Duration expiry/faults restore the default
 estimator and use the existing mission landing lifecycle. Offline tests cover

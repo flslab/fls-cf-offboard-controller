@@ -46,6 +46,9 @@ def validate_level_coast(config, *, sensor_available):
     """Validate this opt-in behavior before any flight commands are sent."""
     options = dict(config.get('level_coast') or {})
     options.update(resolve_command_modes(options))
+    options['estimator_switch_at'] = options.get('estimator_switch_at', 'release')
+    if options['estimator_switch_at'] not in ('detect', 'release'):
+        raise ValueError('level_coast.estimator_switch_at must be detect or release')
     if type(options.get('roll_diagnostics', False)) is not bool:
         raise ValueError('level_coast.roll_diagnostics must be boolean')
     if options.get('roll_diagnostics') and options['coast_command_mode'] != 'scurve':
@@ -542,10 +545,22 @@ def run_level_coast(owner, config):
                 if changed and cycle.phase == 'contact':
                     if curve.active:
                         curve.cancel()
+                    # A new contact can preempt a curve that still uses 3.
+                    # Release-based selection must restore 2 for this contact,
+                    # even while an older switch/restore is awaiting its reply.
+                    use_contact_estimator = options['estimator_switch_at'] == 'detect'
+                    selector.request(use_contact_estimator, sample_now)
+                    owner._log_event('Level Coast Estimator Changed', {
+                        'requested_estimator': 3 if use_contact_estimator else 2,
+                        'reason': 'confirmed_contact',
+                        'estimator_switch_at': options['estimator_switch_at']})
+                    print(f'[interaction] estimator: {3 if use_contact_estimator else 2} (detect)', flush=True)
+                elif changed and cycle.phase == 'coast' and options['estimator_switch_at'] == 'release':
                     selector.request(True, sample_now)
                     owner._log_event('Level Coast Estimator Changed', {
-                        'requested_estimator': 3, 'reason': 'confirmed_contact'})
-                    print('[interaction] estimator: contact', flush=True)
+                        'requested_estimator': 3, 'reason': 'confirmed_release',
+                        'estimator_switch_at': options['estimator_switch_at']})
+                    print('[interaction] estimator: 3 (release)', flush=True)
                 elif curve_completed and cycle.phase != 'coast':
                     curve.cancel()
                     owner._log_event('Level Coast Estimator Changed', {
@@ -562,7 +577,7 @@ def run_level_coast(owner, config):
             stop_status['onboard_stop_speed_value_m_s'] = (
                 cycle.stop_status(state['velocity'])['stop_speed_value_m_s'])
             # Legacy attitude authority follows the transmitted command. The
-            # S-curve estimator was already requested on the contact edge.
+            # S-curve starts only after its selected estimator request is confirmed.
             selected_mode = options['coast_command_mode' if cycle.phase == 'coast' else 'command_mode']
             command_mode = ('firmware_scurve' if curve is not None and curve.active else
                             ('position_follow' if selected_mode == 'position' else 'level_zdistance')
@@ -647,6 +662,7 @@ def run_level_coast(owner, config):
                 'command_mode': command_mode,
                 'scurve_active': curve is not None and curve.active,
                 'scurve_endpoint_received': curve is not None and curve.hold_notice is not None,
+                'estimator_switch_at': options['estimator_switch_at'] if scurve_coast else None,
                 'yaw_target_deg': None if command_mode == 'level_zdistance' else yaw,
                 'yaw_rate_target_deg_s': 0. if command_mode == 'level_zdistance' else None,
                 **position_status,
