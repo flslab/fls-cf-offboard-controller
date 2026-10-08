@@ -585,9 +585,13 @@ camera_node:
     grid_file: /home/fls/fls-marker-localization/high_rate_localizer/config/hypergrid-mygrid-4x4.json
     calibration_file: /home/fls/fls-cf-offboard-controller/config/rgb_camera.json
     rough_position_xyz: [2.336, -0.040, 0.85]
-    look_at_xyz: [0.0, 0.0, 0.0]
     timeout_s: 20.0
 ```
+
+Because SFL currently stores camera position but not pitch, `look_at_xyz`
+defaults to `[0, 0, camera_z]`, representing the level physical recording
+camera. A mission can provide `camera_look_at`, or the pose configuration can
+set `look_at_xyz` explicitly, when the authored shot intentionally uses pitch.
 
 The calibration must be for the recording camera at exactly 1920x1080 and the
 same fixed focus/crop used for recording. Preflight captures a short MJPEG

@@ -242,7 +242,10 @@ class CameraNode:
         orchestrator_timeout = float(config.get('timeout_s', 20.0))
         if not math.isfinite(orchestrator_timeout) or orchestrator_timeout <= 0:
             raise ValueError("timeout_s must be positive and finite")
-        default_estimation_timeout = min(15.0, 0.8 * orchestrator_timeout)
+        # Leave the orchestrator time to receive and validate the result, but
+        # allow four normal captures within the default 20-second preflight.
+        # The first capture is commonly rejected while exposure settles.
+        default_estimation_timeout = 0.9 * orchestrator_timeout
         estimation_timeout = float(config.get(
             'estimation_timeout_s', default_estimation_timeout
         ))
@@ -282,12 +285,23 @@ class CameraNode:
         deadline = time.monotonic() + estimation_timeout
         attempt = 0
         consensus = []
+        last_retry_error = None
         while len(consensus) < consensus_frames:
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise PoseEstimationError(
-                    "camera pose did not reach temporal consensus before timeout"
+            warmup_s = float(config.get('warmup_ms', 2500)) / 1000.0
+            startup_margin_s = float(config.get(
+                'capture_startup_margin_s', 1.0
+            ))
+            minimum_capture_budget = warmup_s + startup_margin_s
+            if remaining <= minimum_capture_budget:
+                detail = (
+                    f"; last rejection: {last_retry_error}"
+                    if last_retry_error is not None else ""
                 )
+                raise PoseEstimationError(
+                    "camera pose did not reach temporal consensus before "
+                    f"timeout{detail}"
+                ) from last_retry_error
             attempt += 1
             try:
                 image = self._capture_pose_image(
@@ -320,6 +334,7 @@ class CameraNode:
             except (CaptureError, PoseEstimationError) as error:
                 if config.get('image_file') or time.monotonic() >= deadline:
                     raise
+                last_retry_error = error
                 self.logger.warning(
                     "RGB camera pose attempt %d rejected: %s", attempt, error
                 )
