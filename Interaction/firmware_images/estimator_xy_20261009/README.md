@@ -1,5 +1,10 @@
 # Bolt estimator-3 XY firmware — 2026-10-09
 
+**Superseded. Do not flash this image with the current S-curve profile.**
+It lacks `hlCommander.pRelCompP` and `hlCommander.pRelFric`, which that profile
+requires. Use [the corrected paired image](../estimator_xy_20261009_v2/README.md).
+The old binary and build evidence remain here for diagnosis.
+
 Build tag: `bolt-state-matched-26092502-eskfxy-261009`.
 The binary adds the `eskfXY` API v1 used by the opt-in live hover correction.
 It is built for Bolt/BMI088 from the paired `classic-260925-0959/hardware`

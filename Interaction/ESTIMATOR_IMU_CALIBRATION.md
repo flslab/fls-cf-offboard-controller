@@ -450,6 +450,6 @@ off, so existing firmware and baseline missions continue using their old path.
 
 The paired prebuilt Bolt image, build fingerprints, integration patches and
 lb11 Radio-Pi flashing commands are retained in
-[the 2026-10-09 firmware release](firmware_images/estimator_xy_20261009/README.md).
+[the corrected 2026-10-09 firmware release](firmware_images/estimator_xy_20261009_v2/README.md).
 Compilation and offline checks passed; flashing and active estimator-3 flight
 validation remain separate steps.
