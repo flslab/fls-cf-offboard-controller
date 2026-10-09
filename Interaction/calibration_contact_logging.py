@@ -36,7 +36,7 @@ def is_plain_xyz_calibration(args):
         getattr(args, name, False) for name in (
             'interaction', 'braking_test', 'targeted_braking_calibration',
             'adaptive_braking_calibration', 'planar_braking_calibration',
-            'mpc', 'ground_test', 'droneless',
+            'mpc', 'ground_test', 'droneless', 'imu_validation_session',
         )
     ))
 

@@ -62,6 +62,7 @@ from viewpoint_transform import (
 setup_logging()
 
 logger = logging.getLogger(__name__)
+IMU_VALIDATION_SWARM_API = 2
 
 pos_update_time_log = []
 pos_update_profile_log = []
@@ -139,6 +140,15 @@ class Controller:
             self.args.takeoff_altitude = self.cfg.DEFAULT_HEIGHT
         if self.args.t is None:
             self.args.t = self.cfg.DEFAULT_DURATION
+        if getattr(args, 'imu_validation_config', None):
+            from Interaction.estimator_validation_flight import load_flight_config
+            validation_config = load_flight_config(args.imu_validation_config)
+            if validation_config.get('ram_trace'):
+                raise ValueError('standard-controller IMU validation uses ordinary logs; RAM capture is not enabled')
+            self.args.takeoff_altitude = validation_config['center_m'][2]
+            self.args.init_pos = validation_config.get('initial_position_m',validation_config['center_m'])
+            self.args.vicon_mode = validation_config.get('tracking_mode','rigidbody' if validation_config.get('rigidbody') else 'pointcloud')
+            self.args.obj_name = validation_config.get('rigidbody')
 
         if self.args.radio:
             self.uri = uri_helper.uri_from_env(default=self.args.radio)
@@ -219,7 +229,8 @@ class Controller:
         )
 
     def __enter__(self):
-        if self.args.radio and not getattr(self.args, 'crazysim', False):
+        if (self.args.radio and not getattr(self.args, 'crazysim', False)
+                and not getattr(self.args, 'imu_validation_session', None)):
             import cflib.crtp
             from cflib.utils.power_switch import PowerSwitch
             cflib.crtp.init_drivers(enable_serial_driver=True)
@@ -284,6 +295,9 @@ class Controller:
         self.setup_contact_attitude_shadow()
         self.setup_force_sensor()
         self.setup_commander()
+        if getattr(self.args, 'imu_validation_session', None):
+            from Interaction.estimator_validation_controller import ControllerValidationCapture
+            self._imu_validation_capture = ControllerValidationCapture(self)
         self.setup_motion_capture()
         self.setup_blinker()
         if not self.args.droneless:
@@ -303,16 +317,29 @@ class Controller:
             if self.led:
                 self.led.show_single_color(color=(80, 240, 30))
 
+        if getattr(self, '_imu_validation_capture', None) is not None:
+            self._imu_validation_capture.prepare()
+            if not self.args.orchestrated:
+                input('Press ENTER to start standard controller takeoff, IMU sampling and landing (Ctrl+C to cancel): ')
         self.handshake()
         self.verify_contact_attitude_final_prearm_ready()
         self.mission_start_time = time.time()
 
-        if not self.args.droneless:
-            if self.led:
-                self.led.clear()
-            self.arm()
-            self.takeoff()
-        self.run_mission()
+        try:
+            if not self.args.droneless:
+                if self.led:
+                    self.led.clear()
+                if getattr(self, '_imu_validation_capture', None) is not None:
+                    self._imu_validation_capture.arm_requested()
+                self.arm()
+                self.takeoff()
+            self.run_mission()
+        except BaseException as error:
+            capture = getattr(self, '_imu_validation_capture', None)
+            if capture is not None:
+                capture.report['error'] = str(error) or type(error).__name__
+                capture.save()
+            raise
 
     def prepare_firmware_auto_brake(self):
         # Calibration produces the model; it cannot require that model or arm
@@ -1039,11 +1066,20 @@ class Controller:
             if self.args.ground_test:
                 time.sleep(1)
 
+        hover_xy = getattr(self, '_estimator_hover_xy', None)
+        if hover_xy is not None:
+            attempt('Stop estimator XY sampling/loading', hover_xy.close)
         selector = getattr(getattr(self, 'cf', None), '_level_coast_estimator_selector', None)
         if selector is not None and selector.prepared:
             attempt('Restore default S-curve estimator', selector.close)
 
         attempt('Landing (not confirmed on error)', self.land)
+        if getattr(self, '_imu_validation_capture', None) is not None:
+            attempt('IMU validation capture finish', lambda: self._imu_validation_capture.finish(
+                not self.flying and not cleanup_errors))
+        if getattr(getattr(self, 'cf', None), '_interaction_ram_recorder', None) is not None:
+            from Interaction.estimator_ram_trace import finish_interaction_recorder
+            attempt('Frozen RAM trace download after landing', lambda: finish_interaction_recorder(self))
 
         yaw_damping = getattr(self, '_offboard_yaw_damping', None)
         if yaw_damping is not None:
@@ -1132,7 +1168,8 @@ class Controller:
         # Fit only after landing, logger closure and disconnect: never run an
         # optimizer in the flight/control or sensor callback thread.
         calibration_pid = getattr(self, '_response_calibration_pid', None)
-        if calibration_pid is not None and not cleanup_errors:
+        if (calibration_pid is not None and not cleanup_errors
+                and not getattr(self.args, 'imu_validation_session', None)):
             try:
                 from pathlib import Path
                 from Interaction.firmware_response_model import fit_completed_calibration
@@ -1164,6 +1201,16 @@ class Controller:
         logger.debug("loaded manifest")
 
     def download_mission_config(self):
+        if (getattr(self.args, 'imu_validation_session', None)
+                and not self.args.orchestrated):
+            self.mission = {
+                'name':'estimator_imu_validation', 'takeoff_speed':.5,
+                'drones':{self.args.drone_id:{'target':[
+                    *self.args.init_pos[:2], self.args.takeoff_altitude]}},
+                'Interaction':{'config':{}, 'action':'translation'},
+            }
+            self.missions = [self.mission]
+            return
         if not self.args.orchestrated:
             return
 
@@ -1292,9 +1339,12 @@ class Controller:
         elif self.log_manager is not None:
             self.log_manager.add_log_group('mocap_timing')
             timing_callback = self._log_mocap_timing
+        mocap_options = {}
+        if getattr(self, '_imu_validation_capture', None) is not None:
+            mocap_options['host_name'] = self._imu_validation_capture.config['mocap_host']
         self.mocap = Mocap(mode=self.args.vicon_mode,
                            timing_callback=timing_callback,
-                           source_metadata=getattr(self.args, 'vicon_source_metadata', False))
+                           source_metadata=getattr(self.args, 'vicon_source_metadata', False), **mocap_options)
 
         if self.args.vicon_mode == "rigidbody":
             logger.info(f"Subscribing to RigidBody: {self.args.obj_name}")
@@ -1425,11 +1475,24 @@ class Controller:
             self._takeoff_with_localizer(takeoff_speed)
             return
 
+        if getattr(self, '_imu_validation_capture', None) is not None:
+            self._imu_validation_capture.wait_until_fly_ready()
         self.flying = True
-
         t = self.args.takeoff_altitude / takeoff_speed
-        self.hl_commander.takeoff(
-            self.args.takeoff_altitude, t, yaw=self.args.init_yaw)
+        if getattr(self.args, 'imu_validation_session', None):
+            # This workflow keeps the aircraft powered to retain the IMU
+            # session. LL ownership can survive a previous flight/connection.
+            # Confirm a fresh takeoff plan before releasing that priority;
+            # notify alone could resume an old plan or a stopped planner.
+            handoff_to_high_level(
+                self.ll_commander, self.hl_commander, 'takeoff',
+                self.args.takeoff_altitude, t, yaw=self.args.init_yaw,
+                dry_run=self.args.droneless,
+            )
+            logger.info('IMU validation takeoff accepted; high-level control active')
+        else:
+            self.hl_commander.takeoff(
+                self.args.takeoff_altitude, t, yaw=self.args.init_yaw)
         self._safe_sleep(t + 1)
 
     def _takeoff_with_localizer(self, speed):
@@ -1853,6 +1916,8 @@ class Controller:
                 selected = configure_contact_validation_capture(
                     self.log_manager, self.cf, selected, self.mission, self.args,
                 )
+                from Interaction.estimator_hover_live import add_capture_logs
+                selected = add_capture_logs(selected, self.mission, self.cf, self.args)
                 self.log_manager.init_cf_logger(
                     self.cf, selected,
                     self.args.cf_log_period,
@@ -2216,6 +2281,7 @@ class Controller:
 
         if (getattr(self.args, 'calibrate', False)
                 and not getattr(self.args, 'planar_braking_calibration', False)
+                and not getattr(self.args, 'imu_validation_session', None)
                 and self.args.controller_type == 'pid'):
             from Interaction.firmware_response_model import confirm_pid_context
             configured = self.cfg.PID_VALUES_FLOWDECK if self.use_flowdeck else self.cfg.PID_VALUES
@@ -2254,6 +2320,12 @@ class Controller:
         self._prepare_offboard_yaw_damping()
         self._prepare_offboard_position_control()
 
+        from Interaction.estimator_ram_trace import prepare_interaction_recorder
+        prepare_interaction_recorder(self)
+        from Interaction.estimator_hover_live import requested, LiveHoverXY
+        if requested(getattr(self, 'mission', None)):
+            self._estimator_hover_xy = LiveHoverXY(self)
+
     def arm(self):
         if self.args.ground_test or self.args.skip_arm:
             return
@@ -2274,7 +2346,9 @@ class Controller:
         self.log_manager.add_log_entry("events", {"time": time.time(), "name": "armed"})
 
     def run_mission(self):
-        if self.args.autotune:
+        if getattr(self, '_imu_validation_capture', None) is not None:
+            self._imu_validation_capture.run()
+        elif self.args.autotune:
             autotuner = PIDAutotuner(self)
             autotuner.run_autotune()
         elif self.args.simple_takeoff:
@@ -3832,6 +3906,8 @@ class Controller:
                     self._firmware_vicon_mirror_error = None
                 except (ValueError, OverflowError, OSError) as error:
                     self._firmware_vicon_mirror_error = str(error)
+        if getattr(self, '_imu_validation_capture', None) is not None:
+            self._imu_validation_capture.on_pose(frame)
         self._log_mocap(frame)
 
     def _send_position_orientation(self, frame):
@@ -3922,6 +3998,9 @@ if __name__ == '__main__':
     tag = f"{datetime.datetime.now():%Y-%m-%d_%H-%M-%S}"
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", default=tag, type=str, help="tag included in filename of saved log files")
+    ap.add_argument('--imu-validation-session', help='saved IMU session for contact-free validation task')
+    ap.add_argument('--imu-validation-output', help='new flight capture directory')
+    ap.add_argument('--imu-validation-config', help='optional validation flight settings override')
     ap.add_argument("--drone-id", type=str, help="drone id")
     ap.add_argument("--orchestrated", action="store_true", help="orchestrated by orchestrator")
     ap.add_argument(
@@ -4196,6 +4275,14 @@ if __name__ == '__main__':
         validate_repeat_test_options(args)
     except ValueError as error:
         ap.error(str(error))
+    if args.imu_validation_session:
+        if (not args.calibrate or not args.imu_validation_output or not args.vicon
+                or args.vicon_full_pose or args.tracker
+                or args.ground_test or args.droneless or args.skip_arm
+                or args.skip_takeoff or args.skip_landing or args.controller_type != 'pid'):
+            ap.error('IMU validation requires --calibrate --log --vicon with standard PID takeoff/landing, without full-pose/tracker/skip modes')
+    elif args.imu_validation_output:
+        ap.error('--imu-validation-output requires --imu-validation-session')
     experiment_modes = (
         args.interaction, args.calibrate, args.braking_test, args.mpc,
         args.baseline, args.hover,

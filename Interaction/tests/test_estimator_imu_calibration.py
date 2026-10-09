@@ -241,6 +241,9 @@ class CaptureTests(unittest.TestCase):
             with radio_packets('usb://0') as (next_packet, metadata):
                 self.assertEqual(metadata['firmware_parameters_before'], cf.param.values)
                 blocks = [call.args[0] for call in cf.log.add_config.call_args_list]
+                # FLS consumes the wire byte in ms; cflib divides its argument
+                # by ten. Check actual wire periods, not just display labels.
+                self.assertEqual([block.period for block in blocks], [10, 50])
                 blocks[0].data_received_cb.call(10, dict.fromkeys(IMU_FIELDS, 0), blocks[0])
                 self.assertEqual(next_packet(timeout=.1)[0], 'imu')
                 next_packet.reset()
@@ -259,20 +262,24 @@ class CaptureTests(unittest.TestCase):
             with self.subTest(failure=failure), TemporaryDirectory() as tmp:
                 output = Path(tmp) / 'session'
                 args = SimpleNamespace(output=output, uri='usb://0', drone_id='test',
+                    calibration_method='six_face',
                     firmware_id='synthetic', fixture_id='test-fixture', reference_note='synthetic',
                     duration_s=4, settle_s=2)
                 windows = list(data['poses'])
+                pose_prompt = Mock(return_value='')
                 if failure:
                     windows[2] = RuntimeError('link failed')
                 with patch('Interaction.calibrate_estimator_imu.collect_window', side_effect=windows), \
                         patch('Interaction.calibrate_estimator_imu.time.monotonic', side_effect=[0, 11]):
                     if failure:
                         with self.assertRaisesRegex(RuntimeError, 'link failed'):
-                            collect(args, prompt=Mock(return_value='PROPS OFF'), source=source)
+                            collect(args, prompt=pose_prompt, source=source)
                     else:
-                        self.assertEqual(collect(args, prompt=Mock(return_value='PROPS OFF'), source=source), 0)
+                        self.assertEqual(collect(args, prompt=pose_prompt, source=source), 0)
+                self.assertFalse(any('PROPS OFF' in call.args[0] for call in pose_prompt.call_args_list))
                 captured = json.loads((output / 'dataset.json').read_text())
                 self.assertEqual(captured['status'], 'incomplete' if failure else 'complete')
+                self.assertEqual(captured['motors_off_confirmation_source'], 'fixture_collection_assumption')
                 self.assertEqual(len(captured['poses']), 2 if failure else 12)
                 self.assertEqual((output / 'fit' / 'calibration.json').exists(), not failure)
 

@@ -1,0 +1,63 @@
+{
+  "checks": [
+    {
+      "file": "regression-final.log",
+      "result": "Ran 122 tests in 21.343s\n\nOK"
+    },
+    {
+      "file": "orchestrator-tests.log",
+      "result": "Ran 9 tests in 0.386s\n\nOK\n[Orchestrator] Sending REMOTE REBOOT request to Radio Node (1 drones)..."
+    },
+    {
+      "file": "orchestrator-entry-tests.log",
+      "result": "Ran 22 tests in 0.326s\n\nOK"
+    }
+  ],
+  "hardware_build_passed": true,
+  "sitl_build_passed": true,
+  "syntax_passed": 9,
+  "git_diff_check_passed": true,
+  "real_log_replay": {
+    "completed": true,
+    "raw_summary": {
+      "samples": 5326,
+      "segments": 1,
+      "rmse_rpy_deg": [
+        2.3250728173214052,
+        0.5693227788392032,
+        3.0120657543985954
+      ],
+      "mean_error_rpy_deg": [
+        -2.3072349987140925,
+        0.5395333307672326,
+        1.9888348658187873
+      ]
+    },
+    "initialized_summary": {
+      "samples": 5326,
+      "segments": 1,
+      "rmse_rpy_deg": [
+        0.28211677437566335,
+        0.27176180125233423,
+        3.24191256440765
+      ],
+      "mean_error_rpy_deg": [
+        -0.15908403219814868,
+        -0.2004611029406651,
+        2.1937500887938723
+      ]
+    },
+    "coefficients": {
+      "sx": 0.9865199743004224,
+      "sy": 0.9878758287416435,
+      "bx": -0.12628179330732964,
+      "by": -0.36499037537829243
+    },
+    "z_changed": false,
+    "gyro_changed": false,
+    "yaw_calibrated": false
+  },
+  "onboard_loading_test_uses_actual_c": true,
+  "firmware_flashing_performed": false,
+  "real_flight_performed": false
+}

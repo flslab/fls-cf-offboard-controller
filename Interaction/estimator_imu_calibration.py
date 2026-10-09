@@ -52,7 +52,7 @@ def _array(value, shape, name):
     return result
 
 
-def validate_pose(pose):
+def validate_pose(pose, *, known_reference=True):
     """Check the whole contiguous window; never select its quietest subset."""
     t = np.asarray(pose['time_s'], dtype=float)
     n = len(t)
@@ -65,9 +65,11 @@ def validate_pose(pose):
         raise ValueError('pose duration must be at least 2 seconds')
     acc = _array(pose['accel_m_s2'], (n, 3), 'accel')
     gyro = _array(pose['gyro_rad_s'], (n, 3), 'gyro')
-    ref = _array(pose['reference_force_m_s2'], (3,), 'reference force')
-    if abs(np.linalg.norm(ref) - G) > .05:
-        raise ValueError('reference must be gravity in an independently known static pose')
+    ref = None
+    if known_reference:
+        ref = _array(pose['reference_force_m_s2'], (3,), 'reference force')
+        if abs(np.linalg.norm(ref) - G) > .05:
+            raise ValueError('reference must be gravity in an independently known static pose')
     if np.any(np.abs(acc) > 2 * G) or np.any(np.abs(gyro) > np.deg2rad(5)):
         raise ValueError('pose is moving or accelerometer is outside the static range')
     if np.max(np.std(acc, axis=0)) > LIMITS['maximum_accel_std_m_s2']:
@@ -116,8 +118,11 @@ def _metrics(acc, gyro, ref, matrix, ba, bg):
     }
 
 
-def fit_dataset(document):
+def fit_dataset(document, *, require_validation=True):
     """Fit ONLY training windows, then independently accept/reject on validation."""
+    if isinstance(document, dict) and document.get('reference_source') == 'gravity_magnitude':
+        from Interaction.estimator_gravity_calibration import fit_gravity_dataset
+        return fit_gravity_dataset(document, require_validation=require_validation)
     if not isinstance(document, dict) or document.get('schema') != SCHEMA or document.get('status') != 'complete':
         raise ValueError('need a complete fixture dataset with the supported schema')
     for key in ('drone_id', 'firmware_id', 'fixture_id', 'reference_note'):
@@ -148,7 +153,7 @@ def fit_dataset(document):
         sample_fingerprints.add(fingerprint)
         grouped[pose['role']].append((pose, reference, acc, gyro))
     conditions = {role: _coverage([row[1] for row in rows], role)
-                  for role, rows in grouped.items()}
+                  for role, rows in grouped.items() if rows or require_validation}
     # Each pose contributes equally, even when radio delivery rates differ.
     train = grouped['train']
     ref = np.asarray([row[1] for row in train])
@@ -184,10 +189,16 @@ def fit_dataset(document):
                 failures.append(f'{name}: residual gyro zero changed after fitting')
     return {
         'schema': 'estimator_processed_imu_calibration_v1',
-        'accepted': not failures, 'failures': failures,
+        'accepted': not failures and bool(grouped['validation']), 'failures': failures,
+        'fit_passed': not failures,
+        'independent_static_validation_passed': not failures and bool(grouped['validation']),
         'drone_id': document['drone_id'], 'firmware_id': document['firmware_id'],
         'fixture_id': document['fixture_id'], 'reference_note': document['reference_note'],
+        'provenance_documented': all(document[key].strip().lower() != 'unknown'
+                                     for key in ('firmware_id','fixture_id','reference_note')),
         'sensor_frame': 'driver_processed_body',
+        'calibration_method': 'six_face', 'reference_source': 'independent_fixture',
+        'accel_alignment_calibrated': True, 'accel_cross_axis_calibrated': True,
         'measured_from_reference': matrix.tolist(), 'accel_bias_m_s2': ba.tolist(),
         'gyro_residual_bias_rad_s': bg.tolist(),
         'correction': 'acc_corrected = solve(measured_from_reference, acc_measured - accel_bias_m_s2); gyro_corrected = gyro_measured - gyro_residual_bias_rad_s',
@@ -195,7 +206,7 @@ def fit_dataset(document):
         'reference_conditions': conditions, 'pose_metrics': metrics, 'limits': dict(LIMITS),
         'gyro_axis_scale_calibrated': False, 'vicon_delay_calibrated': False,
         'firmware_applied': False, 'flight_validated': False,
-        'note': 'Known fixture is operator-supplied truth. Repeat poses cannot detect a shared fixture error. Residual gyro zero is boot/temperature dependent. No flight process loads this file.',
+        'note': 'Known fixture is operator-supplied truth. Repeat poses cannot detect a shared fixture error. Residual gyro zero is boot/temperature dependent. No onboard estimator loads this file.',
     }
 
 
@@ -215,24 +226,53 @@ def write_json(path, document):
             os.unlink(temporary)
 
 
-def analyze_file(dataset_path, output_dir):
+def analyze_file(dataset_path, output_dir, *, require_validation=True):
     """Keep failures reviewable; accepted calibration exists only on success."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=False)
     raw = Path(dataset_path).read_bytes()
     try:
-        result = fit_dataset(json.loads(raw))
+        result = fit_dataset(json.loads(raw), require_validation=require_validation)
     except (ValueError, KeyError, TypeError) as error:
         result = {'schema': 'estimator_processed_imu_calibration_v1', 'accepted': False,
                   'failures': [str(error)], 'firmware_applied': False, 'flight_validated': False}
     result['dataset_sha256'] = hashlib.sha256(raw).hexdigest()
+    try:
+        dataset = json.loads(raw)
+    except ValueError:
+        dataset = {}
+    if 'rotations' in dataset and 'gyro_residual_bias_rad_s' in result:
+        from Interaction.estimator_gyro_calibration import fit_gyro
+        try:
+            gyro = fit_gyro(dataset['rotations'], result['gyro_residual_bias_rad_s'])
+            result['gyro_calibration'] = gyro
+            result['gyro_axis_scale_calibrated'] = gyro['accepted']
+            if not gyro['accepted']:
+                raise ValueError('gyro independent rotation error exceeds limit')
+        except (ValueError, KeyError, TypeError) as error:
+            result['accepted'] = False
+            result['fit_passed'] = False
+            result['failures'].append('gyro calibration: '+str(error))
     result['dataset_path'] = str(Path(dataset_path).resolve())
     write_json(output_dir / 'report.json', result)
     if result['accepted']:
         write_json(output_dir / 'calibration.json', result)
+    if result.get('fit_passed'):
+        write_json(output_dir / 'candidate.json', result)
     lines = ['# Estimator IMU calibration', '', f"Accepted: {result['accepted']}",
              '', 'Firmware applied: False. Flight validated: False.', '']
-    if 'pose_metrics' in result:
+    if result.get('calibration_method') == 'gravity_norm':
+        lines += ['Method: gravity magnitude, diagonal axis scale + bias.',
+                  'Sensor/body alignment rotation: NOT calibrated.',
+                  'Cross-axis terms: NOT calibrated. No attitude reference was used.',
+                  f"Axis scales: {result['axis_scales']}",
+                  f"Accelerometer bias (m/s²): {result['accel_bias_m_s2']}",
+                  f"Residual gyro bias (deg/s): {np.rad2deg(result['gyro_residual_bias_rad_s']).tolist()}", '',
+                  '| Pose | Role | Raw norm RMSE (m/s²) | Corrected norm RMSE (m/s²) | Mean norm error (m/s²) |',
+                  '| --- | --- | ---: | ---: | ---: |']
+        lines += [f"| {name} | {row['role']} | {row['raw_norm_rmse_m_s2']:.4f} | {row['corrected_norm_rmse_m_s2']:.4f} | {row['corrected_norm_mean_error_m_s2']:.4f} |"
+                  for name, row in result['pose_metrics'].items()]
+    elif 'pose_metrics' in result:
         lines += [f"Alignment rotation: {result['alignment_rotation_deg']:.3f} deg",
                   f"Accelerometer bias (m/s²): {result['accel_bias_m_s2']}",
                   f"Residual gyro bias (deg/s): {np.rad2deg(result['gyro_residual_bias_rad_s']).tolist()}", '',
@@ -243,5 +283,12 @@ def analyze_file(dataset_path, output_dir):
     lines += ['', *result['failures'], '',
               'Vicon transport delay and gyro axis/scale are not identified by static poses.',
               'Do not use an ordinary-KF or Contact-ESKF quaternion as fixture truth.']
+    if 'gyro_calibration' in result:
+        gyro = result['gyro_calibration']
+        lines += ['', '## Gyro scale and axis calibration', '', f"Accepted: {gyro['accepted']}",
+                  f"Alignment rotation: {gyro['alignment_rotation_deg']:.3f} deg", '',
+                  '| Turn | Role | Rotation error norm (deg) |', '| --- | --- | ---: |']
+        lines += [f"| {name} | {row['role']} | {row['error_norm_deg']:.4f} |"
+                  for name, row in gyro['rotation_metrics'].items()]
     (output_dir / 'report.md').write_text('\n'.join(lines) + '\n')
     return result

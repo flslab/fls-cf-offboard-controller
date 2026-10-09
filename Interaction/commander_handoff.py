@@ -51,8 +51,8 @@ def _unwrap(commander):
 
 
 def _command_arguments(command_name, args, kwargs):
-    if command_name not in ("go_to", "land"):
-        raise HandoffError("handoff supports only go_to or land, never stop")
+    if command_name not in ("go_to", "land", "takeoff"):
+        raise HandoffError("handoff supports only go_to, land or takeoff, never stop")
     try:
         bound = inspect.signature(getattr(HighLevelCommander, command_name)).bind(
             None, *args, **kwargs)
@@ -67,7 +67,7 @@ def _command_arguments(command_name, args, kwargs):
                 raise ValueError(name + " must be finite")
         if values["duration_s"] <= 0:
             raise ValueError("duration_s must be positive")
-        if command_name == "land" and values["yaw"] is not None:
+        if command_name in ("land", "takeoff") and values["yaw"] is not None:
             if isinstance(values["yaw"], bool) or not math.isfinite(float(values["yaw"])):
                 raise ValueError("yaw must be finite or None")
         return values
@@ -85,17 +85,19 @@ def _reply_prefix(command_name, values, cf):
         except Exception as exc:
             raise HandoffError("cannot determine the high-level wire protocol") from exc
     # The firmware echoes the first three bytes, then writes its result in
-    # byte 3. LAND_2's third byte is the first byte of the target-height float.
+    # byte 3. LAND_2/TAKEOFF_2 include the first target-height float byte.
     try:
-        return struct.pack("<BBf", HighLevelCommander.COMMAND_LAND_2,
+        command = (HighLevelCommander.COMMAND_TAKEOFF_2 if command_name == "takeoff"
+                   else HighLevelCommander.COMMAND_LAND_2)
+        return struct.pack("<BBf", command,
                            values["group_mask"], values["absolute_height_m"])[:3]
     except (TypeError, ValueError, OverflowError, struct.error) as exc:
-        raise HandoffError("landing parameters cannot be represented on the wire") from exc
+        raise HandoffError("height parameters cannot be represented on the wire") from exc
 
 
 def handoff_to_high_level(low_level, high_level, command_name, *args,
                          ack_timeout_s=0.15, dry_run=False, **kwargs):
-    """Start ``go_to``/``land``, require firmware ret=0, then notify once.
+    """Start ``go_to``/``land``/``takeoff``, require firmware ret=0, then notify once.
 
     Default acknowledgement deadline is 150 ms from just before command send;
     no automatic retry or intervening low-level keepalive is permitted. The

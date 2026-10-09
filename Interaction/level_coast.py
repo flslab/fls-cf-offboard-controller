@@ -46,6 +46,11 @@ def validate_level_coast(config, *, sensor_available):
     """Validate this opt-in behavior before any flight commands are sent."""
     options = dict(config.get('level_coast') or {})
     options.update(resolve_command_modes(options))
+    from Interaction.estimator_hover_live import requested
+    requested({'Interaction': {'config': config}})
+    if 'ram_trace' in options:
+        from Interaction.estimator_ram_trace import validate_interaction_trace
+        options['ram_trace'] = validate_interaction_trace(options['ram_trace'], options['coast_command_mode'])
     options['estimator_switch_at'] = options.get('estimator_switch_at', 'release')
     if options['estimator_switch_at'] not in ('detect', 'release'):
         raise ValueError('level_coast.estimator_switch_at must be detect or release')
@@ -331,6 +336,9 @@ def run_level_coast(owner, config):
         config, sensor_available=getattr(owner, 'force_sensor', None) is not None)
     scurve_coast = options['coast_command_mode'] == 'scurve'
     curve = selector = None
+    hover_xy = getattr(owner.cf, '_estimator_hover_xy', None)
+    if options.get('estimator_hover_xy', False) and hover_xy is None:
+        raise RuntimeError('estimator hover XY was not prepared before takeoff')
     if scurve_coast:
         from Interaction.level_coast_scurve import FirmwareSCurveCoast
         selector = getattr(owner.cf, '_level_coast_estimator_selector', None)
@@ -468,6 +476,8 @@ def run_level_coast(owner, config):
                     if yaw_ready:
                         owner._log_event('Level Coast Yaw Damping Enabled', {})
                         print('[interaction] yaw damping enabled', flush=True)
+            hover_ready = (hover_xy.update(cycle.hold_position, can_begin=gate.armed,
+                                          now=sample_now) if hover_xy is not None else True)
             yaw_status = (yaw_guard.update(state['angular_velocity'][2])
                           if options['yaw_rate_damping'] and yaw_ready else {})
             started = released = False
@@ -537,10 +547,13 @@ def run_level_coast(owner, config):
                           if curve_completed else None)
             changed = cycle.update(
                 state['position'], state['velocity'], sample_now,
-                armed=gate.armed and yaw_ready, started=started, released=released,
+                armed=gate.armed and yaw_ready and hover_ready, started=started, released=released,
                 interaction_direction=direction, interaction_direction_source=direction_source,
                 stop_velocity=stop_velocity, curve_completed=curve_completed,
                 curve_hold_position=curve_hold)
+            if options.get('ram_trace') is not None:
+                from Interaction.estimator_ram_trace import interaction_step
+                interaction_step(owner, cycle.phase, released)
             if curve is not None:
                 if changed and cycle.phase == 'contact':
                     if curve.active:

@@ -1,0 +1,20 @@
+{
+  "feature": "saved hover XY compensation reuse",
+  "tests_passed": 97,
+  "default_mode": "auto",
+  "manual_refresh_mode": "refresh",
+  "strict_saved_mode": "reuse",
+  "reboot_reuse_tested": true,
+  "fresh_commit_ack_each_flight": true,
+  "sampling_window_skipped_on_reuse": true,
+  "failed_refresh_preserves_saved_fit": true,
+  "static_candidate_hash_checked": true,
+  "firmware_changed": false,
+  "flight_or_flash_performed": false,
+  "cross_boot_physical_accuracy_validated": false,
+  "sources_sha256": {
+    "Interaction/estimator_hover_live.py": "48b87c14c20a2d1b369cab7ffdca7ef3f9f707af1ef009928af98eff20b96057",
+    "Interaction/tests/test_estimator_xy_loading.py": "48d26d698534e7c5e0d6af9d1f4b7464e3c7f2de5d65932e3592d0ee9bace5bc",
+    "Interaction/ESTIMATOR_IMU_CALIBRATION.md": "dda0ea5591253a84a2e2209be4592c6c22d6a4ff47e3cc4524b6294ede1cff7e"
+  }
+}
