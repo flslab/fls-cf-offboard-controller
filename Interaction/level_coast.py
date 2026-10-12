@@ -361,6 +361,8 @@ def run_level_coast(owner, config):
     calibrated_config = apply_detection_calibration(
         deepcopy(config['wrench_interaction']), owner.drone_id,
         config.get('wrench_calibration_file', DEFAULT_CALIBRATION_PATH))
+    if options['detection_method'] != 'model':
+        calibrated_config['force_estimator'] = 'momentum'
     pipeline = OnboardMomentumWrenchPipeline(calibrated_config)
     imu_reader = (SpecificForceTelemetry(pipeline.config)
                   if pipeline.force_estimator == 'specific_force' else None)

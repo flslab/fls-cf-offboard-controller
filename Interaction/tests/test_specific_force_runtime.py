@@ -138,10 +138,28 @@ class ConfigurationTests(unittest.TestCase):
                           ('max_pair_skew_s',.01),('imu_from_com_m',[0,1]),('unknown',1)]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 validate_config({'specific_force':{key:value}})
-        m=self.mission(True);m['Interaction']['config']['detection_method']='vel'
+        m=self.mission(True);m['Interaction']['config']['behavior']='other'
+        with self.assertRaises(ValueError):requested(m)
+        m=self.mission(True);m['Interaction']['config']['wrench_interaction']['state_source']='offboard'
         with self.assertRaises(ValueError):requested(m)
         m=self.mission(True);m['Interaction']['config']['wrench_interaction']['force_estimator']='typo'
         with self.assertRaises(ValueError):log_vars_for_mission(m)
+
+    def test_non_model_detection_ignores_force_estimator_and_raw_imu_settings(self):
+        for detector in ('potentiometer', 'vel', None):
+            for brake in (False, True):
+                with self.subTest(detector=detector, brake=brake):
+                    m=self.mission(brake)
+                    cfg=m['Interaction']['config']
+                    if detector is None:
+                        cfg.pop('detection_method')
+                    else:
+                        cfg['detection_method']=detector
+                    cfg['wrench_interaction']['specific_force']={'window_s':-1}
+                    original=deepcopy(m)
+                    self.assertFalse(requested(m))
+                    self.assertNotIn(IMU_GROUP,log_vars_for_mission(m))
+                    self.assertEqual(m,original)
 
     def test_prearm_requires_fresh_device_paired_raw_imu(self):
         from controller import Controller

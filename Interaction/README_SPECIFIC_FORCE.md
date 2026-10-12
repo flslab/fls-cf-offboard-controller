@@ -39,8 +39,12 @@ supply its usual `state_source: onboard` and `shadow_mode: false` settings.
 
 The existing release threshold and dwell remain configuration-driven (the
 current level-coast profile uses 0.044 N along the locked direction and 150 ms).
-The new selector is supported only by the `level_coast` model path; selecting it
-for another behavior or detector fails during log configuration.
+The new selector is supported only by the `level_coast` model path. With
+potentiometer or velocity detection, `force_estimator` and `specific_force`
+settings are ignored: no `MODEL_IMU` stream or raw-IMU readiness check is added,
+and the existing momentum computation remains diagnostic. With model detection,
+selecting `specific_force` for another behavior or without onboard state fails
+during log configuration.
 
 ## Measurements and calibration
 

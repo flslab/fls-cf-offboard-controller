@@ -45,10 +45,12 @@ def validate_config(config):
 
 def requested(mission):
     config = (mission or {}).get('Interaction', {}).get('config', {})
+    if config.get('detection_method', 'potentiometer') != 'model':
+        return False
     wrench = config.get('wrench_interaction') or {}
     if force_estimator(wrench) != 'specific_force':
         return False
-    if (config.get('behavior') != 'level_coast' or config.get('detection_method') != 'model'
+    if (config.get('behavior') != 'level_coast'
             or wrench.get('state_source') != 'onboard'):
         raise ValueError('specific_force requires level_coast, model detection and onboard state')
     validate_config(wrench)
