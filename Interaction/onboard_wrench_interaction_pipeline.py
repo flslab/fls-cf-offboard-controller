@@ -15,6 +15,8 @@ import numpy as np
 
 from Interaction.external_wrench_observer import WrenchEstimate, _as_vector
 from Interaction.wrench_interaction_pipeline import PipelineOutput, WrenchInteractionPipeline
+from Interaction.specific_force_contact_observer import SpecificForceContactObserver
+from Interaction.specific_force_runtime import force_estimator, validate_config
 
 
 DEFAULT_MOMENTUM_OBSERVER_CONFIG = {
@@ -517,6 +519,15 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
         self.last_impulse_ready = False
         self.last_aligned_expected_linear_acceleration = np.zeros(3)
         self.last_model_alignment_ready = False
+        self.force_estimator = force_estimator(self.config)
+        self.config['force_estimator'] = self.force_estimator
+        self.specific_force_observer = None
+        if self.force_estimator == 'specific_force':
+            settings = validate_config(self.config)
+            self.config['specific_force'] = settings
+            self.specific_force_observer = SpecificForceContactObserver(
+                self.config['mass'], **{key: settings[key] for key in
+                ('window_s', 'minimum_window_s', 'max_dt_s', 'imu_from_com_m')})
 
     def update(
             self,
@@ -528,6 +539,9 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
             battery_voltage: float | None,
             timestamp: float,
             yaw_control_command: float | None = None,
+            specific_force_body_m_s2: Sequence[float] | None = None,
+            gyro_body_rad_s: Sequence[float] | None = None,
+            imu_timestamp: float | None = None,
     ) -> PipelineOutput:
         timestamp = float(timestamp)
         if self._start_timestamp is None:
@@ -593,6 +607,31 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
             ),
         )
 
+        if self.specific_force_observer is not None:
+            if (specific_force_body_m_s2 is None or gyro_body_rad_s is None
+                    or imu_timestamp is None or not has_motor_data
+                    or battery_voltage is None or not np.isfinite(battery_voltage)
+                    or battery_voltage <= 0):
+                raise ValueError('specific_force requires raw IMU, sample time and live motor/battery data')
+            settings = self.config['specific_force']
+            acc = (_as_vector(specific_force_body_m_s2, 3, 'raw IMU')
+                   * settings['accel_scale'] - settings['accel_bias_m_s2'])
+            # Input RPY uses Crazyflie's legacy negative pitch convention.
+            roll, pitch, yaw = attitude_rpy * [.5, -.5, .5]
+            cr, cp, cy = np.cos([roll, pitch, yaw])
+            sr, sp, sy = np.sin([roll, pitch, yaw])
+            q = [sr*cp*cy-cr*sp*sy, cr*sp*cy+sr*cp*sy,
+                 cr*cp*sy-sr*sp*cy, cr*cp*cy+sr*sp*sy]
+            thrust = np.linalg.norm(expected_linear + [0., 0., 9.81]) * settings['thrust_scale']
+            force = self.specific_force_observer.update(
+                acc, q, thrust, imu_timestamp, gyro_body_rad_s)
+            self.last_impulse_ready = force.ready
+            self.last_impulse_window_s = force.window_s
+            self.last_external_impulse = force.external_force * force.window_s
+            raw = replace(raw, external_force=force.external_force,
+                          position_innovation=self.last_external_impulse.copy(),
+                          measurement_rejected=not force.ready or force.rejected)
+
         if not self.calibrated:
             self._update_bias(raw)
         estimate = replace(
@@ -604,10 +643,15 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
         contacts = None
         force_input = np.zeros(3)
         yaw_input = 0.0
-        if self.calibrated:
+        if self.calibrated and (self.specific_force_observer is None or not raw.measurement_rejected):
             contacts = self.detector.update(estimate)
             if not estimate.measurement_rejected:
                 force_input, yaw_input = self._response_inputs(estimate, contacts)
+        elif self.specific_force_observer is not None:
+            # Retain active contact/direction, but never bridge an invalid
+            # window with old onset evidence or partially completed dwell.
+            for channel in (self.detector.translation, self.detector.yaw):
+                channel.invalidate_sample(timestamp)
         admittance = self.admittance.step(force_input, yaw_input, dt)
         return PipelineOutput(
             raw_estimate=raw,

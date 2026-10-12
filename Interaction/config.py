@@ -618,6 +618,9 @@ def log_vars_for_crazysim(mission):
     reference estimator without starving motor/state packets. Simulator
     odometry is captured independently by the CrazySim runner.
     """
+    from Interaction.specific_force_runtime import requested
+    if requested(mission):
+        return log_vars_for_mission(mission)
     return {
         'VEL_ORI': VEL_ORI,
         'POS_ACC': POS_ACC,
@@ -976,6 +979,9 @@ def log_vars_for_mission(mission):
     the firmware-latched contactImu packet. The diagnostic definition remains
     available to standalone tools and legacy comparison runs.
     """
+    from Interaction.specific_force_runtime import add_imu_logs
+    # Validate before logger startup/arming, including unsupported behaviors.
+    add_imu_logs({}, mission)
     try:
         wrench_config = mission['Interaction']['config'].get(
             'wrench_interaction'
@@ -1032,7 +1038,7 @@ def log_vars_for_mission(mission):
             selected['YAW_CTL'] = YAW_CTL
         selected['FIRMWARE_BRAKE'] = firmware_brake_log_vars(mission)
         from Interaction.roll_diagnostics import add_roll_diagnostics
-        return add_roll_diagnostics(selected, mission)
+        return add_imu_logs(add_roll_diagnostics(selected, mission), mission)
     # A dormant diagnostic must not make a legacy mission fail because it
     # happens to carry an old or misspelled shadow-mode value.  Mode validation
     # belongs exclusively to the explicitly enabled path.
@@ -1040,6 +1046,7 @@ def log_vars_for_mission(mission):
         {**LOG_VARS, 'YAW_CTL': YAW_CTL}
         if onboard_yaw_log_required(mission) else LOG_VARS
     )
+    ordinary_logs = add_imu_logs(ordinary_logs, mission)
     if not enabled:
         return ordinary_logs
     if mode not in ('onboard_mirror', 'inertial_position'):

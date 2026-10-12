@@ -7,6 +7,7 @@ import time
 import numpy as np
 
 from Interaction.onboard_wrench_interaction_pipeline import OnboardMomentumWrenchPipeline
+from Interaction.specific_force_runtime import SpecificForceTelemetry, requested as specific_force_requested
 from Interaction.offboard_yaw_damping import (
     DEFAULT_YAW_RATE_DEADBAND_DEG_S, validate_yaw_deadband,
 )
@@ -45,6 +46,7 @@ def resolve_command_modes(options):
 def validate_level_coast(config, *, sensor_available):
     """Validate this opt-in behavior before any flight commands are sent."""
     options = dict(config.get('level_coast') or {})
+    specific_force_requested({'Interaction': {'config': config}})
     options.update(resolve_command_modes(options))
     from Interaction.estimator_hover_live import requested
     requested({'Interaction': {'config': config}})
@@ -360,6 +362,9 @@ def run_level_coast(owner, config):
         deepcopy(config['wrench_interaction']), owner.drone_id,
         config.get('wrench_calibration_file', DEFAULT_CALIBRATION_PATH))
     pipeline = OnboardMomentumWrenchPipeline(calibrated_config)
+    imu_reader = (SpecificForceTelemetry(pipeline.config)
+                  if pipeline.force_estimator == 'specific_force' else None)
+    imu_wait_since = None
     safety = pipeline.config['safety']
     gate = InitialContactArmingGate(**pipeline.config['initial_contact_arming'])
     target = owner.mission['drones'][owner.drone_id]['target']
@@ -408,7 +413,8 @@ def run_level_coast(owner, config):
             owner.lo_commander.send_position_setpoint(*cycle.hold_position, yaw)
 
     def reset_detectors(timestamp):
-        pipeline.detector.translation.reset(timestamp)
+        model_time = (pipeline._last_timestamp if imu_reader is not None else timestamp)
+        pipeline.detector.translation.reset(model_time)
         velocity_detector.reset()
         if pot_contact is not None:
             pot_contact.reset()
@@ -434,6 +440,22 @@ def run_level_coast(owner, config):
                 send()  # A duplicate can refresh the command, never a detector/timer.
                 owner._safe_sleep(dt)
                 continue
+            imu_inputs = {}
+            if imu_reader is not None:
+                imu_inputs = imu_reader.read(owner.log_manager, state, now)
+                if imu_inputs is None:
+                    # Wait briefly for independently delivered matching IMU;
+                    # refresh commands but never advance contact/release time.
+                    if imu_wait_since is None:
+                        imu_wait_since = time.monotonic()
+                    timeout = (safety['startup_timeout_s'] if last_state_time is None
+                               else imu_reader.config['max_sample_age_s'])
+                    if time.monotonic() - imu_wait_since >= timeout:
+                        raise StaleLocalizationError('specific_force requires fresh synchronized MODEL_IMU')
+                    send()
+                    owner._safe_sleep(dt)
+                    continue
+                imu_wait_since = None
             last_state_time = state['time']
             if options['follow_yaw']:
                 yaw = math.degrees(float(state['attitude_rpy'][2]))
@@ -459,8 +481,9 @@ def run_level_coast(owner, config):
             output = pipeline.update(
                 position=state['position'], velocity=state['velocity'],
                 attitude_rpy=state['attitude_rpy'], angular_velocity=state['angular_velocity'],
-                motor_pwm=pwm, battery_voltage=voltage, timestamp=state['time'],
-                yaw_control_command=state['yaw_control_command'])
+                motor_pwm=pwm, battery_voltage=voltage,
+                timestamp=imu_inputs.get('imu_timestamp', state['time']),
+                yaw_control_command=state['yaw_control_command'], **imu_inputs)
             if not output.calibrated:
                 send()
                 owner._safe_sleep(dt)
@@ -665,6 +688,10 @@ def run_level_coast(owner, config):
                 'velocity_m_s': state['velocity'].tolist(),
                 **stop_status,
                 'external_force_N': output.estimate.external_force.tolist(),
+                'force_estimator': pipeline.force_estimator,
+                'force_estimator_ready': pipeline.last_impulse_ready,
+                'force_bias_N': pipeline.force_bias.tolist(),
+                **(imu_reader.diagnostics if imu_reader is not None else {}),
                 'contact_started': started, 'release_confirmed': released,
                 'detection_enabled': enabled,
                 'detection_to_ori_delay_s': cycle.detection_to_ori_delay_s,

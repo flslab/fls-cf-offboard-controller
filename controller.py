@@ -2051,6 +2051,8 @@ class Controller:
         """Fail before arming if required onboard-state logs are unavailable."""
         if not self._uses_onboard_wrench_state():
             return
+        from Interaction.specific_force_runtime import requested, IMU_GROUP, IMU_FIELDS
+        specific_force_requested = requested(self.mission)
         subscribed = getattr(self.log_manager, 'cf_log_data', None) or {}
         compressed = 'FIRMWARE_KIN' in subscribed
         if compressed:
@@ -2087,6 +2089,8 @@ class Controller:
             required['YAW_CTL'] = (
                 'controller.cmd_yaw', 'controller.r_yaw',
             )
+        if specific_force_requested:
+            required[IMU_GROUP] = IMU_FIELDS
         run = getattr(self.args, 'contact_attitude_run', None)
         if run in (2, 3):
             required.update({
@@ -2134,6 +2138,16 @@ class Controller:
                         OverflowError):
                     missing.append('FIRMWARE_KIN/FIRMWARE_ACT decoded pair')
             handle = getattr(self, '_contact_attitude_shadow_prearm', None)
+            if specific_force_requested and not missing:
+                from Interaction.specific_force_runtime import SpecificForceTelemetry
+                try:
+                    state = InteractionsControl._get_synchronized_onboard_wrench_state(self)
+                    reader = SpecificForceTelemetry(
+                        self.mission['Interaction']['config']['wrench_interaction'])
+                    if state is None or reader.read(self.log_manager, state, time.time()) is None:
+                        missing.append('MODEL_IMU device-time pair')
+                except (AttributeError, KeyError, TypeError, ValueError, RuntimeError):
+                    missing.append('MODEL_IMU valid raw sample')
             if handle is not None:
                 missing.extend(
                     f'listener.{group_name}'
