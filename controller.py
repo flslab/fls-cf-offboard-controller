@@ -1292,7 +1292,9 @@ class Controller:
         elif self.log_manager is not None:
             self.log_manager.add_log_group('mocap_timing')
             timing_callback = self._log_mocap_timing
-        self.mocap = Mocap(mode=self.args.vicon_mode,
+        self.mocap = Mocap(mocap_system_type=getattr(self.args, 'mocap_type', 'vicon'),
+                           host_name=getattr(self.args, 'mocap_ip', '192.168.1.39'),
+                           mode=self.args.vicon_mode,
                            timing_callback=timing_callback,
                            source_metadata=getattr(self.args, 'vicon_source_metadata', False))
 
@@ -4087,6 +4089,10 @@ if __name__ == '__main__':
     ap.add_argument("--payload-size", type=int, default=4, help="size of the payload")
     ap.add_argument("--velocity-p", type=float, default=1.0, help="velocity gain for tracker-based velocity control")
     ap.add_argument("--vicon", action="store_true", help="localize using Vicon and save tracking data")
+    ap.add_argument("--mocap-type", default="vicon",
+                    help="motion-capture system type (default: vicon)")
+    ap.add_argument("--mocap-ip", default="192.168.1.39",
+                    help="motion-capture server IP or hostname")
     ap.add_argument("--vicon-source-metadata", action="store_true",
                     help=("opt-in Vicon frame number, timecode and pipeline latency "
                           "diagnostics in mocap_timing; requires --log and a "
