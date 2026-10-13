@@ -57,6 +57,9 @@ class ContactEstimatorSelector:
         if not self.prepared:
             raise RuntimeError('S-curve contact estimator was not prepared before takeoff')
         requested = self.CONTACT if contact else self.DEFAULT
+        calibration = getattr(self.cf, '_estimator_hover_xy', None)
+        if contact and calibration is not None and not calibration.ready:
+            raise RuntimeError('estimator-3 XY calibration has not been acknowledged and settled')
         with self._lock:
             if requested == self._requested:
                 return

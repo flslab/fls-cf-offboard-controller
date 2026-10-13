@@ -1,0 +1,43 @@
+# Opt-in candidate based on the Oct 12 lb11 mission. No deployment is implied.
+# See Interaction/README_SPECIFIC_FORCE.md for calibration and validation limits.
+name: translation_level_coast_specific_force
+drones:
+  lb11:
+    target: [0, -1, 1]
+    interaction: single
+Interaction:
+  action: translation
+  config:
+    behavior: level_coast
+    detection_method: model
+    record_potentiometer: false
+    vicon_source_metadata: true
+    duration: 60
+    grace_time: 1
+    level_coast:
+      command_mode: orientation
+      coast_command_mode: scurve
+      estimator_switch_at: detect
+      estimator_hover_xy: true
+      estimator_hover_xy_mode: auto
+      grace_start: release
+      follow_yaw: false
+      yaw_rate_damping: false
+      roll_diagnostics: true
+      stop_speed_m_s: 0.03
+    wrench_interaction_profile: level_coast
+    wrench_interaction:
+      force_estimator: specific_force
+      specific_force:
+        window_s: 0.08
+        accel_scale: [1.0, 1.0, 1.0]
+        accel_bias_m_s2: [0.0, 0.0, 0.0]
+        imu_from_com_m: [0.0, 0.0, 0.0]
+        thrust_scale: 1.0
+boundary_limits:
+  x_min: -1.5
+  x_max: 1.5
+  y_min: -1.5
+  y_max: 1.5
+  z_min: 0.3
+  z_max: 1.5

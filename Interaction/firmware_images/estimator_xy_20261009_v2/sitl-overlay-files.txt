@@ -1,0 +1,6 @@
+src/modules/interface/kalman_core/post_release_curve_log.h
+src/modules/interface/kalman_core/post_release_velocity_curve.h
+src/modules/interface/kalman_core/post_release_stop_request.h
+src/modules/src/post_release_curve_log.inc
+src/modules/src/crtp_commander_high_level.c
+src/modules/src/post_release_velocity_runtime.inc

@@ -1,0 +1,8 @@
+{
+  "tag": "bolt-distance-26092803-eskfxy-26100902",
+  "base": "classic-260928-distance",
+  "base_binary_sha256": "7b58856afad6d8a14919791ab18320b7cc2d26fa34cf331b16cb61168b95919c",
+  "native_kernels_identical": true,
+  "calibration_only_change": true,
+  "flashed": false
+}

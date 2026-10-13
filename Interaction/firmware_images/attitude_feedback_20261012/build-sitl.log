@@ -1,0 +1,44 @@
+[  1%] Built target version_cf
+Consolidate compiler generated dependencies of target cf2
+[  2%] Building C object CMakeFiles/cf2.dir/master-sitl/src/modules/src/estimator/estimator_kalman.c.o
+In file included from /master-sitl/sitl_make/../vendor/FreeRTOS/include/portable.h:51,
+                 from /master-sitl/sitl_make/../vendor/FreeRTOS/include/FreeRTOS.h:63,
+                 from /master-sitl/src/modules/src/estimator/estimator_kalman.c:65:
+/master-sitl/sitl_make/../vendor/FreeRTOS/portable/ThirdParty/GCC/Posix/portmacro.h:127: warning: "portCONFIGURE_TIMER_FOR_RUN_TIME_STATS" redefined
+  127 | #define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() /* no-op */
+      | 
+In file included from /master-sitl/sitl_make/../src/config/FreeRTOSConfig.h:59,
+                 from /master-sitl/sitl_make/../src/utils/interface/cf_math.h:39,
+                 from /master-sitl/sitl_make/../src/modules/interface/kalman_core/kalman_core.h:58,
+                 from /master-sitl/src/modules/src/estimator/estimator_kalman.c:61:
+/master-sitl/sitl_make/../src/config/config.h:61: note: this is the location of the previous definition
+   61 | #define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() usecTimerInit()
+      | 
+In file included from /master-sitl/sitl_make/../vendor/FreeRTOS/include/portable.h:51,
+                 from /master-sitl/sitl_make/../vendor/FreeRTOS/include/FreeRTOS.h:63,
+                 from /master-sitl/src/modules/src/estimator/estimator_kalman.c:65:
+/master-sitl/sitl_make/../vendor/FreeRTOS/portable/ThirdParty/GCC/Posix/portmacro.h:128: warning: "portGET_RUN_TIME_COUNTER_VALUE" redefined
+  128 | #define portGET_RUN_TIME_COUNTER_VALUE()         ulPortGetRunTime()
+      | 
+In file included from /master-sitl/sitl_make/../src/config/FreeRTOSConfig.h:59,
+                 from /master-sitl/sitl_make/../src/utils/interface/cf_math.h:39,
+                 from /master-sitl/sitl_make/../src/modules/interface/kalman_core/kalman_core.h:58,
+                 from /master-sitl/src/modules/src/estimator/estimator_kalman.c:61:
+/master-sitl/sitl_make/../src/config/config.h:62: note: this is the location of the previous definition
+   62 | #define portGET_RUN_TIME_COUNTER_VALUE() usecTimestamp()
+      | 
+/master-sitl/src/modules/src/estimator/estimator_kalman.c: In function 'kalmanTask':
+/master-sitl/src/modules/src/estimator/estimator_kalman.c:117:22: warning: format '%lu' expects argument of type 'long unsigned int', but argument 2 has type 'uint32_t' {aka 'unsigned int'} [-Wformat=]
+  117 | #define DEBUG_MODULE "ESTKALMAN"
+      |                      ^~~~~~~~~~~
+/master-sitl/sitl_make/../src/utils/interface/debug.h:45:24: note: in expansion of macro 'DEBUG_MODULE'
+   45 | #define DEBUG_FMT(fmt) DEBUG_MODULE ": " fmt
+      |                        ^~~~~~~~~~~~
+/master-sitl/sitl_make/../src/utils/interface/debug.h:66:40: note: in expansion of macro 'DEBUG_FMT'
+   66 |   #define DEBUG_PRINT(fmt, ...) printf(DEBUG_FMT(fmt), ##__VA_ARGS__)
+      |                                        ^~~~~~~~~
+/master-sitl/src/modules/src/estimator/estimator_kalman.c:1003:9: note: in expansion of macro 'DEBUG_PRINT'
+ 1003 |         DEBUG_PRINT("WARNING: Kalman prediction rate off (%lu)\n", rateSupervisorLatestCount(&rateSupervisorContext));
+      |         ^~~~~~~~~~~
+[  3%] Linking C executable cf2
+[100%] Built target cf2

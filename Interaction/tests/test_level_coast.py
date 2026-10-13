@@ -375,7 +375,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                      position_options=None, coast_command_mode=None, duplicate_times=(),
                      velocity_fn=None, force_direction_fn=None, record_potentiometer=False,
                      vicon_velocity_fn=None, scurve_completion_s=.12, estimator_delay_s=0.,
-                     curve_fault=None, estimator_switch_at=None):
+                     curve_fault=None, estimator_switch_at=None, force_config=None):
         config = configuration(detector)
         config['record_potentiometer'] = record_potentiometer
         config['duration'] = duration
@@ -394,6 +394,8 @@ class LevelCoastLoopTests(unittest.TestCase):
             config['wrench_interaction_profile'] = 'level_coast'
             config['wrench_interaction'].pop('firmware_auto_brake')
             config = resolve_mission_profiles({'Interaction': {'config': config}})['Interaction']['config']
+        if force_config is not None:
+            config['wrench_interaction'].update(force_config)
         original = copy.deepcopy(config)
         clock = {'t': 0.}
         control = InteractionsControl.__new__(InteractionsControl)
@@ -589,6 +591,21 @@ class LevelCoastLoopTests(unittest.TestCase):
         phases = [c.args[1] for c in control._log_event.call_args_list
                   if c.args[0] == 'Level Coast Phase Changed']
         return control, commands, phases, clock['t']
+
+    def test_non_model_detection_ignores_specific_force_without_raw_imu(self):
+        for detector in ('potentiometer', 'vel'):
+            for coast in ('orientation', 'scurve'):
+                with self.subTest(detector=detector, coast=coast):
+                    control, _, phases, _ = self.run_scenario(
+                        detector, coast_command_mode=coast,
+                        force_config={'force_estimator': 'specific_force',
+                                      'specific_force': {'window_s': -1}})
+                    self.assertIn('contact', [p['phase'] for p in phases])
+                    self.assertTrue(any(p['released'] for p in phases))
+                    rows=control.log_manager.groups['wrench_observer']
+                    self.assertTrue(rows)
+                    self.assertTrue(all(r['force_estimator']=='momentum' for r in rows))
+                    self.assertTrue(all('imu_cf_timestamp_ms' not in r for r in rows))
 
     def test_handoff_uses_vicon_velocity_while_detector_retains_onboard_velocity(self):
         for detector in ('potentiometer', 'model', 'vel'):

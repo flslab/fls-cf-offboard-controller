@@ -1,0 +1,206 @@
+--- a/src/modules/src/estimator/estimator_kalman.c
++++ b/src/modules/src/estimator/estimator_kalman.c
+@@ -293,6 +293,11 @@
+ static uint32_t postReleaseTaskStartUs, postReleaseTaskMaxUs, postReleasePairQueueDrops;
+ 
+ static postReleaseShadowLogSnapshot_t postReleaseShadowLogSource;
++// Written only by the estimator publisher. Never refresh acquisition times
++// when a reader reuses this sample; the original 20 ms age limit still applies.
++static postReleaseShadowLogSnapshot_t postReleaseLastGoodAttitude;
++static uint8_t postReleaseAttitudeHeld;
++static uint32_t postReleaseAttitudeHoldCount;
+ static volatile uint32_t postReleaseShadowLogGeneration = 0;
+ static postReleaseShadowLogSnapshot_t postReleaseShadowLogSnapshot;
+ static uint32_t postReleaseShadowLogTransportTimestamp = 0;
+@@ -367,56 +372,76 @@
+       scfCorrectWeighted(&scfObserver,receipt,raw,vicon.velocityMps,.2f,.02f,4);
+   }
+ #endif
++  // Single estimator-task writer: keep staging off its constrained stack.
++  static postReleaseShadowLogSnapshot_t next;
++#ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
++  const scfSample_t*sc=&scfObserver.history[scfObserver.head];
++  memcpy(next.scfPosition,sc->x,sizeof(sc->x));
++  memcpy(next.scfVelocity,sc->v,sizeof(sc->v));
++  next.scfTimestamp=sc->t;
++  next.scfViconTimestamp=scfObserver.lastVicon;
++  next.scfValid=scfObserver.valid;
++#endif
++  next.active = postReleaseShadowActive;
++  next.imuFailure = postReleaseImuFailure;
++  next.armPending = postReleaseShadowArmPending ? 1 : 0;
++  next.valid = postReleaseShadowValid;
++  next.reason = postReleaseShadowReason;
++  next.timestampUs = postReleaseShadow.lastTimestampUs;
++  next.fusedViconUs = postReleaseShadow.viconFusionTimestampUs;
++  next.seedTimestampUs = postReleaseShadow.releaseTimestampUs;
++  memcpy(next.positionM,
++    postReleaseShadow.positionM, sizeof(next.positionM));
++  memcpy(next.velocityMps,
++    postReleaseShadow.velocityMps, sizeof(next.velocityMps));
++  memcpy(next.quaternionWxyz,
++    postReleaseShadow.quaternionWxyz, sizeof(next.quaternionWxyz));
++  memcpy(next.worldAccelerationMps2,
++    postReleaseShadow.worldAccelerationMps2,
++    sizeof(next.worldAccelerationMps2));
++  next.propagationCount = postReleaseShadow.propagationCount;
++  next.covarianceCount = postReleaseShadow.covarianceCount;
++  next.covarianceForcedCount = postReleaseShadow.covarianceForcedCount;
++  next.covarianceTimestampUs = postReleaseShadow.covarianceTimestampUs;
++  next.covarianceMaxSpanUs = postReleaseShadow.covarianceMaxSpanUs;
++  next.covarianceMaxComputeUs = postReleaseShadow.covarianceMaxComputeUs;
++  next.propagationMaxComputeUs = postReleaseShadow.propagationMaxComputeUs;
++  next.positionUpdateCount = postReleaseShadow.positionUpdateCount;
++  next.rejectedPositionCount = postReleaseShadow.rejectedPositionCount;
++  next.maxObservedImuGapUs = postReleaseShadow.maxObservedImuGapUs;
++  next.gyroAgeUs = postReleaseShadowGyroAgeUs;
++  next.accelAgeUs = postReleaseShadowAccelAgeUs;
++  next.pairSkewUs = postReleaseShadowPairSkewUs;
++  next.pairCount = postReleaseShadowPairCount;
++  next.unmatchedImuCount = postReleaseShadowUnmatchedImuCount;
++  next.pairTimestampUs = postReleaseShadowPairTimestampUs;
++  next.bodyRatesDegPerS[0] =
++    postReleaseShadowPairedGyroDegPerS.x;
++  next.bodyRatesDegPerS[1] =
++    postReleaseShadowPairedGyroDegPerS.y;
++  next.bodyRatesDegPerS[2] =
++    postReleaseShadowPairedGyroDegPerS.z;
++  next.publishedAtUs = (uint32_t)usecTimestamp();
++  const bool attitudeUsable = postReleaseShadowEnable && next.active &&
++    next.valid && next.pairCount >= 2u && next.positionUpdateCount >= 2u &&
++    (uint32_t)(next.timestampUs - next.seedTimestampUs) >= 40000u &&
++    postReleaseAttitudeSnapshotIsUsable(next.quaternionWxyz,
++      next.bodyRatesDegPerS, next.publishedAtUs, next.timestampUs,
++      next.pairTimestampUs);
++  // A seqlock alone is insufficient: the higher-priority stabilizer can
++  // preempt an odd-generation writer and exhaust every retry before the
++  // writer can resume. Prepare outside the critical section, then commit
++  // only the bounded copies while task readers cannot preempt the writer.
++  taskENTER_CRITICAL();
+   __atomic_add_fetch(&postReleaseShadowLogGeneration, 1, __ATOMIC_SEQ_CST);
+-#ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
+-  const scfSample_t*sc=&scfObserver.history[scfObserver.head];
+-  memcpy(postReleaseShadowLogSource.scfPosition,sc->x,sizeof(sc->x));
+-  memcpy(postReleaseShadowLogSource.scfVelocity,sc->v,sizeof(sc->v));
+-  postReleaseShadowLogSource.scfTimestamp=sc->t;
+-  postReleaseShadowLogSource.scfViconTimestamp=scfObserver.lastVicon;
+-  postReleaseShadowLogSource.scfValid=scfObserver.valid;
+-#endif
+-  postReleaseShadowLogSource.active = postReleaseShadowActive;
+-  postReleaseShadowLogSource.imuFailure = postReleaseImuFailure;
+-  postReleaseShadowLogSource.armPending = postReleaseShadowArmPending ? 1 : 0;
+-  postReleaseShadowLogSource.valid = postReleaseShadowValid;
+-  postReleaseShadowLogSource.reason = postReleaseShadowReason;
+-  postReleaseShadowLogSource.timestampUs = postReleaseShadow.lastTimestampUs;
+-  postReleaseShadowLogSource.fusedViconUs = postReleaseShadow.viconFusionTimestampUs;
+-  postReleaseShadowLogSource.seedTimestampUs = postReleaseShadow.releaseTimestampUs;
+-  memcpy(postReleaseShadowLogSource.positionM,
+-    postReleaseShadow.positionM, sizeof(postReleaseShadowLogSource.positionM));
+-  memcpy(postReleaseShadowLogSource.velocityMps,
+-    postReleaseShadow.velocityMps, sizeof(postReleaseShadowLogSource.velocityMps));
+-  memcpy(postReleaseShadowLogSource.quaternionWxyz,
+-    postReleaseShadow.quaternionWxyz, sizeof(postReleaseShadowLogSource.quaternionWxyz));
+-  memcpy(postReleaseShadowLogSource.worldAccelerationMps2,
+-    postReleaseShadow.worldAccelerationMps2,
+-    sizeof(postReleaseShadowLogSource.worldAccelerationMps2));
+-  postReleaseShadowLogSource.propagationCount = postReleaseShadow.propagationCount;
+-  postReleaseShadowLogSource.covarianceCount = postReleaseShadow.covarianceCount;
+-  postReleaseShadowLogSource.covarianceForcedCount = postReleaseShadow.covarianceForcedCount;
+-  postReleaseShadowLogSource.covarianceTimestampUs = postReleaseShadow.covarianceTimestampUs;
+-  postReleaseShadowLogSource.covarianceMaxSpanUs = postReleaseShadow.covarianceMaxSpanUs;
+-  postReleaseShadowLogSource.covarianceMaxComputeUs = postReleaseShadow.covarianceMaxComputeUs;
+-  postReleaseShadowLogSource.propagationMaxComputeUs = postReleaseShadow.propagationMaxComputeUs;
+-  postReleaseShadowLogSource.positionUpdateCount = postReleaseShadow.positionUpdateCount;
+-  postReleaseShadowLogSource.rejectedPositionCount = postReleaseShadow.rejectedPositionCount;
+-  postReleaseShadowLogSource.maxObservedImuGapUs = postReleaseShadow.maxObservedImuGapUs;
+-  postReleaseShadowLogSource.gyroAgeUs = postReleaseShadowGyroAgeUs;
+-  postReleaseShadowLogSource.accelAgeUs = postReleaseShadowAccelAgeUs;
+-  postReleaseShadowLogSource.pairSkewUs = postReleaseShadowPairSkewUs;
+-  postReleaseShadowLogSource.pairCount = postReleaseShadowPairCount;
+-  postReleaseShadowLogSource.unmatchedImuCount = postReleaseShadowUnmatchedImuCount;
+-  postReleaseShadowLogSource.pairTimestampUs = postReleaseShadowPairTimestampUs;
+-  postReleaseShadowLogSource.bodyRatesDegPerS[0] =
+-    postReleaseShadowPairedGyroDegPerS.x;
+-  postReleaseShadowLogSource.bodyRatesDegPerS[1] =
+-    postReleaseShadowPairedGyroDegPerS.y;
+-  postReleaseShadowLogSource.bodyRatesDegPerS[2] =
+-    postReleaseShadowPairedGyroDegPerS.z;
+-  postReleaseShadowLogSource.publishedAtUs = (uint32_t)usecTimestamp();
++  if (!postReleaseShadowEnable || !next.active ||
++      next.seedTimestampUs != postReleaseLastGoodAttitude.seedTimestampUs) {
++    postReleaseLastGoodAttitude.valid = 0u;
++  }
++  if (attitudeUsable) postReleaseLastGoodAttitude = next;
++  postReleaseShadowLogSource = next;
+   __atomic_add_fetch(&postReleaseShadowLogGeneration, 1, __ATOMIC_SEQ_CST);
++  taskEXIT_CRITICAL();
+ }
+ 
+ static void postReleaseShadowCaptureLog(const uint32_t timestamp) {
+@@ -1331,6 +1356,7 @@
+     };
+   }
+   postReleaseHardwareAttitudeReady = 0u;
++  postReleaseAttitudeHeld = 0u;
+   if (quaternionWxyz == NULL || !postReleaseShadowEnable ||
+       !postReleaseShadowActive) {
+     postReleaseHardwareAttitudeReadyReason = 1u;
+@@ -1338,23 +1364,20 @@
+     return false;
+   }
+   postReleaseShadowLogSnapshot_t snapshot;
+-  bool coherent = false;
+-  uint32_t snapshotGeneration = 0u;
+-  for (int attempt = 0; attempt < 3; attempt++) {
+-    const uint32_t before = __atomic_load_n(
+-      &postReleaseShadowLogGeneration, __ATOMIC_SEQ_CST);
+-    if (before & 1u) {
+-      continue;
+-    }
+-    snapshot = postReleaseShadowLogSource;
+-    const uint32_t after = __atomic_load_n(
+-      &postReleaseShadowLogGeneration, __ATOMIC_SEQ_CST);
+-    if (before == after && !(after & 1u)) {
+-      coherent = true;
+-      snapshotGeneration = after;
+-      break;
+-    }
+-  }
++  bool held = false;
++  // Pair the current epoch and last-good sample atomically. Both are task
++  // data, never ISR data, and no blocking or numerical work occurs here.
++  taskENTER_CRITICAL();
++  snapshot = postReleaseShadowLogSource;
++  const uint32_t snapshotGeneration = postReleaseShadowLogGeneration;
++  const bool coherent = !(snapshotGeneration & 1u);
++  if (coherent && !snapshot.valid && snapshot.active &&
++      postReleaseLastGoodAttitude.valid &&
++      snapshot.seedTimestampUs == postReleaseLastGoodAttitude.seedTimestampUs) {
++    snapshot = postReleaseLastGoodAttitude;
++    held = true;
++  }
++  taskEXIT_CRITICAL();
+   // Sample after the coherent copy, never before a concurrent publication.
+   const uint32_t readUs = (uint32_t)usecTimestamp();
+   if (diagnostic) {
+@@ -1404,6 +1427,11 @@
+   if (observationUs != NULL) {
+     *observationUs = readUs -
+       (stateAgeUs > pairAgeUs ? stateAgeUs : pairAgeUs);
++  }
++  postReleaseAttitudeHeld = held ? 1u : 0u;
++  if (held) {
++    postReleaseAttitudeHoldCount++;
++    if (diagnostic) diagnostic->flags |= 32u;
+   }
+   postReleaseHardwareAttitudeReadyReason = 0u;
+   postReleaseHardwareAttitudeReady = 1u;
+@@ -1946,6 +1974,8 @@
+ LOG_GROUP_START(pRelVicon)
+   LOG_ADD(LOG_UINT8, attReady, &postReleaseHardwareAttitudeReady)
+   LOG_ADD(LOG_UINT8, attErr, &postReleaseHardwareAttitudeReadyReason)
++  LOG_ADD(LOG_UINT8, attHeld, &postReleaseAttitudeHeld)
++  LOG_ADD(LOG_UINT32, attHoldN, &postReleaseAttitudeHoldCount)
+   LOG_ADD(LOG_UINT8, attSrc, &postReleaseHardwareAttitudeSource)
+   LOG_ADD(LOG_UINT8, valid, &postReleaseHardwareVicon.valid)
+   LOG_ADD(LOG_FLOAT, vx, &postReleaseHardwareVicon.velocityMps[0])

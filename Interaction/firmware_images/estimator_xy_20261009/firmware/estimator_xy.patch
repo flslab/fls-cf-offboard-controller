@@ -1,0 +1,83 @@
+--- a/src/modules/src/estimator/estimator_kalman.c
++++ b/src/modules/src/estimator/estimator_kalman.c
+@@ -70,6 +70,9 @@
+ #include "static_mem.h"
+ 
+ #include "estimator.h"
++#ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
++#include "kalman_core/estimator_xy_calibration.h"
++#endif
+ #include "estimator_kalman.h"
+ #ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
+ #include "post_release_attitude_snapshot.h"
+@@ -196,6 +199,8 @@
+ #ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
+ static postReleaseViconVelocityKf_t postReleaseHardwareVicon;
+ #include "post_release_scurve_feedback.h"
++static estimatorXYCalibration_t estimatorXY = {.staged={1,1,0,0}};
++static uint8_t estimatorXYApi = 1;
+ static scfObserver_t scfObserver;
+ static float scfRawPosition[2];
+ static uint8_t scfEnabled=0;
+@@ -622,6 +627,20 @@
+ }
+ 
+ static void postReleaseShadowPrepareIteration(void) {
++#ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
++  taskENTER_CRITICAL();
++  const bool xyLoaded = estimatorXYProcess(&estimatorXY, supervisorIsArmed(),
++    stateEstimatorGetType() == StateEstimatorTypeKalman, postReleaseHardwareBrakeAccepted);
++  taskEXIT_CRITICAL();
++  if (xyLoaded) {
++    // Discard uncorrected ESKF history before any authority switch. The
++    // ordinary KF stays running and seeds a new, corrected propagation epoch.
++    postReleaseShadowEnablePrevious = false;
++    postReleaseShadowActive = 0;
++    postReleaseShadowArmPending = true;
++  }
++#endif
++
+ #ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_SIM_BRIDGE
+   // The 15-state core uses static matrix scratch. The captured-time bridge
+   // owns that core in a simulation build; never run the legacy shadow beside
+@@ -714,13 +733,16 @@
+       gyroDegPerS->z * DEG_TO_RAD,
+     }
+   };
+-  const Axis3f specificForceMps2 = {
++  Axis3f specificForceMps2 = {
+     .axis = {
+       accelG->x * GRAVITY_MAGNITUDE,
+       accelG->y * GRAVITY_MAGNITUDE,
+       accelG->z * GRAVITY_MAGNITUDE,
+     }
+   };
++#ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
++  estimatorXYCorrect(&estimatorXY, specificForceMps2.axis);
++#endif
+   postReleaseInertialEkfPropagate(
+     &postReleaseShadow, &postReleaseShadowParams,
+     &gyroRadPerS, &specificForceMps2, timestampUs);
+@@ -2045,6 +2067,22 @@
+ 
+ #ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_SHADOW
+ /** Experimental shadow-only post-release inertial ESKF parameters. */
++#ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
++/* Staged XY calibration; req commits once, ACK identifies the frozen set.
++ * Automatically cleared on disarm; no flash persistence or in-contact fit. */
++PARAM_GROUP_START(eskfXY)
++  PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, api, &estimatorXYApi)
++  PARAM_ADD(PARAM_FLOAT, sx, &estimatorXY.staged.sx)
++  PARAM_ADD(PARAM_FLOAT, sy, &estimatorXY.staged.sy)
++  PARAM_ADD(PARAM_FLOAT, bx, &estimatorXY.staged.bx)
++  PARAM_ADD(PARAM_FLOAT, by, &estimatorXY.staged.by)
++  PARAM_ADD(PARAM_UINT32, req, &estimatorXY.request)
++  PARAM_ADD(PARAM_UINT32 | PARAM_RONLY, ack, &estimatorXY.applied)
++  PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, on, &estimatorXY.enabled)
++  PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, status, &estimatorXY.status)
++PARAM_GROUP_STOP(eskfXY)
++#endif
++
+ PARAM_GROUP_START(kalmanPRel)
+ #ifdef CONFIG_ESTIMATOR_KALMAN_POST_RELEASE_HARDWARE_BRAKE
+   PARAM_ADD(PARAM_UINT8, scEnable, &scfEnabled)

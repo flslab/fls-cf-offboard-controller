@@ -40,7 +40,7 @@ class CalibrationCaptureTests(unittest.TestCase):
         self.assertFalse(is_plain_xyz_calibration(SimpleNamespace(interaction=True)))
         for mode in ('interaction', 'braking_test', 'targeted_braking_calibration',
                      'adaptive_braking_calibration', 'planar_braking_calibration',
-                     'mpc', 'ground_test', 'droneless'):
+                     'mpc', 'ground_test', 'droneless', 'imu_validation_session'):
             with self.subTest(mode=mode):
                 self.assertFalse(is_plain_xyz_calibration(
                     SimpleNamespace(calibrate=True, **{mode: True})))

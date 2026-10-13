@@ -85,6 +85,24 @@ class CommanderHandoffTests(unittest.TestCase):
         self.assertEqual(cf.events[1][1][:3], struct.pack("<BBf", 8, 0, .1)[:3])
         self.assertEqual(result["command"], "land")
 
+    def test_takeoff_ack_precedes_priority_release(self):
+        cf, low, high = self.pair()
+        result = handoff_to_high_level(low, high, "takeoff", .764, 1.528, yaw=None)
+        self.assertEqual(cf.events[1][1][:3], struct.pack("<BBf", 7, 0, .764)[:3])
+        self.assertEqual([event[0] for event in cf.events],
+                         ["register", "high_send", "ack", "remove", "notify"])
+        self.assertTrue(result["priority_released"])
+
+    def test_takeoff_rejection_and_timeout_keep_low_level_ownership(self):
+        for rejected in (False, True):
+            with self.subTest(rejected=rejected):
+                cf, low, high = self.pair()
+                cf.on_send = (lambda packet: cf.emit(bytes(packet.data[:3])+bytes((16,)))) if rejected else (lambda packet: None)
+                with self.assertRaises(HandoffError):
+                    handoff_to_high_level(low, high, "takeoff", .764, 1.528, ack_timeout_s=.001)
+                self.assertNotIn(("notify",), cf.events)
+                self.assertEqual(cf.callbacks, [])
+
     def test_stop_is_never_a_handoff_plan(self):
         cf, low, high = self.pair()
         with self.assertRaisesRegex(HandoffError, "never stop"):

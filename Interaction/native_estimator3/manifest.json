@@ -1,0 +1,31 @@
+{
+  "source": "Frozen classic-260925-0959 firmware snapshot; exact currently flashed build not independently verified",
+  "files": {
+    "post_release_inertial_ekf.c": {
+      "original_path": "src/modules/src/kalman_core/post_release_inertial_ekf.c",
+      "sha256": "f904ef888503b78b360be5adc5e15e74d1dcf96264704785af627ff027ea512e"
+    },
+    "post_release_inertial_ekf.h": {
+      "original_path": "src/modules/interface/kalman_core/post_release_inertial_ekf.h",
+      "sha256": "3f11e15bfe65e5a739e6bd96c10e5ff89d29a62e814eaba1dde78b3cc6b3eee0"
+    },
+    "post_release_vicon_velocity_kf.c": {
+      "original_path": "src/modules/src/kalman_core/post_release_vicon_velocity_kf.c",
+      "sha256": "2b6e6e176353e3dc69795ee9ad9822d6bc8d31d3777bff900c34155de3d63279"
+    },
+    "post_release_vicon_velocity_kf.h": {
+      "original_path": "src/modules/interface/kalman_core/post_release_vicon_velocity_kf.h",
+      "sha256": "00c7d4cb2ff80e85f3b8bdc160c320bb0482e5560dfd379e3c5393f40ad85d27"
+    },
+    "imu_types.h": {
+      "original_path": "src/hal/interface/imu_types.h",
+      "sha256": "c2aef811602a33a6df7e9b704155ca830df76a0faf7dc319006a2991c1c0f952"
+    },
+    "physicalConstants.h": {
+      "original_path": "src/utils/interface/physicalConstants.h",
+      "sha256": "7f569271a97928a0126bdd09226e918bcc244787c25c4918dba3c0960bd9b1e2"
+    }
+  },
+  "log_rate_max_gap_us": 20000,
+  "bit_exact_firmware_reproduction": false
+}

@@ -1,0 +1,35 @@
+{
+  "tag": "bolt-eskfxy-attfix-26101201",
+  "supersedes": "estimator_xy_20261009_v2",
+  "binary_file": "bolt-eskfxy-attfix-26101201.bin",
+  "binary_sha256": "dee2bab5c8985929a2d1aee35810b6da9039076ad5d0bbc920c121410992ca1c",
+  "elf_sha256": "a1ceb68cac85d1f4c7d04704a473f0511e61a00ab94bfa864317f10ea55a2d6a",
+  "elf_gzip_sha256": "bf664bcb316bd20713b5a8ab4589fb91007726727045857cf7ea074b6ed6fd66",
+  "hardware_config_sha256": "39f78d3dc33d1b036af289ec6be2c9fea985636a8d8e5e64e0c098a54e778bb7",
+  "hardware_build_passed": true,
+  "sitl_build_passed": true,
+  "production_function_fault_injection_passed": true,
+  "baseline_preemption_failure_reproduced": true,
+  "mission_parameter_contract_passed": true,
+  "maximum_attitude_age_us": 20000,
+  "flashed": true,
+  "real_flight_validated": false,
+  "hardware_sources": {
+    "src/modules/src/estimator/estimator_kalman.c": "01626908d62489eb80f1bf46ad6d26efcd0e2553f46f702e69a8a60f33356b9d",
+    "src/modules/src/crtp_commander_high_level.c": "c32640ea02f552e35804ac532655d2f918ba82b8ddd751a0d4c8ffc65da2df4d",
+    "src/modules/interface/estimator/post_release_attitude_snapshot.h": "24416616af6d0ef1653d3113187a5e3ba0c4c58cdd770d10718eae06743eb324",
+    "src/modules/interface/estimator/post_release_fault_snapshot.h": "0e437d8cc2d4a0f6599b2de011df2f219aecd283b8e72d84bbd4337dbc226f52",
+    "snapshot_version.json": "ac8b8309261fd2361f34240e8110d058e0152ea2a144fb4b249efc2581882b31"
+  },
+  "firmware_sources": {
+    "src/modules/src/estimator/estimator_kalman.c": "01626908d62489eb80f1bf46ad6d26efcd0e2553f46f702e69a8a60f33356b9d",
+    "src/modules/src/crtp_commander_high_level.c": "c32640ea02f552e35804ac532655d2f918ba82b8ddd751a0d4c8ffc65da2df4d",
+    "src/modules/interface/estimator/post_release_attitude_snapshot.h": "24416616af6d0ef1653d3113187a5e3ba0c4c58cdd770d10718eae06743eb324",
+    "src/modules/interface/estimator/post_release_fault_snapshot.h": "0e437d8cc2d4a0f6599b2de011df2f219aecd283b8e72d84bbd4337dbc226f52",
+    "snapshot_version.json": "ac8b8309261fd2361f34240e8110d058e0152ea2a144fb4b249efc2581882b31"
+  },
+  "offboard_tests_passed": 88,
+  "flash_readback_verified": true,
+  "flash_target": "lb11 via 192.168.1.90",
+  "flash_readback_report": "flash-readback.json"
+}

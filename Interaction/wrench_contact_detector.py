@@ -116,6 +116,14 @@ class ContactChannelDetector:
         self._projection_rearm_blocked = False
         self._release_candidate_active = False
 
+    def invalidate_sample(self, timestamp: float) -> None:
+        """Discard timing evidence across a gap without releasing contact."""
+        self.evidence = 0.0
+        self._significant_since = None
+        self._release_elapsed = 0.0
+        self._release_candidate_active = False
+        self._last_timestamp = float(timestamp)
+
     def _lock_release_direction(
             self,
             value: np.ndarray,
