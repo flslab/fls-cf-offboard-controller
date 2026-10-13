@@ -1,0 +1,7 @@
+PASS: unpatched production publisher reproduces read reason 2 during forced preemption.
+PASS: patched hardware and SITL production publisher/getter fault-injection harnesses, including AddressSanitizer and UndefinedBehaviorSanitizer.
+PASS: hardware and SITL compilation.
+PASS: active mission compiled parameter contract.
+PASS: 88 selected offboard regression tests.
+PASS: flash via Pi 192.168.1.90, tag and identity, 47 parameters, diagnostic TOC, self-test and disarmed/zero motor readback.
+Not performed: hardware timing measurement, new flight validation.

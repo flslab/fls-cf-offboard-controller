@@ -1,0 +1,30 @@
+SYS: ----------------------------
+SYS: Crazyflie Bolt 1.1 is up and running!
+SYS: Build 0:0f2632ccb897 (bolt-eskfxy-attfix-26101201) MODIFIED
+SYS: I am 0x37383134303347100034002C and I have 1024KB of flash!
+CFGBLK: v1, verification [OK]
+DECK_DISCOVERY: Backend found: onewire
+DECK_DISCOVERY: Backend found: deckctrl
+DECK_CORE: 0 deck(s) found
+IMU: BMI088: Using SPI interface.
+IMU: BMI088 Gyro connection [OK].
+IMU: BMI088 Accel connection [OK]
+IMU: BMP388 I2C connection [OK]
+ESTIMATOR: Estimator type forced
+ESTIMATOR: Using Kalman (2) estimator
+CONTROLLER: Using PID (1) controller
+MTR-DRV: Using brushless motor driver: ONESHOT125
+SYS: About to run tests in system.c.
+SYS: NRF51 version: 2025.02 (CB11)
+EEPROM: I2C connection [OK].
+STORAGE: Storage check [OK].
+IMU: BMI088 gyro self-test [OK]
+SYS: Self test passed!
+STAB: Wait for sensor calibration...
+SYS: Free heap: 17256 bytes
+STAB: Starting stabilizer loop
+ESTKALMAN: State out of bounds, resetting
+Traceback (most recent call last):
+  File "/home/fls/verify_attitude_feedback_flash.py", line 27, in <module>
+    assert not (required_logs - available_logs), sorted(required_logs - available_logs)
+AssertionError: ['kalmanPRel.attHeld', 'kalmanPRel.attHoldN']
