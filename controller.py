@@ -1230,7 +1230,22 @@ class Controller:
                     data = response.read().decode('utf-8')
                     _mission = yaml.safe_load(data)
                     if self.args.drone_id in _mission['drones']:
+                        if (
+                            (getattr(self.args, 'interaction', False)
+                             or getattr(self.args, 'sense', False))
+                            and not getattr(self.args, 'intractable_illumination', False)
+                            and not _mission.get('Recap')
+                            and 'Interaction' not in _mission
+                        ):
+                            raise ValueError(
+                                f'{filename}: --interaction requires an Interaction block; '
+                                'for the no-detection hover mission set '
+                                'Interaction.config.behavior: prev. '
+                                'Check the YAML served by the orchestrator.'
+                            )
                         self.missions.append(resolve_mission_profiles(_mission))
+                        behavior = _mission.get('Interaction', {}).get('config', {}).get('behavior', 'standard')
+                        logger.info('Loaded mission %s: interaction behavior=%s', filename, behavior)
                 logger.info(f"  > Download successful: {filename}")
 
             except urllib.error.URLError as e:
