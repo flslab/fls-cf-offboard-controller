@@ -2921,7 +2921,10 @@ class Controller:
                 self._safe_sleep(30)
                 return
 
-            if self.args.intractable_illumination:
+            if self.mission.get('Interaction', {}).get('config', {}).get('behavior') == 'prev':
+                logger.info('Prev behavior: running SFL position hold without interaction detection.')
+                self.run_multiple_orchestrated_missions()
+            elif self.args.intractable_illumination:
                 self.orchestrated_mission_interaction()
             elif self.mission.get("Recap", None):
                 recap_cfg = self.mission["Recap"]
@@ -3024,7 +3027,7 @@ class Controller:
         except Exception as e:
             logging.error(f"Interaction Error: {e}\n")
             if (getattr(self, 'firmware_auto_brake_enabled', False) or
-                    (self.mission or {}).get('Interaction', {}).get('config', {}).get('behavior') == 'level_coast' or
+                    (self.mission or {}).get('Interaction', {}).get('config', {}).get('behavior') in ('level_coast', 'prev') or
                     getattr(self.args, 'contact_attitude_run', None) is not None):
                 raise
         finally:
