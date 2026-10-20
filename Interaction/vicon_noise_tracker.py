@@ -43,7 +43,6 @@ logging.basicConfig(
 logger = logging.getLogger("vicon_noise")
 
 VICON_PC_IP   = "192.168.1.39"
-VICON_ADDRESS = f"{VICON_PC_IP}:801"
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -69,7 +68,7 @@ def per_axis_std(data: np.ndarray):
 
 # ── callable entry-point for orchestrator ────────────────────────────────────
 
-def run_tracker(subject: str, out_path: str, stop_event=None):
+def run_tracker(subject: str, out_path: str, stop_event=None, host: str = VICON_PC_IP):
     """
     Connect to Vicon, stream frames for `subject` until `stop_event` is set
     (or KeyboardInterrupt), then compute and save noise stats to `out_path`.
@@ -80,12 +79,14 @@ def run_tracker(subject: str, out_path: str, stop_event=None):
     out_path   : full path for the output JSON file
     stop_event : threading.Event — when set the loop exits gracefully.
                  Pass None to run until KeyboardInterrupt only.
+    host       : Vicon server IP or hostname.
     """
     _log = logging.getLogger("vicon_noise")
     client = PyViconDatastream()
 
-    _log.info(f"[NoiseTracker] Connecting to {VICON_ADDRESS} …")
-    client.connect(VICON_ADDRESS)
+    address = f"{host}:801"
+    _log.info(f"[NoiseTracker] Connecting to {address} …")
+    client.connect(address)
     if not client.is_connected():
         _log.error("[NoiseTracker] Failed to connect — tracker will not run.")
         return
@@ -233,6 +234,8 @@ def main():
                     help="Recording duration in seconds (default: 30)")
     ap.add_argument("--out", "-o", default="",
                     help="Output JSON file path")
+    ap.add_argument("--mocap-ip", default=VICON_PC_IP,
+                    help="Vicon server IP or hostname")
     args = ap.parse_args()
 
     stop = threading.Event()
@@ -243,7 +246,7 @@ def main():
 
     threading.Thread(target=_stopper, daemon=True).start()
     out = args.out or f"vicon_noise_{args.subject}_{int(time.time())}.json"
-    run_tracker(args.subject, out, stop_event=stop)
+    run_tracker(args.subject, out, stop_event=stop, host=args.mocap_ip)
 
 
 if __name__ == "__main__":

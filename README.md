@@ -1,3 +1,37 @@
+## Move a Raspberry Pi to a Wi-Fi network with the same SSID
+
+On a Pi using NetworkManager, `prepare_wifi_move.sh` replaces the saved
+WPA-Personal password for the **currently connected** Wi-Fi SSID. It stages and
+checks the new profile first, then removes all older profiles for that SSID and
+disconnects Wi-Fi about five seconds later. The SSH session will close. The new
+profile uses DHCP, keeps the current IPv6 mode, and is set to connect
+automatically on the next boot.
+
+While the Pi is still reachable in the old lab, run these commands from this
+repository on your computer, one Pi at a time (replace the hostname):
+
+```bash
+scp prepare_wifi_move.sh fls@lightbendercf01:/home/fls/prepare_wifi_move.sh
+ssh -tt fls@lightbendercf01 'sudo bash /home/fls/prepare_wifi_move.sh'
+```
+
+Enter the Pi's sudo password if prompted, then type the **new** Wi-Fi password
+twice. It is read from the terminal and is not included in the SSH command.
+Wait for the confirmation that the new profile was saved and for SSH to close.
+Then power off the Pi and move it. At the new lab, power it on and confirm it
+appears on the new network. To use a different wireless interface, pass its
+name after the script path (for example, `wlan1`). Keep local console or Ethernet
+access available for the first boot: the new password cannot be tested against
+the old lab's access point.
+
+This script expects a WPA2-Personal or WPA2/WPA3 transition network that accepts
+`wpa-psk`. For WPA3-only or enterprise Wi-Fi, configure the corresponding
+NetworkManager security settings before removing the old connection. If the Pi
+uses a static address, reconfigure that separately; the staged profile uses DHCP.
+
+After the move, verify SSH and update the orchestrator's `controller`, drone,
+camera/radio, and Vicon addresses in its manifest and code where necessary.
+
 Flashing firmwares:
 Download the firmwares from here
 https://github.com/bitcraze/crazyflie-release/releases
