@@ -18,6 +18,7 @@ Interaction:
       command_mode: orientation
       coast_command_mode: scurve
       estimator_switch_at: detect
+      coasting_enabled: true  # false: hold current XY at detector release; keep mission height.
       estimator_hover_xy: true
       estimator_hover_xy_mode: auto
       grace_start: release

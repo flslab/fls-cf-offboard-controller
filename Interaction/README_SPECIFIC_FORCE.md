@@ -46,6 +46,36 @@ and the existing momentum computation remains diagnostic. With model detection,
 selecting `specific_force` for another behavior or without onboard state fails
 during log configuration.
 
+## Hold position directly after interaction
+
+Set this beside the estimator-switch option in `Interaction.config.level_coast`:
+
+```yaml
+estimator_switch_at: detect
+coasting_enabled: false  # omitted/true preserves the configured coasting behavior
+```
+
+With coasting disabled, `model` and `potentiometer` capture the current onboard
+XY position on their **confirmed release** sample and send a fixed position
+setpoint immediately, retaining the mission height and existing yaw policy.
+`vel` does the same when onboard horizontal speed stays below
+`level_coast.velocity.release_speed_m_s` for `release_dwell_s`.
+For example, `0.08` and `0.05` mean below 0.08 m/s for 50 ms. The separate
+`stop_speed_m_s` coast threshold is not used in this mode.
+
+The contact command mode is unchanged. No coasting command or firmware S-curve
+release event is sent. The hold target stays fixed instead of following the
+moving vehicle or returning to the original takeoff target. Grace starts at this
+hold transition for either grace policy; the existing rearming rules then apply.
+
+For the S-curve estimator configuration, `estimator_switch_at: detect` still
+requests estimator 3 at contact and requests estimator 2 when entering hold.
+Position setpoints start immediately while that restoration is acknowledged.
+With `estimator_switch_at: release`, the run remains on estimator 2 because
+there is no S-curve to execute. Keep the existing S-curve profile, firmware setup,
+hover-calibration and diagnostic settings; the switch skips execution, without
+changing their preflight configuration.
+
 ## Measurements and calibration
 
 The mission automatically adds the `MODEL_IMU` block at 10 ms: `acc.x/y/z` and

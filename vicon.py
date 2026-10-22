@@ -10,7 +10,7 @@ from pyvicon_datastream import PyViconDatastream, StreamMode, Direction
 
 from log import LoggerFactory
 
-VICON_PC_IP = '192.168.1.39'
+VICON_PC_IP = '10.182.71.233'
 VICON_ADDRESS = f"{VICON_PC_IP}:801"
 
 
