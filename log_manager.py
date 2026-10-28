@@ -2,7 +2,8 @@ import copy
 import json
 import os
 import bisect
-from threading import Lock
+from threading import Lock, local
+from fc_clock import CrazyflieLogClockMapper
 
 from log_manager_abs import LogManager
 from cflib.crazyflie.log import LogConfig
@@ -17,6 +18,14 @@ class IlluminationLogger(LogManager):
         super().__init__(*args, **kwargs)
         self.cf_var_loggers = []
         self.cf_log_times = {}
+        self.cf_log_monotonic_times = {}
+        self.cf_log_timing = {}
+        self._cf_clock = CrazyflieLogClockMapper()
+        self._cf_clock_group = None
+        self._cf_clock_lock = Lock()
+        self._cf_clock_event_sequence = 0
+        self._cf_last_valid_source_time = {}
+        self._packet_context = local()
         self.cf_log_data = None
         self.cf_log_callbacks = {}
         self._cf_log_callbacks_lock = Lock()
@@ -62,16 +71,27 @@ class IlluminationLogger(LogManager):
             "args": args,
             "git_ver": subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
         }
+        output_data['fc_clock'] = {
+            **self._cf_clock.configuration(), 'reference_group': self._cf_clock_group,
+            'time_monotonic_s_basis': 'host callback receipt CLOCK_MONOTONIC',
+            'source_time_monotonic_s_basis': 'FC device tick mapped onto host CLOCK_MONOTONIC; null when invalid',
+            'other_groups': 'projected onto the reference group clock, not independently fitted',
+        }
 
         for group, entries in self.groups.items():
             output_data[group] = entries
 
         if len(self.cf_var_loggers) > 0:
-            for group_name, group_vars in self.cf_log_data.items():
-                output_data[f"cf_{group_name}"] = {
-                    "time": self.cf_log_times[group_name],
-                    "params": group_vars
-                }
+            # One snapshot keeps measurement and timing arrays parallel even
+            # if a final in-flight callback races with logger shutdown.
+            with self._cf_clock_lock:
+                for group_name, group_vars in self.cf_log_data.items():
+                    output_data[f"cf_{group_name}"] = {
+                        "time": list(self.cf_log_times[group_name]),
+                        "time_monotonic_s": list(self.cf_log_monotonic_times[group_name]),
+                        **{key:list(values) for key,values in self.cf_log_timing[group_name].items()},
+                        "params": copy.deepcopy(group_vars)
+                    }
 
         filename = os.path.join(log_dir, f"{tag}.json")
         with open(filename, 'w') as f:
@@ -80,6 +100,8 @@ class IlluminationLogger(LogManager):
 
     def init_cf_logger(self, cf, cf_log_vars, cf_log_period=100):
         self.cf_log_data = copy.deepcopy(cf_log_vars)
+        self._cf_clock_group = next((name for name in ('QUAT', 'QUATERNION')
+                                    if name in self.cf_log_data), next(iter(self.cf_log_data), None))
 
         for group_name, group_vars in self.cf_log_data.items():
             log_period = cf_log_period * 10
@@ -95,32 +117,70 @@ class IlluminationLogger(LogManager):
             cf_var_logger.data_received_cb.add_callback(self.cf_log_callback)
             self.cf_var_loggers.append(cf_var_logger)
             self.cf_log_times[group_name] = []
+            self.cf_log_monotonic_times[group_name] = []
+            self.cf_log_timing[group_name] = {key: [] for key in (
+                'cf_timestamp_ms', 'source_time_monotonic_s', 'clock_revision',
+                'clock_valid', 'clock_event_sequence')}
             cf_var_logger.start()
             time.sleep(0.1)
 
     def cf_log_callback(self, timestamp, data, log_conf):
         cur_time = time.time()
+        cur_monotonic_time = time.monotonic()
         group_name = log_conf.name
-        self.cf_log_times[group_name].append(cur_time)
-        for par in self.cf_log_data[group_name].keys():
-            self.cf_log_data[group_name][par]["data"].append(data[par])
+        with self._cf_clock_lock:
+            try:
+                raw_tick = self._cf_clock._validate_raw_timestamp(timestamp)
+                mapped = (self._cf_clock.map(raw_tick, cur_monotonic_time)
+                          if group_name == self._cf_clock_group
+                          else self._cf_clock.project(raw_tick, cur_monotonic_time))
+            except (ValueError, TypeError, OverflowError):
+                raw_tick, mapped = None, None
+            revision = self._cf_clock.history_revision
+            previous = self.cf_log_timing[group_name]
+            valid = mapped is not None
+            last = self._cf_last_valid_source_time.get(group_name)
+            if valid and last is not None and mapped <= last[1]:
+                valid = False
+                mapped = None
+            if valid:
+                self._cf_last_valid_source_time[group_name] = (revision, mapped)
+            timing = {'cf_timestamp_ms': raw_tick, 'source_time_monotonic_s': mapped,
+                      'clock_revision': revision, 'clock_valid': valid,
+                      'clock_event_sequence': self._cf_clock_event_sequence}
+            self._cf_clock_event_sequence += 1
+            for key, value in timing.items():
+                previous[key].append(value)
+            self.cf_log_times[group_name].append(cur_time)
+            self.cf_log_monotonic_times[group_name].append(cur_monotonic_time)
+            for par in self.cf_log_data[group_name].keys():
+                self.cf_log_data[group_name][par]["data"].append(data[par])
 
         with self._cf_log_callbacks_lock:
             callbacks = tuple(self.cf_log_callbacks.get(group_name, ()))
-        for callback in callbacks:
-            try:
-                callback(timestamp, data, log_conf)
-            except Exception:
-                logger.exception(
-                    "Crazyflie log callback failed for %s; ignored",
-                    group_name,
-                )
+        self._packet_context.current = (group_name, timestamp,
+                                        {**timing, 'time_monotonic_s': cur_monotonic_time})
+        try:
+            for callback in callbacks:
+                try:
+                    callback(timestamp, data, log_conf)
+                except Exception:
+                    logger.exception("Crazyflie log callback failed for %s; ignored", group_name)
+        finally:
+            self._packet_context.current = None
 
         # A subscribed group can be part of a real-time control path. Avoid
         # synchronous per-variable logging on that callback thread.
         if self.verbose and not callbacks:
             for par in self.cf_log_data[group_name].keys():
                 logger.info(f"{par} = {data[par]}")
+
+    def get_current_cf_packet_timing(self, group_name, timestamp):
+        """Timing for a synchronous subscriber, with no callback ABI change."""
+        current = getattr(self._packet_context, 'current', None)
+        if current is not None and current[:2] == (group_name, timestamp):
+            return dict(current[2])
+        return None
 
     def register_cf_log_callback(self, group_name, callback):
         """Subscribe to complete packets from one configured log group.
