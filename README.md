@@ -611,6 +611,15 @@ Potentiometer threshold crossings are a reference proxy; they are not exact
 physical contact times. The offline verifier reports coverage, misses and
 unmatched onsets, and never treats missing data as zero false positives.
 
+## Recording camera encoding
+
+The recorder explicitly writes MP4 using `libx264` at CRF 23 and 1920x1080,
+30 fps, matching the front recording camera. Explicit encoder selection keeps
+other Raspberry Pi models from falling back to the libav hardware encoder's
+low default bitrate. CRF controls quality, so file size can vary with the view.
+These options apply to mission video; pose-preflight JPEG capture keeps its
+separate MJPEG encoder.
+
 ## External RGB camera pose from PixyTile
 
 `camera_node.py` can localize the fixed recording camera before a mission by

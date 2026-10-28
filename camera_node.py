@@ -478,11 +478,19 @@ class CameraNode:
     def start_recording(self, request_id=None, acknowledge=True):
         if self.recording_process is None:
             # -t 0: Record indefinitely until signal.
-            # --inline: Improves compatibility for streaming/concatenation
+            # The default h264 encoder writes an elementary stream even when
+            # the filename ends in .mp4. Request the MP4 muxer explicitly.
+            # Match the front Pi 5: libx264 CRF 23 at 1080p30. Other Pis can
+            # default to h264_v4l2m2m with a much lower default bitrate.
             cmd = [
                 self.recording_binary,
                 "-t", "0",
                 "-o", OUTPUT_FILENAME,
+                "--codec", "libav",
+                "--libav-format", "mp4",
+                "--libav-video-codec", "libx264",
+                "--libav-video-codec-opts", "crf=23",
+                "--framerate", "30",
                 "--width", "1920",
                 "--height", "1080",
                 "--nopreview"
