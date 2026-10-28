@@ -56,6 +56,9 @@ def validate_level_coast(config, *, sensor_available):
     options['estimator_switch_at'] = options.get('estimator_switch_at', 'release')
     if options['estimator_switch_at'] not in ('detect', 'release'):
         raise ValueError('level_coast.estimator_switch_at must be detect or release')
+    options['coasting_enabled'] = options.get('coasting_enabled', True)
+    if type(options['coasting_enabled']) is not bool:
+        raise ValueError('level_coast.coasting_enabled must be boolean')
     if type(options.get('roll_diagnostics', False)) is not bool:
         raise ValueError('level_coast.roll_diagnostics must be boolean')
     if options.get('roll_diagnostics') and options['coast_command_mode'] != 'scurve':
@@ -192,7 +195,8 @@ class LevelCoastCycle:
     """Selectable grace timing; release-based rearming can interrupt coast."""
 
     def __init__(self, position, stop_speed_m_s, grace_s, grace_start='speed_threshold',
-                 detection_to_ori_delay_s=0., *, coast_command_mode='orientation'):
+                 detection_to_ori_delay_s=0., *, coast_command_mode='orientation',
+                 coasting_enabled=True):
         self.hold_position = np.asarray(position, dtype=float).copy()
         self.stop_speed = stop_speed_m_s
         self.grace_s = grace_s
@@ -203,6 +207,7 @@ class LevelCoastCycle:
         self.detected_at = None
         self.delay_pending = False
         self.coast_command_mode = coast_command_mode
+        self.coasting_enabled = coasting_enabled
         self.interaction_direction_xy = None
         self.interaction_direction_source = None
 
@@ -235,7 +240,8 @@ class LevelCoastCycle:
                                          else self.interaction_direction_xy.tolist()),
             'interaction_direction_source': self.interaction_direction_source,
             'interaction_velocity_m_s': projected,
-            'stop_speed_metric': 'firmware_curve_completion' if self.coast_command_mode == 'scurve' else metric,
+            'stop_speed_metric': ('detector_release' if not self.coasting_enabled else
+                                  'firmware_curve_completion' if self.coast_command_mode == 'scurve' else metric),
             'stop_speed_value_m_s': projected if metric == 'interaction_projection' else xy_speed,
         }
 
@@ -273,6 +279,16 @@ class LevelCoastCycle:
             self.delay_pending = self.detection_to_ori_delay_s > 0
             self._lock_interaction_direction(interaction_direction, interaction_direction_source, velocity)
         elif self.phase == 'contact' and released:
+            if not self.coasting_enabled:
+                # All detectors expose their confirmed end as released. For
+                # velocity detection this requires its low-speed dwell, not
+                # merely a force release or the coast stop-speed threshold.
+                self.hold_position[:2] = np.asarray(position)[:2]
+                self.delay_pending = False
+                self.grace_started = now
+                self.phase = ('ready' if self.grace_start == 'release'
+                              and self.grace_expired(now) else 'grace')
+                return previous != self.phase
             self.phase = 'coast'
             if self.grace_start == 'release':
                 self.grace_started = now
@@ -336,16 +352,18 @@ def run_level_coast(owner, config):
     )
     options = validate_level_coast(
         config, sensor_available=getattr(owner, 'force_sensor', None) is not None)
-    scurve_coast = options['coast_command_mode'] == 'scurve'
+    scurve_mode = options['coast_command_mode'] == 'scurve'
+    scurve_coast = scurve_mode and options['coasting_enabled']
     curve = selector = None
     hover_xy = getattr(owner.cf, '_estimator_hover_xy', None)
     if options.get('estimator_hover_xy', False) and hover_xy is None:
         raise RuntimeError('estimator hover XY was not prepared before takeoff')
-    if scurve_coast:
-        from Interaction.level_coast_scurve import FirmwareSCurveCoast
+    if scurve_mode:
         selector = getattr(owner.cf, '_level_coast_estimator_selector', None)
         if not getattr(selector, 'prepared', False):
             raise RuntimeError('S-curve estimator was not prepared before takeoff')
+    if scurve_coast:
+        from Interaction.level_coast_scurve import FirmwareSCurveCoast
         curve = FirmwareSCurveCoast(owner, selector)
         owner._firmware_brake_active = True
     yaw_guard = getattr(owner.cf, '_offboard_yaw_damping_guard', None)
@@ -377,7 +395,8 @@ def run_level_coast(owner, config):
     owner.check_interaction_boundary(nominal)
     cycle = LevelCoastCycle(nominal, options['stop_speed_m_s'], options['grace_s'],
                             options['grace_start'], options['detection_to_ori_delay_s'],
-                            coast_command_mode=options['coast_command_mode'])
+                            coast_command_mode=options['coast_command_mode'],
+                            coasting_enabled=options['coasting_enabled'])
     position_command = nominal.copy()
     command_mode = 'position_hold'
     velocity_detector = VelocityContactDetector(**options['velocity'])
@@ -396,8 +415,14 @@ def run_level_coast(owner, config):
         'wrench_interaction': deepcopy(pipeline.config),
         'wrench_detection_calibration': calibrated_config.get('wrench_detection_calibration'),
         'velocity_source': 'crazyflie_state_estimate',
-        'handoff_velocity_source': 'firmware_curve_endpoint' if scurve_coast else 'vicon_position_kf',
-        'handoff_condition': 'curve_complete' if scurve_coast else 'velocity_threshold',
+        'handoff_velocity_source': (
+            'crazyflie_state_estimate' if not options['coasting_enabled'] and options['detection_method'] == 'vel'
+            else None if not options['coasting_enabled']
+            else 'firmware_curve_endpoint' if scurve_coast else 'vicon_position_kf'),
+        'handoff_condition': (
+            'velocity_release_threshold' if not options['coasting_enabled'] and options['detection_method'] == 'vel'
+            else 'confirmed_release' if not options['coasting_enabled']
+            else 'curve_complete' if scurve_coast else 'velocity_threshold'),
         'vicon_velocity_age_limit_s': None,
         'position_motion_velocity_source': 'vicon_position_kf',
         'position_pid_velocity_source': 'crazyflie_state_estimate',
@@ -554,9 +579,12 @@ def run_level_coast(owner, config):
             # compensation. Use checked Vicon KF for motion policy and handoff.
             stop_velocity = None
             stop_reference = {'stop_velocity_source': 'crazyflie_state_estimate'}
-            if (not scurve_coast and cycle.phase in ('contact', 'coast')) or (
-                    scurve_coast and cycle.phase == 'contact' and options['command_mode'] == 'position') or (
-                    started and options['command_mode'] == 'position'):
+            position_motion = options['command_mode'] == 'position' and (
+                started or (cycle.phase == 'contact'
+                            and (options['coasting_enabled'] or not released)))
+            legacy_coast_motion = (options['coasting_enabled'] and not scurve_mode
+                                   and cycle.phase in ('contact', 'coast'))
+            if position_motion or legacy_coast_motion:
                 stop_velocity, vicon_time, vicon_skew = (
                     owner._vicon_velocity_reference_for_onboard_state(
                         state, max_time_skew_s=None))
@@ -579,9 +607,9 @@ def run_level_coast(owner, config):
             if options.get('ram_trace') is not None:
                 from Interaction.estimator_ram_trace import interaction_step
                 interaction_step(owner, cycle.phase, released)
-            if curve is not None:
+            if selector is not None:
                 if changed and cycle.phase == 'contact':
-                    if curve.active:
+                    if curve is not None and curve.active:
                         curve.cancel()
                     # A new contact can preempt a curve that still uses 3.
                     # Release-based selection must restore 2 for this contact,
@@ -593,6 +621,14 @@ def run_level_coast(owner, config):
                         'reason': 'confirmed_contact',
                         'estimator_switch_at': options['estimator_switch_at']})
                     print(f'[interaction] estimator: {3 if use_contact_estimator else 2} (detect)', flush=True)
+                elif changed and previous == 'contact' and not options['coasting_enabled']:
+                    # Issue the hold packet in this same iteration. Restore the
+                    # default estimator asynchronously, without adding a coast
+                    # interval or waiting to start position control.
+                    selector.request(False, sample_now)
+                    owner._log_event('Level Coast Estimator Changed', {
+                        'requested_estimator': 2, 'reason': 'direct_position_hold',
+                        'estimator_switch_at': options['estimator_switch_at']})
                 elif changed and cycle.phase == 'coast' and options['estimator_switch_at'] == 'release':
                     selector.request(True, sample_now)
                     owner._log_event('Level Coast Estimator Changed', {
@@ -603,12 +639,12 @@ def run_level_coast(owner, config):
                     curve.cancel()
                     owner._log_event('Level Coast Estimator Changed', {
                         'confirmed_estimator': 2, 'reason': 'curve_complete'})
-                if (cycle.phase == 'coast' and cycle.level and not curve.active
-                        and selector.ready(sample_now)):
-                    # The event time is this confirmed release/dispatch epoch;
-                    # Arduino ID is optional metadata for vel/model detectors.
-                    curve.begin(height=nominal[2], release_monotonic_s=time.monotonic(),
-                                sample_id=sensor.get('force_sensor_arduino_time_ms', 0))
+            if (curve is not None and cycle.phase == 'coast' and cycle.level
+                    and not curve.active and selector.ready(sample_now)):
+                # The event time is this confirmed release/dispatch epoch;
+                # Arduino ID is optional metadata for vel/model detectors.
+                curve.begin(height=nominal[2], release_monotonic_s=time.monotonic(),
+                            sample_id=sensor.get('force_sensor_arduino_time_ms', 0))
             stop_status = cycle.stop_status(
                 state['velocity'] if stop_velocity is None else stop_velocity)
             stop_status.update(stop_reference)
@@ -626,6 +662,7 @@ def run_level_coast(owner, config):
                 # to the selected coast policy, even if no coast packet was sent.
                 capture_position = (was_level and not cycle.level
                     and cycle.phase in ('grace', 'ready')
+                    and options['coasting_enabled']
                     and options['coast_command_mode'] == 'position')
                 if command_mode == 'position_follow' or capture_position:
                     if stop_velocity is None:
@@ -643,7 +680,7 @@ def run_level_coast(owner, config):
                         cycle.hold_position[:] = position_command
                 if command_mode != 'position_follow':
                     position_follower.reset()
-            if not scurve_coast:
+            if not scurve_mode:
                 owner._set_contact_pid_attitude_authority(command_mode == 'level_zdistance')
             if command_mode != 'firmware_scurve':
                 owner._translation_high_level_active = False
@@ -663,6 +700,7 @@ def run_level_coast(owner, config):
                     'elapsed_s': time.monotonic() - start,
                     'hold_position_m': cycle.hold_position.tolist(),
                     'grace_start': options['grace_start'],
+                    'coasting_enabled': options['coasting_enabled'],
                     'command_mode': command_mode,
                     'coast_preempted': previous == 'coast' and cycle.phase == 'contact',
                 })
@@ -704,7 +742,8 @@ def run_level_coast(owner, config):
                 'command_mode': command_mode,
                 'scurve_active': curve is not None and curve.active,
                 'scurve_endpoint_received': curve is not None and curve.hold_notice is not None,
-                'estimator_switch_at': options['estimator_switch_at'] if scurve_coast else None,
+                'estimator_switch_at': options['estimator_switch_at'] if scurve_mode else None,
+                'coasting_enabled': options['coasting_enabled'],
                 'yaw_target_deg': None if command_mode == 'level_zdistance' else yaw,
                 'yaw_rate_target_deg_s': 0. if command_mode == 'level_zdistance' else None,
                 **position_status,

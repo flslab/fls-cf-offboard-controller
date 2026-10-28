@@ -398,7 +398,7 @@ class Mocap(threading.Thread):
             new_list = [obj for obj in self.objects_to_track if obj[0] != obj_name]
             self.objects_to_track = new_list
 
-    def subscribe_point(self, initial_point, callback, name=None, max_distance=0.05):
+    def subscribe_point(self, initial_point, callback, name=None, max_distance=0.15):
         """
         Subscribe to a specific point in the pointcloud (Pointcloud Mode).
 
@@ -407,7 +407,7 @@ class Mocap(threading.Thread):
             callback (func): Function to call with frame data.
             name (str, optional): Unique identifier for this point to allow unsubscribing.
             max_distance (float): Maximum allowed distance (meters) the point can move
-                                  between frames before being considered "lost".
+                                  from the last matched position (default: 0.15 m).
         """
         with self._write_lock:
             # We store a mutable dictionary for each tracked point.

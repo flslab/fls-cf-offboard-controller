@@ -1230,7 +1230,22 @@ class Controller:
                     data = response.read().decode('utf-8')
                     _mission = yaml.safe_load(data)
                     if self.args.drone_id in _mission['drones']:
+                        if (
+                            (getattr(self.args, 'interaction', False)
+                             or getattr(self.args, 'sense', False))
+                            and not getattr(self.args, 'intractable_illumination', False)
+                            and not _mission.get('Recap')
+                            and 'Interaction' not in _mission
+                        ):
+                            raise ValueError(
+                                f'{filename}: --interaction requires an Interaction block; '
+                                'for the no-detection hover mission set '
+                                'Interaction.config.behavior: prev. '
+                                'Check the YAML served by the orchestrator.'
+                            )
                         self.missions.append(resolve_mission_profiles(_mission))
+                        behavior = _mission.get('Interaction', {}).get('config', {}).get('behavior', 'standard')
+                        logger.info('Loaded mission %s: interaction behavior=%s', filename, behavior)
                 logger.info(f"  > Download successful: {filename}")
 
             except urllib.error.URLError as e:
@@ -2923,7 +2938,10 @@ class Controller:
                 self._safe_sleep(30)
                 return
 
-            if self.args.intractable_illumination:
+            if self.mission.get('Interaction', {}).get('config', {}).get('behavior') == 'prev':
+                logger.info('Prev behavior: running SFL position hold without interaction detection.')
+                self.run_multiple_orchestrated_missions()
+            elif self.args.intractable_illumination:
                 self.orchestrated_mission_interaction()
             elif self.mission.get("Recap", None):
                 recap_cfg = self.mission["Recap"]
@@ -3026,7 +3044,7 @@ class Controller:
         except Exception as e:
             logging.error(f"Interaction Error: {e}\n")
             if (getattr(self, 'firmware_auto_brake_enabled', False) or
-                    (self.mission or {}).get('Interaction', {}).get('config', {}).get('behavior') == 'level_coast' or
+                    (self.mission or {}).get('Interaction', {}).get('config', {}).get('behavior') in ('level_coast', 'prev') or
                     getattr(self.args, 'contact_attitude_run', None) is not None):
                 raise
         finally:

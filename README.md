@@ -236,6 +236,14 @@ extra measurements do not trigger contact/release or change phase transitions.
 
 ### Repeated level-attitude interaction
 
+`Interaction.config.behavior: prev` runs the ordinary SFL flight path through
+`--interaction`, without constructing an interaction detector or force observer.
+Use `prev_behavior.yaml` with `sensing: false` and `record_potentiometer: false`;
+the drone moves to its SFL target, holds for `drones.<id>.delta_t`, and lands
+through the normal controller lifecycle. Battery and emergency-stop checks
+remain active. This behavior also takes precedence over
+`--intractable-illumination`.
+
 `Interaction.config.behavior: level_coast` selects an independent timed behavior.
 Omitting it (or using `standard`) preserves the existing interaction/EKF and
 firmware braking path. The separate LightBender mission is

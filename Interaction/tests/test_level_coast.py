@@ -38,6 +38,42 @@ def configuration(detector='potentiometer'):
 
 
 class LevelCoastStateTests(unittest.TestCase):
+    def test_coasting_switch_defaults_on_and_requires_boolean(self):
+        config = configuration()
+        self.assertTrue(validate_level_coast(config, sensor_available=True)['coasting_enabled'])
+        config['level_coast']['coasting_enabled'] = False
+        self.assertFalse(validate_level_coast(config, sensor_available=True)['coasting_enabled'])
+        for value in ('false', 0, 1, None, [], {}):
+            with self.subTest(value=value):
+                config['level_coast']['coasting_enabled'] = value
+                with self.assertRaisesRegex(ValueError, 'coasting_enabled'):
+                    validate_level_coast(config, sensor_available=True)
+
+    def test_direct_hold_captures_release_position_despite_speed_or_pending_delay(self):
+        for mode in ('orientation', 'position', 'scurve'):
+            for grace_start in ('release', 'speed_threshold'):
+                with self.subTest(mode=mode, grace_start=grace_start):
+                    cycle = LevelCoastCycle([0, 0, 1], .03, .5, grace_start, .25,
+                                           coast_command_mode=mode, coasting_enabled=False)
+                    cycle.update([0, 0, 1], [0, 0, 0], 0, armed=True)
+                    cycle.update([.1, 0, 1], [.2, 0, 0], .1, started=True)
+                    # Low speed alone is not a release for model/pot.
+                    cycle.update([.2, 0, 1], [0, 0, 0], .11)
+                    self.assertEqual(cycle.phase, 'contact')
+                    cycle.update([.3, .2, 1.2], [.4, .2, 0], .12, released=True)
+                    self.assertEqual(cycle.phase, 'grace')
+                    self.assertFalse(cycle.level)
+                    self.assertFalse(cycle.delay_pending)
+                    np.testing.assert_allclose(cycle.hold_position, [.3, .2, 1])
+                    self.assertEqual(cycle.grace_started, .12)
+                    self.assertEqual(cycle.stop_status([.4, .2, 0])['stop_speed_metric'],
+                                     'detector_release')
+                    cycle.update([.5, .4, 1], [.2, 0, 0], .4, started=True)
+                    self.assertEqual(cycle.phase, 'grace')
+                    np.testing.assert_allclose(cycle.hold_position, [.3, .2, 1])
+                    cycle.update([.5, .4, 1], [0, 0, 0], .63)
+                    self.assertEqual(cycle.phase, 'ready' if grace_start == 'release' else 'prepare')
+
     def test_estimator_switch_defaults_to_release_and_rejects_unknown_edges(self):
         config = configuration()
         self.assertEqual(validate_level_coast(config, sensor_available=True)['estimator_switch_at'], 'release')
@@ -270,6 +306,92 @@ class LevelCoastStateTests(unittest.TestCase):
 
 
 class LevelCoastLoopTests(unittest.TestCase):
+    def test_direct_hold_uses_detector_end_and_sends_fixed_position_in_same_sample(self):
+        for detector in ('potentiometer', 'model', 'vel'):
+            for contact in ('orientation', 'position'):
+                for coast in ('orientation', 'position', 'scurve'):
+                    with self.subTest(detector=detector, contact=contact, coast=coast):
+                        control, commands, phases, _ = self.run_scenario(
+                            detector, command_mode=contact, coast_command_mode=coast,
+                            coasting_enabled=False, estimator_switch_at='detect',
+                            pressed_fn=lambda t: .08 <= t < .16,
+                            # Final speed is below velocity release (.08), but
+                            # above coast stop (.03): the latter must not gate hold.
+                            speed_fn=lambda t: 0. if t < .08 else .2 if t < .30 else .06)
+                        hold = next(p for p in phases if p['previous'] == 'contact')
+                        self.assertEqual(hold['phase'], 'grace')
+                        self.assertTrue(hold['released'])
+                        self.assertEqual(hold['command_mode'], 'position_hold')
+                        self.assertGreater(hold['xy_speed_m_s'], .03)
+                        self.assertFalse(any(p['phase'] == 'coast' for p in phases))
+                        held_at = hold['elapsed_s']
+                        if detector == 'vel':
+                            self.assertGreaterEqual(held_at, .31 - 1e-6)
+                        else:
+                            self.assertLess(held_at, .30)
+                        expected = [held_at/10, 0., 1.]
+                        np.testing.assert_allclose(hold['hold_position_m'], expected)
+                        sent = [(t, name, args) for t, name, args in commands if t >= held_at]
+                        self.assertTrue(sent)
+                        self.assertAlmostEqual(sent[0][0], held_at)
+                        for _, name, args in sent:
+                            self.assertEqual(name, 'send_position_setpoint')
+                            np.testing.assert_allclose(args[:3], expected)
+                        rows = control.log_manager.groups['wrench_observer']
+                        self.assertFalse(any(r['scurve_active'] or r['coasting_enabled'] for r in rows))
+                        if coast == 'scurve':
+                            self.assertEqual(control.curve_clock['releases'], [])
+                            self.assertEqual([v for _, v in control.curve_clock['requests']], [3, 2])
+                            self.assertEqual(control.curve_clock['closed'], 1)
+                            self.assertFalse(control._firmware_brake_active)
+
+    def test_direct_hold_does_not_wait_for_estimator_ack_or_contact_command_delay(self):
+        for switch_at in ('detect', 'release'):
+            with self.subTest(switch_at=switch_at):
+                control, commands, phases, _ = self.run_scenario(
+                    'model', coast_command_mode='scurve', coasting_enabled=False,
+                    estimator_switch_at=switch_at, estimator_delay_s=.20,
+                    ori_delay=.25, grace_time=1.,
+                    pressed_fn=lambda t: .08 <= t < .16)
+                onset = next(p for p in phases if p['phase'] == 'contact')
+                hold = next(p for p in phases if p['previous'] == 'contact')
+                self.assertLess(hold['elapsed_s'], onset['elapsed_s'] + .25)
+                self.assertTrue(any(abs(t - hold['elapsed_s']) < 1e-6
+                                    and name == 'send_position_setpoint'
+                                    for t, name, _ in commands))
+                self.assertFalse(any(name == 'send_zdistance_setpoint' for _, name, _ in commands))
+                self.assertEqual(control.curve_clock['releases'], [])
+                requests = control.curve_clock['requests']
+                self.assertEqual([value for _, value in requests],
+                                 [3, 2] if switch_at == 'detect' else [])
+                if requests:
+                    self.assertAlmostEqual(requests[-1][0], hold['elapsed_s'])
+
+    def test_direct_hold_rearms_for_repeated_interactions(self):
+        for detector in ('potentiometer', 'model', 'vel'):
+            with self.subTest(detector=detector):
+                control, _, phases, _ = self.run_scenario(
+                    detector, coast_command_mode='scurve', coasting_enabled=False,
+                    estimator_switch_at='detect', grace_start='release', grace_time=.05,
+                    pressed_fn=lambda t: .08 <= t < .16 or .52 <= t < .60,
+                    speed_fn=lambda t: .12 if .08 <= t < .16 or .52 <= t < .60 else 0.)
+                holds = [p for p in phases if p['previous'] == 'contact']
+                self.assertEqual(len(holds), 2)
+                self.assertGreater(holds[1]['hold_position_m'][0], holds[0]['hold_position_m'][0])
+                self.assertEqual(control.curve_clock['releases'], [])
+                self.assertEqual([v for _, v in control.curve_clock['requests']], [3, 2, 3, 2])
+
+    def test_direct_hold_preserves_abort_cleanup(self):
+        for fault in ('state', 'battery', 'boundary', 'motor'):
+            with self.subTest(fault=fault):
+                control, *_ = self.run_scenario(
+                    coast_command_mode='scurve', coasting_enabled=False,
+                    estimator_switch_at='detect', fault=fault)
+                self.assertEqual(control.curve_clock['releases'], [])
+                self.assertEqual(control.curve_clock['closed'], 1)
+                self.assertEqual(control.cf.param.set_value.call_args_list[-1].args,
+                                 ('stabilizer.estimator', '2'))
+
     def test_scurve_estimator_switch_uses_selected_edge_and_confirms_before_dispatch(self):
         for switch_at in (None, 'release', 'detect'):
             for detector in ('potentiometer', 'model', 'vel'):
@@ -375,7 +497,8 @@ class LevelCoastLoopTests(unittest.TestCase):
                      position_options=None, coast_command_mode=None, duplicate_times=(),
                      velocity_fn=None, force_direction_fn=None, record_potentiometer=False,
                      vicon_velocity_fn=None, scurve_completion_s=.12, estimator_delay_s=0.,
-                     curve_fault=None, estimator_switch_at=None, force_config=None):
+                     curve_fault=None, estimator_switch_at=None, force_config=None,
+                     coasting_enabled=None):
         config = configuration(detector)
         config['record_potentiometer'] = record_potentiometer
         config['duration'] = duration
@@ -386,6 +509,8 @@ class LevelCoastLoopTests(unittest.TestCase):
         config['level_coast']['command_mode'] = command_mode
         if estimator_switch_at is not None:
             config['level_coast']['estimator_switch_at'] = estimator_switch_at
+        if coasting_enabled is not None:
+            config['level_coast']['coasting_enabled'] = coasting_enabled
         if coast_command_mode is not None:
             config['level_coast']['coast_command_mode'] = coast_command_mode
         if position_options is not None:

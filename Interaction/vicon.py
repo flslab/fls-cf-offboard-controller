@@ -11,9 +11,8 @@ from pyvicon_datastream import PyViconDatastream, StreamMode, Direction
 
 from log import LoggerFactory
 
-VICON_PC_IP = '192.168.1.39'
-VICON_ADDRESS = f"{VICON_PC_IP}:801"
-
+VICON_PC_IP = '10.182.71.142'
+VICON_ADDRESS = f"{VICON_PC_IP}:804"
 
 class ViconWrapper(threading.Thread):
     def __init__(self, log_level=logging.INFO, marker_type='mixed', stop_event=None, vicon_rotation=False, marker_order=None):
@@ -192,7 +191,7 @@ if __name__ == "__main__":
     # name = "ClientPull"
 
     name = "ServerPush"
-    vw = ViconWrapper(marker_type='unlabeled', log_level=logging.DEBUG)
+    vw = ViconWrapper(marker_type='mixed', log_level=logging.DEBUG)
     vw.start()
     time.sleep(args.t)
     vw.stop()
