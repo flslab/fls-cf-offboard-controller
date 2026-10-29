@@ -1,0 +1,10 @@
+hardware
+PASS: mode reset, XY/full dispatch, mode history, feedforward normalization, release latch, entry/hold/legacy resets, trim preservation, zero-thrust reset under all four flag combinations
+PASS: boot default 40 degrees; 12 executor/state combinations preserve scope and explicit smaller limits
+PASS: 540 directions/tilt limits in compensated and uncompensated command coordinates
+PASS: 240 free/distance reference cases; invalid limits; stronger and tail-limited cases
+firmware
+PASS: mode reset, XY/full dispatch, mode history, feedforward normalization, release latch, entry/hold/legacy resets, trim preservation, zero-thrust reset under all four flag combinations
+PASS: boot default 40 degrees; 12 executor/state combinations preserve scope and explicit smaller limits
+PASS: 540 directions/tilt limits in compensated and uncompensated command coordinates
+PASS: 240 free/distance reference cases; invalid limits; stronger and tail-limited cases

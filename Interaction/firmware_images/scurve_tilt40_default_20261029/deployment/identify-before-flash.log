@@ -1,0 +1,30 @@
+SYS: ----------------------------
+SYS: Crazyflie Bolt 1.1 is up and running!
+SYS: Build 0:0f2632ccb897 (bolt-scurve-reset-26102902) MODIFIED
+SYS: I am 0x37383134303347100034002C and I have 1024KB of flash!
+CFGBLK: v1, verification [OK]
+DECK_DISCOVERY: Backend found: onewire
+DECK_DISCOVERY: Backend found: deckctrl
+DECK_CORE: 0 deck(s) found
+IMU: BMI088: Using SPI interface.
+IMU: BMI088 Gyro connection [OK].
+IMU: BMI088 Accel connection [OK]
+IMU: BMP388 I2C connection [OK]
+ESTIMATOR: Estimator type forced
+ESTIMATOR: Using Kalman (2) estimator
+CONTROLLER: Using PID (1) controller
+MTR-DRV: Using brushless motor driver: ONESHOT125
+SYS: About to run tests in system.c.
+SYS: NRF51 version: 2025.02 (CB11)
+EEPROM: I2C connection [OK].
+STORAGE: Storage check [OK].
+IMU: BMI088 gyro self-test [OK]
+SYS: Self test passed!
+STAB: Wait for sensor calibration...
+SYS: Free heap: 17256 bytes
+STAB: Starting stabilizer loop
+ESTKALMAN: State out of bounds, resetting
+Could not save cache, no writable directory
+Could not save cache, no writable directory
+APPLICATION {"identity": "0x37383134303347100034002C", "parameters": {"cpu.id0": "3407916", "cpu.id1": "808666896", "cpu.id2": "926429492", "system.selftestPassed": "1", "hlCommander.pRelSVer": "26092803", "hlCommander.pRelAuto": "0"}}
+PRE_FLASH_VERIFIED {"identity": "0x37383134303347100034002C", "parameters": {"cpu.id0": "3407916", "cpu.id1": "808666896", "cpu.id2": "926429492", "system.selftestPassed": "1", "hlCommander.pRelSVer": "26092803", "hlCommander.pRelAuto": "0"}, "motor_outputs_all_zero": true, "unarmed": true, "samples": [{"timestamp_ms": 17521, "motor.m1": 0, "motor.m2": 0, "motor.m3": 0, "motor.m4": 0, "supervisor.info": 513}, {"timestamp_ms": 17531, "motor.m1": 0, "motor.m2": 0, "motor.m3": 0, "motor.m4": 0, "supervisor.info": 513}, {"timestamp_ms": 17541, "motor.m1": 0, "motor.m2": 0, "motor.m3": 0, "motor.m4": 0, "supervisor.info": 513}, {"timestamp_ms": 17551, "motor.m1": 0, "motor.m2": 0, "motor.m3": 0, "motor.m4": 0, "supervisor.info": 513}, {"timestamp_ms": 17561, "motor.m1": 0, "motor.m2": 0, "motor.m3": 0, "motor.m4": 0, "supervisor.info": 513}, {"timestamp_ms": 17571, "motor.m1": 0, "motor.m2": 0, "motor.m3": 0, "motor.m4": 0, "supervisor.info": 513}, {"timestamp_ms": 17581, "motor.m1": 0, "motor.m2": 0, "motor.m3": 0, "motor.m4": 0, "supervisor.info": 513}, {"timestamp_ms": 17591, "motor.m1": 0, "motor.m2": 0, "motor.m3": 0, "motor.m4": 0, "supervisor.info": 513}, {"timestamp_ms": 17601, "motor.m1": 0, "motor.m2": 0, "motor.m3": 0, "motor.m4": 0, "supervisor.info": 513}, {"timestamp_ms": 17611, "motor.m1": 0, "motor.m2": 0, "motor.m3": 0, "motor.m4": 0, "supervisor.info": 513}], "flight_commands_sent": false, "parameter_writes": false}

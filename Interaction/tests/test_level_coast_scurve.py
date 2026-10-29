@@ -81,6 +81,9 @@ class ContactEstimatorTests(unittest.TestCase):
             params.replies[key] = str(value)
         params.toc.toc['hlCommander']['pRelEnd'] = None
         params.replies['hlCommander.pRelEnd'] = '1'
+        for name,value in {'pRelAMax':8.23,'pRelTMax':40.}.items():
+            params.toc.toc['hlCommander'][name]=None
+            params.replies['hlCommander.'+name]=str(value)
         control.cf = SimpleNamespace(param=params)
         with self.assertRaisesRegex(RuntimeError, 'pRelHoldG'):
             control._setup_firmware_auto_brake_params()

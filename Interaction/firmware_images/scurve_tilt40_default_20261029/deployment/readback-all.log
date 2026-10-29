@@ -1,0 +1,18 @@
+BOOTLOADER_URI radio://0/0/2M/B15D84D3A3?safelink=0
+READBACK 1 / 368
+READBACK 33 / 368
+READBACK 65 / 368
+READBACK 97 / 368
+READBACK 129 / 368
+RETRY_PAGE 134 1
+READBACK 161 / 368
+READBACK 193 / 368
+READBACK 225 / 368
+READBACK 257 / 368
+READBACK 289 / 368
+RETRY_PAGE 315 1
+READBACK 321 / 368
+READBACK 353 / 368
+READBACK 368 / 368
+FULL_READBACK_VERIFIED {"bytes": 376228, "sha256": "42c6dc0d4a43f7022c4dd126d1a6c067ac2a1de1746db2ef5e0cdb497eabc69f", "elapsed_seconds": 70.46052290999796, "target": "stm32:fw", "page_retries": 2, "flash_written": false, "nrf_or_bootloader_flashed": false, "flight_commands_sent": false}
+BOOT_APPLICATION_OK

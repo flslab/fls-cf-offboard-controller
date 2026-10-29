@@ -1,0 +1,61 @@
+{
+  "tag": "bolt-scurve-40default-26102903",
+  "base_tag": "bolt-eskfxy-attfix-26101201",
+  "binary_file": "bolt-scurve-40default-26102903.bin",
+  "binary_sha256": "42c6dc0d4a43f7022c4dd126d1a6c067ac2a1de1746db2ef5e0cdb497eabc69f",
+  "elf_sha256": "0838d9e0e9e5e301b4fa9a004e8273c03ecef322698b560451428c95751abc7d",
+  "elf_gzip_sha256": "31e6d36a9196289f444771ba8fe6878b6a6766aa0e947fe99b0928209de79bc0",
+  "hardware_config_sha256": "39f78d3dc33d1b036af289ec6be2c9fea985636a8d8e5e64e0c098a54e778bb7",
+  "hardware_build_passed": true,
+  "native_checks_passed": true,
+  "reference_cases_per_source": 240,
+  "tilt_direction_cases_per_source": 540,
+  "offboard_tests_passed": 224,
+  "mission_parameter_contract_passed": true,
+  "full_sitl_build_performed": false,
+  "flashed": true,
+  "device_readback_verified": true,
+  "real_flight_validated": false,
+  "limits": {
+    "maximum_tilt_deg": 40.0,
+    "maximum_reference_deceleration_m_s2": 8.23,
+    "default_reference_deceleration_m_s2": 3.6,
+    "default_tail_s": 1.2,
+    "firmware_boot_tilt_deg": 40.0,
+    "local_scurve_profile_tilt_deg": 40.0
+  },
+  "hardware_sources": {
+    "src/modules/src/crtp_commander_high_level.c": "16e166fe9b39d3a19b54171b486d3b0a96f1ac835eed7a68f35856c4ac882ad5",
+    "src/modules/src/post_release_velocity_runtime.inc": "295096b1fe276fa25cdc713b6b8b778aa6fdc665e0a6937bf0711a48255ac265",
+    "src/modules/interface/kalman_core/post_release_stop_request.h": "4478a669a99fec0be58627d497eaaa662d349560a2a6c073610b7fdd5cc9cba1",
+    "src/modules/interface/kalman_core/post_release_scurve_limits.h": "e0296e01c4f3d17e71df1c7eb2e59bf13c755b9ab29a971cf657ee309b67443e",
+    "snapshot_version.json": "e1949b53847a0aa7887e5f90156b4236dfd8f4d765a61d5e647706661e2ccea2",
+    "src/modules/src/controller/controller_pid.c": "b15c1b188ce6ffc60da86f6a2e729fe98cccf7e1a9aa2208df0cb0afbc71a934",
+    "src/modules/src/post_release_position_handoff.inc": "e68252de2c1ce2a519ef3462883438fb8a90c768b230266425ff0588adbdf1f9",
+    "src/modules/src/post_release_scurve_runtime.inc": "15dd98881926af4d48efb1324ea245adac7836dc5d23a87e62f27924bb3bc217",
+    "src/modules/src/post_release_calibrated_runtime.inc": "378225b66f6424346c47318af8421b4bd58c66df67034ae8ac3c6be2ea8968bf"
+  },
+  "firmware_sources": {
+    "src/modules/src/crtp_commander_high_level.c": "16e166fe9b39d3a19b54171b486d3b0a96f1ac835eed7a68f35856c4ac882ad5",
+    "src/modules/src/post_release_velocity_runtime.inc": "295096b1fe276fa25cdc713b6b8b778aa6fdc665e0a6937bf0711a48255ac265",
+    "src/modules/interface/kalman_core/post_release_stop_request.h": "4478a669a99fec0be58627d497eaaa662d349560a2a6c073610b7fdd5cc9cba1",
+    "src/modules/interface/kalman_core/post_release_scurve_limits.h": "e0296e01c4f3d17e71df1c7eb2e59bf13c755b9ab29a971cf657ee309b67443e",
+    "snapshot_version.json": "e1949b53847a0aa7887e5f90156b4236dfd8f4d765a61d5e647706661e2ccea2",
+    "src/modules/src/controller/controller_pid.c": "b15c1b188ce6ffc60da86f6a2e729fe98cccf7e1a9aa2208df0cb0afbc71a934",
+    "src/modules/src/post_release_position_handoff.inc": "e68252de2c1ce2a519ef3462883438fb8a90c768b230266425ff0588adbdf1f9",
+    "src/modules/src/post_release_scurve_runtime.inc": "15dd98881926af4d48efb1324ea245adac7836dc5d23a87e62f27924bb3bc217",
+    "src/modules/src/post_release_calibrated_runtime.inc": "378225b66f6424346c47318af8421b4bd58c66df67034ae8ac3c6be2ea8968bf"
+  },
+  "compiler": "arm-none-eabi-gcc (GNU Arm Embedded Toolchain 10-2020-q4-major) 10.2.1 20201103 (release)",
+  "reset_call_path_checks_passed": true,
+  "reset_defaults": {
+    "pidCtl.resetMode": 1,
+    "hlCommander.pRelRstXY": 1
+  },
+  "reset_zero_thrust_unconditional": true,
+  "default_tilt_scope_cases_per_source": 12,
+  "deployment_evidence": "flash-readback.json",
+  "flashed_drone_id": "lb11",
+  "verified_at": "2026-10-29T19:21:33.578524+00:00",
+  "full_binary_readback_verified": true
+}

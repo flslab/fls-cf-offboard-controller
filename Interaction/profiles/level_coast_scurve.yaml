@@ -6,12 +6,17 @@ firmware_auto_brake:
   command_mode: attitude
   response_time_s: 0.14
   hold_gate: false  # Complete at the curve endpoint; no measured-speed gate.
+  # Preflight reset policy. Keep both true for existing behavior; setting false
+  # requires firmware with pidCtl.resetMode / hlCommander.pRelRstXY.
+  reset_on_mode_change: true
+  reset_xy_on_scurve_transition: true
   response_model:
     enabled: true
     calibration_file: Interaction/attitude_response.json
   analytic_profile:
     shape: velocity_scurve
     execution: attitude
+    max_tilt_deg: 40.0  # Combined roll/pitch tilt; requires the matching FC firmware.
     tail_s: 1.2
     single_s: 1.2
     handoff: curve_endpoint_forward
@@ -26,3 +31,6 @@ firmware_auto_brake:
     state_matched_start: false
     friction_from_interaction: false
   stop_distance_m: 0.0
+  # Nominal reference deceleration remains 3.6 m/s^2; the new firmware permits
+  # up to 8.23 within the configured tilt envelope. This is not measured acceleration.
+  # stop_deceleration_m_s2: 3.6

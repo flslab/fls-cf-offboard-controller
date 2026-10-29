@@ -1,0 +1,8 @@
+Got link error callback [Too many packets lost] in state [1]
+Traceback (most recent call last):
+  File "<stdin>", line 30, in <module>
+  File "/home/fls/env/lib/python3.11/site-packages/cflib/crazyflie/syncCrazyflie.py", line 120, in __enter__
+    self.open_link()
+  File "/home/fls/env/lib/python3.11/site-packages/cflib/crazyflie/syncCrazyflie.py", line 96, in open_link
+    raise Exception(self._error_message)
+Exception: Too many packets lost

@@ -1,0 +1,269 @@
+--- a/src/modules/src/crtp_commander_high_level.c
++++ b/src/modules/src/crtp_commander_high_level.c
+@@ -141,8 +141,15 @@
+ static prFrictionProfile scFriction;
+ static prStopRequestLog scStopInfo;
+ static uint8_t scStopCapability=1;
++static float scStopMaxDecel=PR_STOP_MAX_DECEL_M_S2;
++static float scMaxTilt=PR_STOP_MAX_TILT_DEG;
++static float scTiltParam=PR_STOP_DEFAULT_TILT_DEG,scTiltActive=PR_STOP_DEFAULT_TILT_DEG;
++static uint8_t scResetXYParam=1;
++static bool scResetXYActive=true;
++static float scAccelLimitActive=4.0f,scLinearLimitActive=3.7981093f;
+ static float scStopDecel=3.6f,scStopDistanceActive,scStopDecelActive=3.6f;
+-static inline unsigned scRequestPrecheck(float speed,float distance,float decel);
++static inline unsigned scRequestPrecheck(float speed,float distance,float decel,float tilt);
++static inline float scConfiguredTilt(void);
+ static uint8_t scCompEnable;
+ static bool scCompActive;
+ static uint8_t scCompBiasEnable;
+@@ -809,9 +816,10 @@
+ static int postReleaseAutoAccept(
+     const struct data_post_release_pi_release* event) {
+   const float requestedDistance=scStopRequestM,requestedDecel=scStopDecel;
++  const float requestedTilt=scConfiguredTilt();
+   if(postReleaseAutoMode==2u && scVelocityEnabled &&
+       (!isfinite(requestedDistance) || requestedDistance<0 || requestedDistance>10 ||
+-       !isfinite(requestedDecel) || requestedDecel<=0 || requestedDecel>3.6f)) {
++       !prStopWithinTilt(requestedDecel,requestedTilt))) {
+     postReleaseAutoRejectCount++;postReleaseAutoRejectReason=10u;
+     postReleaseAutoRejectDetail=PR_STOP_INVALID;return ERANGE;
+   }
+@@ -937,9 +945,10 @@
+     velocity[0] / speed, velocity[1] / speed,
+   };
+   if(postReleaseAutoMode==2u && scVelocityEnabled &&
+-      (requestedDistance>0 || requestedDecel!=3.6f || scFrictionEnabled)) {
++      (requestedDistance>0 || requestedDecel!=3.6f || scFrictionEnabled ||
++       requestedTilt!=PR_STOP_LEGACY_TILT_DEG)) {
+     const float cap=scFrictionEnabled?fminf(requestedDecel,event->kineticMu*9.81f):requestedDecel;
+-    const unsigned reason=scRequestPrecheck(speed,requestedDistance,cap);
++    const unsigned reason=scRequestPrecheck(speed,requestedDistance,cap,requestedTilt);
+     if(reason) {
+       postReleaseAutoRejectCount++;postReleaseAutoRejectReason=10u;
+       postReleaseAutoRejectDetail=reason;return ERANGE;
+@@ -977,6 +986,12 @@
+   scFriction=(prFrictionProfile){.flags=scFrictionRunning?PR_FRICTION_ENABLED:0,
+     .mu=scFrictionRunning?event->kineticMu:0};
+   scStopDistanceActive=requestedDistance;scStopDecelActive=requestedDecel;
++  // Latch the envelope with this release; later parameter writes cannot
++  // change an active curve or its command limits.
++  scTiltActive=requestedTilt;
++  scResetXYActive=scResetXYParam!=0;
++  scAccelLimitActive=prStopAccelerationLimit(scTiltActive);
++  scLinearLimitActive=prStopLinearAccelerationLimit(scTiltActive);
+   memset(&scStopInfo,0,sizeof(scStopInfo));
+   scActive=false;scAnchored=false;scRunning=postReleaseAutoMode==2u;scMaxUs=0;
+   scVelocityRunning=postReleaseAutoMode==2u && scVelocityEnabled!=0;
+@@ -3128,6 +3143,13 @@
+ PARAM_ADD(PARAM_FLOAT, pRelScT, &scStopMaxTotalS)
+ PARAM_ADD(PARAM_FLOAT, pRelScA, &scStopDecel)
+ PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, pRelReqVer, &scStopCapability)
++// Fresh capability readback required by the host for requests above 3.6.
++PARAM_ADD(PARAM_FLOAT | PARAM_RONLY, pRelAMax, &scStopMaxDecel)
++PARAM_ADD(PARAM_FLOAT | PARAM_RONLY, pRelTMax, &scMaxTilt)
++/** @brief Combined velocity S-curve attitude command limit (degrees); default 40, latched on release. */
++PARAM_ADD(PARAM_FLOAT, pRelTilt, &scTiltParam)
++/** @brief Reset/seed XY PID at S-curve entry/hold; 0 preserves it. Default 1, latched on accepted release. */
++PARAM_ADD(PARAM_UINT8, pRelRstXY, &scResetXYParam)
+ /** @brief S-curve distance mode: weakest allowed peak deceleration (m/s^2). */
+ PARAM_ADD(PARAM_FLOAT, pRelScB, &scStopMinPeak)
+ /** @brief Minimum release XY speed (m/s); 0 disables the bound. */
+--- a/src/modules/src/post_release_velocity_runtime.inc
++++ b/src/modules/src/post_release_velocity_runtime.inc
+@@ -27,7 +27,13 @@
+ static uint8_t scStateMatchEnable,scStateMatchActive;
+ static unsigned scStateMatchAttempts;
+ static bool scBiasFresh;
+-static inline unsigned scRequestPrecheck(float speed,float distance,float decel) {
++static inline float scConfiguredTilt(void) {
++  return prStopRuntimeTilt(scTiltParam,scShapeParam,scExecParam,scStateMatchEnable!=0);
++}
++static inline unsigned scRequestPrecheck(float speed,float distance,float decel,float tilt) {
++  if(!prStopWithinTilt(decel,tilt))return PR_STOP_INVALID;
++  if(tilt!=PR_STOP_LEGACY_TILT_DEG && (scShapeParam!=0 || scExecParam!=2))
++    return PR_STOP_UNSUPPORTED;
+   if(scShapeParam!=0 || scStateMatchEnable || (distance>0 &&
+       (scExecParam!=2 || !scCompEnable || scPositionPole<=0 || scHoldMode!=3)))
+     return PR_STOP_UNSUPPORTED;
+@@ -136,11 +142,9 @@
+   if(correction>0)scCompGuardN++;
+   for(unsigned axis=0;axis<2;axis++)
+     acceleration[axis]+=direction[axis]*correction/effective.axis[1-axis].gain;
+-  const float mag=hypotf(acceleration[0],acceleration[1]);
+-  // Match the existing 4 m/s^2 tilt envelope: G*atan(4/g) in this
+-  // small-angle command coordinate. Inversion must not enlarge the envelope.
+-  const float bound=3.7981093f;
+-  if(mag>bound){acceleration[0]*=bound/mag;acceleration[1]*=bound/mag;scCompSaturatedN++;}
++  // Convert the latched degree bound using the response model's linear
++  // command coordinates; the nonlinear g*tan bound belongs to the other path.
++  if(prStopLimitXY(acceleration,scLinearLimitActive))scCompSaturatedN++;
+   command[0]=-acceleration[1]/PR_COMP_G_DEG;
+   command[1]=-acceleration[0]/PR_COMP_G_DEG;
+   const uint32_t elapsed=clProfileNow()-start;
+@@ -278,7 +282,8 @@
+       }
+       clReferenceKind=scShapeActive?1:0;clExecutionKind=scExecActive+1;
+       scActive=!fault;scBeginUs=scVelOriginUs=nowUs;
+-      positionControllerResetXYFromState(s);postReleaseAutoReplanCount++;
++      if(scResetXYActive)positionControllerResetXYFromState(s);
++      postReleaseAutoReplanCount++;
+       clTimingPlan(planBegin);
+       if(!fault)scVelocityCapture(1,nowUs,s,pa,angles,rates);
+     }
+@@ -341,7 +346,7 @@
+       // feedforward. No response inversion, worker or online replanning.
+       float ax=aRef[0]+scAttKvActive*(vRef[0]-s->velocity.x)+scAttKpActive*(pRef[0]-s->position.x);
+       float ay=aRef[1]+scAttKvActive*(vRef[1]-s->velocity.y)+scAttKpActive*(pRef[1]-s->position.y);
+-      const float mag=hypotf(ax,ay);if(mag>4){ax*=4/mag;ay*=4/mag;}
++      float bounded[2]={ax,ay};prStopLimitXY(bounded,scAccelLimitActive);ax=bounded[0];ay=bounded[1];
+       const float bx=cy*ax+sy*ay,by=-sy*ax+cy*ay,p=atanf(bx/9.81f);
+       sp->mode.roll=sp->mode.pitch=modeAbs;
+       sp->attitude.roll=degrees(atanf(-by*cosf(p)/9.81f));sp->attitude.pitch=-degrees(p);
+--- a/src/modules/interface/kalman_core/post_release_stop_request.h
++++ b/src/modules/interface/kalman_core/post_release_stop_request.h
+@@ -1,6 +1,8 @@
+ #pragma once
+ #include "post_release_velocity_curve.h"
+ #include <stdint.h>
++
++#include "post_release_scurve_limits.h"
+ 
+ enum {PR_STOP_VALID=1u, PR_STOP_DISTANCE=2u};
+ enum {PR_STOP_OK=0, PR_STOP_INVALID=1, PR_STOP_TOO_SHORT=2,
+@@ -28,8 +30,7 @@
+   unsigned reason=PR_STOP_OK;
+   prVelocityCurve plan;
+   float tail=preferredTail,a=cap;
+-  if(!out || !log || !isfinite(speed) || !isfinite(cross) || !isfinite(cap) ||
+-     cap<=0 || cap>3.6f || !isfinite(distance) || distance<0 || distance>10 ||
++  if(!out || !log || !isfinite(speed) || !isfinite(cross) || !prStopDecelValid(cap) || !isfinite(distance) || distance<0 || distance>10 ||
+      !isfinite(tail) || tail<.15f || tail>3 || !isfinite(maxTime) || maxTime<.15f || maxTime>12) {
+     reason=PR_STOP_INVALID;goto done;
+   }
+--- /dev/null
++++ b/src/modules/interface/kalman_core/post_release_scurve_limits.h
+@@ -0,0 +1,46 @@
++#pragma once
++#include <math.h>
++#include <stdbool.h>
++
++// Bounds for the velocity S-curve attitude executor only. Other brake modes
++// retain their original envelope. The attitude S-curve defaults to 40 degrees.
++#define PR_STOP_GRAVITY_M_S2 9.81f
++#define PR_STOP_DEG_TO_RAD 0.017453292519943295f
++#define PR_STOP_LEGACY_TILT_DEG 22.183041f
++#define PR_STOP_MAX_TILT_DEG 40.0f
++#define PR_STOP_DEFAULT_TILT_DEG PR_STOP_MAX_TILT_DEG
++// Rounded down from g*tan(40 deg); not a guarantee of physical acceleration.
++#define PR_STOP_MAX_DECEL_M_S2 8.23f
++
++// A larger default must not change/reject legacy polynomial, state-matched,
++// position, or velocity execution. The parameter belongs to this executor only.
++static inline float prStopRuntimeTilt(float requested,unsigned shape,unsigned execution,bool stateMatch) {
++  return shape==0 && execution==2 && !stateMatch ? requested : PR_STOP_LEGACY_TILT_DEG;
++}
++
++static inline bool prStopDecelValid(float cap) {
++  return isfinite(cap) && cap>0 && cap<=PR_STOP_MAX_DECEL_M_S2;
++}
++static inline bool prStopTiltValid(float tilt) {
++  return isfinite(tilt) && tilt>=.1f && tilt<=PR_STOP_MAX_TILT_DEG;
++}
++static inline float prStopAccelerationLimit(float tilt) {
++  return PR_STOP_GRAVITY_M_S2*tanf(tilt*PR_STOP_DEG_TO_RAD);
++}
++// The calibrated response controller uses g*angle(rad), not g*tan(angle).
++// Converting the angle limit in its own coordinates avoids commanding 48 deg
++// when the requested maximum is 40 deg.
++static inline float prStopLinearAccelerationLimit(float tilt) {
++  return PR_STOP_GRAVITY_M_S2*tilt*PR_STOP_DEG_TO_RAD;
++}
++static inline bool prStopWithinTilt(float cap,float tilt) {
++  return prStopDecelValid(cap) && prStopTiltValid(tilt) &&
++    cap<=prStopAccelerationLimit(tilt)+1e-5f;
++}
++// Norm clipping preserves direction and limits combined roll/pitch, rather
++// than allowing both axes independently to reach the maximum tilt.
++static inline bool prStopLimitXY(float value[2],float bound) {
++  const float mag=hypotf(value[0],value[1]);
++  if(mag<=bound)return false;
++  value[0]*=bound/mag;value[1]*=bound/mag;return true;
++}
+--- a/snapshot_version.json
++++ b/snapshot_version.json
+@@ -1,4 +1,4 @@
+ {
+   "base_revision": "0f2632ccb897c390c3029fd29761d840279a0dc2",
+-  "tag": "bolt-eskfxy-attfix-26101201"
++  "tag": "bolt-scurve-40default-26102903"
+ }
+--- a/src/modules/src/controller/controller_pid.c
++++ b/src/modules/src/controller/controller_pid.c
+@@ -35,6 +35,8 @@
+ static float r_yaw;
+ static float accelz;
+ static bool preserveInnerOnModeChange;
++// Set before flight. Zero-thrust reinitialization is deliberately unconditional.
++static uint8_t resetOnModeChange = 1;
+ static uint32_t fullModeResetCount,xyModeResetCount;
+ 
+ void controllerPidGetAttitudeTarget(float target[2]) {
+@@ -106,7 +108,9 @@
+ {
+   control->controlMode = controlModeLegacy;
+ 
+-  if (setpointModeChanged(setpoint)) {
++  // Always observe the mode, even when reset is disabled, so re-enabling the
++  // policy cannot mistake an already-observed transition for a new one.
++  if (setpointModeChanged(setpoint) && resetOnModeChange != 0) {
+     if (preserveInnerOnModeChange) {
+       xyModeResetCount++;
+       positionControllerResetXYFromState(state);
+@@ -309,3 +313,8 @@
+  */
+ LOG_ADD(LOG_FLOAT, yawRate,   &rateDesired.yaw)
+ LOG_GROUP_STOP(controller)
++
++PARAM_GROUP_START(pidCtl)
++/** @brief Reset PID state on control-mode changes; 0 disables, default 1. Does not disable zero-thrust reset. */
++PARAM_ADD(PARAM_UINT8, resetMode, &resetOnModeChange)
++PARAM_GROUP_STOP(pidCtl)
+--- a/src/modules/src/post_release_position_handoff.inc
++++ b/src/modules/src/post_release_position_handoff.inc
+@@ -86,9 +86,10 @@
+   const struct traj_eval hold={.pos=mkvec(scHoldTarget[0],scHoldTarget[1],postReleaseAutoHeightM),
+     .vel=vzero(),.acc=vzero(),.omega=vzero(),.yaw=postReleaseAutoYawRad};
+   if(plan_go_to_from(&planner,&hold,false,false,hold.pos,hold.yaw,0,t)!=0)return false;
+-  positionControllerResetXYFromState(s);
++  if(scResetXYActive)positionControllerResetXYFromState(s);
+   if(scHoldValid && !scCurveEndpointPolicy)positionControllerArmHold(scHoldTarget,&scHoldInput);
+-  scSeedCompensatedHold(s);
++  // Retaining the integral also means not replacing it with a trim seed.
++  if(scResetXYActive)scSeedCompensatedHold(s);
+   postReleaseAutoStage=4;postReleaseAutoHoldCount++;
+   postReleaseAutoQueueHoldNotice(&hold,now);return true;
+ }
+--- a/src/modules/src/post_release_scurve_runtime.inc
++++ b/src/modules/src/post_release_scurve_runtime.inc
+@@ -130,7 +130,7 @@
+     const struct traj_eval hold={.pos=mkvec(position[0],position[1],postReleaseAutoHeightM),
+       .vel=vzero(),.acc=vzero(),.omega=vzero(),.yaw=postReleaseAutoYawRad};
+     if(plan_go_to_from(&planner,&hold,false,false,hold.pos,hold.yaw,0,t)==0) {
+-      positionControllerResetXY(position[0],position[1]);
++      if(scResetXYActive)positionControllerResetXY(position[0],position[1]);
+       postReleaseAutoStage=4;postReleaseAutoHoldCount++;
+       postReleaseAutoQueueHoldNotice(&hold,nowUs);return false;
+     }
+--- a/src/modules/src/post_release_calibrated_runtime.inc
++++ b/src/modules/src/post_release_calibrated_runtime.inc
+@@ -95,7 +95,8 @@
+     const struct traj_eval hold={.pos=mkvec(position[0],position[1],postReleaseAutoHeightM),
+       .vel=vzero(),.acc=vzero(),.omega=vzero(),.yaw=postReleaseAutoYawRad};
+     if(plan_go_to_from(&planner,&hold,false,false,hold.pos,hold.yaw,0,t)==0) {
+-      positionControllerResetXY(position[0],position[1]);postReleaseAutoStage=4;
++      if(scResetXYActive)positionControllerResetXY(position[0],position[1]);
++      postReleaseAutoStage=4;
+       clCapture(3,nowUs,scrPlanUs,scrPlan,model,position,pv,pa,angles,euler,scrUsedId,scrModel.source);
+       postReleaseAutoHoldCount++;postReleaseAutoQueueHoldNotice(&hold,nowUs);return false;
+     }

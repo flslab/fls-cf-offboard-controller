@@ -80,13 +80,19 @@ def mission_parameters(mission):
     if not brake.get('enabled') or brake.get('mode') != 'scurve':
         raise ValueError('this packaging check requires an enabled S-curve mission')
     analytic = profile_parameters(brake['analytic_profile'])
-    required = set(analytic) | {
+    from Interaction.firmware_pid_reset import reset_parameters
+    reset_required = {key for key, value in reset_parameters(brake).items() if not value}
+    required = set(analytic) | reset_required | {
         'kalmanPRel.enable', 'kalmanPRel.scEnable', 'hlCommander.pRelAuto',
         'hlCommander.pRelMode', 'hlCommander.pRelTau', 'hlCommander.pRelJoint',
         'hlCommander.pRelHost', 'hlCommander.pRelScD', 'hlCommander.pRelScT',
         'hlCommander.pRelScB', 'stabilizer.estimator'}
     if analytic.get('hlCommander.pRelHold') == 3:
         required.add('hlCommander.pRelEnd')
+    if 'stop_deceleration_m_s2' in brake or brake.get('stop_distance_m', 0) > 0:
+        required.update(('hlCommander.pRelReqVer', 'hlCommander.pRelScA'))
+    if 'hlCommander.pRelTilt' in analytic or brake.get('stop_deceleration_m_s2', 3.6) > 3.6:
+        required.update(('hlCommander.pRelAMax', 'hlCommander.pRelTMax', 'hlCommander.pRelTilt'))
     if config.get('behavior') == 'level_coast':
         required.add('hlCommander.pRelHoldG')
     if analytic.get('hlCommander.pRelFric'):

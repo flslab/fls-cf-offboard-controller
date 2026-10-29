@@ -1,0 +1,11 @@
+{
+  "status": "flashed_and_verified",
+  "verified_at": "2026-10-29T19:21:33.578524+00:00",
+  "drone_id": "lb11",
+  "firmware": "bolt-scurve-40default-26102903",
+  "boot_tilt_deg": 40.0,
+  "parameter_writes": false,
+  "flight_performed": false,
+  "host_code_deployed_to_pi": false,
+  "evidence": "flash-readback.json"
+}

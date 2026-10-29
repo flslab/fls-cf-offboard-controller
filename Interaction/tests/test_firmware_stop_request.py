@@ -44,6 +44,10 @@ class StopRequestTests(unittest.TestCase):
              patch('Interaction.firmware_response_model.upload_model',return_value={'pRelResp.id':123}):
             ctrl._setup_firmware_auto_brake_params()
 
+    def new_limits(self, p):
+        for name,value in {'pRelAMax':8.23,'pRelTMax':40.,'pRelTilt':22.183041}.items():
+            p.toc.toc['hlCommander'][name]=None;p.replies['hlCommander.'+name]=str(value)
+
     def test_defaults_and_distance_only(self):
         for distance in (0,.2,1.0):
             c=controller(stop_distance_m=distance);c.prepare_firmware_auto_brake()
@@ -79,8 +83,64 @@ class StopRequestTests(unittest.TestCase):
         p.replies['hlCommander.pRelScA']='0.1';self.setup(c)
         self.assertEqual(p.replies['hlCommander.pRelScA'],'3.6')
 
+    def test_higher_deceleration_requires_fresh_capability_and_readback(self):
+        for distance in (0, .5):
+            for decel in (3.7, 4.0, 6.0, 8.23):
+                with self.subTest(distance=distance, decel=decel):
+                    c=controller(stop_distance_m=distance, stop_deceleration_m_s2=decel)
+                    c.mission['Interaction']['config']['wrench_interaction']['firmware_auto_brake']['analytic_profile']['max_tilt_deg']=40.
+                    c.prepare_firmware_auto_brake();p=self.params(c)
+                    self.new_limits(p)
+                    self.setup(c)
+                    self.assertEqual(float(p.replies['hlCommander.pRelScA']), decel)
+                    self.assertIn('hlCommander.pRelAMax', p.requested)
+                    self.assertFalse(any(call.args[0]=='hlCommander.pRelAMax'
+                                         for call in p.set_value.call_args_list))
+                    self.assertEqual(c._firmware_curve_capabilities['hlCommander.pRelAMax'], 8.23)
+                    self.assertEqual(float(p.replies['hlCommander.pRelTilt']),40.)
+                    self.assertIn('hlCommander.pRelTMax',p.requested)
+                    self.assertEqual(p.set_value.call_args_list[-1].args, ('hlCommander.pRelAuto','1'))
+
+    def test_higher_deceleration_rejects_old_firmware_before_writes(self):
+        c=controller(stop_deceleration_m_s2=4.0);c.prepare_firmware_auto_brake()
+        p=self.params(c)
+        with self.assertRaisesRegex(RuntimeError, 'pRelAMax'):
+            self.setup(c)
+        p.set_value.assert_not_called()
+
+    def test_higher_deceleration_rejects_incorrect_or_missing_fresh_capability(self):
+        from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+        for reply in ('3.6', 'nan', None):
+            with self.subTest(reply=reply):
+                c=controller(stop_deceleration_m_s2=4.0);c.prepare_firmware_auto_brake()
+                p=self.params(c);self.new_limits(p)
+                if reply is not None:p.replies['hlCommander.pRelAMax']=reply
+                else:del p.replies['hlCommander.pRelAMax']
+                p.get_value.return_value='8.23'  # A cached value is insufficient.
+                def quick(param, *, expected):
+                    return confirm_firmware_mode_parameters(param, expected=expected, timeout_s=.001)
+                with patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters', side_effect=quick):
+                    with self.assertRaisesRegex(RuntimeError, 'pRelAMax'):
+                        self.setup(c)
+                self.assertEqual([call.args for call in p.set_value.call_args_list],
+                                 [('hlCommander.pRelAuto','0')])
+
+    def test_higher_deceleration_capability_is_rechecked_before_arm(self):
+        from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+        c=controller(stop_deceleration_m_s2=4.0);c.prepare_firmware_auto_brake()
+        p=self.params(c);self.new_limits(p);self.setup(c)
+        c._firmware_response_expected=None
+        c.log_manager=SimpleNamespace(curve_recorder=None)
+        p.replies['hlCommander.pRelAMax']='3.6';p.requested.clear()
+        def quick(param, *, expected):
+            return confirm_firmware_mode_parameters(param, expected=expected, timeout_s=.001)
+        with patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters', side_effect=quick):
+            with self.assertRaisesRegex(RuntimeError, 'pRelAMax'):
+                c.verify_firmware_auto_brake_ready()
+        self.assertIn('hlCommander.pRelAMax', p.requested)
+
     def test_bad_acceleration_and_incompatible_profiles_rejected(self):
-        for value in (0,-.1,3.61,math.nan,math.inf,True,None,'0.6'):
+        for value in (0,-.1,8.24,math.nan,math.inf,True,None,'0.6'):
             with self.subTest(value=value),self.assertRaisesRegex(ValueError,'stop_deceleration'):
                 controller(stop_deceleration_m_s2=value).prepare_firmware_auto_brake()
         for key,value in [('position_tracking_bandwidth',0),('state_matched_start',True),
@@ -90,6 +150,35 @@ class StopRequestTests(unittest.TestCase):
             mode['analytic_profile'][key]=value
             with self.subTest(key=key),self.assertRaisesRegex(ValueError,'stop_distance'):
                 c.prepare_firmware_auto_brake()
+
+    def test_deceleration_cannot_exceed_selected_tilt_envelope(self):
+        c=controller(stop_deceleration_m_s2=6.)
+        c.prepare_firmware_auto_brake()  # Default attitude S-curve envelope is 40 degrees.
+        profile=c.mission['Interaction']['config']['wrench_interaction']['firmware_auto_brake']['analytic_profile']
+        profile['max_tilt_deg']=30.
+        with self.assertRaisesRegex(ValueError,'max_tilt_deg'):
+            c.prepare_firmware_auto_brake()
+        profile['max_tilt_deg']=40.;c.prepare_firmware_auto_brake()
+
+    def test_omitted_tilt_restores_40_degree_default_on_new_firmware(self):
+        c=controller();c.prepare_firmware_auto_brake();p=self.params(c);self.new_limits(p)
+        p.replies['hlCommander.pRelTilt']='22.183041';self.setup(c)
+        self.assertEqual(float(p.replies['hlCommander.pRelTilt']),40.)
+        self.assertIn('hlCommander.pRelTMax',p.requested)
+
+    def test_explicit_smaller_tilt_is_preserved(self):
+        c=controller()
+        c.mission['Interaction']['config']['wrench_interaction']['firmware_auto_brake']['analytic_profile']['max_tilt_deg']=25.
+        c.prepare_firmware_auto_brake();p=self.params(c);self.new_limits(p);self.setup(c)
+        self.assertEqual(float(p.replies['hlCommander.pRelTilt']),25.)
+
+    def test_other_executors_keep_legacy_tilt_default(self):
+        from Interaction.firmware_analytic_profile import default_tilt_limit, LEGACY_TILT_LIMIT_DEG
+        for cfg in (None, {}, dict(shape='single_position_polynomial',execution='attitude'),
+                    dict(shape='velocity_scurve',execution='position'),
+                    dict(shape='velocity_scurve',execution='velocity'),
+                    dict(shape='velocity_scurve',execution='attitude',state_matched_start=True)):
+            self.assertEqual(default_tilt_limit(cfg),LEGACY_TILT_LIMIT_DEG)
 
     def test_log_roundtrip_and_backward_compatibility(self):
         for version in (1,2,3):self.assertNotIn('stop_request',decode_event(wire(version=version)))

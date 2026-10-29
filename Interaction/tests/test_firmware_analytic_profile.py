@@ -3,6 +3,20 @@ from Interaction.firmware_analytic_profile import profile_parameters
 
 
 class AnalyticProfileTests(unittest.TestCase):
+    def test_tilt_limit_is_explicit_combined_and_bounded(self):
+        cfg=self.config();cfg.update(execution='attitude')
+        self.assertNotIn('hlCommander.pRelTilt',profile_parameters(cfg))
+        for tilt in (.1,22,30,40):
+            self.assertEqual(profile_parameters(dict(cfg,max_tilt_deg=tilt))['hlCommander.pRelTilt'],tilt)
+        for tilt in (0,-1,40.01,True,None,'40',float('nan'),float('inf')):
+            with self.subTest(tilt=tilt),self.assertRaises(ValueError):
+                profile_parameters(dict(cfg,max_tilt_deg=tilt))
+        for changes in ({'execution':'velocity'},{'shape':'single_position_polynomial'}):
+            with self.assertRaisesRegex(ValueError,'max_tilt_deg requires'):
+                profile_parameters(dict(cfg,max_tilt_deg=40,**changes))
+        with self.assertRaisesRegex(ValueError,'state_matched_start'):
+            profile_parameters(dict(cfg,max_tilt_deg=40,response_compensation=True,state_matched_start=True))
+
     def config(self, **changes):
         return dict(shape='velocity_scurve', execution='velocity', tail_s=.35,
                     single_s=.35, handoff='predicted_bumpless', feedback='unified_vicon15', **changes)

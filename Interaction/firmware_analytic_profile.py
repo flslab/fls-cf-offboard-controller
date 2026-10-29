@@ -6,6 +6,21 @@ The controller selects the bounded runtime when this profile is present;
 """
 import math
 
+LEGACY_TILT_LIMIT_DEG = math.degrees(math.atan(4.0 / 9.81))
+MAX_TILT_LIMIT_DEG = 40.0
+DEFAULT_SCURVE_TILT_LIMIT_DEG = 40.0
+# Rounded down from g*tan(40 degrees); a reference limit, not measured braking.
+MAX_STOP_DECELERATION_M_S2 = 8.23
+
+
+def default_tilt_limit(profile):
+    profile = profile or {}
+    if (profile.get('shape') == 'velocity_scurve'
+            and profile.get('execution') == 'attitude'
+            and not profile.get('state_matched_start', False)):
+        return DEFAULT_SCURVE_TILT_LIMIT_DEG
+    return LEGACY_TILT_LIMIT_DEG
+
 
 def profile_parameters(config):
     if config is None:
@@ -15,7 +30,8 @@ def profile_parameters(config):
     allowed = {'shape', 'execution', 'tail_s', 'single_s', 'handoff', 'feedback',
                'attitude_kp', 'attitude_kv', 'rate_feedforward',
                'response_compensation', 'response_bandwidth', 'acceleration_residual',
-               'state_matched_start', 'position_tracking_bandwidth', 'friction_from_interaction'}
+               'state_matched_start', 'position_tracking_bandwidth', 'friction_from_interaction',
+               'max_tilt_deg'}
     if set(config) - allowed:
         raise ValueError('unknown analytic_profile fields: ' + ', '.join(sorted(set(config) - allowed)))
     def choice(key, choices):
@@ -88,4 +104,10 @@ def profile_parameters(config):
         result['hlCommander.pRelSeed'] = int(state_match)
     if 'friction_from_interaction' in config:
         result['hlCommander.pRelFric'] = int(friction)
+    if 'max_tilt_deg' in config:
+        if config.get('shape') != 'velocity_scurve' or config.get('execution') != 'attitude':
+            raise ValueError('max_tilt_deg requires velocity_scurve attitude execution')
+        if state_match:
+            raise ValueError('max_tilt_deg requires state_matched_start: false')
+        result['hlCommander.pRelTilt'] = number('max_tilt_deg', .1, MAX_TILT_LIMIT_DEG)
     return result

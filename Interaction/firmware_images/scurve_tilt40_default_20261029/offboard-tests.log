@@ -1,0 +1,2976 @@
+Logging configuration loaded from logging_config.yaml
+test_acceleration_only_and_combined_request_read_back (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_bad_acceleration_and_incompatible_profiles_rejected (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_deceleration_cannot_exceed_selected_tilt_envelope (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_default_clears_previous_deceleration (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_defaults_and_distance_only (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_explicit_smaller_tilt_is_preserved (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_higher_deceleration_capability_is_rechecked_before_arm (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_higher_deceleration_rejects_incorrect_or_missing_fresh_capability (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_higher_deceleration_rejects_old_firmware_before_writes (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_higher_deceleration_requires_fresh_capability_and_readback (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_log_roundtrip_and_backward_compatibility (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_missing_capability_cannot_silently_ignore_distance (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_omitted_tilt_restores_40_degree_default_on_new_firmware (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_other_executors_keep_legacy_tilt_default (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_rejection_explains_infeasible_cap_and_distance (Interaction.tests.test_firmware_stop_request.StopRequestTests) ... ok
+test_acceleration_residual_requires_capability_before_any_write (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_analytic_profile_confirmed_before_enable_and_recorded (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_attitude_selection_clears_velocity_option (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_build_numbers_are_diagnostic_only_including_unknown_versions (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_cached_mode_two_without_fresh_replies_does_not_authorize (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_compensation_uploads_model_without_starting_worker (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_curve_endpoint_checks_capability_without_version_allowlist (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_distance_mode_writes_and_confirms_the_selected_target (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_distance_target_requires_scurve_mode (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_fresh_mode_confirmation_and_original_observer_ready_gate (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_missing_build_number_does_not_reject_capable_firmware (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_missing_capability_rejects_before_any_write (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_mode_two_and_predictor_enabled_without_pi_worker_or_pid_writes (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_old_modes_clear_predictor_but_preserve_existing_mode_codes (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_omitted_position_tracker_resets_supported_parameter (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_plain_velocity_explicitly_selects_execution_on_multimode_firmware (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_pointcloud_and_rigidbody_supported_full_pose_rejected (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_position_tracker_requires_capability_before_any_write (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_prearm_rechecks_execution_and_negotiated_log_protocol (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_prearm_reconfirms_velocity_mode_and_worker_disabled (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_unused_acceleration_residual_is_explicitly_reset_if_supported (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_velocity_mode_disables_attitude_worker_and_confirms_before_enable (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_velocity_rejects_attitude_response_fit_and_fixed_distance (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_velocity_requires_new_capability_not_a_specific_build_number (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_wrong_execution_readback_cannot_enable_braking (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_acceleration_residual_is_explicit_and_requires_compensation (Interaction.tests.test_firmware_analytic_profile.AnalyticProfileTests) ... ok
+test_forward_curve_endpoint_is_explicit_without_replanning (Interaction.tests.test_firmware_analytic_profile.AnalyticProfileTests) ... ok
+test_invalid_rejected_before_packets (Interaction.tests.test_firmware_analytic_profile.AnalyticProfileTests) ... ok
+test_none_preserves_legacy (Interaction.tests.test_firmware_analytic_profile.AnalyticProfileTests) ... ok
+test_position_tracking_is_explicit_bounded_and_does_not_replan (Interaction.tests.test_firmware_analytic_profile.AnalyticProfileTests) ... ok
+test_response_compensation_is_opt_in_and_does_not_enable_replanning (Interaction.tests.test_firmware_analytic_profile.AnalyticProfileTests) ... ok
+test_six_paths_and_bypass_off (Interaction.tests.test_firmware_analytic_profile.AnalyticProfileTests) ... ok
+test_state_matched_start_is_explicit_and_requires_calibrated_execution (Interaction.tests.test_firmware_analytic_profile.AnalyticProfileTests) ... ok
+test_tilt_limit_is_explicit_combined_and_bounded (Interaction.tests.test_firmware_analytic_profile.AnalyticProfileTests) ... ok
+test_current_40_degree_profile_requires_new_image_even_at_default_deceleration (Interaction.tests.test_firmware_image_contract.FirmwareImageContractTests) ... ok
+test_old_image_is_not_compatible_with_higher_deceleration (Interaction.tests.test_firmware_image_contract.FirmwareImageContractTests) ... ok
+test_published_image_and_checked_elf_match_release_fingerprints (Interaction.tests.test_firmware_image_contract.FirmwareImageContractTests) ... ok
+test_reset_disable_requires_both_compiled_switches (Interaction.tests.test_firmware_image_contract.FirmwareImageContractTests) ... ok
+test_shipped_image_preserves_legacy_scurve_and_hover_parameter_contract (Interaction.tests.test_firmware_image_contract.FirmwareImageContractTests) ... ok
+test_cached_one_without_fresh_reply_must_timeout (Interaction.tests.test_firmware_parameter_confirmation.ConfirmationTests) ... ok
+test_delayed_write_replies_do_not_fail_on_initial_zero_cache (Interaction.tests.test_firmware_parameter_confirmation.ConfirmationTests) ... ok
+test_immediate_callbacks_and_repeated_prearm_checks (Interaction.tests.test_firmware_parameter_confirmation.ConfirmationTests) ... ok
+test_invalid_timeout_rejected (Interaction.tests.test_firmware_parameter_confirmation.ConfirmationTests) ... ok
+test_missing_host_and_request_error_cleanup (Interaction.tests.test_firmware_parameter_confirmation.ConfirmationTests) ... ok
+test_prearm_still_requires_observer_and_healthy_worker (Interaction.tests.test_firmware_parameter_confirmation.ConfirmationTests) ... ok
+test_wrong_and_invalid_values_do_not_authorize (Interaction.tests.test_firmware_parameter_confirmation.ConfirmationTests) ... ok
+test_coast_preemption_replaces_pending_restore_with_contact (Interaction.tests.test_level_coast_scurve.ContactEstimatorTests) ... ok
+test_hardware_preflight_requires_and_confirms_disabled_speed_gate_before_enable (Interaction.tests.test_level_coast_scurve.ContactEstimatorTests) ... ok
+test_switch_is_nonblocking_ignores_old_reply_and_requires_confirmation (Interaction.tests.test_level_coast_scurve.ContactEstimatorTests) ... ok
+test_timeout_and_partial_write_failure_still_restore_default (Interaction.tests.test_level_coast_scurve.ContactEstimatorTests) ... ok
+test_all_phase_mode_pairs_send_selected_packets_and_preempt_for_every_detector (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] cmd: pos -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: pos -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] cmd: ori -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: pos -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] cmd: pos -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: pos -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] cmd: ori -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: pos -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] cmd: pos -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: pos -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] cmd: ori -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: pos -> hold
+[interaction] done
+ok
+test_capture_cannot_keep_sending_when_duplicate_state_expires (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> capture
+[interaction] cmd: pos -> capture
+[interaction] capture -> grace
+[interaction] cmd: capture -> hold
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> capture
+[interaction] cmd: ori -> capture
+[interaction] capture -> grace
+[interaction] cmd: capture -> hold
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> position capture
+[interaction] coast -> capture
+[interaction] cmd: s-curve -> capture
+ok
+test_common_capture_and_compensated_hold_for_all_three_coasts_and_detectors (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: pos -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: ori -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] coast: detection ready
+[interaction] s-curve done -> position capture
+[interaction] coast -> capture
+[interaction] cmd: s-curve -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: pos -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: ori -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] coast: detection ready
+[interaction] s-curve done -> position capture
+[interaction] coast -> capture
+[interaction] cmd: s-curve -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: pos -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: ori -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] coast: detection ready
+[interaction] s-curve done -> position capture
+[interaction] coast -> capture
+[interaction] cmd: s-curve -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: pos -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: ori -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] coast: detection ready
+[interaction] s-curve done -> position capture
+[interaction] coast -> capture
+[interaction] cmd: s-curve -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> capture
+[interaction] cmd: pos -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast -> capture
+[interaction] cmd: ori -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] coast: detection ready
+[interaction] s-curve done -> position capture
+[interaction] coast -> capture
+[interaction] cmd: s-curve -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> capture
+[interaction] cmd: pos -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> capture
+[interaction] cmd: ori -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] coast: detection ready
+[interaction] s-curve done -> position capture
+[interaction] coast -> capture
+[interaction] cmd: s-curve -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+ok
+test_delay_does_not_block_duration_abort_or_early_release (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.5s
+[interaction] contact -> coast
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.5s
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.5s
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.5s
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.5s
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.5s
+[interaction] contact -> coast
+ok
+test_delay_sends_only_pos_until_deadline_for_all_detectors (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] contact -> coast
+[interaction] cmd: hold -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] contact -> coast
+[interaction] cmd: hold -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] contact -> coast
+[interaction] cmd: hold -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] contact -> coast
+[interaction] cmd: hold -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_direct_hold_does_not_wait_for_estimator_ack_or_contact_command_delay (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] pos delay: 0.25s
+[interaction] contact -> grace
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] pos delay: 0.25s
+[interaction] contact -> grace
+[interaction] done
+ok
+test_direct_hold_preserves_abort_cleanup (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+ok
+test_direct_hold_rearms_for_repeated_interactions (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> ready
+[interaction] done
+ok
+test_direct_hold_uses_detector_end_and_sends_fixed_position_in_same_sample (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] done
+ok
+test_duplicate_state_resends_selected_coast_packet_without_advancing (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_duration_expires_in_every_phase (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] done
+ok
+test_faults_propagate_and_clear_contact_authority (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+ok
+test_follow_yaw_updates_all_hold_phases_but_never_becomes_a_yaw_rate (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_follow_yaw_waits_for_first_fresh_state (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_handoff_uses_vicon_velocity_while_detector_retains_onboard_velocity (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_low_speed_release_captures_using_coast_policy_even_without_coast_packet (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_mixed_mode_faults_abort_and_clear_authority (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+ok
+test_mixed_modes_early_release_and_preemption_preserve_position_delay (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] contact -> coast
+[interaction] cmd: hold -> ori
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] pos delay: 0.1s
+[interaction] cmd: ori -> hold
+[interaction] contact -> coast
+[interaction] cmd: hold -> ori
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] contact -> coast
+[interaction] cmd: hold -> pos
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] pos delay: 0.1s
+[interaction] cmd: pos -> hold
+[interaction] contact -> coast
+[interaction] cmd: hold -> pos
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: pos -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] contact -> coast
+[interaction] cmd: hold -> ori
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] pos delay: 0.1s
+[interaction] cmd: ori -> hold
+[interaction] contact -> coast
+[interaction] cmd: hold -> ori
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] contact -> coast
+[interaction] cmd: hold -> pos
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] pos delay: 0.1s
+[interaction] cmd: pos -> hold
+[interaction] contact -> coast
+[interaction] cmd: hold -> pos
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: pos -> hold
+[interaction] done
+ok
+test_mixed_modes_preserve_yaw_packet_semantics (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] yaw damping enabled
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] yaw damping enabled
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_model_and_velocity_selectors_reach_level_and_grace (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_new_capture_keeps_existing_failure_and_boundary_paths (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: pos -> s-curve
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: pos -> s-curve
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: pos -> s-curve
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: pos -> s-curve
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: pos -> s-curve
+ok
+test_new_contact_preempts_capture_and_discards_anchor_for_every_coast (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: pos -> capture
+[interaction] capture -> contact
+[interaction] cmd: capture -> pos
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: pos -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: ori -> capture
+[interaction] capture -> contact
+[interaction] cmd: capture -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: detection ready
+[interaction] coast -> capture
+[interaction] cmd: ori -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: pos -> s-curve
+[interaction] coast: detection ready
+[interaction] s-curve done -> position capture
+[interaction] coast -> capture
+[interaction] cmd: s-curve -> capture
+[interaction] estimator: 2 (detect)
+[interaction] capture -> contact
+[interaction] cmd: capture -> pos
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: pos -> s-curve
+[interaction] coast: detection ready
+[interaction] s-curve done -> position capture
+[interaction] coast -> capture
+[interaction] cmd: s-curve -> capture
+[interaction] capture -> ready
+[interaction] cmd: capture -> hold
+[interaction] done
+ok
+test_non_model_detection_ignores_specific_force_without_raw_imu (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_optional_sensing_is_logged_without_changing_model_or_velocity_decisions (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_position_capture_freezes_forward_target_without_changing_grace_semantics (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: pos -> hold
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> ready
+[interaction] done
+ok
+test_position_delay_yaw_and_safety_use_existing_lifecycle (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] contact -> coast
+[interaction] cmd: hold -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.1s
+[interaction] contact -> coast
+[interaction] cmd: hold -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+ok
+test_position_mode_only_sends_position_in_contact_and_coast_for_all_detectors (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_position_modes_abort_on_stale_vicon_without_velocity_fallback (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+ok
+test_position_packets_use_vicon_motion_and_onboard_pid_compensation (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_pot_and_model_orientation_capture_ignores_lateral_drift_but_position_does_not (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: pos -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_potentiometer_two_contacts_and_ignored_contact_during_coast_and_grace (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_release_grace_discards_early_model_evidence_and_preserves_safety (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+ok
+test_release_grace_preempts_coast_for_all_detectors (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> contact
+[interaction] contact -> coast
+[interaction] coast: detection ready
+[interaction] coast -> ready
+[interaction] cmd: ori -> hold
+[interaction] done
+ok
+test_scurve_abort_ack_failure_and_existing_safety_restore_default (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+ok
+test_scurve_estimator_switch_uses_selected_edge_and_confirms_before_dispatch (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: pos -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: pos -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: pos -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+ok
+test_scurve_keeps_firmware_ownership_then_restores_estimator_before_position (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> pos
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] cmd: pos -> ori
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] done
+ok
+test_scurve_release_grace_can_preempt_without_consuming_old_completion (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] coast: detection ready
+[interaction] estimator: 2 (detect)
+[interaction] coast -> contact
+[interaction] cmd: s-curve -> ori
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: ori -> s-curve
+[interaction] coast: detection ready
+[interaction] s-curve done -> default estimator
+[interaction] coast -> ready
+[interaction] cmd: s-curve -> hold
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] coast: detection ready
+[interaction] estimator: 3 (detect)
+[interaction] coast -> contact
+[interaction] cmd: s-curve -> ori
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] coast: detection ready
+[interaction] s-curve done -> default estimator
+[interaction] coast -> ready
+[interaction] cmd: s-curve -> hold
+[interaction] done
+ok
+test_scurve_switch_edge_is_independent_of_position_command_delay (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 3 (detect)
+[interaction] ready -> contact
+[interaction] pos delay: 0.25s
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: hold -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] pos delay: 0.25s
+[interaction] estimator: 3 (release)
+[interaction] contact -> coast
+[interaction] coast: s-curve
+[interaction] cmd: hold -> s-curve
+[interaction] s-curve done -> default estimator
+[interaction] coast -> grace
+[interaction] cmd: s-curve -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_stale_vicon_does_not_fall_back_to_onboard_handoff (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+ok
+test_stationary_rearm_uses_physical_motion_after_compensated_hover (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] cmd: ori -> pos
+[interaction] coast -> capture
+[interaction] cmd: pos -> capture
+[interaction] capture -> grace
+[interaction] cmd: capture -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> capture
+[interaction] cmd: ori -> capture
+[interaction] capture -> grace
+[interaction] cmd: capture -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] estimator: 2 (detect)
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] estimator: 3 (release)
+[interaction] coast: s-curve
+[interaction] contact -> coast
+[interaction] cmd: ori -> s-curve
+[interaction] s-curve done -> position capture
+[interaction] coast -> capture
+[interaction] cmd: s-curve -> capture
+[interaction] capture -> grace
+[interaction] cmd: capture -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_velocity_detector_locks_onset_axis_for_orientation_coast (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+ok
+test_vicon_low_speed_can_capture_while_onboard_velocity_is_still_high (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] done
+ok
+test_yaw_confirmation_failure_never_arms_detection (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+ok
+test_yaw_damping_keeps_standard_packets_and_ignores_changing_heading (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] yaw damping enabled
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_yaw_damping_never_starts_if_not_stable_or_disabled (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] done
+[interaction] startup
+[interaction] prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_yaw_damping_waits_for_stability_and_confirmation_before_detection (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] yaw damping enabled
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_yaw_deadband_receives_body_z_rate_in_every_phase_after_activation (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] yaw damping enabled
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.02s
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] pos delay: 0.02s
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+[interaction] coast -> grace
+[interaction] cmd: ori -> hold
+[interaction] grace -> prepare
+[interaction] prepare -> ready
+[interaction] done
+ok
+test_yaw_switch_failure_exits_to_landing_and_clears_attitude_authority (Interaction.tests.test_level_coast.LevelCoastLoopTests) ... [interaction] startup
+[interaction] prepare
+[interaction] yaw damping enabled
+[interaction] prepare -> ready
+[interaction] ready -> contact
+[interaction] cmd: hold -> ori
+[interaction] contact -> coast
+ok
+test_coast_mode_inherits_contact_and_rejects_invalid_values (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_coast_preemption_restarts_delay_and_holds_current_xy (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_coasting_switch_defaults_on_and_requires_boolean (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_delay_constant_must_be_finite_and_nonnegative (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_delay_keeps_position_and_remembers_early_release (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_direct_hold_captures_release_position_despite_speed_or_pending_delay (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_direction_stays_fixed_until_accepted_coast_preemption (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_estimator_switch_defaults_to_release_and_rejects_unknown_edges (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_missing_direction_uses_full_speed_without_inventing_an_axis (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_orientation_stop_uses_signed_projection_and_ignores_lateral_speed (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_position_coast_requires_release_and_full_xy_speed_below_threshold (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_preflight_rejects_conflicting_authority_missing_sensor_and_bad_thresholds (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_release_grace_can_preempt_coast_and_restarts_each_release (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_release_grace_low_speed_capture_keeps_remaining_timer (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_scurve_completes_only_on_notice_regardless_of_speed (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_velocity_release_requires_continuous_evidence (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_zero_release_grace_and_late_capture (Interaction.tests.test_level_coast.LevelCoastStateTests) ... ok
+test_explicit_measured_response_is_required (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_final_prearm_refreshes_model_and_propagates_sync_failure (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_firmware_abort_is_not_treated_as_velocity_phase (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_firmware_hold_health_check_does_not_block_contact_detection (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_firmware_hold_health_check_preserves_stale_log_fault (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_firmware_hold_observation_fails_if_firmware_leaves_hold (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_firmware_monitor_uses_sticky_battery_abort (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_firmware_owned_brake_loads_xyz_without_enabling_pi_braking (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_firmware_owner_disables_only_pi_release_profile (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_firmware_state_assembly_does_not_fabricate_yaw_pid_logs (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_full_pose_and_offboard_shadow_are_rejected (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_legacy_modes_clear_stale_experiment_without_requiring_new_params (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_mode_defaults_to_two_phase_and_zero_velocity_is_explicit (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_monitor_snapshot_keeps_values_with_their_actual_receipt_time (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_old_firmware_without_atomic_handoff_protocol_refuses_arm (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_other_interaction_modes_remain_default_off (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_pi_joint_build_number_is_diagnostic_and_prewarms_before_enable (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_pi_joint_worker_is_required_at_final_prearm_check (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_pi_worker_start_failure_never_enables_host_mode (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_readiness_requires_selected_firmware_mode (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_release_rejection_capture_does_not_reuse_sticky_old_reason (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_release_rejection_capture_uses_new_status_packet (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_single_marker_pointcloud_is_allowed_but_mixed_is_not (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_wait_loop_checks_battery_during_telemetry_gap_and_pending_notice (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_wait_loop_never_acks_cached_hold_or_notice_without_new_hold_status (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_wait_loop_preserves_terminal_timeout_with_fresh_logs (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_wait_loop_reports_stage_six_on_first_observed_fault (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_yaw_log_is_optional_only_for_disabled_firmware_yaw_model (Interaction.tests.test_firmware_auto_brake_preflight.FirmwareAutoBrakePreflightTests) ... ok
+test_alternating_conditions_sent_once_without_parameter_write (Interaction.tests.test_firmware_friction.FrictionTests) ... ok
+test_legacy_event_remains_byte_identical (Interaction.tests.test_firmware_friction.FrictionTests) ... ok
+test_mu_is_in_same_packet_and_full_echo_identity (Interaction.tests.test_firmware_friction.FrictionTests) ... ok
+test_omitted_option_resets_previous_friction_mode (Interaction.tests.test_firmware_friction.FrictionTests) ... ok
+test_only_supported_profile_and_capability_before_write (Interaction.tests.test_firmware_friction.FrictionTests) ... ok
+test_v3_friction_metadata_atomic_crc_and_backward_compatibility (Interaction.tests.test_firmware_friction.FrictionTests) ... ok
+test_acceleration_residual_requires_capability_before_any_write (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_analytic_profile_confirmed_before_enable_and_recorded (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_attitude_selection_clears_velocity_option (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_build_numbers_are_diagnostic_only_including_unknown_versions (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_cached_mode_two_without_fresh_replies_does_not_authorize (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_compensation_uploads_model_without_starting_worker (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_curve_endpoint_checks_capability_without_version_allowlist (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_distance_mode_writes_and_confirms_the_selected_target (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_distance_target_requires_scurve_mode (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_fresh_mode_confirmation_and_original_observer_ready_gate (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_missing_build_number_does_not_reject_capable_firmware (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_missing_capability_rejects_before_any_write (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_mode_two_and_predictor_enabled_without_pi_worker_or_pid_writes (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_old_modes_clear_predictor_but_preserve_existing_mode_codes (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_omitted_position_tracker_resets_supported_parameter (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_plain_velocity_explicitly_selects_execution_on_multimode_firmware (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_pointcloud_and_rigidbody_supported_full_pose_rejected (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_position_tracker_requires_capability_before_any_write (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_prearm_rechecks_execution_and_negotiated_log_protocol (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_prearm_reconfirms_velocity_mode_and_worker_disabled (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_unused_acceleration_residual_is_explicitly_reset_if_supported (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_velocity_mode_disables_attitude_worker_and_confirms_before_enable (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_velocity_rejects_attitude_response_fit_and_fixed_distance (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_velocity_requires_new_capability_not_a_specific_build_number (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_wrong_execution_readback_cannot_enable_braking (Interaction.tests.test_scurve_firmware_preflight.SCurvePreflightTests) ... ok
+test_duration_during_second_contact_does_not_land_via_old_hlc_hold (Interaction.tests.test_firmware_reinteraction.FirmwareReinteractionTests) ... ok
+test_firmware_hold_does_not_emit_low_level_commands_until_new_contact (Interaction.tests.test_firmware_reinteraction.FirmwareReinteractionTests) ... ok
+test_legacy_flag_neither_locks_hold_nor_ends_mission (Interaction.tests.test_firmware_reinteraction.FirmwareReinteractionTests) ... ok
+test_no_new_contact_after_duration (Interaction.tests.test_firmware_reinteraction.FirmwareReinteractionTests) ... ok
+test_no_second_contact_keeps_hold_until_duration (Interaction.tests.test_firmware_reinteraction.FirmwareReinteractionTests) ... ok
+test_two_contacts_run_by_default_until_original_deadline (Interaction.tests.test_firmware_reinteraction.FirmwareReinteractionTests) ... ok
+test_missing_notice_does_not_invent_target (Interaction.tests.test_firmware_hold_target_logging.FirmwareHoldTargetLoggingTests) ... ok
+test_target_logged_once_before_later_confirmation (Interaction.tests.test_firmware_hold_target_logging.FirmwareHoldTargetLoggingTests) ... ok
+test_target_survives_fault_on_same_monitor_iteration (Interaction.tests.test_firmware_hold_target_logging.FirmwareHoldTargetLoggingTests) ... ok
+test_actual_cascade_error_does_not_jump_with_estimator_bias_or_position_jump (Interaction.tests.test_position_handoff.PositionHandoffTests) ... ok
+test_capture_preserves_outgoing_command_and_bounds_combined_acceleration (Interaction.tests.test_position_handoff.PositionHandoffTests) ... ok
+test_config_and_stale_command_rejected (Interaction.tests.test_position_handoff.PositionHandoffTests) ... ok
+test_default_applies_to_all_coasts_but_not_direct_hold_or_other_behaviors (Interaction.tests.test_position_handoff.PositionHandoffTests) ... ok
+test_delayed_plant_with_bias_switch_stops_without_centimeter_reverse (Interaction.tests.test_position_handoff.PositionHandoffTests) ... ok
+test_duplicate_vicon_does_not_satisfy_dwell_and_bad_samples_abort (Interaction.tests.test_position_handoff.PositionHandoffTests) ... ok
+test_hold_anchor_is_physical_not_frozen_bias_offset_and_remains_corrected (Interaction.tests.test_position_handoff.PositionHandoffTests) ... ok
+test_slower_vicon_stream_advances_dwell_only_on_new_samples (Interaction.tests.test_position_handoff.PositionHandoffTests) ... ok
+test_speed_tilt_rate_acceleration_and_ack_each_prevent_early_hold (Interaction.tests.test_position_handoff.PositionHandoffTests) ... ok
+test_timeout_and_infeasible_commands_do_not_silently_freeze (Interaction.tests.test_position_handoff.PositionHandoffTests) ... ok
+test_all_detection_methods_keep_onboard_logging_and_both_command_modes (Interaction.tests.test_mission_profiles.MissionProfileTests) ... ok
+test_download_expands_profile_before_preflight_for_each_matching_mission (Interaction.tests.test_mission_profiles.MissionProfileTests) ... ok
+test_inline_only_missions_are_unchanged (Interaction.tests.test_mission_profiles.MissionProfileTests) ... ok
+test_level_coast_calibration_keeps_onboard_pipeline_for_all_methods (Interaction.tests.test_mission_profiles.MissionProfileTests) ... ok
+test_nested_overrides_preserve_siblings_and_do_not_mutate_profile (Interaction.tests.test_mission_profiles.MissionProfileTests) ... ok
+test_profile_is_portable_and_retains_baseline_values (Interaction.tests.test_mission_profiles.MissionProfileTests) ... ok
+test_scurve_cannot_silently_run_a_conflicting_firmware_profile (Interaction.tests.test_mission_profiles.MissionProfileTests) ... ok
+test_scurve_selection_loads_existing_curve_but_preserves_mission_overrides (Interaction.tests.test_mission_profiles.MissionProfileTests) ... ok
+test_unknown_missing_and_malformed_profiles_fail (Interaction.tests.test_mission_profiles.MissionProfileTests) ... ok
+test_defaults_restore_enabled_policy_before_enable (Interaction.tests.test_firmware_pid_reset.ResetPolicyTests) ... ok
+test_disable_on_old_firmware_fails_before_writes (Interaction.tests.test_firmware_pid_reset.ResetPolicyTests) ... ok
+test_disabled_auto_brake_does_not_activate_reset_policy (Interaction.tests.test_firmware_pid_reset.ResetPolicyTests) ... ok
+test_invalid_config_rejected_during_prepare (Interaction.tests.test_firmware_pid_reset.ResetPolicyTests) ... ok
+test_legacy_firmware_defaults_need_no_new_parameters (Interaction.tests.test_firmware_pid_reset.ResetPolicyTests) ... ok
+test_switches_are_independent (Interaction.tests.test_firmware_pid_reset.ResetPolicyTests) ... ok
+test_wrong_readback_cannot_enable_or_pass_prearm (Interaction.tests.test_firmware_pid_reset.ResetPolicyTests) ... ok
+
+----------------------------------------------------------------------
+Ran 224 tests in 4.317s
+
+OK

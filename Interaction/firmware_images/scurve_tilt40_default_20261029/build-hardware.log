@@ -1,0 +1,20 @@
+  Using .. as source for kernel
+  GEN     ./Makefile
+python3 ../tools/make/versionTemplate.py --crazyflie-base .. ../src/utils/src/version.vtpl src/utils/src/version_gen.c
+  CC      src/modules/src/crtp_commander_high_level.o
+  CC      src/utils/src/version_gen.o
+  LD      src/utils/src/version.o
+  LD      src/utils/src/built-in.o
+  LD      src/utils/built-in.o
+  LD      src/modules/src/built-in.o
+  LD      src/modules/built-in.o
+  LD      src/built-in.o
+  LD      firmware
+  COPY  bolt.bin
+  COPY  bolt.hex
+Build for the bolt platform!
+Build 0:0f2632ccb897 (bolt-scurve-40default-26102903) [1;31mMODIFIED[m
+Version extracted from explicit modified firmware snapshot
+Flash |  375772/1032192 (36%),  656420 free | text: 366236, data: 9536, ccmdata: 0
+RAM   |  121332/131072  (93%),    9740 free | bss: 111796, data: 9536
+CCM   |   55144/65536   (84%),   10392 free | ccmbss: 55144, ccmdata: 0

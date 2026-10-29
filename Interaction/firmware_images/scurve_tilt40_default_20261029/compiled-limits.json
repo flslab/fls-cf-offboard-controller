@@ -1,0 +1,10 @@
+{
+  "scMaxTilt": 40.0,
+  "scResetXYActive": 1,
+  "scResetXYParam": 1,
+  "scStopDecel": 3.5999999046325684,
+  "scStopMaxDecel": 8.229999542236328,
+  "scTailParam": 1.2000000476837158,
+  "scTiltParam": 40.0,
+  "resetOnModeChange": 1
+}
