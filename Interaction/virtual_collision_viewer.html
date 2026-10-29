@@ -1,0 +1,275 @@
+<div id="virtual-collision-replay">
+  <style>
+    #virtual-collision-replay { color: var(--foreground); }
+    #virtual-collision-replay .vc-heading { padding-inline-end: 94px; }
+    #virtual-collision-replay .vc-subtitle { margin-block: 4px 16px; }
+    #virtual-collision-replay .vc-identities { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; margin-block: 14px 4px; }
+    #virtual-collision-replay .vc-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    #virtual-collision-replay .vc-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+    #virtual-collision-replay .vc-a { background: var(--viz-series-1); }
+    #virtual-collision-replay .vc-b { background: var(--viz-series-2); }
+    #virtual-collision-replay .vc-scene { display: block; width: 100%; overflow: visible; }
+    #virtual-collision-replay .vc-scene text { fill: var(--foreground); }
+    #virtual-collision-replay .vc-metrics { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-block: 8px 12px; }
+    #virtual-collision-replay .vc-timeline { margin-block: 12px; }
+    #virtual-collision-replay .vc-detail { margin-block: 10px 0; overflow-wrap: anywhere; }
+    #virtual-collision-replay .vc-spacer { flex: 1; }
+  </style>
+  <h3 class="vc-heading">两机虚拟碰撞</h3>
+  <div id="vc-subtitle" class="text-small text-muted vc-subtitle">一维延迟响应模型 · 非飞控 SITL</div>
+  <div class="viz-controls">
+    <label class="form-label" for="vc-scenario">场景
+      <select class="form-select" id="vc-scenario"></select>
+    </label>
+  </div>
+  <div class="vc-identities tabular-nums">
+    <div class="vc-identity"><span class="vc-dot vc-a" aria-hidden="true"></span><span id="vc-a-name">A</span><span id="vc-a-speed"></span></div>
+    <div class="vc-identity"><span class="vc-dot vc-b" aria-hidden="true"></span><span id="vc-b-name">B</span><span id="vc-b-speed"></span></div>
+  </div>
+  <svg class="vc-scene" role="img" aria-labelledby="vc-scene-title vc-scene-description">
+    <title id="vc-scene-title">两架无人机沿同一直线接近并模拟碰撞</title>
+    <desc id="vc-scene-description">上方为含延迟的实际模型位置，下方为空心的理想参考位置。箭头表示速度方向。半透明圆环表示每机一半的最小中心间距。</desc>
+  </svg>
+  <div class="vc-metrics text-small tabular-nums">
+    <span id="vc-gap"></span>
+    <span id="vc-minimum"></span>
+    <span id="vc-limit"></span>
+  </div>
+  <div class="viz-row">
+    <button class="btn btn-primary" id="vc-play" type="button">播放</button>
+    <span id="vc-phase" class="text-small"></span>
+    <span class="vc-spacer"></span>
+    <span id="vc-clock" class="text-small tabular-nums"></span>
+  </div>
+  <div class="vc-timeline">
+    <label class="form-label" for="vc-time">时间 <span id="vc-time-value" class="tabular-nums"></span></label>
+    <input class="form-range" id="vc-time" type="range" min="0" max="1" value="0" step="0.001" aria-label="仿真时间" />
+  </div>
+  <div id="vc-detail" class="vc-detail text-small tabular-nums" aria-live="polite"></div>
+  <div id="vc-announcement" class="sr-only" aria-live="polite"></div>
+</div>
+<script>
+(() => {
+  const dataset = __SIMULATION_DATA__;
+  const root = document.getElementById('virtual-collision-replay');
+  const find = id => root.querySelector('#' + id);
+  const selector = find('vc-scenario');
+  const play = find('vc-play');
+  const time = find('vc-time');
+  const svg = root.querySelector('.vc-scene');
+  const scenarios = dataset.scenarios.filter(s => Array.isArray(s.samples) && s.samples.length > 0);
+  if (!scenarios.length) {
+    find('vc-detail').textContent = '无可播放的仿真记录';
+    play.disabled = true;
+    time.disabled = true;
+    return;
+  }
+  const ns = 'http://www.w3.org/2000/svg';
+  const colors = ['var(--viz-series-1)', 'var(--viz-series-2)'];
+  const phaseNames = {
+    approach: '接近', transition: '减速 → 反弹', separation: '分离',
+    response: '延迟响应', coast: '分离', settle: '响应收敛',
+    delay: '响应延迟', collision: '减速 → 反弹', rebound: '反弹',
+    brake: '减速', hold: '保持', rejected: '间距不足，拒绝执行'
+  };
+  let scenarioIndex = 0;
+  let clock = 0;
+  let playing = false;
+  let lastFrame = null;
+  let frame = null;
+  let domain = [-1, 1];
+  let width = Math.max(root.getBoundingClientRect().width, 280);
+  let marks = {};
+  const fixed = (n, places = 2) => Number.isFinite(Number(n)) ? Number(n).toFixed(places) : '—';
+  const signed = n => (Number(n) >= 0 ? '+' : '−') + fixed(Math.abs(Number(n)));
+  const selected = () => scenarios[scenarioIndex];
+  const duration = () => selected().samples[selected().samples.length - 1].time_s;
+  const sx = x => 30 + (x - domain[0]) / (domain[1] - domain[0]) * (width - 60);
+  const px = meters => meters / (domain[1] - domain[0]) * (width - 60);
+  function element(tag, attributes, parent = svg, text) {
+    const node = document.createElementNS(ns, tag);
+    for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+    if (text !== undefined) node.textContent = text;
+    parent.appendChild(node);
+    return node;
+  }
+  function sampleAt(t) {
+    const samples = selected().samples;
+    let low = 0;
+    let high = samples.length - 1;
+    while (low + 1 < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (samples[mid].time_s <= t) low = mid;
+      else high = mid;
+    }
+    const a = samples[low];
+    const b = samples[high];
+    const f = Math.max(0, Math.min(1, (t - a.time_s) / Math.max(1e-12, b.time_s - a.time_s)));
+    const result = {...a};
+    for (const key of Object.keys(a)) {
+      if (typeof a[key] === 'number' && typeof b[key] === 'number') result[key] = a[key] + f * (b[key] - a[key]);
+    }
+    if (f >= 1) result.phase = b.phase;
+    return result;
+  }
+  function rebuild() {
+    width = Math.max(root.getBoundingClientRect().width, 280);
+    const scenario = selected();
+    const values = scenario.samples.flatMap(s => [s.x1_m, s.x2_m, s.ref_x1_m, s.ref_x2_m]).filter(Number.isFinite);
+    const low = Math.min(...values);
+    const high = Math.max(...values);
+    const pad = Math.max(0.22, (high - low) * 0.12, Number(scenario.config.minimum_separation_m || 0) / 2);
+    domain = [low - pad, high + pad];
+    svg.setAttribute('viewBox', `0 0 ${width} 260`);
+    svg.setAttribute('height', '260');
+    while (svg.lastChild && !['title', 'desc'].includes(svg.lastChild.tagName)) svg.removeChild(svg.lastChild);
+    const defs = element('defs', {});
+    colors.forEach((color, i) => {
+      const marker = element('marker', {id: 'vc-arrow-' + i, viewBox: '0 0 8 8', refX: 7, refY: 4, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse'}, defs);
+      element('path', {d: 'M 0 0 L 8 4 L 0 8 Z', fill: color}, marker);
+    });
+    element('text', {x: 4, y: 22, class: 'text-small'}, svg, scenario.summary.firmware_sitl ? 'Gazebo 实测' : '延迟响应');
+    element('text', {x: 4, y: 134, class: 'text-small'}, svg, '理想参考');
+    [84, 174].forEach(y => element('line', {x1: 30, x2: width - 30, y1: y, y2: y, stroke: 'var(--border)', 'stroke-width': 1}));
+    element('line', {x1: 30, x2: width - 30, y1: 222, y2: 222, stroke: 'var(--border)', 'stroke-width': 1});
+    const tickCount = width < 420 ? 3 : 5;
+    for (let i = 0; i < tickCount; i++) {
+      const value = domain[0] + (domain[1] - domain[0]) * i / (tickCount - 1);
+      const x = sx(value);
+      element('line', {x1: x, x2: x, y1: 218, y2: 226, stroke: 'var(--border)', 'stroke-width': 1});
+      element('text', {x, y: 242, 'text-anchor': i === 0 ? 'start' : i === tickCount - 1 ? 'end' : 'middle', class: 'text-small'}, svg, fixed(value, 1));
+    }
+    element('text', {x: width - 30, y: 258, 'text-anchor': 'end', class: 'text-small'}, svg, '位置 x (m)');
+    marks = {};
+    const physicalRadius = Math.max(0, Number(scenario.config.drone_radius_m || 0.085));
+    colors.forEach((color, i) => {
+      const envelope = element('circle', {cy: 84, r: px(Number(scenario.config.minimum_separation_m || 0) / 2), fill: color, 'fill-opacity': 0.065, stroke: color, 'stroke-opacity': 0.4, 'stroke-width': 1, 'stroke-dasharray': '4 4'});
+      const body = element('circle', {cy: 84, r: px(physicalRadius), fill: color});
+      const label = element('text', {y: 112, 'text-anchor': 'middle', class: 'text-small'}, svg, i ? 'B' : 'A');
+      const arrow = element('line', {y1: 54, y2: 54, stroke: color, 'stroke-width': 2, 'marker-end': 'url(#vc-arrow-' + i + ')'});
+      const ref = element('circle', {cy: 174, r: px(physicalRadius), fill: 'none', stroke: color, 'stroke-width': 1.5, 'stroke-dasharray': '3 2'});
+      const refLabel = element('text', {y: 202, 'text-anchor': 'middle', class: 'text-small'}, svg, i ? 'B' : 'A');
+      marks[i] = {envelope, body, label, arrow, ref, refLabel};
+    });
+    draw();
+  }
+  function draw() {
+    const scenario = selected();
+    const row = sampleAt(clock);
+    const velocityScale = Math.max(...scenario.samples.flatMap(s => [Math.abs(s.v1_m_s), Math.abs(s.v2_m_s)]), 0.1);
+    [0, 1].forEach(i => {
+      const k = i + 1;
+      const x = sx(row['x' + k + '_m']);
+      const refX = sx(row['ref_x' + k + '_m']);
+      const v = row['v' + k + '_m_s'];
+      const nodes = marks[i];
+      if (!nodes) return;
+      nodes.envelope.setAttribute('cx', x);
+      nodes.body.setAttribute('cx', x);
+      nodes.label.setAttribute('x', x);
+      nodes.ref.setAttribute('cx', refX);
+      nodes.refLabel.setAttribute('x', refX);
+      nodes.arrow.setAttribute('x1', x);
+      nodes.arrow.setAttribute('x2', Math.max(12, Math.min(width - 12, x + v / velocityScale * Math.min(58, width * 0.1))));
+      nodes.arrow.setAttribute('opacity', Math.abs(v) < 0.015 ? 0 : 1);
+    });
+    find('vc-a-speed').textContent = signed(row.v1_m_s) + ' m/s';
+    find('vc-b-speed').textContent = signed(row.v2_m_s) + ' m/s';
+    const gap = Number.isFinite(row.separation_m) ? row.separation_m : row.x2_m - row.x1_m;
+    find('vc-gap').textContent = '当前中心间距 ' + fixed(gap) + ' m';
+    find('vc-gap').classList.toggle('text-destructive', gap < Number(scenario.config.minimum_separation_m) - 1e-6);
+    find('vc-phase').textContent = phaseNames[row.phase] || String(row.phase || '');
+    find('vc-clock').textContent = fixed(clock) + ' / ' + fixed(duration()) + ' s';
+    find('vc-time-value').textContent = fixed(clock) + ' s';
+    time.value = clock;
+    time.setAttribute('aria-valuetext', fixed(clock) + ' 秒');
+  }
+  function pause() {
+    playing = false;
+    lastFrame = null;
+    if (frame !== null) cancelAnimationFrame(frame);
+    frame = null;
+    play.textContent = clock >= duration() - 1e-8 ? '重播' : '播放';
+  }
+  function persist() {
+    if (typeof window.openai?.setWidgetState !== 'function') return;
+    window.openai.setWidgetState({
+      modelContent: {scenario: selected().name, time_s: Number(clock.toFixed(3))},
+      privateContent: {scenarioIndex, clock}
+    }).catch(() => {});
+  }
+  function animate(now) {
+    if (!playing) return;
+    if (lastFrame !== null) clock = Math.min(duration(), clock + Math.min((now - lastFrame) / 1000, 0.1));
+    lastFrame = now;
+    draw();
+    if (clock >= duration()) {
+      pause();
+      persist();
+      find('vc-announcement').textContent = '播放结束';
+    } else frame = requestAnimationFrame(animate);
+  }
+  function loadScenario(index, restoredTime = 0) {
+    pause();
+    scenarioIndex = Math.max(0, Math.min(scenarios.length - 1, Math.trunc(index)));
+    selector.value = scenarioIndex;
+    clock = Math.max(0, Math.min(duration(), Number(restoredTime) || 0));
+    time.max = duration();
+    const scenario = selected();
+    const c = scenario.config;
+    const summary = scenario.summary;
+    find('vc-subtitle').textContent = summary.firmware_sitl
+      ? 'Gazebo / CrazySim · 双机物理仿真'
+      : '一维延迟响应模型 · 非飞控 SITL';
+    find('vc-scene-description').textContent = (summary.firmware_sitl
+      ? '上方为 Gazebo 中无人机的实测位置，下方为空心的理想参考位置。'
+      : '上方为含延迟的实际模型位置，下方为空心的理想参考位置。')
+      + '箭头表示速度方向。半透明圆环表示每机一半的最小中心间距。'
+      + (summary.tracking_scope ? ' ' + String(summary.tracking_scope) : '');
+    find('vc-a-name').textContent = 'A · ' + fixed(Number(c.mass1_kg) * 1000, 0) + ' g';
+    find('vc-b-name').textContent = 'B · ' + fixed(Number(c.mass2_kg) * 1000, 0) + ' g';
+    find('vc-minimum').textContent = '全程最近 ' + fixed(summary.minimum_separation_m) + ' m';
+    find('vc-limit').textContent = '间距下限 ' + fixed(c.minimum_separation_m) + ' m';
+    find('vc-detail').textContent = (summary.status === 'passed' ? '检查通过' : '检查未通过')
+      + ' · 目标 e ' + fixed(c.restitution, 1)
+      + (Number.isFinite(summary.measured_restitution) ? ' / 实测 e ' + fixed(summary.measured_restitution) : '')
+      + ' · 目标速度 A ' + signed(summary.target_velocity1_m_s) + ' / B ' + signed(summary.target_velocity2_m_s) + ' m/s';
+    find('vc-detail').classList.toggle('text-destructive', summary.status !== 'passed');
+    rebuild();
+    pause();
+  }
+  scenarios.forEach((scenario, index) => {
+    const option = document.createElement('option');
+    option.value = index;
+    option.textContent = scenario.name;
+    selector.appendChild(option);
+  });
+  selector.addEventListener('change', () => { loadScenario(Number(selector.value)); persist(); });
+  time.addEventListener('input', () => { pause(); clock = Number(time.value); draw(); });
+  time.addEventListener('change', persist);
+  play.addEventListener('click', () => {
+    if (playing) { pause(); persist(); return; }
+    if (clock >= duration() - 1e-8) clock = 0;
+    playing = true;
+    lastFrame = null;
+    play.textContent = '暂停';
+    find('vc-announcement').textContent = '开始播放';
+    frame = requestAnimationFrame(animate);
+  });
+  function restore(state) {
+    const saved = state?.privateContent;
+    if (saved && Number.isFinite(saved.scenarioIndex)) loadScenario(saved.scenarioIndex, saved.clock);
+    else loadScenario(0);
+  }
+  window.addEventListener('openai:set_globals', event => {
+    const globals = event.detail?.globals;
+    if (globals && Object.prototype.hasOwnProperty.call(globals, 'widgetState')) restore(globals.widgetState);
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+  restore(window.openai?.widgetState);
+  new ResizeObserver(() => {
+    const nextWidth = Math.max(root.getBoundingClientRect().width, 280);
+    if (Math.abs(nextWidth - width) > 0.5) rebuild();
+  }).observe(root);
+})();
+</script>

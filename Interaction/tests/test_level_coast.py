@@ -306,14 +306,83 @@ class LevelCoastStateTests(unittest.TestCase):
 
 
 class LevelCoastLoopTests(unittest.TestCase):
+    def test_common_capture_and_compensated_hold_for_all_three_coasts_and_detectors(self):
+        for detector in ('potentiometer','model','vel'):
+            for push in ('position','orientation'):
+                for coast in ('position','orientation','scurve'):
+                    with self.subTest(detector=detector,push=push,coast=coast):
+                        control,commands,phases,_=self.run_scenario(detector,
+                            command_mode=push,coast_command_mode=coast,duration=1.2,
+                            handoff_options={},grace_start='release',grace_time=.1,
+                            pressed_fn=lambda t:.08<=t<.16,
+                            velocity_fn=lambda t:[.12 if .08<=t<.16 else .055 if t>=.3 else 0.,0.,0.],
+                            vicon_velocity_fn=lambda t:[.12 if .08<=t<.27 else 0.,0.,0.],
+                            estimator_delay_s=.02)
+                        capture=next(p for p in phases if p['phase']=='capture')
+                        complete=next(p for p in phases if p['previous']=='capture' and p['phase']=='ready')
+                        self.assertEqual(capture['command_mode'],'position_capture')
+                        self.assertEqual(complete['command_mode'],'position_hold')
+                        self.assertGreaterEqual(complete['elapsed_s']-capture['elapsed_s'],.34)
+                        events=control._log_event.call_args_list
+                        completed=next(c.args[1] for c in events if c.args[0]=='Level Coast Position Capture Completed')
+                        self.assertAlmostEqual(completed['position_handoff_velocity_bias_m_s'][0],.055)
+                        self.assertNotEqual(completed['position_handoff_anchor_m'],completed['position_handoff_command_m'])
+                        if coast=='scurve':
+                            begin=control.curve_clock['releases'][0][0]
+                            self.assertFalse(any(begin<t<begin+.12-1e-6 for t,_,_ in commands))
+                            first=next(i for i,c in enumerate(commands) if c[0]>=capture['elapsed_s']-1e-6)
+                            self.assertEqual(control.command_estimators[first],3)
+                            restore=next(t for t,v in control.curve_clock['requests'] if v==2 and t>=capture['elapsed_s']-1e-6)
+                            self.assertGreaterEqual(restore,commands[first][0])
+
+    def test_new_contact_preempts_capture_and_discards_anchor_for_every_coast(self):
+        for coast in ('position','orientation','scurve'):
+            control,commands,phases,_=self.run_scenario(coast_command_mode=coast,
+                command_mode='position',handoff_options={},duration=1.4,
+                grace_start='release',grace_time=.03,
+                pressed_fn=lambda t:.08<=t<.16 or .4<=t<.48,
+                speed_fn=lambda t:.12 if .08<=t<.27 or .4<=t<.59 else 0.)
+            self.assertTrue(any(p['previous']=='capture' and p['phase']=='contact' for p in phases))
+            starts=[c for c in control._log_event.call_args_list if c.args[0]=='Level Coast Position Capture Started']
+            self.assertEqual(len(starts),2)
+            completed=[c for c in control._log_event.call_args_list if c.args[0]=='Level Coast Position Capture Completed']
+            self.assertEqual(len(completed),1)
+
+    def test_new_capture_keeps_existing_failure_and_boundary_paths(self):
+        for coast in ('position','orientation','scurve'):
+            for fault in ('vicon','state','motor','battery','boundary'):
+                with self.subTest(coast=coast,fault=fault):
+                    control,*_=self.run_scenario(coast_command_mode=coast,command_mode='position',
+                        handoff_options={},fault=fault,pressed_fn=lambda t:.08<=t<.16)
+                    self.assertFalse(control._pid_15state_control_active)
+
+    def test_capture_cannot_keep_sending_when_duplicate_state_expires(self):
+        for coast in ('position','orientation','scurve'):
+            control,*_=self.run_scenario(coast_command_mode=coast,handoff_options={},
+                fault='capture_age',pressed_fn=lambda t:.08<=t<.16,
+                speed_fn=lambda t:.12 if .08<=t<.20 else 0.)
+            self.assertFalse(control._pid_15state_control_active)
+
+    def test_stationary_rearm_uses_physical_motion_after_compensated_hover(self):
+        for coast in ('position','orientation','scurve'):
+            _,_,phases,_=self.run_scenario(coast_command_mode=coast,handoff_options={},
+                duration=1.4,pressed_fn=lambda t:.08<=t<.16,
+                velocity_fn=lambda t:[.12 if .08<=t<.16 else .055 if t>=.3 else 0.,0.,0.],
+                vicon_velocity_fn=lambda t:[.12 if .08<=t<.27 else 0.,0.,0.])
+            self.assertTrue(any(p['previous']=='grace' and p['phase']=='prepare' for p in phases))
+            self.assertEqual(sum(p['phase']=='ready' for p in phases),2)
+
     def test_direct_hold_uses_detector_end_and_sends_fixed_position_in_same_sample(self):
         for detector in ('potentiometer', 'model', 'vel'):
             for contact in ('orientation', 'position'):
                 for coast in ('orientation', 'position', 'scurve'):
-                    with self.subTest(detector=detector, contact=contact, coast=coast):
+                    with self.subTest(detector=detector, contact=contact, coast=coast), \
+                            patch('Interaction.level_coast.PositionHandoff',
+                                  side_effect=AssertionError('No coasting must not create a handoff')) as handoff:
                         control, commands, phases, _ = self.run_scenario(
                             detector, command_mode=contact, coast_command_mode=coast,
                             coasting_enabled=False, estimator_switch_at='detect',
+                            handoff_options={'enabled': True},
                             pressed_fn=lambda t: .08 <= t < .16,
                             # Final speed is below velocity release (.08), but
                             # above coast stop (.03): the latter must not gate hold.
@@ -323,7 +392,8 @@ class LevelCoastLoopTests(unittest.TestCase):
                         self.assertTrue(hold['released'])
                         self.assertEqual(hold['command_mode'], 'position_hold')
                         self.assertGreater(hold['xy_speed_m_s'], .03)
-                        self.assertFalse(any(p['phase'] == 'coast' for p in phases))
+                        handoff.assert_not_called()
+                        self.assertFalse(any(p['phase'] in ('coast', 'capture') for p in phases))
                         held_at = hold['elapsed_s']
                         if detector == 'vel':
                             self.assertGreaterEqual(held_at, .31 - 1e-6)
@@ -339,6 +409,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                             np.testing.assert_allclose(args[:3], expected)
                         rows = control.log_manager.groups['wrench_observer']
                         self.assertFalse(any(r['scurve_active'] or r['coasting_enabled'] for r in rows))
+                        self.assertFalse(any(k.startswith('position_handoff_') for r in rows for k in r))
                         if coast == 'scurve':
                             self.assertEqual(control.curve_clock['releases'], [])
                             self.assertEqual([v for _, v in control.curve_clock['requests']], [3, 2])
@@ -498,7 +569,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                      velocity_fn=None, force_direction_fn=None, record_potentiometer=False,
                      vicon_velocity_fn=None, scurve_completion_s=.12, estimator_delay_s=0.,
                      curve_fault=None, estimator_switch_at=None, force_config=None,
-                     coasting_enabled=None):
+                     coasting_enabled=None, handoff_options=None):
         config = configuration(detector)
         config['record_potentiometer'] = record_potentiometer
         config['duration'] = duration
@@ -507,6 +578,10 @@ class LevelCoastLoopTests(unittest.TestCase):
         config['level_coast']['follow_yaw'] = follow_yaw
         config['level_coast']['yaw_rate_damping'] = yaw_rate_damping
         config['level_coast']['command_mode'] = command_mode
+        # These existing scenarios audit the explicit legacy comparison path.
+        # New capture tests below opt into the new default separately.
+        config['level_coast']['position_handoff'] = ({'enabled': False}
+            if handoff_options is None else handoff_options)
         if estimator_switch_at is not None:
             config['level_coast']['estimator_switch_at'] = estimator_switch_at
         if coasting_enabled is not None:
@@ -577,7 +652,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                 def wait(self, _):
                     if clock['t'] >= curve_clock['start'] + scurve_completion_s:
                         return dict(**self.identity, hold_position_m=[.25, .1, 1.], hold_yaw_rad=0.)
-        if 'position' in (command_mode, coast_command_mode):
+        if 'position' in (command_mode, coast_command_mode) or handoff_options is not None:
             from Interaction.tests.test_position_follow import parameters
             control.cf._offboard_position_pid = SimpleNamespace(prepared=fault != 'pid', parameters=parameters())
         yaw_requests = []
@@ -608,6 +683,14 @@ class LevelCoastLoopTests(unittest.TestCase):
         control.force_sensor = object() if sensor_present else None
         control._unsubscribe_contact_attitude_shadow = Mock()
         control.log_manager = FakeOnboardLogManager(1000.)
+        if handoff_options is not None:
+            original_nearest = control.log_manager.get_nearest_group_log_data
+            original_latest = control.log_manager.get_latest_group_log_time
+            control.log_manager.get_nearest_group_log_data = lambda group, stamp: (
+                ({'controller.roll': 0., 'controller.pitch': 0.}, 0.)
+                if group == 'POSITION_HANDOFF' else original_nearest(group, stamp))
+            control.log_manager.get_latest_group_log_time = lambda group: (
+                1000.+clock['t'] if group == 'POSITION_HANDOFF' else original_latest(group))
         control._log_event = Mock()
         control._handoff_translation_hold = Mock()
         commands = []
@@ -636,6 +719,8 @@ class LevelCoastLoopTests(unittest.TestCase):
 
         def state():
             t = clock['t']
+            if fault == 'capture_age' and t >= .6:
+                t = .6
             if t in duplicate_times:
                 t = round(t - .01, 6)
             if t < state_delay:
@@ -673,6 +758,11 @@ class LevelCoastLoopTests(unittest.TestCase):
                         else reference_state['velocity'])
             return np.asarray(velocity, dtype=float), reference_state['time'], 0.
         control._vicon_velocity_reference_for_onboard_state = vicon_velocity
+        def vicon_motion(reference_state, *, max_time_skew_s):
+            self.assertEqual(max_time_skew_s, .035)
+            velocity, stamp, skew = vicon_velocity(reference_state, max_time_skew_s=None)
+            return reference_state['position'].copy(), velocity, stamp, skew
+        control._vicon_motion_reference_for_onboard_state = vicon_motion
         control._safe_sleep = sleep
         control._force_sensor_log_fields = sensor
         real_update = OnboardMomentumWrenchPipeline.update
@@ -692,7 +782,8 @@ class LevelCoastLoopTests(unittest.TestCase):
         expected = {'battery':LowBatteryException, 'state':StaleLocalizationError,
                     'boundary':BoundaryExceededError, 'motor':RuntimeError, 'sensor':RuntimeError,
                     'yaw':RuntimeError, 'yaw_switch':RuntimeError, 'target':BoundaryExceededError,
-                    'pid':RuntimeError, 'vicon':StaleLocalizationError}
+                    'pid':RuntimeError, 'vicon':StaleLocalizationError,
+                    'capture_age':StaleLocalizationError}
         if fault == 'target':
             control.bounds['x_max'] = .05
         with patch('Interaction.level_coast.time.time', side_effect=lambda:1000.+clock['t']), \

@@ -276,7 +276,7 @@ class PositionPidRecoveryTests(unittest.TestCase):
                     guard = Mock()
                     with patch('Interaction.position_follow.PositionFollowPidContext', return_value=guard), \
                             patch('pathlib.Path.exists', return_value=False):
-                        enabled = 'position' in (contact, coast)
+                        enabled = True  # Shared position capture is enabled by default.
                         if enabled:
                             c.args.skip_takeoff = True
                             with self.assertRaisesRegex(ValueError, 'grounded'):
@@ -284,13 +284,36 @@ class PositionPidRecoveryTests(unittest.TestCase):
                             guard.prepare.assert_not_called()
                             c.args.skip_takeoff = False
                         c._prepare_offboard_position_control()
-                    self.assertEqual(guard.prepare.call_count, int(enabled))
+                    # The common capture/hover path also requires P-only XY
+                    # gains when both moving phases use orientation commands.
+                    self.assertEqual(guard.prepare.call_count, 1)
                     self.assertEqual(guard.restore.call_count, int(enabled))
                     if enabled:
                         self.assertIs(c.cf._offboard_position_pid, guard)
                         logged = c.log_manager.add_log_entry.call_args.args[1]
                         self.assertEqual(logged['command_mode'], contact)
                         self.assertEqual(logged['coast_command_mode'], coast)
+
+    def test_no_coasting_does_not_prepare_pid_for_dormant_handoff(self):
+        for coast in ('orientation', 'scurve'):
+            with self.subTest(coast=coast):
+                c=Controller.__new__(Controller)
+                c.cf=SimpleNamespace()
+                c.flying=False
+                c.log_manager=Mock()
+                c.args=SimpleNamespace(drone_id='unit-test',controller_type='pid',
+                    skip_takeoff=False,skip_landing=False,calibrate=False,interaction=True)
+                c.mission={'Interaction':{'config':{'behavior':'level_coast',
+                    'level_coast':{'command_mode':'orientation','coast_command_mode':coast,
+                        'coasting_enabled':False,'position_handoff':{'enabled':True}}}}}
+                guard=Mock()
+                with patch('Interaction.position_follow.PositionFollowPidContext',return_value=guard), \
+                        patch('pathlib.Path.exists',return_value=False):
+                    c._prepare_offboard_position_control()
+                guard.prepare.assert_not_called()
+                guard.restore.assert_not_called()
+                c.log_manager.add_log_entry.assert_not_called()
+                self.assertFalse(hasattr(c.cf,'_offboard_position_pid'))
 
     def test_cleanup_only_restores_after_confirmed_landing(self):
         from Interaction.tests.test_controller_logging_cleanup import methods

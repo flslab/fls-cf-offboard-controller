@@ -1,0 +1,86 @@
+{
+  "hardware": {
+    "baseline": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/imu_hover_xy_compatible_20261009/hardware",
+    "candidate": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/scurve_deceleration_20261029/hardware",
+    "files": {
+      "src/modules/src/crtp_commander_high_level.c": {
+        "before_sha256": "c32640ea02f552e35804ac532655d2f918ba82b8ddd751a0d4c8ffc65da2df4d",
+        "after_sha256": "9f25e701a0a67f9d6d6ab1d86d4534de8fff403a635dd151634aa5e95005406c"
+      },
+      "src/modules/src/post_release_velocity_runtime.inc": {
+        "before_sha256": "9817e848991b35d994d7e7b6337339eeaac2cf05c8e0a3030db1c4a1d94ea379",
+        "after_sha256": "086ed92e936222548ca29a95726dec631296b566e08afa31534148451a890ee0"
+      },
+      "src/modules/interface/kalman_core/post_release_stop_request.h": {
+        "before_sha256": "7b4d35472201f930a38475b02297d7c74abfa4d685e6cb7a600f8a5140bf7b15",
+        "after_sha256": "4478a669a99fec0be58627d497eaaa662d349560a2a6c073610b7fdd5cc9cba1"
+      },
+      "src/modules/interface/kalman_core/post_release_scurve_limits.h": {
+        "before_sha256": null,
+        "after_sha256": "8163ef54fa62bae42969606c29e9552d4afd8f88c4a7cab73303671c3442b398"
+      },
+      "snapshot_version.json": {
+        "before_sha256": "ac8b8309261fd2361f34240e8110d058e0152ea2a144fb4b249efc2581882b31",
+        "after_sha256": "a100902dd30b2705ccd046708d84f7d3d7b9614fd5073489761961cd1d40c783"
+      },
+      "src/modules/src/controller/controller_pid.c": {
+        "before_sha256": "b9f587f114afda33d1791b20b1191806ffb707822b58edcdd6f294ccf11cfe17",
+        "after_sha256": "b15c1b188ce6ffc60da86f6a2e729fe98cccf7e1a9aa2208df0cb0afbc71a934"
+      },
+      "src/modules/src/post_release_position_handoff.inc": {
+        "before_sha256": "d4401035319aa7d98ebe7a002b72c287c69fa8fd6b25100f09ff0387b0627b6d",
+        "after_sha256": "e68252de2c1ce2a519ef3462883438fb8a90c768b230266425ff0588adbdf1f9"
+      },
+      "src/modules/src/post_release_scurve_runtime.inc": {
+        "before_sha256": "82bea716b1fb8e646aa8f84cfee9d94fa058fb827eb380e018df3c570734a6d5",
+        "after_sha256": "15dd98881926af4d48efb1324ea245adac7836dc5d23a87e62f27924bb3bc217"
+      },
+      "src/modules/src/post_release_calibrated_runtime.inc": {
+        "before_sha256": "a082331a45aeacad8b76311a956cf3e3240c5f31859f03a521889a9d5576dfde",
+        "after_sha256": "378225b66f6424346c47318af8421b4bd58c66df67034ae8ac3c6be2ea8968bf"
+      }
+    }
+  },
+  "firmware": {
+    "baseline": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/imu_hover_xy_compatible_20261009/firmware",
+    "candidate": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/scurve_deceleration_20261029/firmware",
+    "files": {
+      "src/modules/src/crtp_commander_high_level.c": {
+        "before_sha256": "c32640ea02f552e35804ac532655d2f918ba82b8ddd751a0d4c8ffc65da2df4d",
+        "after_sha256": "9f25e701a0a67f9d6d6ab1d86d4534de8fff403a635dd151634aa5e95005406c"
+      },
+      "src/modules/src/post_release_velocity_runtime.inc": {
+        "before_sha256": "9817e848991b35d994d7e7b6337339eeaac2cf05c8e0a3030db1c4a1d94ea379",
+        "after_sha256": "086ed92e936222548ca29a95726dec631296b566e08afa31534148451a890ee0"
+      },
+      "src/modules/interface/kalman_core/post_release_stop_request.h": {
+        "before_sha256": "7b4d35472201f930a38475b02297d7c74abfa4d685e6cb7a600f8a5140bf7b15",
+        "after_sha256": "4478a669a99fec0be58627d497eaaa662d349560a2a6c073610b7fdd5cc9cba1"
+      },
+      "src/modules/interface/kalman_core/post_release_scurve_limits.h": {
+        "before_sha256": null,
+        "after_sha256": "8163ef54fa62bae42969606c29e9552d4afd8f88c4a7cab73303671c3442b398"
+      },
+      "snapshot_version.json": {
+        "before_sha256": "ac8b8309261fd2361f34240e8110d058e0152ea2a144fb4b249efc2581882b31",
+        "after_sha256": "a100902dd30b2705ccd046708d84f7d3d7b9614fd5073489761961cd1d40c783"
+      },
+      "src/modules/src/controller/controller_pid.c": {
+        "before_sha256": "b9f587f114afda33d1791b20b1191806ffb707822b58edcdd6f294ccf11cfe17",
+        "after_sha256": "b15c1b188ce6ffc60da86f6a2e729fe98cccf7e1a9aa2208df0cb0afbc71a934"
+      },
+      "src/modules/src/post_release_position_handoff.inc": {
+        "before_sha256": "d4401035319aa7d98ebe7a002b72c287c69fa8fd6b25100f09ff0387b0627b6d",
+        "after_sha256": "e68252de2c1ce2a519ef3462883438fb8a90c768b230266425ff0588adbdf1f9"
+      },
+      "src/modules/src/post_release_scurve_runtime.inc": {
+        "before_sha256": "82bea716b1fb8e646aa8f84cfee9d94fa058fb827eb380e018df3c570734a6d5",
+        "after_sha256": "15dd98881926af4d48efb1324ea245adac7836dc5d23a87e62f27924bb3bc217"
+      },
+      "src/modules/src/post_release_calibrated_runtime.inc": {
+        "before_sha256": "a082331a45aeacad8b76311a956cf3e3240c5f31859f03a521889a9d5576dfde",
+        "after_sha256": "378225b66f6424346c47318af8421b4bd58c66df67034ae8ac3c6be2ea8968bf"
+      }
+    }
+  }
+}
