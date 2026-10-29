@@ -1035,9 +1035,17 @@ def log_vars_for_mission(mission):
         elif onboard_yaw_log_required(mission):
             selected['YAW_CTL'] = YAW_CTL
         selected['FIRMWARE_BRAKE'] = firmware_brake_log_vars(mission)
+        profile=(wrench_config.get('firmware_auto_brake') or {}).get('analytic_profile') or {}
+        if profile.get('auto_unwind') and (mission.get('Interaction',{}).get('config',{}).get('level_coast') or {}).get('coasting_enabled',True):
+            selected['AUTO_UNWIND']={'log_period_ms':20,
+                'hlCommander.scUnwPhase':{'type':'uint8_t','data':[]},
+                'hlCommander.scUnwWhy':{'type':'uint8_t','data':[]},
+                'hlCommander.scUnwT':{'type':'float','data':[]},
+                'hlCommander.scUnwEndV':{'type':'float','data':[]}}
         from Interaction.roll_diagnostics import add_roll_diagnostics
         from Interaction.position_handoff import add_handoff_logs
-        return add_handoff_logs(add_imu_logs(add_roll_diagnostics(selected, mission), mission), mission)
+        from Interaction.marker_geometry import add_logs as add_marker_logs
+        return add_marker_logs(add_handoff_logs(add_imu_logs(add_roll_diagnostics(selected, mission), mission), mission),mission)
     # A dormant diagnostic must not make a legacy mission fail because it
     # happens to carry an old or misspelled shadow-mode value.  Mode validation
     # belongs exclusively to the explicitly enabled path.
@@ -1046,6 +1054,8 @@ def log_vars_for_mission(mission):
         if onboard_yaw_log_required(mission) else LOG_VARS
     )
     ordinary_logs = add_imu_logs(ordinary_logs, mission)
+    from Interaction.marker_geometry import add_logs as add_marker_logs
+    ordinary_logs=add_marker_logs(ordinary_logs,mission)
     if not enabled:
         return ordinary_logs
     if mode not in ('onboard_mirror', 'inertial_position'):

@@ -1,0 +1,15 @@
+{
+  "image": "bolt-flyback-auto-26102901",
+  "identity": "0x37383134303347100034002C",
+  "bytes": 383592,
+  "sha256": "0e97e81583676eff78eec9f2f5212e4404d624dbc8aa023c2268488f0a4f4f3e",
+  "page_retries": 2,
+  "reconnections": 2,
+  "readback_elapsed_s": 68.3399369539693,
+  "target": "stm32:fw",
+  "flash_written": false,
+  "nrf_or_bootloader_flashed": false,
+  "parameter_writes": false,
+  "flight_performed": false,
+  "verified_at": "2026-10-29T21:36:52.447878+00:00"
+}

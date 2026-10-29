@@ -101,3 +101,27 @@ class AnalyticProfileTests(unittest.TestCase):
                 profile_parameters(dict(cfg,position_tracking_bandwidth=value))
         with self.assertRaisesRegex(ValueError,'requires response_compensation'):
             profile_parameters(dict(cfg,response_compensation=False,position_tracking_bandwidth=3))
+
+class AutomaticUnwindTests(unittest.TestCase):
+    def config(self,**kw):
+        return dict(shape='velocity_scurve',execution='attitude',tail_s=.6,single_s=.6,
+            handoff='curve_endpoint_forward',feedback='unified_vicon15',response_compensation=True,
+            auto_unwind=True,**kw)
+
+    def test_explicit_api_and_terminal_target_are_independent_of_legacy_tail(self):
+        p=profile_parameters(self.config())
+        self.assertEqual(p['hlCommander.pRelUnwAuto'],1)
+        self.assertEqual(p['hlCommander.pRelUnwVer'],1)
+        self.assertEqual(p['hlCommander.pRelEndV'],0)
+        self.assertEqual(profile_parameters(self.config(end_velocity_m_s=.01))['hlCommander.pRelEndV'],.01)
+        self.assertEqual(p['hlCommander.pRelAdapt'],0)
+
+    def test_incompatible_modes_and_nonfinite_targets_are_rejected(self):
+        for key,value in [('execution','position'),('feedback','roll_pitch_only'),('state_matched_start',True),
+                          ('friction_from_interaction',True),
+                          ('position_tracking_bandwidth',3),('auto_unwind',1),('end_velocity_m_s',.021),
+                          ('end_velocity_m_s',float('nan')),('end_velocity_m_s',True)]:
+            cfg=self.config();cfg[key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(ValueError):profile_parameters(cfg)
+        cfg=self.config();cfg['auto_unwind']=False;cfg['end_velocity_m_s']=0
+        with self.assertRaises(ValueError):profile_parameters(cfg)

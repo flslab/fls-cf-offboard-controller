@@ -1,0 +1,12 @@
+{
+  "cases": 1944,
+  "failed": 0,
+  "corrective_only": 0,
+  "min_velocity_m_s": -0.008458,
+  "max_flyback_m": 0.000511,
+  "max_duration_s": 1.43,
+  "unwind_min_s": 0.195,
+  "unwind_max_s": 0.54,
+  "native_cpu_s": 0.706,
+  "late_braking_flyback_m": 0.05136
+}

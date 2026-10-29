@@ -1,0 +1,7 @@
+{
+  "image": "bolt-flyback-auto-26102901",
+  "elapsed_s": 21.85861254693009,
+  "bytes": 383592,
+  "target": "stm32:fw",
+  "nrf_or_bootloader_flashed": false
+}

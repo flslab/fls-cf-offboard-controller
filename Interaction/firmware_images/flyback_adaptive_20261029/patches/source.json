@@ -1,0 +1,47 @@
+{
+  "baseline": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/scurve_deceleration_20261029/hardware",
+  "candidate": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/flyback_adaptive_20261029/hardware",
+  "paired_candidate": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/flyback_adaptive_20261029/firmware",
+  "files": {
+    "snapshot_version.json": {
+      "before_sha256": "e1949b53847a0aa7887e5f90156b4236dfd8f4d765a61d5e647706661e2ccea2",
+      "after_sha256": "e6cb8cacc9dc81ba8ff4c946d2161359f4644d73bc726b10a0727285210b5582"
+    },
+    "src/modules/interface/kalman_core/mocap_marker_geometry.h": {
+      "before_sha256": null,
+      "after_sha256": "0d0b2a2e75b94a2d98139d4f30929e42452fa1316daf632c56f36c2141e2329b"
+    },
+    "src/modules/interface/kalman_core/post_release_auto_unwind.h": {
+      "before_sha256": null,
+      "after_sha256": "28fc587021964937a0446a386f218b26b01dd0200a5992a2d1442fe6c4e9be5e"
+    },
+    "src/modules/interface/kalman_core/post_release_vicon_velocity_kf.h": {
+      "before_sha256": "00c7d4cb2ff80e85f3b8bdc160c320bb0482e5560dfd379e3c5393f40ad85d27",
+      "after_sha256": "4017c884b035164d9ca1dedbdb580af43697ee7584ba89499ff03037ae46f3cc"
+    },
+    "src/modules/src/crtp_commander_high_level.c": {
+      "before_sha256": "16e166fe9b39d3a19b54171b486d3b0a96f1ac835eed7a68f35856c4ac882ad5",
+      "after_sha256": "07d9a041cc8f2de7d618ad72f8be2cd5d40f9e3e3291a56c524b8a4f487590dd"
+    },
+    "src/modules/src/estimator/estimator_kalman.c": {
+      "before_sha256": "01626908d62489eb80f1bf46ad6d26efcd0e2553f46f702e69a8a60f33356b9d",
+      "after_sha256": "9f5187a1f284c99430a9323b16be5209417893643d9d7159c4e637cbd5f7fc99"
+    },
+    "src/modules/src/kalman_core/mm_position.c": {
+      "before_sha256": "a0ba9ca5a6a488d0ee4ce3b12c4c6b47eecaf1998df020216dc1c03fa6eb8618",
+      "after_sha256": "b2843afc95cdb47ea6ab659081342c4f7ff0e695752d2bcbc5277085005fb99e"
+    },
+    "src/modules/src/kalman_core/post_release_vicon_velocity_kf.c": {
+      "before_sha256": "2b6e6e176353e3dc69795ee9ad9822d6bc8d31d3777bff900c34155de3d63279",
+      "after_sha256": "260ffec2b95bb12847806494ed8ceae0e9dadc610ed8395ba26235f2215f6f68"
+    },
+    "src/modules/src/post_release_curve_log.inc": {
+      "before_sha256": "211498a2e06d2ffe1a6a3a74a1e31bd38ab946929c527098779aae343873a8bd",
+      "after_sha256": "7cec2e3aadd09f2d4ff51f8264ca28e29c3d2930963dabf024e76427df14526b"
+    },
+    "src/modules/src/post_release_velocity_runtime.inc": {
+      "before_sha256": "295096b1fe276fa25cdc713b6b8b778aa6fdc665e0a6937bf0711a48255ac265",
+      "after_sha256": "dd22d203a7e33e149fba7b509f65093bd7254386f2521de8f225a32707873797"
+    }
+  }
+}

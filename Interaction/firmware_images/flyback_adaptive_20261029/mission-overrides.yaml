@@ -1,0 +1,17 @@
+# Merge into an existing mission; not a standalone flight mission.
+Interaction:
+  config:
+    behavior: level_coast
+    duration: 60
+    wrench_interaction_profile: level_coast
+    level_coast:
+      coast_command_mode: scurve
+      coasting_enabled: true
+    wrench_interaction:
+      firmware_auto_brake:
+        stop_deceleration_m_s2: 3.6
+        analytic_profile:
+          auto_unwind: true
+          end_velocity_m_s: 0.0
+          position_tracking_bandwidth: 0.0
+          marker_from_imu_m: [0.0, 0.0, 0.086]

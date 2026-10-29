@@ -49,6 +49,25 @@ def state(group,tick=50000):
 
 
 class CurveLoggingTests(unittest.TestCase):
+    def test_automatic_unwind_records_degrees_and_does_not_invent_commands(self):
+        def auto(kind,zero=False):
+            old=wire(kind=kind);header=list(HEADER.unpack_from(old));values=list(FLOATS.unpack_from(old,HEADER.size))
+            header[-1]|=0x2000000|0x200000|(3<<19)
+            if zero:values[24]=values[26]=0
+            payload=HEADER.pack(*header)+FLOATS.pack(*values)+old[HEADER.size+FLOATS.size:-4]
+            return payload+struct.pack('<I',zlib.crc32(payload))
+        initial=decode_event(auto(1,True))
+        self.assertFalse(initial['reference_valid'])
+        self.assertEqual(initial['coefficient_units'],'deg')
+        self.assertEqual(initial['curve_axes'],['body_pitch','body_roll'])
+        self.assertNotIn('end_rad',initial['axes'][0])
+        unwind=decode_event(auto(2))
+        self.assertEqual(unwind['event'],'phase_transition')
+        self.assertEqual(unwind['phase'],'unwind')
+        self.assertIsNone(reconstruct_command(unwind,50000))
+        self.assertIsNone(reconstruct_velocity(unwind,50000))
+        with self.assertRaises(ValueError):decode_event(auto(2,True))
+
     def test_acceleration_residual_logs_reuse_one_full_size_block(self):
         from Interaction.config import FIRMWARE_ACT
         before=dict(FIRMWARE_ACT)

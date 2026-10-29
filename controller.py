@@ -380,6 +380,16 @@ class Controller:
         from Interaction.firmware_analytic_profile import profile_parameters
         self.firmware_analytic_profile = mode.get('analytic_profile')
         self._firmware_analytic_expected = profile_parameters(self.firmware_analytic_profile)
+        from Interaction.marker_geometry import requested as marker_requested
+        if not marker_requested(translation):
+            self._firmware_analytic_expected={k:v for k,v in self._firmware_analytic_expected.items()
+                                               if not k.startswith('mocapMarker.')}
+        if (translation.get('behavior')=='level_coast' and
+                not (translation.get('level_coast') or {}).get('coasting_enabled',True)):
+            # Direct hold never requests the new unwind API, even when a
+            # stored S-curve profile contains the experiment's options.
+            for key in ('pRelUnwAuto','pRelUnwVer','pRelEndV'):
+                self._firmware_analytic_expected.pop('hlCommander.'+key,None)
         if self._firmware_analytic_expected and (brake_mode != 'scurve' or
                 self.firmware_analytic_profile['execution'] != command_mode):
             raise ValueError('analytic_profile requires scurve and execution matching command_mode')
@@ -417,6 +427,8 @@ class Controller:
         if stop and brake_mode != 'scurve':
             raise ValueError('firmware_auto_brake.stop_distance_m requires mode: scurve')
         self.firmware_auto_brake_stop_distance_m = float(stop)
+        if self._firmware_analytic_expected.get('hlCommander.pRelUnwAuto') and stop:
+            raise ValueError('auto_unwind selects a free stop, not a fixed stop_distance_m')
         from Interaction.firmware_analytic_profile import (
             default_tilt_limit, MAX_STOP_DECELERATION_M_S2)
         decel = mode.get('stop_deceleration_m_s2', 3.6)
@@ -575,6 +587,13 @@ class Controller:
             # Explicitly clear a previous measured-speed gate on the same FC.
             curve_expected['hlCommander.pRelHoldG'] = 0
         capabilities = {'hlCommander.pRelEnd': 1} if analytic.get('hlCommander.pRelHold') == 3 else {}
+        if 'mocapMarker.api' in curve_expected:
+            capabilities['mocapMarker.api']=curve_expected.pop('mocapMarker.api')
+        if 'hlCommander.pRelUnwVer' in curve_expected:
+            capabilities['hlCommander.pRelUnwVer']=curve_expected.pop('hlCommander.pRelUnwVer')
+        if 'pRelUnwAuto' in toc.get('hlCommander', {}):
+            curve_expected.setdefault('hlCommander.pRelUnwAuto',0)
+            curve_expected.setdefault('hlCommander.pRelEndV',0)
         request_opt_in = (getattr(self, '_firmware_stop_deceleration_explicit', False) or
                           (bool(analytic) and self.firmware_auto_brake_stop_distance_m > 0))
         if request_opt_in:
@@ -741,7 +760,9 @@ class Controller:
                     replanning=False,
                     requested_stop_distance_m=self.firmware_auto_brake_stop_distance_m,
                     nominal_deceleration_m_s2=getattr(self, 'firmware_auto_brake_stop_deceleration_m_s2', 3.6),
-                    velocity_tail_s=analytic.get('hlCommander.pRelTail')))
+                    velocity_tail_s=None if analytic.get('hlCommander.pRelUnwAuto') else analytic.get('hlCommander.pRelTail'),
+                    automatic_unwind=bool(analytic.get('hlCommander.pRelUnwAuto')),
+                    terminal_velocity_m_s=analytic.get('hlCommander.pRelEndV')))
         # Preparation happens before arming, never on the release critical path.
         # If startup fails, do not enable the firmware host-planning mode.
         planner = getattr(self.cf, '_post_release_pi_planner', None)
@@ -2159,6 +2180,9 @@ class Controller:
         if (handoff_enabled(translation) and
                 (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve'):
             required['POSITION_HANDOFF'] = ('controller.roll', 'controller.pitch')
+        from Interaction.marker_geometry import requested as marker_requested
+        if marker_requested(translation):
+            required['MOCAP_REFERENCE']=tuple('mocapRef.'+x for x in ('x','y','z','vx','vy','vz','age'))
         run = getattr(self.args, 'contact_attitude_run', None)
         if run in (2, 3):
             required.update({
@@ -2337,8 +2361,39 @@ class Controller:
             'xy_control': 'P-only position and velocity; ordinary Z and attitude/rate PID',
         }, name='Offboard Position Follow PID')
 
+    def _prepare_marker_geometry(self):
+        from Interaction.marker_geometry import requested,parameters
+        from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+        config=(self.mission or {}).get('Interaction',{}).get('config',{})
+        active=requested(config) and not getattr(self.args,'calibrate',False)
+        toc=getattr(getattr(self.cf.param,'toc',None),'toc',{})
+        if not active and 'enable' not in toc.get('mocapMarker',{}):return
+        if getattr(self,'flying',False):raise ValueError('marker geometry setup requires grounded startup')
+        expected={'mocapMarker.enable':0}
+        if active:
+            if getattr(self.args,'skip_takeoff',False):
+                raise ValueError('marker geometry setup requires grounded takeoff startup')
+            if getattr(self.args,'vicon_full_pose',False):
+                raise ValueError('marker geometry currently requires position-only Vicon input')
+            profile=config['wrench_interaction']['firmware_auto_brake']['analytic_profile']
+            expected=parameters(profile['marker_from_imu_m'])
+            missing=[k for k in expected if k.split('.')[1] not in toc.get('mocapMarker',{})]
+            if missing:raise RuntimeError('connected firmware lacks marker geometry: '+', '.join(missing))
+            confirm_firmware_mode_parameters(self.cf.param,expected={'mocapMarker.api':1})
+        self.cf.param.set_value('mocapMarker.enable','0')
+        for key,value in expected.items():
+            if key not in ('mocapMarker.api','mocapMarker.enable'):
+                self.cf.param.set_value(key,str(value))
+        confirm_firmware_mode_parameters(self.cf.param,expected={**expected,'mocapMarker.enable':0})
+        if active:self.cf.param.set_value('mocapMarker.enable','1')
+        confirm_firmware_mode_parameters(self.cf.param,expected=expected)
+        self._marker_geometry_expected=expected
+        self.marker_geometry_enabled=active
+
     def setup_params(self):
         logger.info("Setting up parameters...")
+
+        self._prepare_marker_geometry()
 
         self._prepare_offboard_yaw_damping(recover_only=True)
         self._prepare_offboard_position_control(recover_only=True)
@@ -2414,6 +2469,13 @@ class Controller:
             return
 
         self.verify_contact_attitude_final_prearm_ready()
+        marker_expected=getattr(self,'_marker_geometry_expected',{})
+        if marker_expected:
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            confirm_firmware_mode_parameters(self.cf.param,expected=marker_expected)
+            if getattr(self,'marker_geometry_enabled',False):
+                from Interaction.marker_geometry import motion_reference
+                motion_reference(self.log_manager,time.time(),.035)
         position_pid = getattr(self, '_offboard_position_pid', None)
         if position_pid is not None:
             position_pid.verify()
@@ -3978,7 +4040,8 @@ class Controller:
             started = time.monotonic()
             self.cf.extpos.send_extpos(*frame['tvec'])
             self._finish_mocap_forward_timing(frame, started)
-            if getattr(self, 'firmware_auto_brake_enabled', False):
+            if (getattr(self, 'firmware_auto_brake_enabled', False) or
+                    getattr(self, 'marker_geometry_enabled', False)):
                 receive_s = (frame.get('mocap_timing') or {}).get(
                     'wait_return_monotonic_s')
                 try:

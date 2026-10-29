@@ -93,6 +93,9 @@ def decode_event(wire):
     axes=[]
     velocity_mode = bool(flags & 0x10000)
     position_reference = bool(flags & 0x20000)
+    auto_attitude = bool(flags & 0x2000000)
+    if auto_attitude and (velocity_mode or position_reference):
+        raise ValueError('conflicting automatic attitude reference units')
     if velocity_mode and position_reference:
         raise ValueError('conflicting curve reference units')
     for i in range(2):
@@ -100,9 +103,9 @@ def decode_event(wire):
             split=bool(flags & (1<<i)), coefficients=[list(v[28+16*i:36+16*i]),list(v[36+16*i:44+16*i])],
             response=dict(zip(('delay_s','wn_rad_s','zeta','gain','bias_rad'),v[14+5*i:19+5*i]))))
         # Keep the legacy attitude field only when its units really are radians.
-        if not velocity_mode and not position_reference:
+        if not velocity_mode and not position_reference and not auto_attitude:
             axes[-1]['end_rad'] = v[25+2*i]
-    if kind<=2 and any(a['duration_s']<=0 or (not velocity_mode and not position_reference and a['response']['gain']<=0) for a in axes):
+    if kind<=2 and any((a['duration_s']<=0 and not (auto_attitude and kind==1)) or (not velocity_mode and not position_reference and a['response']['gain']<=0) for a in axes):
         raise ValueError('invalid executable curve')
     result = dict(type='curve', wire_version=version, event=KINDS[kind], event_id=event, session_id=session,
         sequence=sequence, interaction_id=f'{session}:{sequence}', plan_id=plan,
@@ -128,6 +131,13 @@ def decode_event(wire):
                 4:'unified_vicon15',5:'simulation_truth'}.get(source,'unknown'),
             acceleration_source='tilt_approximation',
             reconstruction='reference_only; feedback_command_requires_state_and_runtime_parameters')
+    if auto_attitude:
+        result.update(reference_kind='automatic_attitude_unwind',coefficient_units='deg',
+            curve_axes=['body_pitch','body_roll'],
+            reference_valid=all(a['duration_s']>0 for a in axes),
+            reconstruction='reference_only; measured-state feedback and delayed commands required')
+        if kind==2:
+            result.update(event='phase_transition',phase='unwind')
     if velocity_mode and kind==2:
         result['event']='phase_transition'
     if flags & 0x1000000 and not flags & 0x800000:
@@ -145,14 +155,14 @@ def decode_event(wire):
             4: 'unified_vicon15', 5: 'simulation_truth'}.get(source, 'unknown')
         result['response_model_used'] = False
     if flags & 0x200000:
-        if not velocity_mode or execution_kind != 3:
+        if (not velocity_mode and not auto_attitude) or execution_kind != 3:
             raise ValueError('response compensation requires explicit attitude velocity-reference execution')
         if kind <= 3 and (not model or any(a['response']['gain'] <= 0 or
                                           a['response']['wn_rad_s'] <= 0 for a in axes)):
             raise ValueError('response compensation model missing from executable curve')
         result.update(response_model_used=True,
             response_compensation='delay_state_prediction_and_tail_impulse_feedback',
-            response_axes=['roll', 'pitch'],
+            response_axes=['body_pitch', 'body_roll'] if auto_attitude else ['roll', 'pitch'],
             reconstruction='reference_only; command also requires state, causal command history and runtime parameters')
     if flags & 0x400000:
         if not flags & 0x200000:

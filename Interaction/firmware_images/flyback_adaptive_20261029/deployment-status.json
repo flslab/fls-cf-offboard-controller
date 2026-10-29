@@ -1,0 +1,15 @@
+{
+  "status": "flashed_and_ground_verified",
+  "verified_at": "2026-10-29T21:37:33.904368+00:00",
+  "firmware": "bolt-flyback-auto-26102901",
+  "drone_id": "lb11",
+  "full_readback_bytes": 383592,
+  "selftest_passed": true,
+  "unarmed": true,
+  "motor_outputs_all_zero": true,
+  "host_code_deployed_to_pi": false,
+  "automatic_unwind_enabled": false,
+  "marker_compensation_enabled": false,
+  "flight_performed": false,
+  "evidence": "flash-readback.json"
+}

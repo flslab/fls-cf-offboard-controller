@@ -147,3 +147,25 @@ class PositionHandoffTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class EstimatorRestorationDwellTests(unittest.TestCase):
+    update=PositionHandoffTests.update
+    def test_restoration_uses_physical_dwell_independent_of_ack_then_new_dwell_for_hold(self):
+        h=PositionHandoff(parameters(),{}, {})
+        for k in range(60):self.update(h,k*.01,allow_hold=False)
+        self.assertTrue(h.ready_to_restore);self.assertFalse(h.complete)
+        self.assertIsNone(h.settled_since)
+        # A velocity-estimate jump does not move the physical anchor or veto
+        # settling when the same-point Vicon observation remains stationary.
+        for k in range(60,69):self.update(h,k*.01,v=(.08,0,0),allow_hold=True)
+        self.assertFalse(h.complete)
+        for k in range(69,73):self.update(h,k*.01,v=(.08,0,0),allow_hold=True)
+        self.assertTrue(h.complete);np.testing.assert_allclose(h.anchor,[0,0,1])
+
+    def test_tilt_rate_or_motion_reset_restoration_eligibility(self):
+        for invalid in ({'rp':(.02,0)}, {'rates':(.2,0,0)}, {'mv':(.04,0,0)}):
+            h=PositionHandoff(parameters(),{}, {})
+            for k in range(60):self.update(h,k*.01,allow_hold=False)
+            self.assertTrue(h.ready_to_restore)
+            self.update(h,.6,allow_hold=False,**invalid)
+            self.assertFalse(h.ready_to_restore);self.assertIsNone(h.restore_settled_since)

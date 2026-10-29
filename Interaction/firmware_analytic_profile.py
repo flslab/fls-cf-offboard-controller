@@ -31,7 +31,7 @@ def profile_parameters(config):
                'attitude_kp', 'attitude_kv', 'rate_feedforward',
                'response_compensation', 'response_bandwidth', 'acceleration_residual',
                'state_matched_start', 'position_tracking_bandwidth', 'friction_from_interaction',
-               'max_tilt_deg'}
+               'max_tilt_deg', 'marker_from_imu_m', 'auto_unwind', 'end_velocity_m_s'}
     if set(config) - allowed:
         raise ValueError('unknown analytic_profile fields: ' + ', '.join(sorted(set(config) - allowed)))
     def choice(key, choices):
@@ -73,6 +73,16 @@ def profile_parameters(config):
         raise ValueError('friction_from_interaction must be boolean')
     if friction and (not compensate or state_match):
         raise ValueError('friction_from_interaction requires compensated velocity_scurve attitude execution and state_matched_start: false')
+    automatic=config.get('auto_unwind',False)
+    if type(automatic) is not bool:
+        raise ValueError('analytic_profile.auto_unwind must be boolean')
+    if automatic and (not compensate or state_match or friction or
+                      config.get('feedback')!='unified_vicon15' or
+                      config.get('position_tracking_bandwidth',0)!=0):
+        raise ValueError('auto_unwind requires compensated unified_vicon15 attitude execution, '
+                         'state_matched_start: false, no friction/position tracking')
+    if 'end_velocity_m_s' in config and not automatic:
+        raise ValueError('end_velocity_m_s requires auto_unwind')
     result = {
         'hlCommander.pRelLite': 0,
         'hlCommander.pRelVelCmd': 1,
@@ -110,4 +120,12 @@ def profile_parameters(config):
         if state_match:
             raise ValueError('max_tilt_deg requires state_matched_start: false')
         result['hlCommander.pRelTilt'] = number('max_tilt_deg', .1, MAX_TILT_LIMIT_DEG)
+    if 'marker_from_imu_m' in config:
+        from Interaction.marker_geometry import parameters
+        result.update(parameters(config['marker_from_imu_m']))
+    if 'auto_unwind' in config:
+        result['hlCommander.pRelUnwAuto']=int(automatic)
+    if automatic:
+        result['hlCommander.pRelUnwVer']=1
+        result['hlCommander.pRelEndV']=number('end_velocity_m_s',0,.02,0)
     return result

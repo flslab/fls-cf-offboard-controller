@@ -17,7 +17,7 @@ def delta_ms(a,b):
 
 def reconstruct_command(event,tick_ms):
     """Exact reference convention (including model inverse and joint clamp)."""
-    if event.get('coefficient_units')=='m/s' or event.get('command_mode')=='velocity' or event.get('reference_kind')=='position_polynomial':return None
+    if event.get('coefficient_units') in ('m/s','deg') or event.get('command_mode')=='velocity' or event.get('reference_kind')=='position_polynomial':return None
     if event['event'] not in ('initial','replan'):return None
     age=((event['applied_us_mod32']-event['plan_origin_us_mod32'])&0xffffffff)*1e-6
     age+=delta_ms(tick_ms,event['cf_timestamp_ms'])*.001

@@ -817,14 +817,14 @@ def run_level_coast(owner, config):
                 detection_was_enabled = False  # Also rearm when grace is zero.
             send()
             if (handoff is not None and handoff.active and selector is not None
-                    and not handoff_restore_requested):
-                # The compensated position stream owns control before changing
-                # the FC state view. Keep regenerating offsets from fresh state
-                # throughout the asynchronous switch and subsequent hover.
+                    and handoff.ready_to_restore and not handoff_restore_requested):
+                # First damp residual motion with estimator 3. Change the state
+                # view only after an independent physical-settling dwell; final
+                # anchor capture requires fresh post-ACK states and another dwell.
                 selector.request(False, sample_now)
                 handoff_restore_requested = True
                 owner._log_event('Level Coast Estimator Changed', {
-                    'requested_estimator': 2, 'reason': 'position_capture_active'})
+                    'requested_estimator': 2, 'reason': 'position_capture_settled'})
             owner.log_manager.add_log_entry('wrench_observer', {
                 'time': now, 'behavior': 'level_coast', 'phase': cycle.phase,
                 'state_time': state['time'], 'position_m': state['position'].tolist(),

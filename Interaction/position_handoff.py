@@ -89,6 +89,8 @@ class PositionHandoff:
         self.acceleration = np.zeros(2)
         self.measured_acceleration = np.zeros(2)
         self.settled_since = None
+        self.restore_settled_since = None
+        self.ready_to_restore = False
         self.complete = False
 
     @property
@@ -154,12 +156,23 @@ class PositionHandoff:
         if norm > limit and norm > 0:
             change *= limit/norm
         self.acceleration += change
-        stable = (allow_hold and fraction == 1.
+        physically_stable = (fraction == 1.
             and np.linalg.norm(mv[:2]) <= self.options['settle_speed_m_s']
             and np.linalg.norm(np.degrees(rpy[:2])) <= self.options['settle_tilt_deg']
             and np.linalg.norm(np.degrees(rates[:2])) <= self.options['settle_rate_deg_s']
             and np.linalg.norm(self.measured_acceleration) <= self.options['settle_acceleration_m_s2']
             and np.linalg.norm(self.acceleration) <= self.options['settle_acceleration_m_s2'])
+        # Estimator restoration must not be a prerequisite for measuring that
+        # estimator-3 capture has settled. Completion still needs a separate
+        # fresh dwell after the restoration acknowledgement.
+        if not physically_stable:
+            self.restore_settled_since = None
+            self.ready_to_restore = False
+        elif motion_dt > 0:
+            if self.restore_settled_since is None:
+                self.restore_settled_since = motion_time
+            self.ready_to_restore = motion_time-self.restore_settled_since >= self.options['settle_dwell_s']
+        stable = physically_stable and allow_hold
         if not self.complete:
             if stable and motion_dt > 0:
                 if self.settled_since is None:
@@ -182,6 +195,7 @@ class PositionHandoff:
         target = np.array([*(p[:2]+offset), height])
         self.last_time = timestamp
         status = {'position_handoff_complete': self.complete,
+            'position_handoff_ready_to_restore': self.ready_to_restore,
             'position_handoff_elapsed_s': elapsed, 'position_handoff_allow_hold': bool(allow_hold),
             'position_handoff_anchor_m': None if self.anchor is None else self.anchor.tolist(),
             'position_handoff_acceleration_m_s2': self.acceleration.tolist(),

@@ -1,0 +1,119 @@
+{
+  "tag": "bolt-flyback-auto-26102901",
+  "offboard_base": "b2d6b246f4e54f017a555d4eaf582c564f2641fa",
+  "binary_sha256": "0e97e81583676eff78eec9f2f5212e4404d624dbc8aa023c2268488f0a4f4f3e",
+  "binary_size": 383592,
+  "elf_sha256": "c8e6641e9288006de33ca017a0615696972b3cd75927f7f99eb5322cd493d787",
+  "elf_gzip_sha256": "9a63177fe8e39198e3d050ae0793545516d4648ff8c3c795d29ca06d1f0c89ea",
+  "config_sha256": "39f78d3dc33d1b036af289ec6be2c9fea985636a8d8e5e64e0c098a54e778bb7",
+  "source_fingerprints": {
+    "snapshot_version.json": {
+      "before_sha256": "e1949b53847a0aa7887e5f90156b4236dfd8f4d765a61d5e647706661e2ccea2",
+      "after_sha256": "e6cb8cacc9dc81ba8ff4c946d2161359f4644d73bc726b10a0727285210b5582"
+    },
+    "src/modules/interface/kalman_core/mocap_marker_geometry.h": {
+      "before_sha256": null,
+      "after_sha256": "0d0b2a2e75b94a2d98139d4f30929e42452fa1316daf632c56f36c2141e2329b"
+    },
+    "src/modules/interface/kalman_core/post_release_auto_unwind.h": {
+      "before_sha256": null,
+      "after_sha256": "28fc587021964937a0446a386f218b26b01dd0200a5992a2d1442fe6c4e9be5e"
+    },
+    "src/modules/interface/kalman_core/post_release_vicon_velocity_kf.h": {
+      "before_sha256": "00c7d4cb2ff80e85f3b8bdc160c320bb0482e5560dfd379e3c5393f40ad85d27",
+      "after_sha256": "4017c884b035164d9ca1dedbdb580af43697ee7584ba89499ff03037ae46f3cc"
+    },
+    "src/modules/src/crtp_commander_high_level.c": {
+      "before_sha256": "16e166fe9b39d3a19b54171b486d3b0a96f1ac835eed7a68f35856c4ac882ad5",
+      "after_sha256": "07d9a041cc8f2de7d618ad72f8be2cd5d40f9e3e3291a56c524b8a4f487590dd"
+    },
+    "src/modules/src/estimator/estimator_kalman.c": {
+      "before_sha256": "01626908d62489eb80f1bf46ad6d26efcd0e2553f46f702e69a8a60f33356b9d",
+      "after_sha256": "9f5187a1f284c99430a9323b16be5209417893643d9d7159c4e637cbd5f7fc99"
+    },
+    "src/modules/src/kalman_core/mm_position.c": {
+      "before_sha256": "a0ba9ca5a6a488d0ee4ce3b12c4c6b47eecaf1998df020216dc1c03fa6eb8618",
+      "after_sha256": "b2843afc95cdb47ea6ab659081342c4f7ff0e695752d2bcbc5277085005fb99e"
+    },
+    "src/modules/src/kalman_core/post_release_vicon_velocity_kf.c": {
+      "before_sha256": "2b6e6e176353e3dc69795ee9ad9822d6bc8d31d3777bff900c34155de3d63279",
+      "after_sha256": "260ffec2b95bb12847806494ed8ceae0e9dadc610ed8395ba26235f2215f6f68"
+    },
+    "src/modules/src/post_release_curve_log.inc": {
+      "before_sha256": "211498a2e06d2ffe1a6a3a74a1e31bd38ab946929c527098779aae343873a8bd",
+      "after_sha256": "7cec2e3aadd09f2d4ff51f8264ca28e29c3d2930963dabf024e76427df14526b"
+    },
+    "src/modules/src/post_release_velocity_runtime.inc": {
+      "before_sha256": "295096b1fe276fa25cdc713b6b8b778aa6fdc665e0a6937bf0711a48255ac265",
+      "after_sha256": "dd22d203a7e33e149fba7b509f65093bd7254386f2521de8f225a32707873797"
+    }
+  },
+  "compiler": "arm-none-eabi-gcc (GNU Arm Embedded Toolchain 10-2020-q4-major) 10.2.1 20201103 (release)",
+  "native_validation": {
+    "cases": 1944,
+    "failed": 0,
+    "corrective_only": 0,
+    "min_velocity_m_s": -0.008458,
+    "max_flyback_m": 0.000511,
+    "max_duration_s": 1.43,
+    "unwind_min_s": 0.195,
+    "unwind_max_s": 0.54,
+    "native_cpu_s": 0.706,
+    "late_braking_flyback_m": 0.05136
+  },
+  "validation_status": {
+    "ARM_build": true,
+    "pure_C_ASan_UBSan": true,
+    "closed_loop_sitl": false,
+    "target_CPU_timing": false,
+    "flight_validated": false,
+    "on_target_boot_and_api_presence": true
+  },
+  "deployment": {
+    "committed": false,
+    "pushed": false,
+    "pi_pulled": false,
+    "flashed": true,
+    "verified_at": "2026-10-29T21:37:33.904368+00:00",
+    "drone_id": "lb11",
+    "radio_pi": "10.182.71.171",
+    "host_code_deployed_to_pi": false,
+    "evidence": "flash-readback.json"
+  },
+  "native_source_sha256": {
+    "tests/post_release_vicon_velocity_kf.c": "260ffec2b95bb12847806494ed8ceae0e9dadc610ed8395ba26235f2215f6f68",
+    "tests/test_flyback.c": "79d3c2b0d165454efc1a26f313b65cce5c095d81d7c5c08459528679e4f4579e",
+    "tests/include/post_release_adaptive_scurve.h": "f5b0c771555ad2b5ab9b1bd2ac7ff9cf494243802da140386a9617808c74a36f",
+    "tests/include/mocap_marker_geometry.h": "0d0b2a2e75b94a2d98139d4f30929e42452fa1316daf632c56f36c2141e2329b",
+    "tests/include/post_release_response.h": "9445c626203b9e18ed62c2b86c2eba65c541eba0fa1966d9ee96cf77e9812af1",
+    "tests/include/post_release_response_compensation.h": "a14a6a530ab4b4fecf1631e93092d5e7886e0acaf81c60211ce0177b16030654",
+    "tests/include/post_release_vicon_velocity_kf.h": "4017c884b035164d9ca1dedbdb580af43697ee7584ba89499ff03037ae46f3cc",
+    "tests/include/post_release_auto_unwind.h": "28fc587021964937a0446a386f218b26b01dd0200a5992a2d1442fe6c4e9be5e"
+  },
+  "offboard_unit_tests": {
+    "count": 205,
+    "passed": true
+  },
+  "packaged_at_utc": "2026-10-29T21:14:45.453591+00:00",
+  "memory": {
+    "Flash": {
+      "used": 383136,
+      "total": 1032192,
+      "free": 649056
+    },
+    "RAM": {
+      "used": 121708,
+      "total": 131072,
+      "free": 9364
+    },
+    "CCM": {
+      "used": 55144,
+      "total": 65536,
+      "free": 10392
+    }
+  },
+  "executed_deployment_scripts_sha256": {
+    "executed-flash-and-readback.py": "0c67f31766f6c538cd6f35a7ceca58ec138950178f81acd0c740973dfa8d2d29",
+    "executed-readback-recovery.py": "df8c5628453c34d360d07aa50fb85ceb7429bb2b7bcbaf4ace883955ac895295"
+  }
+}

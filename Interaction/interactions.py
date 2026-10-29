@@ -17393,6 +17393,16 @@ class InteractionsControl:
 
     def _vicon_motion_reference_for_onboard_state(self, state, *, max_time_skew_s=0.035):
         """Read Vicon KF near the state epoch; None disables the age limit."""
+        from Interaction.marker_geometry import requested, motion_reference
+        config=(self.mission.get('Interaction') or {}).get('config') or {}
+        if requested(config):
+            try:
+                reference=motion_reference(self.log_manager,float(state['time']),max_time_skew_s)
+                if np.linalg.norm(reference[0]-np.asarray(state['position']))>.10:
+                    raise ValueError('Corrected Vicon disagrees with onboard position')
+                return reference
+            except (ValueError,KeyError) as error:
+                raise StaleLocalizationError(str(error)) from error
         frames = self.log_manager.groups.get(self.pos_group_name, [])
         if len(frames) < 10:
             raise StaleLocalizationError(
