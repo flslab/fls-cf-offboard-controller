@@ -362,6 +362,10 @@ class Controller:
         self.firmware_auto_brake_enabled = enabled
         if not enabled:
             return
+        from Interaction.firmware_pid_reset import reset_parameters
+        self._firmware_reset_config = {key: mode[key] for key in (
+            'reset_on_mode_change', 'reset_xy_on_scurve_transition') if key in mode}
+        reset_parameters(self._firmware_reset_config)  # Validate before any writes.
         brake_mode = mode.get('mode', 'two_phase')
         if brake_mode not in ('two_phase', 'zero_velocity', 'pi_joint', 'scurve'):
             raise ValueError('firmware_auto_brake.mode must be two_phase, '
@@ -461,6 +465,10 @@ class Controller:
     def verify_firmware_auto_brake_ready(self):
         if not getattr(self, 'firmware_auto_brake_enabled', False):
             return
+        reset_expected = getattr(self, '_firmware_reset_expected', {})
+        if reset_expected:
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            confirm_firmware_mode_parameters(self.cf.param, expected=reset_expected)
         curve_recorder = getattr(getattr(self, 'log_manager', None), 'curve_recorder', None)
         if curve_recorder is not None:
             curve_recorder.check()
@@ -551,6 +559,8 @@ class Controller:
         if velocity_mode:
             required['hlCommander'] += ('pRelVelCmd', 'pRelAdapt')
         toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
+        from Interaction.firmware_pid_reset import reset_parameters
+        reset_expected = reset_parameters(getattr(self, '_firmware_reset_config', {}), toc)
         analytic = getattr(self, '_firmware_analytic_expected', {})
         curve_expected = dict(analytic)
         translation = (self.mission or {}).get('Interaction', {}).get('config', {})
@@ -591,7 +601,7 @@ class Controller:
             for name in ('pRelExec', 'pRelShape', 'pRelLite'):
                 if name in toc.get('hlCommander', {}):
                     curve_expected['hlCommander.' + name] = 0
-        for key in {**curve_expected, **capabilities}:
+        for key in {**curve_expected, **capabilities, **reset_expected}:
             group, name = key.split('.', 1)
             required[group] = required.get(group, ()) + (name,)
         missing=[group+'.'+name for group,names in required.items()
@@ -601,11 +611,18 @@ class Controller:
         if velocity_mode and not analytic and self.firmware_auto_brake_stop_distance_m > 0:
             raise ValueError('velocity curve requires free-stop distance 0')
         self._firmware_curve_expected = curve_expected
-        if velocity_mode:
+        self._firmware_reset_expected = reset_expected
+        if velocity_mode or reset_expected:
             self.cf.param.set_value('hlCommander.pRelAuto', '0')
         if capabilities:
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             confirm_firmware_mode_parameters(self.cf.param, expected=capabilities)
+        if reset_expected:
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            for key, value in reset_expected.items():
+                self.cf.param.set_value(key, str(value))
+            confirm_firmware_mode_parameters(self.cf.param, expected=reset_expected)
+            logger.info('Firmware PID reset policy confirmed: %s', reset_expected)
         self.firmware_build_info = {}
         for name in ('pRelSVer', 'pRelAdVer', 'pRelJVer'):
             if name in toc.get('hlCommander', {}):
@@ -689,6 +706,7 @@ class Controller:
                     firmware=self.firmware_build_info,
                     command_mode=execution,
                     analytic_profile=getattr(self, 'firmware_analytic_profile', None), confirmed_parameters=confirmed_curve,
+                    pid_reset_parameters=reset_expected,
                     velocity_source={1: 'ordinary_firmware_state', 2: 'unified_vicon15'}.get(
                         analytic.get('kalmanPRel.feedback'), 'firmware_configured'),
                     response_model_used=bool(analytic.get('hlCommander.pRelComp')),
