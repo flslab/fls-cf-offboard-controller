@@ -284,6 +284,7 @@ class Controller:
     def start(self):
         self.check_deck()
         self.load_manifest()
+        self.configure_battery_threshold()
         self.setup_sockets()
         self.download_mission_config()
         self.prepare_mpc_mission()
@@ -1217,6 +1218,29 @@ class Controller:
             self.manifest = yaml.safe_load(f)
 
         logger.debug("loaded manifest")
+
+    def configure_battery_threshold(self):
+        """Use the manifest's whole-pack voltage, or the legacy 2S default."""
+        mission = (self.manifest or {}).get('mission') or {}
+        if not isinstance(mission, dict):
+            raise ValueError('manifest.mission must be a mapping')
+        threshold = self.cfg.MIN_LIHV_VOLT * 2
+        source = 'config.MIN_LIHV_VOLT * 2'
+        if 'battery_threshold' in mission:
+            threshold = mission['battery_threshold']
+            source = 'manifest.mission.battery_threshold'
+        if (isinstance(threshold, bool) or not isinstance(threshold, (int, float))
+                or not math.isfinite(threshold) or threshold <= 0):
+            raise ValueError(f'{source} must be a positive finite whole-pack voltage in V')
+        if getattr(self.args, 'crazysim', False):
+            self.min_voltage = 0.0
+            self.battery_threshold_source = 'simulation'
+        else:
+            self.min_voltage = float(threshold)
+            self.battery_threshold_source = source
+        logger.info('Low-battery landing threshold: %.2f V (%s; %d consecutive low samples)',
+                    self.min_voltage, self.battery_threshold_source,
+                    self.battery_critical_consecutive_samples)
 
     def download_mission_config(self):
         if (getattr(self.args, 'imu_validation_session', None)
@@ -3802,6 +3826,9 @@ class Controller:
                     "time": time.time(),
                     "name": "battery_critical",
                     "voltage": voltage,
+                    "threshold_v": self.min_voltage,
+                    "threshold_source": getattr(self, 'battery_threshold_source',
+                                                'config.MIN_LIHV_VOLT * 2'),
                     "consecutive_low_voltage_samples": (
                         self.low_voltage_sample_count
                     ),
