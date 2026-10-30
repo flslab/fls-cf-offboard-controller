@@ -335,6 +335,30 @@ The coast/braking trajectory and its completion conditions are unchanged;
 A new contact discards the
 coast ramp and follows the new measured direction.
 
+PID reset policy is configured independently of the selected coasting method:
+
+```yaml
+wrench_interaction:
+  firmware_auto_brake:
+    reset_on_mode_change: false       # pidCtl.resetMode
+    reset_xy_on_scurve_transition: false  # hlCommander.pRelRstXY
+```
+
+Both options default to `true` when omitted.
+Normal preflight writes and freshly confirms these values even when
+`firmware_auto_brake.enabled: false`, including PB, OB and no-coasting missions.
+The reset policy is checked again immediately before arming; missing support for
+an explicit disable or a mismatched readback blocks startup/arming.
+No firmware braking planner is enabled by this independent setup.
+`reset_on_mode_change` controls automatic resets when the FC control modes change;
+`reset_xy_on_scurve_transition` controls extra S-curve XY resets and has no
+transition to act on in PB/OB-only runs.
+These switches do not change PID gains, reset the estimator, or disable
+zero-thrust PID resets.
+Calibration runs retain their existing reset-policy setup.
+The log entry `Firmware PID Reset Policy` records the confirmed FC values;
+the mission YAML alone is not a readback record.
+
 If either phase selects position, or common position handoff is enabled (the
 default for all three coasting modes), setup temporarily sets **only XY
 position/velocity I, D and feedforward gains to zero before takeoff**, after

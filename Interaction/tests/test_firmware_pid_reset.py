@@ -1,7 +1,7 @@
 """Reset-policy integration checks using fresh parameter replies, without radio."""
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from Interaction.firmware_pid_reset import reset_parameters
 from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
@@ -14,7 +14,10 @@ class ResetPolicyTests(unittest.TestCase):
 
     def fixture(self, **config):
         helper = scurve.SCurvePreflightTests()
-        ctrl = helper.velocity_controller(**config)
+        mode = dict(enabled=True, mode='scurve', response_time_s=.14, command_mode='velocity')
+        mode.update(config)
+        ctrl = baseline.FirmwareAutoBrakePreflightTests().controller(mode)
+        ctrl.prepare_firmware_auto_brake()
         param = helper.velocity_params()
         for key in self.keys:
             group, name = key.split('.')
@@ -91,12 +94,91 @@ class ResetPolicyTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, key):
                     ctrl.verify_firmware_auto_brake_ready()
 
-    def test_disabled_auto_brake_does_not_activate_reset_policy(self):
-        ctrl = baseline.FirmwareAutoBrakePreflightTests().controller(dict(
-            enabled=False, reset_on_mode_change=False, reset_xy_on_scurve_transition=False))
-        ctrl.prepare_firmware_auto_brake()
+    def test_disabled_auto_brake_still_applies_and_confirms_reset_policy(self):
+        ctrl, param = self.fixture(enabled=False, reset_on_mode_change=False,
+                                   reset_xy_on_scurve_transition=False)
         self.assertFalse(ctrl.firmware_auto_brake_enabled)
-        self.assertFalse(hasattr(ctrl, '_firmware_reset_config'))
+        self.assertEqual(ctrl._firmware_reset_config, {
+            'reset_on_mode_change': False, 'reset_xy_on_scurve_transition': False})
+        ctrl._setup_firmware_pid_reset_params()
+        self.assertEqual(ctrl._firmware_reset_expected, dict.fromkeys(self.keys, 0))
+        self.assertEqual([c.args for c in param.set_value.call_args_list],
+                         [(key, '0') for key in self.keys])
+        param.requested.clear()
+        ctrl.verify_firmware_auto_brake_ready()
+        self.assertTrue(set(self.keys).issubset(param.requested))
+
+    def test_disabled_auto_brake_rejects_invalid_reset_config(self):
+        for option in ('reset_on_mode_change', 'reset_xy_on_scurve_transition'):
+            with self.subTest(option=option):
+                with self.assertRaisesRegex(ValueError, option):
+                    self.fixture(enabled=False, **{option: 'false'})
+
+    def test_disabled_auto_brake_defaults_restore_previous_disabled_policy(self):
+        ctrl, param = self.fixture(enabled=False)
+        ctrl._setup_firmware_pid_reset_params()
+        self.assertEqual(ctrl._firmware_reset_expected, dict.fromkeys(self.keys, 1))
+        self.assertEqual([c.args for c in param.set_value.call_args_list],
+                         [(key, '1') for key in self.keys])
+
+    def test_no_curve_parameter_is_required_for_independent_reset_setup(self):
+        ctrl, param = self.fixture(enabled=False, reset_on_mode_change=False,
+                                   reset_xy_on_scurve_transition=False)
+        param.toc.toc = {key.split('.')[0]: {key.split('.')[1]: None} for key in self.keys}
+        ctrl._setup_firmware_pid_reset_params()
+        self.assertEqual(ctrl._firmware_reset_expected, dict.fromkeys(self.keys, 0))
+        ctrl.verify_firmware_pid_reset_ready()
+
+    def test_normal_parameter_setup_applies_reset_policy_for_pb_and_ob(self):
+        for coast in ('position', 'orientation'):
+            with self.subTest(coast=coast):
+                ctrl, param = self.fixture(enabled=False, reset_on_mode_change=False,
+                                           reset_xy_on_scurve_transition=False)
+                ctrl.mission['Interaction']['config'].update(behavior='level_coast',
+                    level_coast={'command_mode': 'position', 'coast_command_mode': coast})
+                ctrl.args.vicon = ctrl.args.tracker = False
+                ctrl.args.controller_type = 'pid'
+                ctrl.args.ground_test = True
+                ctrl.use_flowdeck = False
+                ctrl.cfg = SimpleNamespace(PID_VALUES={})
+                ctrl.log_manager = Mock()
+                for method in ('_prepare_offboard_yaw_damping', '_prepare_offboard_position_control',
+                               '_activate_kalman_estimator', '_activate_tumble_check',
+                               '_activate_pid_controller', '_activate_high_level_commander',
+                               '_set_pid_values', '_setup_firmware_auto_brake_params'):
+                    setattr(ctrl, method, Mock())
+                with patch('Interaction.estimator_ram_trace.prepare_interaction_recorder'), \
+                     patch('Interaction.estimator_hover_live.requested', return_value=False):
+                    ctrl.setup_params()
+                ctrl._setup_firmware_auto_brake_params.assert_not_called()
+                self.assertEqual([c.args for c in param.set_value.call_args_list],
+                                 [(key, '0') for key in self.keys])
+                recorded = ctrl.log_manager.add_log_entry.call_args
+                self.assertEqual(recorded.kwargs['name'], 'Firmware PID Reset Policy')
+                self.assertEqual(recorded.args[1]['confirmed_parameters'], dict.fromkeys(self.keys, 0))
+
+    def test_reset_policy_cannot_be_changed_while_flying(self):
+        ctrl, param = self.fixture(enabled=False)
+        ctrl.flying = True
+        with self.assertRaisesRegex(RuntimeError, 'grounded'):
+            ctrl._setup_firmware_pid_reset_params()
+        param.set_value.assert_not_called()
+
+    def test_wrong_reset_readback_blocks_no_curve_prearm(self):
+        ctrl, param = self.fixture(enabled=False, reset_on_mode_change=False,
+                                   reset_xy_on_scurve_transition=False)
+        ctrl._setup_firmware_pid_reset_params()
+        param.replies[self.keys[0]] = '1'
+        def quick(param, *, expected):
+            return confirm_firmware_mode_parameters(param, expected=expected, timeout_s=.001)
+        with patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters', side_effect=quick):
+            with self.assertRaisesRegex(RuntimeError, self.keys[0]):
+                ctrl.verify_firmware_auto_brake_ready()
+            ctrl.args.ground_test = ctrl.args.skip_arm = False
+            ctrl.cf.platform = SimpleNamespace(send_arming_request=Mock())
+            with self.assertRaisesRegex(RuntimeError, self.keys[0]):
+                ctrl.arm()
+            ctrl.cf.platform.send_arming_request.assert_not_called()
 
 
 if __name__ == '__main__':

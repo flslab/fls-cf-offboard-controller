@@ -361,12 +361,12 @@ class Controller:
         if type(enabled) is not bool:
             raise ValueError('firmware_auto_brake.enabled must be boolean')
         self.firmware_auto_brake_enabled = enabled
-        if not enabled:
-            return
         from Interaction.firmware_pid_reset import reset_parameters
         self._firmware_reset_config = {key: mode[key] for key in (
             'reset_on_mode_change', 'reset_xy_on_scurve_transition') if key in mode}
         reset_parameters(self._firmware_reset_config)  # Validate before any writes.
+        if not enabled:
+            return
         brake_mode = mode.get('mode', 'two_phase')
         if brake_mode not in ('two_phase', 'zero_velocity', 'pi_joint', 'scurve'):
             raise ValueError('firmware_auto_brake.mode must be two_phase, '
@@ -464,12 +464,9 @@ class Controller:
             raise ValueError('firmware auto brake cannot share offboard EKF authority')
 
     def verify_firmware_auto_brake_ready(self):
+        self.verify_firmware_pid_reset_ready()
         if not getattr(self, 'firmware_auto_brake_enabled', False):
             return
-        reset_expected = getattr(self, '_firmware_reset_expected', {})
-        if reset_expected:
-            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
-            confirm_firmware_mode_parameters(self.cf.param, expected=reset_expected)
         curve_recorder = getattr(getattr(self, 'log_manager', None), 'curve_recorder', None)
         if curve_recorder is not None:
             curve_recorder.check()
@@ -538,6 +535,41 @@ class Controller:
         raise RuntimeError('firmware auto brake not ready before arm: '
                            f'mirror={self._firmware_vicon_mirror_error}, '
                            f'last_send={self._firmware_vicon_last_send_s}')
+
+    def _setup_firmware_pid_reset_params(self):
+        """Set and freshly confirm PID reset policy independently of braking."""
+        if getattr(self.args, 'calibrate', False):
+            self._firmware_reset_expected = {}
+            return
+        if getattr(self, 'flying', False):
+            raise RuntimeError('PID reset policy must be configured while grounded')
+        from Interaction.firmware_pid_reset import reset_parameters
+        from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+        toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
+        expected = reset_parameters(getattr(self, '_firmware_reset_config', {}), toc)
+        missing = [key for key in expected
+                   if key.split('.')[1] not in toc.get(key.split('.')[0], {})]
+        if missing:
+            raise RuntimeError('connected Bolt lacks PID reset parameters: ' + ', '.join(missing))
+        self._firmware_reset_expected = expected
+        if not expected:
+            return
+        for key, value in expected.items():
+            self.cf.param.set_value(key, str(value))
+        confirm_firmware_mode_parameters(self.cf.param, expected=expected)
+        logger.info('Firmware PID reset policy confirmed: %s', expected)
+        add_log = getattr(getattr(self, 'log_manager', None), 'add_log_entry', None)
+        if callable(add_log):
+            add_log('configs', {
+                'time': time.time(), 'confirmed_parameters': dict(expected),
+                'firmware_auto_brake_enabled': getattr(self, 'firmware_auto_brake_enabled', False),
+            }, name='Firmware PID Reset Policy')
+
+    def verify_firmware_pid_reset_ready(self):
+        expected = getattr(self, '_firmware_reset_expected', {})
+        if expected:
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            confirm_firmware_mode_parameters(self.cf.param, expected=expected)
 
     def _setup_firmware_auto_brake_params(self):
         """Opt-in event planner; never modify the shared position PID gains."""
@@ -612,18 +644,12 @@ class Controller:
         if velocity_mode and not analytic and self.firmware_auto_brake_stop_distance_m > 0:
             raise ValueError('velocity curve requires free-stop distance 0')
         self._firmware_curve_expected = curve_expected
-        self._firmware_reset_expected = reset_expected
         if velocity_mode or reset_expected:
             self.cf.param.set_value('hlCommander.pRelAuto', '0')
         if capabilities:
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             confirm_firmware_mode_parameters(self.cf.param, expected=capabilities)
-        if reset_expected:
-            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
-            for key, value in reset_expected.items():
-                self.cf.param.set_value(key, str(value))
-            confirm_firmware_mode_parameters(self.cf.param, expected=reset_expected)
-            logger.info('Firmware PID reset policy confirmed: %s', reset_expected)
+        self._setup_firmware_pid_reset_params()
         self.firmware_build_info = {}
         for name in ('pRelSVer', 'pRelAdVer', 'pRelJVer'):
             if name in toc.get('hlCommander', {}):
@@ -2396,6 +2422,8 @@ class Controller:
                     (translation.get('level_coast') or {}).get('estimator_switch_at', 'release') != 'never'))
                 selector.prepare()
                 self.cf._level_coast_estimator_selector = selector
+        else:
+            self._setup_firmware_pid_reset_params()
 
         self._prepare_offboard_yaw_damping()
         self._prepare_offboard_position_control()
@@ -2410,6 +2438,7 @@ class Controller:
         if self.args.ground_test or self.args.skip_arm:
             return
 
+        self.verify_firmware_pid_reset_ready()
         self.verify_contact_attitude_final_prearm_ready()
         position_pid = getattr(self, '_offboard_position_pid', None)
         if position_pid is not None:
