@@ -103,10 +103,21 @@ class PositionHandoffTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'fresh'):self.update(h,.2)
         with self.assertRaises(ValueError):self.update(PositionHandoff(parameters(),{},{}),0,v=(np.nan,0,0))
 
-    def test_timeout_and_infeasible_commands_do_not_silently_freeze(self):
-        h=PositionHandoff(parameters(), {}, {'timeout_s':.5})
-        for k in range(51):self.update(h,k*.01,mv=(.2,0,0))
-        with self.assertRaisesRegex(RuntimeError,'timeout'):self.update(h,.51,mv=(.2,0,0))
+    def test_capture_continues_past_old_timeout_and_can_settle_later(self):
+        for options in ({}, {'timeout_s':.2}):
+            with self.subTest(options=options):
+                h=PositionHandoff(parameters(), {}, options)
+                for k in range(501):
+                    command, status=self.update(h,k*.01,mv=(.2,0,0))
+                self.assertFalse(h.complete)
+                self.assertIsNone(h.anchor)
+                self.assertTrue(np.isfinite(command).all())
+                self.assertEqual(status['position_handoff_elapsed_s'],5.)
+                for k in range(501,701):
+                    self.update(h,k*.01)
+                self.assertTrue(h.complete)
+
+    def test_infeasible_commands_do_not_silently_freeze(self):
         with self.assertRaisesRegex(ValueError,'envelope'):
             self.update(PositionHandoff(parameters(),{},{}),0,incoming=(20,0))
         with self.assertRaisesRegex(ValueError,'velocity limits'):
@@ -121,7 +132,7 @@ class PositionHandoffTests(unittest.TestCase):
         self.assertTrue(h.complete)
 
     def test_config_and_stale_command_rejected(self):
-        for opts in ({'enabled':1},{'transition_s':0},{'timeout_s':.2},{'max_vicon_skew_s':.1},{'unknown':1}):
+        for opts in ({'enabled':1},{'transition_s':0},{'max_vicon_skew_s':.1},{'unknown':1}):
             with self.assertRaises(ValueError):validate_position_handoff(opts)
         lm=SimpleNamespace(get_nearest_group_log_data=Mock(return_value=({'controller.roll':1.,'controller.pitch':2.},0.)),
             get_latest_group_log_time=Mock(return_value=1.))

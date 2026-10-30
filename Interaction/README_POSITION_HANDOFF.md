@@ -94,7 +94,7 @@ Omission uses these defaults.
 | `settle_acceleration_m_s2` | 0.35 m/s² | Filtered measured and commanded acceleration gates |
 | `settle_dwell_s` | 0.10 s | Continuous settling evidence |
 | `acceleration_filter_s` | 0.08 s | Causal acceleration filter time constant |
-| `timeout_s` | 3.0 s | Abort if capture never settles |
+| `timeout_s` | 3.0 s | Legacy compatibility only; ignored for capture timing |
 | `max_sample_gap_s` | 0.10 s | State continuity bound; also post-ACK observation interval |
 | `max_vicon_skew_s` | 0.035 s | Vicon/state pairing ceiling; cannot be widened |
 | `max_command_age_s` | 0.05 s | Command telemetry and capture/hover send freshness ceiling; cannot be widened |
@@ -106,7 +106,8 @@ FC velocity limits, boundaries, battery/motor checks and operator abort remain a
 Duplicate Vicon frames cannot advance settling evidence; slower fresh Vicon
 streams can still accumulate a continuous dwell.
 Duplicate FC states may refresh a packet only within the command freshness bound.
-Missing/stale state or command data, infeasible offsets, or timeout abort through
+Capture has no settling timeout; it continues until settling or another mission transition.
+Missing/stale state or command data and infeasible offsets abort through
 the existing mission cleanup/landing path; they do not silently freeze a target.
 
 Set `position_handoff.enabled: false` only to select the explicit legacy
@@ -124,7 +125,7 @@ Separate `coast`, `capture` and settled hover when analyzing flyback.
 
 The tests reconstruct the FC cascade independently and cover estimator
 position/velocity jumps, all detector/push/coast combinations, re-contact,
-freshness faults, boundaries, timeout and pre-arm requirements.
+freshness faults, boundaries, capture beyond the former timeout and pre-arm requirements.
 Run them with:
 
 ```sh
