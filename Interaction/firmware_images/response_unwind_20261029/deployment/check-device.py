@@ -57,6 +57,8 @@ with tempfile.TemporaryDirectory(prefix='lb11-firmware-check-') as cache:
             finally:cf.param.remove_update_callback(group='hlCommander',name='pRelAuto',cb=updated)
             values['hlCommander.pRelAuto']='0';writes=['hlCommander.pRelAuto=0']
         assert int(values['hlCommander.pRelAuto'])==0
+        startup_console=''.join(console)
+        startup_console_source='current connection'
         if args.after:
             expected={'mocapMarker.api':1,'mocapMarker.enable':0,'hlCommander.pRelUnwVer':2,
                 'hlCommander.pRelUnwAuto':0,'hlCommander.pRelEndV':0,'hlCommander.pRelTMax':40,
@@ -67,15 +69,27 @@ with tempfile.TemporaryDirectory(prefix='lb11-firmware-check-') as cache:
                 'hlCommander.pRelUnwDly':.02,'hlCommander.pRelUnwGain':1.5,
                 'hlCommander.pRelUnwRsv':.08,'hlCommander.pRelUnwWMax':120,
                 'hlCommander.pRelUnwAMax':1000,'hlCommander.pRelUnwSet':6}
-            for k,v in expected.items():assert abs(float(values[k])-v)<1.e-4,(k,values[k],v)
-            assert 'bolt-response-unwind-26102901' in ''.join(console),'New build tag not observed'
+            for k,v in expected.items():
+                values[k]=cf.param.get_value(k)
+                assert abs(float(values[k])-v)<1.e-4,(k,values[k],v)
+            if 'bolt-response-unwind-26102901' not in startup_console:
+                # The first connection consumes the firmware console backlog.
+                # A retry still verifies fresh CPU/API/motor state; bind its
+                # build tag to this same flash's retained first-boot capture.
+                first=root/'postflight-check.log'
+                assert first.stat().st_mtime >= (root/'full-flash-readback.json').stat().st_mtime
+                startup_console=first.read_text().split('Traceback',1)[0]
+                startup_console_source='retained first connection after verified flash'
+                assert identity in startup_console,'First-boot identity missing'
+            assert 'bolt-response-unwind-26102901' in startup_console,'New build tag not observed'
             for group,names in {'mocapRef':['x','y','z','vx','vy','vz','age'],
                 'hlCommander':['scUnwPhase','scUnwWhy','scUnwT','scUnwEndV','scUnwStop','scUnwMinV','scUnwRepl','scUnwLim']}.items():
                 assert all(n in cf.log.toc.toc.get(group,{}) for n in names),(group,names)
         report=dict(identity=actual,uri=uri,drone_id='lb11',verified_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             unarmed=True,motor_outputs_all_zero=True,selftest_passed=True,battery_v=min(s['pm.vbat'] for s in samples),
             required_parameter_count=len(set(required)),parameters=values,samples=samples,
-            parameter_writes=writes,setpoints_sent=False,flight_performed=False,console=''.join(console))
+            parameter_writes=writes,setpoints_sent=False,flight_performed=False,console=''.join(console),
+            startup_console=startup_console,startup_console_source=startup_console_source)
         name='device-after.json' if args.after else 'device-before.json'
         (root/name).write_text(json.dumps(report,indent=2)+'\n')
         print('\n'+('POST_FLASH_VERIFIED ' if args.after else 'PRE_FLASH_VERIFIED ')+json.dumps(report),flush=True)

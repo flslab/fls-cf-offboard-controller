@@ -1,0 +1,15 @@
+{
+  "image": "bolt-response-unwind-26102901",
+  "identity": "0x37383134303347100034002C",
+  "bytes": 390884,
+  "sha256": "f507f4f99ddaa35cd4c3c86c8ea2588bd4056ad0ddbb6c3908d175e4a01beb89",
+  "page_retries": 0,
+  "reconnections": 0,
+  "readback_elapsed_s": 72.75645548000466,
+  "target": "stm32:fw",
+  "flash_written": false,
+  "nrf_or_bootloader_flashed": false,
+  "parameter_writes": false,
+  "flight_performed": false,
+  "verified_at": "2026-10-30T00:09:48.036404+00:00"
+}

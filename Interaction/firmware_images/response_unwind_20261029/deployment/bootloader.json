@@ -1,0 +1,19 @@
+{
+  "uri": "radio://0/0/2M/B15D84D3A3?safelink=0",
+  "identity": "0x37383134303347100034002C",
+  "identity_source": "fresh application CPU-ID and known lb11 warm-reset address",
+  "bootloader_uid_available": false,
+  "target": {
+    "id": 255,
+    "protocol_version": 16,
+    "page_size": 1024,
+    "buffer_pages": 10,
+    "flash_pages": 1024,
+    "start_page": 16,
+    "version": null,
+    "cpuid": "00:00:00:00:00:00:00:00:00:00:00:00",
+    "data": null,
+    "addr": 255
+  },
+  "image_sha256": "f507f4f99ddaa35cd4c3c86c8ea2588bd4056ad0ddbb6c3908d175e4a01beb89"
+}

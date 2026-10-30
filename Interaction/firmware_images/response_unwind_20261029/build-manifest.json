@@ -100,23 +100,39 @@
     "closed_loop_sitl": false,
     "target_CPU_timing": false,
     "runtime_stack_high_water": false,
-    "flight_validated": false
+    "flight_validated": false,
+    "on_target_boot_and_api_presence": true
   },
   "deployment": {
-    "committed": false,
-    "pushed": false,
+    "committed": true,
+    "pushed": true,
     "pi_pulled": false,
-    "flashed": false,
+    "flashed": true,
     "armed": false,
     "active_mission_modified": false,
-    "accepted_calibration_modified": false
+    "accepted_calibration_modified": false,
+    "verified_at": "2026-10-30T00:10:48.000442+00:00",
+    "drone_id": "lb11",
+    "radio_pi": "10.182.71.171",
+    "code_revision": "2d29598928ef4377c92bc147aa95f90bb87431da",
+    "evidence": "flash-readback.json"
   },
   "packaged_at_utc": "2026-10-29T23:45:16.764886+00:00",
   "package_sha256": {
-    "README.md": "981ae02d3b736a0f63a16be3881b79a962aa089b3ce20083239d5d2eb15fa9ea",
+    "README.md": "a3cfdfc4a277346a9534cec15ae4bfdeb0103a1d62a863ced63ddad178d5cab8",
     "bolt-response-unwind-26102901.bin": "f507f4f99ddaa35cd4c3c86c8ea2588bd4056ad0ddbb6c3908d175e4a01beb89",
     "bolt.config": "39f78d3dc33d1b036af289ec6be2c9fea985636a8d8e5e64e0c098a54e778bb7",
     "bolt.elf.gz": "816f77a8bd2fb9e51ed918541bd84474ee48b3c50f2d9e4624ecd665aa3f5bff",
+    "deployment/bootloader.json": "8e59273a539a5ced203e4f803215f3e95fdda0356febff38a23646de362b53dd",
+    "deployment/captured-boot-uri.json": "ffd112e34fb2283a1fd300a9a081001d96b16eefc548e6959f5fe2f4b5ca4108",
+    "deployment/check-device.py": "d35462f27e0e90d338b4aa16a7d9fc08382587769c61e732c634daf0a50fb151",
+    "deployment/device-after.json": "8c6f2740950ebd797aa5d7baac79b674ef17e607e573257e567225ff4edf43ad",
+    "deployment/device-before.json": "e87b3664e8612cf1271193ffbc4651828ba4bed21354a6ab1db55b2765a9487e",
+    "deployment/flash-and-readback.py": "aa6c97047f9c85d643d14305c647822157faf1236abfe250d2b4ca952cfad541",
+    "deployment/full-flash-readback.json": "c3a18d966d9aa06745cd5b56b725df84191a3ccc734f42af6137efda02aea8ce",
+    "deployment/readback-recovery.py": "0e592fc0aed5685e7e61ff1b0ba3b19ce00b8fc650345853a23a958a7877e6e8",
+    "deployment/write-complete.json": "ad61755319763ccbe7222164b56a0e83c7345939ce5e7dc34cfdec12b2f067d8",
+    "flash-readback.json": "c3428c0123e03fa2821113e5641dd01a14ddfded12dd31610c313b9601718d1e",
     "image-contract.json": "f5155bb822850de8333b882a7ff232e7b5c77143e6ea8a80231af434beb2af84",
     "log-admission.json": "d66f5744d309ca13202f03afb62b289c05f4f5209bbe9c61eea3ed0d6bc6bfa6",
     "mission-example.yaml": "d16d51a92ae7a3e1a142bcd65e817d36fc262b3f88d00d32ccab1d85f27a751e",
@@ -132,9 +148,6 @@
     "tests/include/post_release_response.h": "9445c626203b9e18ed62c2b86c2eba65c541eba0fa1966d9ee96cf77e9812af1",
     "tests/include/post_release_response_compensation.h": "a14a6a530ab4b4fecf1631e93092d5e7886e0acaf81c60211ce0177b16030654",
     "tests/test_response_unwind.c": "86cf575d978dc5a870ed1d8c5d227c01f98fed3d4a92e71ca812671e06bf86b7",
-    "validate.py": "2d9b290f9897529980fcbf27e3eaa5659031f40b2de7ec976d25d55af898b06a",
-    "deployment/check-device.py": "977efe40286dd1733535215e3488fe5215332a5d0782c140006758a9ba38ab4f",
-    "deployment/flash-and-readback.py": "aa6c97047f9c85d643d14305c647822157faf1236abfe250d2b4ca952cfad541",
-    "deployment/readback-recovery.py": "0e592fc0aed5685e7e61ff1b0ba3b19ce00b8fc650345853a23a958a7877e6e8"
+    "validate.py": "2d9b290f9897529980fcbf27e3eaa5659031f40b2de7ec976d25d55af898b06a"
   }
 }

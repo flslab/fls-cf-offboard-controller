@@ -1,0 +1,7 @@
+{
+  "image": "bolt-response-unwind-26102901",
+  "elapsed_s": 22.334585689008236,
+  "bytes": 390884,
+  "target": "stm32:fw",
+  "nrf_or_bootloader_flashed": false
+}

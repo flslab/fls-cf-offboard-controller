@@ -1,8 +1,12 @@
 # Response-aware command unwind
 
 Local candidate: `bolt-response-unwind-26102901`, automatic-unwind API 2.
-This package has not been pushed, pulled onto a Pi, flashed, armed, or flight-tested.
-The currently deployed image, accepted attitude-response calibration, and active mission YAML are unchanged.
+This image was flashed to lb11 on 2026-10-29 through Radio Pi 10.182.71.171.
+All 390,884 application bytes matched on readback, followed by verified identity, API 2, self-test, unarmed state, and zero motor outputs.
+The controller changes were pushed to origin/master as 2d295989.
+No arming, setpoints, or flight were performed.
+The onboard Pi code, accepted response calibration, and active mission YAML were not modified by this deployment.
+Before running the new path, pull the updated offboard code onto the Pi and select the API-2 constraint mapping from the reviewed mission overlay.
 See `build-manifest.json`, `native-validation.json`, and `log-admission.json` for exact validation evidence.
 
 ## Control change
@@ -110,4 +114,4 @@ The saved initial-state replay uses sampled 50 Hz command telemetry and therefor
 
 The candidate's stabilizer stack allocation is increased from 3600 to 4800 bytes only for the opt-in joint-unwind build.
 ARM compiler stack-frame inspection and successful linking do not establish runtime stack headroom or control-loop timing.
-On-target timing, a matching-estimator response validation, and flight validation remain required before deployment.
+On-target timing and matching-estimator response validation remain required before flight use; this ground-only flash does not establish flight validation.

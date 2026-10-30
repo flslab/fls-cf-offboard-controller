@@ -1,0 +1,52 @@
+{
+  "identity": "0x37383134303347100034002C",
+  "uri": "radio://0/100/2M/E7E7E7E706",
+  "drone_id": "lb11",
+  "verified_at": "2026-10-30T00:07:30.043441+00:00",
+  "unarmed": true,
+  "motor_outputs_all_zero": true,
+  "selftest_passed": true,
+  "battery_v": 8.489256858825684,
+  "required_parameter_count": 6,
+  "parameters": {
+    "cpu.id0": "3407916",
+    "cpu.id1": "808666896",
+    "cpu.id2": "926429492",
+    "hlCommander.pRelAuto": "0",
+    "stabilizer.estimator": "2",
+    "system.selftestPassed": "1"
+  },
+  "samples": [
+    {
+      "tick_ms": 277373,
+      "motor.m1": 0,
+      "motor.m2": 0,
+      "motor.m3": 0,
+      "motor.m4": 0,
+      "supervisor.info": 513,
+      "pm.vbat": 8.489256858825684
+    },
+    {
+      "tick_ms": 277383,
+      "motor.m1": 0,
+      "motor.m2": 0,
+      "motor.m3": 0,
+      "motor.m4": 0,
+      "supervisor.info": 513,
+      "pm.vbat": 8.489256858825684
+    },
+    {
+      "tick_ms": 277393,
+      "motor.m1": 0,
+      "motor.m2": 0,
+      "motor.m3": 0,
+      "motor.m4": 0,
+      "supervisor.info": 513,
+      "pm.vbat": 8.489256858825684
+    }
+  ],
+  "parameter_writes": [],
+  "setpoints_sent": false,
+  "flight_performed": false,
+  "console": "SYS: ----------------------------\nSYS: Crazyflie Bolt 1.1 is up and running!\nSYS: Build 0:0f2632ccb897 (bolt-flyback-auto-26102901) MODIFIED\nSYS: I am 0x37383134303347100034002C and I have 1024KB of flash!\nCFGBLK: v1, verification [OK]\nDECK_DISCOVERY: Backend found: onewire\nDECK_DISCOVERY: Backend found: deckctrl\nDECK_CORE: 0 deck(s) found\nIMU: BMI088: Using SPI interface.\nIMU: BMI088 Gyro connection [OK].\nIMU: BMI088 Accel connection [OK]\nIMU: BMP388 I2C connection [OK]\nESTIMATOR: Estimator type forced\nESTIMATOR: Using Kalman (2) estimator\nCONTROLLER: Using PID (1) controller\nMTR-DRV: Using brushless motor driver: ONESHOT125\nSYS: About to run tests in system.c.\nSYS: NRF51 version: 2025.02 (CB11)\nEEPROM: I2C connection [OK].\nSTORAGE: Storage check [OK].\nIMU: BMI088 gyro self-test [OK]\nSYS: Self test passed!\nSTAB: Wait for sensor calibration...\nSYS: Free heap: 17256 bytes\nSTAB: Starting stabilizer loop\nESTKALMAN: State out of bounds, resetting\nESTKALMAN: State out of bounds, resetting\nESTKALMAN: State out of bounds, resetting\nESTKALMAN: State out of bounds, resetting\nESTKALMAN: State out of bounds, resetting\nESTKALMAN: State out of bounds, resetting\nESTKALMAN: State out of bounds, resetting\nESTKALMAN: State out of bounds, resetting\nESTKALMAN: State out of bounds, resetting\n"
+}

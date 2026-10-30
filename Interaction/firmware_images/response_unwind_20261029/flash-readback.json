@@ -1,0 +1,23 @@
+{
+  "firmware": "bolt-response-unwind-26102901",
+  "identity": "0x37383134303347100034002C",
+  "drone_id": "lb11",
+  "radio_pi": "10.182.71.171",
+  "flashed": true,
+  "application_bytes_verified": 390884,
+  "sha256": "f507f4f99ddaa35cd4c3c86c8ea2588bd4056ad0ddbb6c3908d175e4a01beb89",
+  "selftest_passed": true,
+  "unarmed": true,
+  "motor_outputs_all_zero": true,
+  "automatic_unwind_api": 2,
+  "boot_checks": "deployment/device-after.json",
+  "first_boot_console_source": "retained first connection after verified flash",
+  "full_readback": "deployment/full-flash-readback.json",
+  "write_evidence": "deployment/write-complete.json",
+  "parameter_writes": [],
+  "flight_performed": false,
+  "flight_validated": false,
+  "host_code_deployed_to_pi": false,
+  "code_revision": "2d29598928ef4377c92bc147aa95f90bb87431da",
+  "verified_at": "2026-10-30T00:10:48.000442+00:00"
+}
