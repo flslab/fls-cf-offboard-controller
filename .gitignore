@@ -5,6 +5,8 @@ metrics/
 Interaction/wrench_calibration.json
 
 # Local research/build artifacts, not offboard runtime dependencies.
+/output/
+/outputs/
 /autoresearch/
 /experiments/
 /reports/
