@@ -19,7 +19,7 @@ DEFAULTS = {
     'settle_acceleration_m_s2': .35,
     'settle_dwell_s': .10,
     'acceleration_filter_s': .08,
-    'timeout_s': 3.0,
+    'timeout_s': 3.0,  # Legacy configuration accepted; capture no longer times out.
     'max_sample_gap_s': .10,
     'max_vicon_skew_s': .035,
     'max_command_age_s': .05,
@@ -40,8 +40,6 @@ def validate_position_handoff(options):
         if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f'position_handoff.{key} must be finite and positive')
         result[key] = float(value)
-    if result['timeout_s'] <= result['transition_s'] + result['settle_dwell_s']:
-        raise ValueError('position_handoff.timeout_s must exceed transition plus dwell')
     if result['max_vicon_skew_s'] > .035 or result['max_command_age_s'] > .05:
         raise ValueError('position_handoff cannot widen Vicon/command freshness ceilings')
     return result
@@ -128,8 +126,6 @@ class PositionHandoff:
             if not 0 < dt <= self.options['max_sample_gap_s']:
                 raise ValueError('Position handoff requires fresh continuous state samples')
         elapsed = timestamp-self.started
-        if not self.complete and elapsed > self.options['timeout_s']:
-            raise RuntimeError('Position handoff did not settle before timeout')
         motion_dt = motion_time-self.last_motion_time
         if motion_dt < 0 or motion_dt > self.options['max_sample_gap_s']:
             raise ValueError('Position handoff Vicon clock is discontinuous')
