@@ -38,6 +38,17 @@ def configuration(detector='potentiometer'):
 
 
 class LevelCoastStateTests(unittest.TestCase):
+    def test_smooth_hover_transition_defaults_on_and_requires_boolean(self):
+        config = configuration()
+        self.assertTrue(validate_level_coast(config, sensor_available=True)['smooth_hover_transition'])
+        config['level_coast']['smooth_hover_transition'] = False
+        self.assertFalse(validate_level_coast(config, sensor_available=True)['smooth_hover_transition'])
+        for value in ('false', 0, 1, None, [], {}):
+            with self.subTest(value=value):
+                config['level_coast']['smooth_hover_transition'] = value
+                with self.assertRaisesRegex(ValueError, 'smooth_hover_transition'):
+                    validate_level_coast(config, sensor_available=True)
+
     def test_coasting_switch_defaults_on_and_requires_boolean(self):
         config = configuration()
         self.assertTrue(validate_level_coast(config, sensor_available=True)['coasting_enabled'])
@@ -308,6 +319,53 @@ class LevelCoastStateTests(unittest.TestCase):
 
 
 class LevelCoastLoopTests(unittest.TestCase):
+    def test_smooth_hover_switch_off_freezes_current_xy_for_all_release_modes(self):
+        for push in ('position', 'orientation'):
+            for coast in ('position', 'orientation', 'scurve'):
+                for common_capture in (True, False):
+                    with self.subTest(push=push, coast=coast, common_capture=common_capture):
+                        control, commands, phases, _ = self.run_scenario(
+                            command_mode=push, coast_command_mode=coast,
+                            smooth_hover_transition=False,
+                            handoff_options={'enabled': common_capture},
+                            grace_start='release', grace_time=.1,
+                            pressed_fn=lambda t: .08 <= t < .16,
+                            speed_fn=lambda t: .12 if .08 <= t < .3 else .02)
+                        held = next(p for p in phases
+                                    if p['previous'] in ('contact', 'coast')
+                                    and p['phase'] in ('grace', 'ready'))
+                        expected = [held['elapsed_s']/10, 0., 1.]
+                        np.testing.assert_allclose(held['hold_position_m'], expected)
+                        after = [(name, args) for t, name, args in commands
+                                 if t >= held['elapsed_s'] - 1e-6]
+                        self.assertTrue(after)
+                        for name, args in after:
+                            self.assertEqual(name, 'send_position_setpoint')
+                            np.testing.assert_allclose(args[:3], expected)
+                        rows = control.log_manager.groups['wrench_observer']
+                        self.assertFalse(any(p['phase'] == 'capture' for p in phases))
+                        self.assertFalse(any(r.get('position_capture_projected') for r in rows))
+                        self.assertFalse(any(k.startswith('position_handoff_') for r in rows for k in r))
+                        logged = next(c for c in control.log_manager.groups['configs']
+                                      if 'smooth_hover_transition' in c)
+                        self.assertIs(logged['smooth_hover_transition'], False)
+
+    def test_smooth_hover_switch_does_not_change_no_coasting_direct_hold(self):
+        for enabled in (True, False):
+            for coast in ('position', 'orientation', 'scurve'):
+                with self.subTest(enabled=enabled, coast=coast):
+                    control, commands, phases, _ = self.run_scenario(
+                        command_mode='position', coast_command_mode=coast,
+                        smooth_hover_transition=enabled, coasting_enabled=False,
+                        handoff_options={'enabled': True},
+                        pressed_fn=lambda t: .08 <= t < .16)
+                    release = next(p for p in phases if p['released'])
+                    np.testing.assert_allclose(release['hold_position_m'],
+                                               [release['elapsed_s']/10, 0., 1.])
+                    self.assertFalse(any(p['phase'] in ('coast', 'capture') for p in phases))
+                    if coast == 'scurve':
+                        self.assertFalse(control.curve_clock['releases'])
+
     def test_common_capture_and_compensated_hold_for_all_three_coasts_and_detectors(self):
         for detector in ('potentiometer','model','vel'):
             for push in ('position','orientation'):
@@ -655,7 +713,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                      vicon_velocity_fn=None, scurve_completion_s=.12, estimator_delay_s=0.,
                      curve_fault=None, estimator_switch_at=None, force_config=None,
                      coasting_enabled=None, handoff_options=None, release_rejection=None,
-                     release_rejection_delay_s=0.):
+                     release_rejection_delay_s=0., smooth_hover_transition=None):
         config = configuration(detector)
         config['record_potentiometer'] = record_potentiometer
         config['duration'] = duration
@@ -672,6 +730,8 @@ class LevelCoastLoopTests(unittest.TestCase):
             config['level_coast']['estimator_switch_at'] = estimator_switch_at
         if coasting_enabled is not None:
             config['level_coast']['coasting_enabled'] = coasting_enabled
+        if smooth_hover_transition is not None:
+            config['level_coast']['smooth_hover_transition'] = smooth_hover_transition
         if coast_command_mode is not None:
             config['level_coast']['coast_command_mode'] = coast_command_mode
         if position_options is not None:

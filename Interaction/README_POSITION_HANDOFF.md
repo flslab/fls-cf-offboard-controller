@@ -80,6 +80,25 @@ Normal XY integral disturbance rejection is unavailable during these runs.
 
 ## Configuration and guards
 
+The master switch is `Interaction.config.level_coast.smooth_hover_transition`:
+
+```yaml
+level_coast:
+  smooth_hover_transition: true  # false: capture current FC XY and hold directly.
+```
+
+Its default is `true`, preserving existing behavior.
+With `false`, all three release methods bypass the common smooth capture stage
+and its continuing hover compensation.
+PB also skips the legacy forward-stop projection; S-curve uses current FC XY
+instead of the firmware-reported endpoint for the subsequent offboard hold.
+S-curve still completes its firmware trajectory and confirms the default estimator
+before offboard takes over; this switch does not alter that trajectory.
+Mission height, yaw, release/stop conditions, grace timing and safety checks stay in effect.
+The master switch takes precedence over `position_handoff.enabled`.
+No-coasting runs already use direct hold and are unaffected by either switch.
+`Level Coast Config` records the resolved master-switch value for comparisons.
+
 All values below are configurable in `Interaction.config.level_coast.position_handoff`.
 Omission uses these defaults.
 
@@ -110,7 +129,7 @@ Capture has no settling timeout; it continues until settling or another mission 
 Missing/stale state or command data and infeasible offsets abort through
 the existing mission cleanup/landing path; they do not silently freeze a target.
 
-Set `position_handoff.enabled: false` only to select the explicit legacy
+With the master switch left on, set `position_handoff.enabled: false` to select the explicit legacy
 comparison path: projected fixed PB target, current-position OB hold, and
 firmware endpoint S-curve hold after estimator restoration.
 

@@ -17,6 +17,7 @@ from Interaction.potentiometer_force_sensor import (
 from Interaction.position_follow import PositionVelocityFollower, validate_position_follow
 from Interaction.position_handoff import (
     PositionHandoff, validate_position_handoff, incoming_attitude_command,
+    smooth_hover_transition_enabled,
 )
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH, apply_detection_calibration,
@@ -68,6 +69,7 @@ def validate_level_coast(config, *, sensor_available):
         raise ValueError('roll_diagnostics requires scurve coasting')
     options['position_control'] = validate_position_follow(options.get('position_control', {}))
     options['position_handoff'] = validate_position_handoff(options.get('position_handoff', {}))
+    options['smooth_hover_transition'] = smooth_hover_transition_enabled(options)
     if 'detector' in options:
         raise ValueError('level_coast.detector was removed; use config.detection_method')
     detector = config.get('detection_method', 'potentiometer')
@@ -386,7 +388,8 @@ def run_level_coast(owner, config):
     scurve_mode = options['coast_command_mode'] == 'scurve'
     scurve_coast = scurve_mode and options['coasting_enabled']
     switch_estimators = scurve_mode and options['estimator_switch_at'] != 'never'
-    handoff_enabled = options['coasting_enabled'] and options['position_handoff']['enabled']
+    handoff_enabled = (options['coasting_enabled'] and options['smooth_hover_transition']
+                       and options['position_handoff']['enabled'])
     curve = selector = None
     hover_xy = getattr(owner.cf, '_estimator_hover_xy', None)
     if options.get('estimator_hover_xy', False) and hover_xy is None:
@@ -657,8 +660,10 @@ def run_level_coast(owner, config):
                 }
             sample_now = time.monotonic()
             curve_completed = curve.poll(sample_now) if curve is not None else False
+            # Direct hold captures current FC XY instead of a projected endpoint.
+            # The firmware curve and estimator-restoration acknowledgement still finish first.
             curve_hold = (curve.hold_notice['hold_position_m']
-                          if curve_completed else None)
+                          if curve_completed and options['smooth_hover_transition'] else None)
             changed = cycle.update(
                 state['position'], state['velocity'], sample_now,
                 armed=gate.armed and yaw_ready and hover_ready, started=started, released=released,
@@ -761,6 +766,7 @@ def run_level_coast(owner, config):
                 capture_position = (was_level and not cycle.level
                     and cycle.phase in ('grace', 'ready')
                     and options['coasting_enabled']
+                    and options['smooth_hover_transition']
                     and not handoff_enabled
                     and options['coast_command_mode'] == 'position')
                 if command_mode == 'position_follow' or capture_position:

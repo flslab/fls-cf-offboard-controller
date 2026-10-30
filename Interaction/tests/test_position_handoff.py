@@ -31,6 +31,16 @@ class PositionHandoffTests(unittest.TestCase):
             self.assertIs(add_handoff_logs(selected, {'Interaction':{'config':c}}), selected)
         self.assertFalse(handoff_enabled({'behavior':'translation_inertia'}))
 
+    def test_master_switch_disables_capture_telemetry_for_every_coast(self):
+        for mode in ('position', 'orientation', 'scurve'):
+            with self.subTest(mode=mode):
+                c = {'behavior': 'level_coast', 'level_coast': {
+                    'coast_command_mode': mode, 'smooth_hover_transition': False,
+                    'position_handoff': {'enabled': True}}}
+                self.assertFalse(handoff_enabled(c))
+                selected = {'existing_group': {}}
+                self.assertIs(add_handoff_logs(selected, {'Interaction': {'config': c}}), selected)
+
     def test_actual_cascade_error_does_not_jump_with_estimator_bias_or_position_jump(self):
         for yaw in (0., .8, -1.7):
             h=PositionHandoff(parameters(), {}, {})

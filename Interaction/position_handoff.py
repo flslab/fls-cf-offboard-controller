@@ -45,10 +45,20 @@ def validate_position_handoff(options):
     return result
 
 
+def smooth_hover_transition_enabled(options):
+    """Master switch for both compensated capture and legacy forward projection."""
+    enabled = options.get('smooth_hover_transition', True)
+    if type(enabled) is not bool:
+        raise ValueError('level_coast.smooth_hover_transition must be boolean')
+    return enabled
+
+
 def handoff_enabled(config):
     options = config.get('level_coast') or {}
     values = validate_position_handoff(options.get('position_handoff', {}))
-    return config.get('behavior') == 'level_coast' and options.get('coasting_enabled', True) and values['enabled']
+    return (config.get('behavior') == 'level_coast'
+            and options.get('coasting_enabled', True)
+            and smooth_hover_transition_enabled(options) and values['enabled'])
 
 
 def add_handoff_logs(selected, mission):

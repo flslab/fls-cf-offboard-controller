@@ -323,6 +323,15 @@ or stopping time. At low speed, enter the common capture stage.
 For explicit legacy comparisons, `position_handoff.enabled: false` restores
 the former frozen forward projection for PB and current-XY capture for OB.
 Neither path promises zero overshoot with real attitude lag.
+To disable both smooth capture and forward prediction, set the master switch
+`level_coast.smooth_hover_transition: false` (default `true`).
+After PB/OB reaches its stopping condition, or S-curve confirms completion and
+the default estimator is ready, freeze the current FC XY position and send
+ordinary position-hold commands at mission height.
+This overrides `position_handoff.enabled` and also bypasses the legacy PB
+projection and the S-curve endpoint target for the subsequent offboard hold.
+The coast/braking trajectory and its completion conditions are unchanged;
+`coasting_enabled: false` still enters direct hold at release regardless of this switch.
 A new contact discards the
 coast ramp and follows the new measured direction.
 
