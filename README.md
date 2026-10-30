@@ -292,10 +292,15 @@ not actively brake horizontal velocity and may travel farther.
 
 Detector, release/grace timing and coast preemption are shared. A fresh contact
 that preempts coast switches back to `command_mode`. The coast-specific speed
-threshold below enters position hold: position coast uses the stopping-position
-projection below, while orientation coast
-captures current XY. This also applies when release is already below the speed
-threshold and goes straight to hold. The existing hardcoded
+threshold below now enters a common **position capture** stage for PB and OB;
+S-curve enters this stage after its confirmed firmware endpoint.
+Capture uses fresh Vicon motion, bounds the change in commanded acceleration,
+and waits for low speed, tilt, angular rate and acceleration before fixing the
+physical hover anchor. Position packets continue compensating the FC velocity
+estimate throughout hover; a temporary compensation offset is never frozen as
+the hover anchor. See [position handoff](Interaction/README_POSITION_HANDOFF.md)
+for equations, parameters, limitations and verification commands.
+The existing hardcoded
 `DETECTION_TO_ORI_DELAY_S` now means the delay before the selected movement
 policy (fixed position hold during the delay).
 
@@ -314,14 +319,15 @@ coast selected, a smooth 0.5 s transition from the first coast command
 reduces the retained velocity fraction from 1 to 0. The confirmed velocity P
 gains bound the nominal braking tilt to an equivalent 0.8 m/s² horizontal
 acceleration. This is a setpoint bound, not a guarantee about actual acceleration
-or stopping time. At low speed, freeze a short forward stopping projection for
-hover using the nominal velocity-P decay (`v_body / (g * radians(Kv_xy))`),
-retaining any farther current follow target. This accounts for residual motion
-instead of locking directly onto the current point; it does not promise zero
-overshoot with real attitude lag. A new contact discards the
+or stopping time. At low speed, enter the common capture stage.
+For explicit legacy comparisons, `position_handoff.enabled: false` restores
+the former frozen forward projection for PB and current-XY capture for OB.
+Neither path promises zero overshoot with real attitude lag.
+A new contact discards the
 coast ramp and follows the new measured direction.
 
-If either phase selects position, setup temporarily sets **only XY
+If either phase selects position, or common position handoff is enabled (the
+default for all three coasting modes), setup temporarily sets **only XY
 position/velocity I, D and feedforward gains to zero before takeoff**, after
 saving and freshly confirming originals.
 It leaves P, Z, attitude/rate PID and estimator settings unchanged. This makes
@@ -354,8 +360,10 @@ contact sends
 keeps that same command until `dot(velocity_xy, interaction_direction_xy) <
 level_coast.stop_speed_m_s` (default `0.03` m/s), or a newly detected interaction
 preempts coast as described below. The projection is signed: lateral drift does
-not delay capture, and reverse motion also satisfies the threshold. Capture holds
-current XY at nominal Z; orientation-only runs reset position/velocity integrators.
+not delay capture, and reverse motion also satisfies the threshold.
+Common capture then damps both horizontal axes before hover; its settling gate
+uses full XY speed. Orientation-only runs with common capture disabled retain
+the original current-XY hold and position/velocity integrator reset.
 
 The world-XY direction is normalized and locked at each accepted contact onset:
 model reuses its detector's force direction (or onset force if projection is
@@ -371,7 +379,7 @@ compared against the threshold.
 
 `grace_time` specifies seconds (default `0.5`), and `level_coast.grace_start` selects:
 
-- `speed_threshold` (default): start grace at low-speed capture, hold position,
+- `speed_threshold` (default): start grace after capture settles, hold position,
   then reset detectors and repeat stationary arming. Coast/grace ignore onsets.
 - `release`: start grace at each **confirmed** release. At expiry, clear detector
   evidence and the release latch, then allow a fresh onset even during coast.
@@ -489,19 +497,22 @@ requires the sensor (or enable `record_potentiometer` for diagnostic logging).
 
 The matching firmware endpoint notice and fresh stage-4 status complete the
 curve. `pRelHoldG=0` is explicitly written/read back pre-arm: neither the offboard
-`stop_speed_m_s` nor a measured terminal-speed window gates this transition.
-Fresh firmware state and existing abort/admission checks still apply. Request
-the default estimator (`2`), wait for its confirmation while retaining firmware
-hold, then send low-level position packets at the exact firmware hold target.
-The endpoint target preserves the existing forward-only policy; this option
-does not recompute a speed-based stopping projection.
+`stop_speed_m_s` nor a measured terminal-speed window gates firmware completion.
+Fresh firmware state and existing abort/admission checks still apply.
+With common position handoff enabled, fresh FC commanded roll/pitch seeds the
+capture stage. Send the first compensated position packet before requesting
+default estimator `2`, and keep updating the compensation through the asynchronous
+switch. Final hover waits for acknowledgement, new state samples and the common
+settling gate. The firmware's braking and unwind trajectory is unchanged.
+With `position_handoff.enabled: false`, retain the legacy sequence: confirm
+estimator `2` while firmware holds, then freeze its reported endpoint target.
 
 `grace_start: release` retains its release-time origin and can preempt a running
 curve with a newly detected interaction after grace. In `release` switch mode,
 that new contact requests estimator `2` again; its next release requests `3`.
 In `detect` mode, contact continues to request `3`. `speed_threshold` retains
-the existing spelling, but in S-curve mode starts grace at curve completion and
-default-estimator confirmation. Duration expiry/faults restore the default
+the existing spelling, but with common handoff starts grace after position
+capture completes, including default-estimator confirmation. Duration expiry/faults restore the default
 estimator and use the existing mission landing lifecycle. Offline tests cover
 these transitions; physical timing, stopping quality and repeated flight remain
 unvalidated.

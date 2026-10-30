@@ -2108,6 +2108,11 @@ class Controller:
             )
         if specific_force_requested:
             required[IMU_GROUP] = IMU_FIELDS
+        from Interaction.position_handoff import handoff_enabled
+        translation = self.mission.get('Interaction', {}).get('config', {})
+        if (handoff_enabled(translation) and
+                (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve'):
+            required['POSITION_HANDOFF'] = ('controller.roll', 'controller.pitch')
         run = getattr(self.args, 'contact_attitude_run', None)
         if run in (2, 3):
             required.update({
@@ -2250,13 +2255,14 @@ class Controller:
         import hashlib
         from Interaction.position_follow import PositionFollowPidContext
         from Interaction.level_coast import resolve_command_modes
+        from Interaction.position_handoff import handoff_enabled
         translation = (self.mission or {}).get('Interaction', {}).get('config', {})
         modes = (resolve_command_modes(translation.get('level_coast') or {})
                  if translation.get('behavior') == 'level_coast' else {})
         # Calibration uses the ordinary position PID even when the mission's
         # later interaction policy follows position. Still recover persisted
         # gains from an interrupted interaction before configuring calibration.
-        enabled = ('position' in modes.values()
+        enabled = (('position' in modes.values() or handoff_enabled(translation))
                    and not getattr(self.args, 'calibrate', False))
         identity = getattr(self.args, 'drone_id', None)
         if identity is None:

@@ -90,9 +90,10 @@ class ContactEstimatorSelector:
 
 
 class FirmwareSCurveCoast:
-    def __init__(self, owner, selector):
+    def __init__(self, owner, selector, *, defer_estimator_restore=False):
         self.owner = owner
         self.selector = selector
+        self.defer_estimator_restore = defer_estimator_restore
         self.session = uuid4().int & 0xFFFFFFFF
         self.sequence = 0
         self.completion = None
@@ -158,14 +159,16 @@ class FirmwareSCurveCoast:
                 self.completion.__exit__(None, None, None)
                 self.completion = None
                 self.hold_notice = notice
-                self.selector.request(False, now)
+                if not self.defer_estimator_restore:
+                    self.selector.request(False, now)
                 self.owner._log_event('Level Coast S-Curve Completed', {
                     **notice, 'completion_condition': 'firmware_curve_endpoint',
                     'velocity_threshold_used': False})
-                print('[interaction] s-curve done -> default estimator', flush=True)
+                print('[interaction] s-curve done -> position capture' if self.defer_estimator_restore
+                      else '[interaction] s-curve done -> default estimator', flush=True)
             elif now - self.started_at > self.timeout_s:
                 raise RuntimeError(f'S-curve did not report its completed endpoint within {self.timeout_s:g} s')
-        return self.hold_notice is not None and self.selector.ready(now)
+        return self.hold_notice is not None and (self.defer_estimator_restore or self.selector.ready(now))
 
     def cancel(self):
         # The next LL packet takes control and cancels the FC plan. Merely

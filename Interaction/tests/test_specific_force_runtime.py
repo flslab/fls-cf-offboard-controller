@@ -180,12 +180,33 @@ class ConfigurationTests(unittest.TestCase):
         with patch('controller.time.monotonic',side_effect=[0.,0.,5.1]),patch('controller.time.sleep'):
             with self.assertRaisesRegex(RuntimeError,'MODEL_IMU'):c.verify_onboard_wrench_logging()
 
+    def test_scurve_capture_prearm_requires_command_telemetry(self):
+        from controller import Controller
+        from Interaction.tests.test_compressed_state_logs import buffered_logs, publish, compressed_packets
+        c=Controller.__new__(Controller)
+        c._uses_onboard_wrench_state=lambda:True
+        c.mission=self.mission(True);c.args=SimpleNamespace(contact_attitude_run=None)
+        cfg=c.mission['Interaction']['config']
+        cfg['behavior']='level_coast'
+        cfg['level_coast']={'coast_command_mode':'scurve'}
+        c.log_manager=logs=buffered_logs()
+        k,a=compressed_packets()
+        publish(logs,'FIRMWARE_KIN',5000,1000.,k)
+        publish(logs,'FIRMWARE_ACT',5000,1000.,a)
+        publish(logs,IMU_GROUP,5000,1000.,{**{f:0. for f in IMU_FIELDS},'acc.z':1.})
+        logs.get_latest_group_log_data=lambda group:dict(logs.cf_log_group_packets[group][-1]) if logs.cf_log_group_packets[group] else {}
+        with patch('controller.time.monotonic',side_effect=[0.,0.,5.1]),patch('controller.time.sleep'):
+            with self.assertRaisesRegex(RuntimeError,'POSITION_HANDOFF'):c.verify_onboard_wrench_logging()
+        publish(logs,'POSITION_HANDOFF',5000,1000.,{'controller.roll':0.,'controller.pitch':0.})
+        with patch('controller.time.time',return_value=1000.01):c.verify_onboard_wrench_logging()
+
 
 class LevelCoastRuntimeTests(unittest.TestCase):
     def run_scenario(self, drop_after=None):
         from Interaction.level_coast import run_level_coast
         from Interaction.tests.test_level_coast import configuration
         from Interaction.tests.test_wrench_interactions_integration import FakeCommander
+        from Interaction.tests.test_position_follow import parameters
         clock=[0.]
         cfg=configuration('model');cfg['duration']=1.
         cfg['wrench_interaction']['force_estimator']='specific_force'
@@ -209,11 +230,14 @@ class LevelCoastRuntimeTests(unittest.TestCase):
         def sleep(dt):
             clock[0]=round(clock[0]+dt,6)
             self.assertLess(clock[0],2.)
-        owner=SimpleNamespace(cf=SimpleNamespace(),drone_id='lb11',ctrl_rate=100,
+        owner=SimpleNamespace(cf=SimpleNamespace(_offboard_position_pid=SimpleNamespace(
+                prepared=True,parameters=parameters())),drone_id='lb11',ctrl_rate=100,
             mission={'drones':{'lb11':{'target':[0,0,1]}}},log_manager=logs,
             lo_commander=FakeCommander(),check_interaction_boundary=Mock(),_log_event=Mock(),
             _safe_sleep=sleep,_get_synchronized_onboard_wrench_state=state,
             _set_contact_pid_attitude_authority=Mock(),
+            _vicon_motion_reference_for_onboard_state=lambda *a,**kw:(
+                np.array([0.,0.,1.]),np.zeros(3),1000.+clock[0],0.),
             _vicon_velocity_reference_for_onboard_state=lambda *a,**kw:(np.zeros(3),1000.+clock[0],0.))
         with patch('Interaction.level_coast.time.time',side_effect=lambda:1000.+clock[0]), \
              patch('Interaction.level_coast.time.monotonic',side_effect=lambda:clock[0]), \

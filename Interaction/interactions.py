@@ -17387,6 +17387,11 @@ class InteractionsControl:
         self._log_event('Wrench Interaction Complete')
 
     def _vicon_velocity_reference_for_onboard_state(self, state, *, max_time_skew_s=0.035):
+        _, velocity, stamp, skew = self._vicon_motion_reference_for_onboard_state(
+            state, max_time_skew_s=max_time_skew_s)
+        return velocity, stamp, skew
+
+    def _vicon_motion_reference_for_onboard_state(self, state, *, max_time_skew_s=0.035):
         """Read Vicon KF near the state epoch; None disables the age limit."""
         frames = self.log_manager.groups.get(self.pos_group_name, [])
         if len(frames) < 10:
@@ -17424,7 +17429,7 @@ class InteractionsControl:
                  if max_time_skew_s is None else
                  'Vicon velocity is stale, invalid, or disagrees with position')
             )
-        return velocity, float(frame['time']), skew_s
+        return position.copy(), velocity.copy(), float(frame['time']), skew_s
 
     def _get_synchronized_onboard_wrench_state(self):
         """Return time-aligned Crazyflie state-estimate and actuator packets."""
