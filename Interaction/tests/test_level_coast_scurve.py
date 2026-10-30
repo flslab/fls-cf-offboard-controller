@@ -1,7 +1,9 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock, patch
 
-from Interaction.level_coast_scurve import ContactEstimatorSelector
+from Interaction.level_coast_scurve import ContactEstimatorSelector, FirmwareSCurveCoast
+from Interaction.post_release_firmware_control_event import FirmwareReleaseRejectedError
 from Interaction.tests.test_firmware_parameter_confirmation import AsyncParams
 from Interaction.tests import test_firmware_auto_brake_preflight as preflight
 from Interaction.tests import test_scurve_firmware_preflight as scurve_preflight
@@ -10,12 +12,22 @@ from Interaction.tests.test_mission_profiles import mission
 
 
 class ContactEstimatorTests(unittest.TestCase):
-    def selector(self):
+    def selector(self, *, switching_enabled=True):
         params = AsyncParams({'stabilizer.estimator': '2', 'stabilizer.controller': '1',
             'kalmanPRel.feedback': '2', 'hlCommander.pRelEnd': '1', 'hlCommander.pRelHoldG': '0'})
-        selector = ContactEstimatorSelector(SimpleNamespace(param=params))
+        selector = ContactEstimatorSelector(SimpleNamespace(param=params), switching_enabled=switching_enabled)
         selector.prepare()
         return selector, params
+
+    def test_never_switches_or_restores_estimator_even_without_xy_calibration(self):
+        selector, params = self.selector(switching_enabled=False)
+        selector.cf._estimator_hover_xy = SimpleNamespace(ready=False)
+        for contact in (True, False, True):
+            selector.request(contact, 1.)
+            self.assertTrue(selector.ready(10.))
+        selector.close()
+        params.set_value.assert_not_called()
+        self.assertEqual(params.callbacks, {})
 
     def test_switch_is_nonblocking_ignores_old_reply_and_requires_confirmation(self):
         selector, params = self.selector()
@@ -92,6 +104,47 @@ class ContactEstimatorTests(unittest.TestCase):
         writes = [call.args for call in params.set_value.call_args_list]
         self.assertIn(('hlCommander.pRelHoldG', '0'), writes)
         self.assertEqual(writes[-1], ('hlCommander.pRelAuto', '1'))
+
+
+class FirmwareSCurveAdmissionTests(unittest.TestCase):
+    def attempt(self, reason, detail, *, ack_errno=34, fresh=True):
+        packet = {'hlCommander.pRelRejR': reason, 'hlCommander.pRelRejD': detail}
+        owner = SimpleNamespace(
+            cf=SimpleNamespace(), mission={'Interaction': {'config': {
+                'wrench_interaction': {'firmware_auto_brake': {}}}}},
+            lo_commander=SimpleNamespace(send_zdistance_setpoint=Mock()),
+            _firmware_brake_status_snapshot=lambda: ({}, 1.),
+            _capture_firmware_release_rejection=lambda receipt: (
+                packet, {'fresh_post_release_packet': fresh}),
+            _log_event=Mock())
+        curve = FirmwareSCurveCoast(owner, SimpleNamespace())
+        completion = MagicMock()
+        with patch('Interaction.level_coast_scurve.FirmwareHoldNotification', return_value=completion), \
+                patch('Interaction.level_coast_scurve.handoff_pi_release_to_firmware',
+                      side_effect=FirmwareReleaseRejectedError(ack_errno)):
+            if fresh and ack_errno == 34 and (reason, detail) in ((7, 4), (4, 1)):
+                self.assertIs(curve.begin(height=1., release_monotonic_s=1.), False)
+            else:
+                with self.assertRaises(FirmwareReleaseRejectedError):
+                    curve.begin(height=1., release_monotonic_s=1.)
+        self.assertFalse(curve.active)
+        self.assertIsNone(curve.completion)
+        self.assertIsNone(curve.hold_notice)
+        self.assertEqual(curve.sequence, 1)
+        completion.__exit__.assert_called_once()
+        completion.acknowledge.assert_not_called()
+
+    def test_only_explicit_fresh_low_speed_rejections_skip_curve(self):
+        for reason, detail in ((7, 4), (4, 1)):
+            with self.subTest(reason=reason, detail=detail):
+                self.attempt(reason, detail)
+
+    def test_other_or_combined_failures_remain_errors(self):
+        for reason, detail in ((7, 6), (7, 12), (7, 20), (4, 0), (6, 1), (3, 1), (10, 4)):
+            with self.subTest(reason=reason, detail=detail):
+                self.attempt(reason, detail)
+        self.attempt(7, 4, fresh=False)
+        self.attempt(7, 4, ack_errno=11)
 
 
 if __name__ == '__main__':

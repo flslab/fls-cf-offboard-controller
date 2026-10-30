@@ -77,6 +77,8 @@ class LevelCoastStateTests(unittest.TestCase):
     def test_estimator_switch_defaults_to_release_and_rejects_unknown_edges(self):
         config = configuration()
         self.assertEqual(validate_level_coast(config, sensor_available=True)['estimator_switch_at'], 'release')
+        config['level_coast']['estimator_switch_at'] = 'never'
+        self.assertEqual(validate_level_coast(config, sensor_available=True)['estimator_switch_at'], 'never')
         for value in ('contact', '', None, True, ['release']):
             with self.subTest(value=value):
                 config['level_coast']['estimator_switch_at'] = value
@@ -559,6 +561,89 @@ class LevelCoastLoopTests(unittest.TestCase):
             control, *_ = self.run_scenario(coast_command_mode='scurve', curve_fault=curve_fault)
             self.assertEqual(control.curve_clock['closed'], 1)
 
+    def test_never_keeps_estimator_two_through_curve_capture_and_cleanup(self):
+        for handoff in (None, {'enabled': True, 'settle_dwell_s': .03}):
+            with self.subTest(handoff=handoff):
+                control, commands, phases, _ = self.run_scenario(
+                    coast_command_mode='scurve', estimator_switch_at='never',
+                    handoff_options=handoff, pressed_fn=lambda t: .08 <= t < .16,
+                    speed_fn=lambda t: .12 if .08 <= t < .16 else .001)
+                self.assertTrue(control.curve_clock['releases'])
+                self.assertEqual(control.curve_clock['requests'], [])
+                self.assertEqual(set(control.command_estimators), {2})
+                control.cf.param.set_value.assert_not_called()
+                self.assertFalse(any(c.args[0] == 'Level Coast Estimator Changed'
+                                     for c in control._log_event.call_args_list))
+                self.assertIn('ready', [p['phase'] for p in phases])
+
+    def test_low_speed_refusal_sends_position_immediately_without_fake_completion(self):
+        for switch_at in ('detect', 'release', 'never'):
+            for handoff in (None, {'enabled': True, 'settle_dwell_s': .03}):
+                with self.subTest(switch_at=switch_at, handoff=handoff):
+                    control, commands, phases, _ = self.run_scenario(
+                        coast_command_mode='scurve', estimator_switch_at=switch_at,
+                        handoff_options=handoff, release_rejection=(7, 4),
+                        pressed_fn=lambda t: .08 <= t < .16,
+                        speed_fn=lambda t: .12 if .08 <= t < .16 else .001)
+                    self.assertEqual(len(control.curve_clock['releases']), 1)
+                    dispatched = control.curve_clock['releases'][0][0]
+                    self.assertTrue(any(abs(t-dispatched) < 1e-6 and name == 'send_position_setpoint'
+                                        for t, name, _ in commands))
+                    self.assertFalse(any(c.args[0] == 'Level Coast S-Curve Completed'
+                                         for c in control._log_event.call_args_list))
+                    skipped = [c for c in control._log_event.call_args_list
+                               if c.args[0] == 'Level Coast S-Curve Skipped']
+                    self.assertEqual(len(skipped), 1)
+                    self.assertTrue(any(p['command_mode'] == 'position_hold' and p['elapsed_s'] >= dispatched
+                                        for p in phases))
+                    if handoff is None:
+                        held = next(p['hold_position_m'] for p in phases if p['elapsed_s'] >= dispatched)
+                        np.testing.assert_allclose(held, [dispatched/10, 0., 1.])
+                    if switch_at == 'never':
+                        control.cf.param.set_value.assert_not_called()
+
+    def test_low_speed_refusal_refreshes_state_after_waiting_for_ack(self):
+        control, commands, phases, _ = self.run_scenario(
+            coast_command_mode='scurve', estimator_switch_at='never',
+            handoff_options={'enabled': True, 'settle_dwell_s': .03},
+            release_rejection=(7, 4), release_rejection_delay_s=.08,
+            pressed_fn=lambda t: .08 <= t < .16,
+            speed_fn=lambda t: .12 if .08 <= t < .16 else .001)
+        dispatched = control.curve_clock['releases'][0][0]
+        capture = next(p for p in phases if p['phase'] == 'capture')
+        self.assertAlmostEqual(capture['elapsed_s'], dispatched+.08)
+        self.assertTrue(any(abs(t-dispatched-.08) < 1e-6 and name == 'send_position_setpoint'
+                            for t, name, _ in commands))
+        row = next(r for r in control.log_manager.groups['wrench_observer'] if r['phase'] == 'capture')
+        self.assertAlmostEqual(row['state_time'], 1000.+dispatched+.08)
+
+    def test_skipped_curves_rearm_for_later_interactions(self):
+        control, _, phases, _ = self.run_scenario(
+            coast_command_mode='scurve', estimator_switch_at='never',
+            handoff_options={'enabled': True, 'settle_dwell_s': .03},
+            release_rejection=(7, 4), grace_start='release', grace_time=.03,
+            pressed_fn=lambda t: .08 <= t < .16 or .52 <= t < .60,
+            speed_fn=lambda t: .12 if .08 <= t < .16 or .52 <= t < .60 else .001)
+        self.assertEqual(len(control.curve_clock['releases']), 2)
+        identities = {(e['session_id'], e['sequence']) for _, e in control.curve_clock['releases']}
+        self.assertEqual(len(identities), 2)
+        self.assertEqual(sum(p['phase'] == 'contact' for p in phases), 2)
+
+    def test_never_with_coasting_disabled_does_not_send_release(self):
+        control, _, phases, _ = self.run_scenario(
+            coast_command_mode='scurve', estimator_switch_at='never', coasting_enabled=False,
+            pressed_fn=lambda t: .08 <= t < .16)
+        self.assertEqual(control.curve_clock['releases'], [])
+        control.cf.param.set_value.assert_not_called()
+        self.assertTrue(any(p['previous'] == 'contact' and p['command_mode'] == 'position_hold'
+                            for p in phases))
+
+    def test_non_speed_release_refusal_still_propagates(self):
+        from Interaction.post_release_firmware_control_event import FirmwareReleaseRejectedError
+        with self.assertRaises(FirmwareReleaseRejectedError):
+            self.run_scenario(coast_command_mode='scurve', release_rejection=(7, 6),
+                              pressed_fn=lambda t: .08 <= t < .16)
+
     def run_scenario(self, detector='potentiometer', *, duration=.85, fault=None,
                      grace_start='speed_threshold', grace_time=.10,
                      pressed_fn=None, speed_fn=None, follow_yaw=False,
@@ -569,7 +654,8 @@ class LevelCoastLoopTests(unittest.TestCase):
                      velocity_fn=None, force_direction_fn=None, record_potentiometer=False,
                      vicon_velocity_fn=None, scurve_completion_s=.12, estimator_delay_s=0.,
                      curve_fault=None, estimator_switch_at=None, force_config=None,
-                     coasting_enabled=None, handoff_options=None):
+                     coasting_enabled=None, handoff_options=None, release_rejection=None,
+                     release_rejection_delay_s=0.):
         config = configuration(detector)
         config['record_potentiometer'] = record_potentiometer
         config['duration'] = duration
@@ -623,7 +709,8 @@ class LevelCoastLoopTests(unittest.TestCase):
                 return curve_clock['estimator'] == curve_clock['requested']
             def close_selector():
                 curve_clock['closed'] += 1
-                control.cf.param.set_value('stabilizer.estimator', '2')
+                if estimator_switch_at != 'never':
+                    control.cf.param.set_value('stabilizer.estimator', '2')
             control.cf._level_coast_estimator_selector = SimpleNamespace(
                 prepared=True, request=request_estimator, ready=estimator_ready, close=close_selector)
             control.curve_clock = curve_clock
@@ -634,12 +721,23 @@ class LevelCoastLoopTests(unittest.TestCase):
                 'hlCommander.pRelReady': 1, 'hlCommander.pRelAutoTime': 0,
             }, 1000. + clock['t'])
             def curve_release(_cf, **event):
-                self.assertEqual(curve_clock['estimator'], 3, 'S-curve started before estimator-3 confirmation')
-                curve_clock['start'] = clock['t']
+                expected_estimator = 2 if estimator_switch_at == 'never' else 3
+                self.assertEqual(curve_clock['estimator'], expected_estimator,
+                                 'S-curve started before estimator confirmation')
                 curve_clock['releases'].append((clock['t'], event))
+                if release_rejection is not None:
+                    from Interaction.post_release_firmware_control_event import FirmwareReleaseRejectedError
+                    clock['t'] = round(clock['t'] + release_rejection_delay_s, 6)
+                    raise FirmwareReleaseRejectedError(34)
+                curve_clock['start'] = clock['t']
                 if curve_fault == 'release':
                     raise RuntimeError('test release ACK failure')
                 return event
+            if release_rejection is not None:
+                reason, detail = release_rejection
+                control._capture_firmware_release_rejection = lambda receipt: (
+                    {'hlCommander.pRelRejR': reason, 'hlCommander.pRelRejD': detail},
+                    {'fresh_post_release_packet': True})
             class Notice:
                 def __init__(self, _cf, **identity):
                     self.identity = identity

@@ -57,8 +57,8 @@ def validate_level_coast(config, *, sensor_available):
         from Interaction.estimator_ram_trace import validate_interaction_trace
         options['ram_trace'] = validate_interaction_trace(options['ram_trace'], options['coast_command_mode'])
     options['estimator_switch_at'] = options.get('estimator_switch_at', 'release')
-    if options['estimator_switch_at'] not in ('detect', 'release'):
-        raise ValueError('level_coast.estimator_switch_at must be detect or release')
+    if options['estimator_switch_at'] not in ('detect', 'release', 'never'):
+        raise ValueError('level_coast.estimator_switch_at must be detect, release or never')
     options['coasting_enabled'] = options.get('coasting_enabled', True)
     if type(options['coasting_enabled']) is not bool:
         raise ValueError('level_coast.coasting_enabled must be boolean')
@@ -262,6 +262,22 @@ class LevelCoastCycle:
             self.grace_start == 'release' and self.phase in ('coast', 'capture', 'grace')
             and not self.delay_pending and self.grace_expired(now))
 
+    def skip_scurve(self, position, now):
+        """A low-speed refusal starts position control, not curve completion."""
+        if self.phase != 'coast' or self.coast_command_mode != 'scurve':
+            raise RuntimeError('S-curve can only be skipped during its coast phase')
+        self.delay_pending = False
+        if self.position_handoff_enabled:
+            self.phase = 'capture'
+        else:
+            # Preserve the commanded flight height and capture the current XY,
+            # never the old pre-push hover point or a fabricated curve endpoint.
+            self.hold_position[:2] = np.asarray(position)[:2]
+            if self.grace_start == 'speed_threshold':
+                self.grace_started = now
+            self.phase = ('ready' if self.grace_start == 'release'
+                          and self.grace_expired(now) else 'grace')
+
     def update(self, position, velocity, now, *, armed=False, started=False, released=False,
                interaction_direction=None, interaction_direction_source=None,
                stop_velocity=None, curve_completed=False, curve_hold_position=None,
@@ -369,6 +385,7 @@ def run_level_coast(owner, config):
         config, sensor_available=getattr(owner, 'force_sensor', None) is not None)
     scurve_mode = options['coast_command_mode'] == 'scurve'
     scurve_coast = scurve_mode and options['coasting_enabled']
+    switch_estimators = scurve_mode and options['estimator_switch_at'] != 'never'
     handoff_enabled = options['coasting_enabled'] and options['position_handoff']['enabled']
     curve = selector = None
     hover_xy = getattr(owner.cf, '_estimator_hover_xy', None)
@@ -658,14 +675,16 @@ def run_level_coast(owner, config):
                     # A new contact can preempt a curve that still uses 3.
                     # Release-based selection must restore 2 for this contact,
                     # even while an older switch/restore is awaiting its reply.
-                    use_contact_estimator = options['estimator_switch_at'] == 'detect'
-                    selector.request(use_contact_estimator, sample_now)
-                    owner._log_event('Level Coast Estimator Changed', {
-                        'requested_estimator': 3 if use_contact_estimator else 2,
-                        'reason': 'confirmed_contact',
-                        'estimator_switch_at': options['estimator_switch_at']})
-                    print(f'[interaction] estimator: {3 if use_contact_estimator else 2} (detect)', flush=True)
-                elif changed and previous == 'contact' and not options['coasting_enabled']:
+                    if switch_estimators:
+                        use_contact_estimator = options['estimator_switch_at'] == 'detect'
+                        selector.request(use_contact_estimator, sample_now)
+                        owner._log_event('Level Coast Estimator Changed', {
+                            'requested_estimator': 3 if use_contact_estimator else 2,
+                            'reason': 'confirmed_contact',
+                            'estimator_switch_at': options['estimator_switch_at']})
+                        print(f'[interaction] estimator: {3 if use_contact_estimator else 2} (detect)', flush=True)
+                elif (switch_estimators and changed and previous == 'contact'
+                      and not options['coasting_enabled']):
                     # Issue the hold packet in this same iteration. Restore the
                     # default estimator asynchronously, without adding a coast
                     # interval or waiting to start position control.
@@ -681,7 +700,7 @@ def run_level_coast(owner, config):
                     print('[interaction] estimator: 3 (release)', flush=True)
                 elif curve_completed and cycle.phase != 'coast':
                     curve.cancel()
-                    if not handoff_enabled:
+                    if switch_estimators and not handoff_enabled:
                         owner._log_event('Level Coast Estimator Changed', {
                             'confirmed_estimator': 2, 'reason': 'curve_complete'})
             if changed and cycle.phase == 'contact' and handoff is not None:
@@ -692,8 +711,38 @@ def run_level_coast(owner, config):
                     and not curve.active and selector.ready(sample_now)):
                 # The event time is this confirmed release/dispatch epoch;
                 # Arduino ID is optional metadata for vel/model detectors.
-                curve.begin(height=nominal[2], release_monotonic_s=time.monotonic(),
-                            sample_id=sensor.get('force_sensor_arduino_time_ms', 0))
+                accepted = curve.begin(height=nominal[2], release_monotonic_s=time.monotonic(),
+                                       sample_id=sensor.get('force_sensor_arduino_time_ms', 0))
+                if accepted is False:
+                    # Waiting for the ACK/rejection log can outlive this loop's
+                    # original sample. Capture from fresh state, keeping the
+                    # same localization, boundary and operator-abort checks.
+                    owner._safe_sleep(0.)
+                    now = time.time()
+                    state = owner._get_synchronized_onboard_wrench_state()
+                    _fresh_state(owner, state, now, safety)
+                    if state['time'] < last_state_time:
+                        raise StaleLocalizationError('Level coast state clock moved backwards')
+                    last_state_time = state['time']
+                    sample_now = time.monotonic()
+                    motion_position = stop_velocity = None
+                    stop_reference = {'stop_velocity_source': 'crazyflie_state_estimate'}
+                    if options['follow_yaw']:
+                        yaw = math.degrees(float(state['attitude_rpy'][2]))
+                        if not math.isfinite(yaw):
+                            raise StaleLocalizationError('Level coast requires a finite onboard yaw')
+                    cycle.skip_scurve(state['position'], sample_now)
+                    changed = True
+                    if handoff is None:
+                        position_command = cycle.hold_position.copy()
+                        if switch_estimators:
+                            selector.request(False, sample_now)
+                    owner._log_event('Level Coast S-Curve Skipped', {
+                        'reason': 'release_speed_below_firmware_minimum',
+                        'next_command_mode': 'position_capture' if handoff is not None else 'position_hold',
+                        'hold_position_m': (None if handoff is not None else cycle.hold_position.tolist()),
+                    })
+                    print('[interaction] s-curve skipped: low release speed -> position control', flush=True)
             stop_status = cycle.stop_status(
                 state['velocity'] if stop_velocity is None else stop_velocity)
             stop_status.update(stop_reference)
@@ -753,7 +802,7 @@ def run_level_coast(owner, config):
                     owner._log_event('Level Coast Position Capture Started', {
                         'coast_command_mode': options['coast_command_mode'],
                         'incoming_roll_pitch_deg': list(incoming)})
-                allow_hold = selector is None
+                allow_hold = selector is None or not switch_estimators
                 if selector is not None and handoff_restore_requested and selector.ready(sample_now):
                     if handoff_restore_ready_since is None:
                         handoff_restore_ready_since = state['time']
@@ -816,7 +865,8 @@ def run_level_coast(owner, config):
             if released:
                 detection_was_enabled = False  # Also rearm when grace is zero.
             send()
-            if (handoff is not None and handoff.active and selector is not None
+            if (handoff is not None and handoff.active and switch_estimators
+                    and selector is not None
                     and not handoff_restore_requested):
                 # The compensated position stream owns control before changing
                 # the FC state view. Keep regenerating offsets from fresh state

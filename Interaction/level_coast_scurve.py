@@ -5,6 +5,7 @@ views of one running Kalman task. Switching between them does not reset it.
 Only the firmware's matching terminal notice can complete an accepted curve.
 """
 
+import errno
 import threading
 import time
 from uuid import uuid4
@@ -17,12 +18,15 @@ from Interaction.post_release_firmware_control_event import (
 
 
 class ContactEstimatorSelector:
+    """Select the FC output view; disabling writes leaves its curve predictor running."""
+
     DEFAULT = 2
     CONTACT = 3
     PARAMETER = 'stabilizer.estimator'
 
-    def __init__(self, cf):
+    def __init__(self, cf, *, switching_enabled=True):
         self.cf = cf
+        self.switching_enabled = switching_enabled
         self.prepared = False
         self._lock = threading.Lock()
         self._requested = self.DEFAULT
@@ -56,6 +60,7 @@ class ContactEstimatorSelector:
     def request(self, contact, now=None):
         if not self.prepared:
             raise RuntimeError('S-curve contact estimator was not prepared before takeoff')
+        contact = contact and self.switching_enabled
         requested = self.CONTACT if contact else self.DEFAULT
         calibration = getattr(self.cf, '_estimator_hover_xy', None)
         if contact and calibration is not None and not calibration.ready:
@@ -82,7 +87,8 @@ class ContactEstimatorSelector:
     def close(self):
         # No worker can enqueue a late contact write after this restoration.
         try:
-            self.cf.param.set_value(self.PARAMETER, str(self.DEFAULT))
+            if self.switching_enabled:
+                self.cf.param.set_value(self.PARAMETER, str(self.DEFAULT))
         finally:
             if self.prepared:
                 self.cf.param.remove_update_callback(group='stabilizer', name='estimator', cb=self._callback)
@@ -126,6 +132,15 @@ class FirmwareSCurveCoast:
             error.add_firmware_diagnostics(packet)
             owner._log_event('Firmware Release Event Rejected', details)
             self.cancel()
+            # Only a fresh, unambiguous low-speed refusal may skip braking.
+            # Combined bounds failures, missing diagnostics and other ACKs
+            # still propagate through the existing flight-safety path.
+            if (error.ack_errno == errno.ERANGE
+                    and details.get('fresh_post_release_packet') is True
+                    and (error.diagnostics.get('firmware_reject_reason'),
+                         error.diagnostics.get('firmware_reject_detail'))
+                    in ((7, 4), (4, 1))):
+                return False
             raise
         except Exception:
             self.cancel()
@@ -135,6 +150,7 @@ class FirmwareSCurveCoast:
         self.hold_notice = None
         owner._log_event('Firmware Post-Release Brake Handoff', {**event, 'brake_mode': 'scurve'})
         print('[interaction] coast: s-curve', flush=True)
+        return True
 
     def poll(self, now):
         if not self.active:

@@ -2392,7 +2392,8 @@ class Controller:
             if (translation.get('behavior') == 'level_coast'
                     and (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve'):
                 from Interaction.level_coast_scurve import ContactEstimatorSelector
-                selector = ContactEstimatorSelector(self.cf)
+                selector = ContactEstimatorSelector(self.cf, switching_enabled=(
+                    (translation.get('level_coast') or {}).get('estimator_switch_at', 'release') != 'never'))
                 selector.prepare()
                 self.cf._level_coast_estimator_selector = selector
 
