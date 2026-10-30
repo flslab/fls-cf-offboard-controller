@@ -939,8 +939,11 @@ FIRMWARE_BRAKE_LOG_VARS = {
     # firmware admission gate instead of being reported only as EAGAIN.
     'hlCommander.pRelRejR': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelRejD': {'type': 'uint8_t', 'unit': '', 'data': []},
+    # Correlate sticky rejection reasons with this request; modulo-256 is
+    # sufficient because only one release handoff can be outstanding.
+    'hlCommander.pRelAutoRej': {'type': 'uint8_t', 'unit': '', 'data': []},
     'hlCommander.pRelTau': {'type': 'FP16', 'unit': 's', 'data': []},
-    # S-curve reference/command trace. FP16 keeps the whole block at 16 bytes;
+    # S-curve reference/command trace. FP16 keeps the status block compact;
     # these resolve ~1 mm/s and ~1 mm/s^2, far finer than the effects studied.
     'hlCommander.scV': {'type': 'FP16', 'unit': 'm/s', 'data': []},
     'hlCommander.scCmd': {'type': 'FP16', 'unit': 'm/s2', 'data': []},

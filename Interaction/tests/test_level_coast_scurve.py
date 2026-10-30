@@ -114,7 +114,7 @@ class FirmwareSCurveAdmissionTests(unittest.TestCase):
                 'wrench_interaction': {'firmware_auto_brake': {}}}}},
             lo_commander=SimpleNamespace(send_zdistance_setpoint=Mock()),
             _firmware_brake_status_snapshot=lambda: ({}, 1.),
-            _capture_firmware_release_rejection=lambda receipt: (
+            _capture_firmware_release_rejection=lambda receipt, **kwargs: (
                 packet, {'fresh_post_release_packet': fresh}),
             _log_event=Mock())
         curve = FirmwareSCurveCoast(owner, SimpleNamespace())

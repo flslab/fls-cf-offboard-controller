@@ -128,7 +128,8 @@ class FirmwareSCurveCoast:
                 pi_receive_monotonic_ns=int(round(release_monotonic_s * 1e9)),
                 firmware_auto_brake_armed=True)
         except FirmwareReleaseRejectedError as error:
-            packet, details = owner._capture_firmware_release_rejection(receipt)
+            packet, details = owner._capture_firmware_release_rejection(
+                receipt, baseline_reject_count=baseline.get('hlCommander.pRelAutoRej'))
             error.add_firmware_diagnostics(packet)
             owner._log_event('Firmware Release Event Rejected', details)
             self.cancel()

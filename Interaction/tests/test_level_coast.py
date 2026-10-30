@@ -735,7 +735,7 @@ class LevelCoastLoopTests(unittest.TestCase):
                 return event
             if release_rejection is not None:
                 reason, detail = release_rejection
-                control._capture_firmware_release_rejection = lambda receipt: (
+                control._capture_firmware_release_rejection = lambda receipt, **kwargs: (
                     {'hlCommander.pRelRejR': reason, 'hlCommander.pRelRejD': detail},
                     {'fresh_post_release_packet': True})
             class Notice:

@@ -162,6 +162,65 @@ class FirmwareAutoBrakePreflightTests(unittest.TestCase):
         self.assertFalse(diagnostics['fresh_post_release_packet'])
         self.assertIsNone(diagnostics['firmware_reject_reason'])
 
+    def rejection_timeline(self, snapshot, *, baseline_count=0, abort_at=None):
+        control = InteractionsControl.__new__(InteractionsControl)
+        clock = {'now': 0.0}
+        control._firmware_brake_status_snapshot = lambda: snapshot(clock['now'])
+
+        def safe_sleep(duration):
+            if abort_at is not None and clock['now'] >= abort_at:
+                raise LowBatteryException('battery abort while reading rejection')
+            clock['now'] = round(clock['now'] + duration, 6)
+
+        control._safe_sleep = safe_sleep
+        with patch('Interaction.interactions.time.monotonic', side_effect=lambda: clock['now']):
+            result = control._capture_firmware_release_rejection(
+                1000.0, baseline_reject_count=baseline_count)
+        return result, clock['now']
+
+    def test_release_rejection_waits_for_100ms_packet_not_first_zero_reason_packet(self):
+        def snapshot(now):
+            rejected = now >= .10
+            return ({'hlCommander.pRelRejR': 7 if rejected else 0,
+                     'hlCommander.pRelRejD': 4 if rejected else 0,
+                     'hlCommander.pRelAutoRej': 1 if rejected else 0},
+                    1000.10 if rejected else 1000.02)
+
+        (packet, diagnostics), elapsed = self.rejection_timeline(snapshot)
+        self.assertAlmostEqual(elapsed, .10)
+        self.assertEqual(packet['hlCommander.pRelRejR'], 7)
+        self.assertTrue(diagnostics['fresh_post_release_packet'])
+        self.assertTrue(diagnostics['rejection_counter_advanced'])
+
+    def test_new_receipt_with_old_sticky_low_speed_does_not_mask_current_other_failure(self):
+        def snapshot(now):
+            rejected = now >= .10
+            return ({'hlCommander.pRelRejR': 3 if rejected else 7,
+                     'hlCommander.pRelRejD': 1 if rejected else 4,
+                     'hlCommander.pRelAutoRej': 8 if rejected else 7},
+                    1000.10 if rejected else 1000.02)
+
+        (packet, diagnostics), elapsed = self.rejection_timeline(snapshot, baseline_count=7)
+        self.assertAlmostEqual(elapsed, .10)
+        self.assertEqual(packet['hlCommander.pRelRejR'], 3)
+        self.assertTrue(diagnostics['rejection_counter_advanced'])
+
+    def test_rejection_capture_counter_wrap_and_bounded_missing_counter(self):
+        (packet, diagnostics), elapsed = self.rejection_timeline(
+            lambda _: ({'hlCommander.pRelRejR': 7, 'hlCommander.pRelRejD': 4,
+                        'hlCommander.pRelAutoRej': 0}, 1000.1), baseline_count=255)
+        self.assertEqual(elapsed, 0.)
+        self.assertTrue(diagnostics['fresh_post_release_packet'])
+        (packet, diagnostics), elapsed = self.rejection_timeline(
+            lambda now: ({'hlCommander.pRelRejR': 7, 'hlCommander.pRelRejD': 4}, 1000.+now))
+        self.assertAlmostEqual(elapsed, .25)
+        self.assertEqual(packet, {})
+        self.assertFalse(diagnostics['fresh_post_release_packet'])
+
+    def test_rejection_wait_still_obeys_battery_abort(self):
+        with self.assertRaises(LowBatteryException):
+            self.rejection_timeline(lambda _: ({}, 1000.), abort_at=.05)
+
     def test_firmware_hold_health_check_does_not_block_contact_detection(self):
         control = InteractionsControl.__new__(InteractionsControl)
         control._safe_sleep = Mock()
