@@ -20,6 +20,14 @@ from Interaction.post_release_firmware_control_event import (
 
 
 class FirmwareBrakeMonitorTimelineTests(unittest.TestCase):
+    def test_unwind_infeasibility_is_a_latched_failure_not_hold(self):
+        self.assertIn('stopping not completed',
+                      firmware_brake_abort_message({'hlCommander.pRelAbort': 18}))
+        with self.assertRaisesRegex(FirmwareBrakeMonitorError, 'no feasible bounded unwind'):
+            self.observe(.1, receipt=1000.1, stage=6, reason=18, notice=self.notice)
+        with self.assertRaises(FirmwareBrakeMonitorError):
+            self.observe(.2, receipt=1000.2, stage=4, notice=self.notice)
+
     def test_state_matched_plan_failure_is_identified(self):
         self.assertIn('state-matched S-curve has no feasible bounded release-time plan',
                       firmware_brake_abort_message({'hlCommander.pRelAbort': 13}))

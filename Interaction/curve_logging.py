@@ -94,6 +94,9 @@ def decode_event(wire):
     velocity_mode = bool(flags & 0x10000)
     position_reference = bool(flags & 0x20000)
     auto_attitude = bool(flags & 0x2000000)
+    auto_command = bool(flags & 0x4000000)
+    if auto_command and not auto_attitude:
+        raise ValueError('automatic command polynomial requires explicit attitude units')
     if auto_attitude and (velocity_mode or position_reference):
         raise ValueError('conflicting automatic attitude reference units')
     if velocity_mode and position_reference:
@@ -132,10 +135,11 @@ def decode_event(wire):
             acceleration_source='tilt_approximation',
             reconstruction='reference_only; feedback_command_requires_state_and_runtime_parameters')
     if auto_attitude:
-        result.update(reference_kind='automatic_attitude_unwind',coefficient_units='deg',
+        result.update(reference_kind='automatic_command_unwind' if auto_command else 'automatic_attitude_unwind',coefficient_units='deg',
             curve_axes=['body_pitch','body_roll'],
             reference_valid=all(a['duration_s']>0 for a in axes),
-            reconstruction='reference_only; measured-state feedback and delayed commands required')
+            reconstruction=('issued_command_reference; physical_response_requires_model; settling_not_reconstructed'
+                if auto_command else 'reference_only; measured-state feedback and delayed commands required'))
         if kind==2:
             result.update(event='phase_transition',phase='unwind')
     if velocity_mode and kind==2:

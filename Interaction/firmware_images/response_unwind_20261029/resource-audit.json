@@ -1,0 +1,532 @@
+{
+  "stabilizer_stack_bytes": 4800,
+  "compiler": "ARM GCC 10.2.1",
+  "frames": [
+    {
+      "function": "prFrictionMuValid",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "prVelocityExactTail",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "handleMemGetSize",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "scDisableAdaptive",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "clReferenceFlags",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "postReleaseAutoQueueHoldNotice",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "prCompAcceleration",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoLimitsValid",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "clProfileNow",
+      "bytes": 8,
+      "kind": "static"
+    },
+    {
+      "function": "clTimingStep",
+      "bytes": 8,
+      "kind": "static"
+    },
+    {
+      "function": "postReleaseAutoStartUnwind",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "jointGroundBenchmark",
+      "bytes": 392,
+      "kind": "static"
+    },
+    {
+      "function": "jointRunPendingPlan",
+      "bytes": 536,
+      "kind": "static"
+    },
+    {
+      "function": "postReleaseAutoSendHoldNotice",
+      "bytes": 80,
+      "kind": "static"
+    },
+    {
+      "function": "jointPushSendExecutionNotice",
+      "bytes": 104,
+      "kind": "static"
+    },
+    {
+      "function": "jointRunLocalPrediction",
+      "bytes": 384,
+      "kind": "static"
+    },
+    {
+      "function": "scClamp",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "scIntegral",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "scRamp",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "scaClip",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoIntegralTo",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoHypothesis",
+      "bytes": 48,
+      "kind": "static"
+    },
+    {
+      "function": "jointHostLocalDuration",
+      "bytes": 8,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoPastCommand",
+      "bytes": 8,
+      "kind": "static"
+    },
+    {
+      "function": "jointHostDeadlineFault",
+      "bytes": 40,
+      "kind": "static"
+    },
+    {
+      "function": "jointHostCapture",
+      "bytes": 176,
+      "kind": "static"
+    },
+    {
+      "function": "postReleaseAutoCorrectUnwind",
+      "bytes": 320,
+      "kind": "static"
+    },
+    {
+      "function": "postReleaseAutoReadyLog",
+      "bytes": 48,
+      "kind": "static"
+    },
+    {
+      "function": "postReleaseAutoCacheTrustedState",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "scPlanPeak",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "scfRamp.part.0",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "clConfigChanged",
+      "bytes": 8,
+      "kind": "static"
+    },
+    {
+      "function": "prResidualUpdate.constprop",
+      "bytes": 72,
+      "kind": "static"
+    },
+    {
+      "function": "postReleaseAutoBeginUnwind.constprop",
+      "bytes": 144,
+      "kind": "static"
+    },
+    {
+      "function": "scaMake.constprop",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "prVelocityCurveInit",
+      "bytes": 56,
+      "kind": "static"
+    },
+    {
+      "function": "scEval.constprop",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "clInterrupted.part.0",
+      "bytes": 400,
+      "kind": "static"
+    },
+    {
+      "function": "clInterrupted",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "scaEval",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoPlan",
+      "bytes": 96,
+      "kind": "static"
+    },
+    {
+      "function": "prVelocityCurveAdvance",
+      "bytes": 48,
+      "kind": "static"
+    },
+    {
+      "function": "scCompPositionReference",
+      "bytes": 208,
+      "kind": "static"
+    },
+    {
+      "function": "prStateMatchedCurveInit.constprop",
+      "bytes": 512,
+      "kind": "static"
+    },
+    {
+      "function": "prVelocityAlongEval",
+      "bytes": 48,
+      "kind": "static"
+    },
+    {
+      "function": "scCompReference",
+      "bytes": 264,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoBound",
+      "bytes": 208,
+      "kind": "static"
+    },
+    {
+      "function": "scCompBiasBody.isra",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "prCompDerivative.isra",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "prCompStep",
+      "bytes": 80,
+      "kind": "static"
+    },
+    {
+      "function": "prCompPredict",
+      "bytes": 88,
+      "kind": "static"
+    },
+    {
+      "function": "scCompCommand",
+      "bytes": 280,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoMinimumChecked.constprop",
+      "bytes": 728,
+      "kind": "static"
+    },
+    {
+      "function": "scPlan.constprop",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "scfPosition",
+      "bytes": 40,
+      "kind": "static"
+    },
+    {
+      "function": "prStopWithinTilt",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "clCapture",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "scLiteCapture",
+      "bytes": 88,
+      "kind": "static"
+    },
+    {
+      "function": "scLiteSetpoint",
+      "bytes": 240,
+      "kind": "static"
+    },
+    {
+      "function": "scVelocityCapture.constprop",
+      "bytes": 1024,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoTerminal.constprop",
+      "bytes": 144,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoTryReturn.constprop",
+      "bytes": 536,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoWorstStop.constprop",
+      "bytes": 80,
+      "kind": "static"
+    },
+    {
+      "function": "prAutoStep.constprop",
+      "bytes": 672,
+      "kind": "static"
+    },
+    {
+      "function": "jointPushHandlePacket",
+      "bytes": 128,
+      "kind": "static"
+    },
+    {
+      "function": "scTerminalCommit.constprop",
+      "bytes": 136,
+      "kind": "static"
+    },
+    {
+      "function": "prStopCurveInit",
+      "bytes": 256,
+      "kind": "static"
+    },
+    {
+      "function": "scRequestPrecheck",
+      "bytes": 232,
+      "kind": "static"
+    },
+    {
+      "function": "postReleaseAutoAccept",
+      "bytes": 280,
+      "kind": "static"
+    },
+    {
+      "function": "scVelocityGetSetpoint.isra",
+      "bytes": 328,
+      "kind": "static"
+    },
+    {
+      "function": "scfPlanDistance.constprop",
+      "bytes": 152,
+      "kind": "static"
+    },
+    {
+      "function": "postReleaseAutoGetSetpoint",
+      "bytes": 624,
+      "kind": "static"
+    },
+    {
+      "function": "isInGroup",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "handleCommand",
+      "bytes": 160,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelTask",
+      "bytes": 104,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelInit",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelIsStopped",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelTellState",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelDisable",
+      "bytes": 8,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelPostReleaseApplied",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelGetSetpoint",
+      "bytes": 96,
+      "kind": "static"
+    },
+    {
+      "function": "initCrtpPacket",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelTakeoff",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelTakeoffYaw",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelTakeoffWithVelocity",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelLand",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelLandWithVelocity",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelLandYaw",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelStop",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderBlock",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelIsBlocked",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelGoTo",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelGoTo2",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelSpiral",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelIsTrajectoryDefined",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelStartTrajectory",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelDefineTrajectory",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelTrajectoryMemSize",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelWriteTrajectory",
+      "bytes": 8,
+      "kind": "static"
+    },
+    {
+      "function": "handleMemWrite",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelReadTrajectory",
+      "bytes": 8,
+      "kind": "static"
+    },
+    {
+      "function": "handleMemRead",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelGetPlannerState",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "crtpCommanderHighLevelIsTrajectoryFinished",
+      "bytes": 8,
+      "kind": "static"
+    }
+  ],
+  "target_timing_validated": false,
+  "runtime_stack_high_water_validated": false,
+  "notes": [
+    "Individual compiler stack frames are not whole call-chain maxima.",
+    "Prediction executes synchronously in the existing HLC path; on-target timing must be measured before deployment."
+  ]
+}

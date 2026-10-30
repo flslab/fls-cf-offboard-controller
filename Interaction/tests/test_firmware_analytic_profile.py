@@ -106,15 +106,33 @@ class AutomaticUnwindTests(unittest.TestCase):
     def config(self,**kw):
         return dict(shape='velocity_scurve',execution='attitude',tail_s=.6,single_s=.6,
             handoff='curve_endpoint_forward',feedback='unified_vicon15',response_compensation=True,
-            auto_unwind=True,**kw)
+            auto_unwind=True,unwind_constraints={},**kw)
 
     def test_explicit_api_and_terminal_target_are_independent_of_legacy_tail(self):
         p=profile_parameters(self.config())
         self.assertEqual(p['hlCommander.pRelUnwAuto'],1)
-        self.assertEqual(p['hlCommander.pRelUnwVer'],1)
+        self.assertEqual(p['hlCommander.pRelUnwVer'],2)
         self.assertEqual(p['hlCommander.pRelEndV'],0)
         self.assertEqual(profile_parameters(self.config(end_velocity_m_s=.01))['hlCommander.pRelEndV'],.01)
         self.assertEqual(p['hlCommander.pRelAdapt'],0)
+
+    def test_legacy_profiles_retain_their_original_contract(self):
+        cfg=self.config();cfg.pop('unwind_constraints')
+        p=profile_parameters(cfg)
+        self.assertEqual(p['hlCommander.pRelUnwVer'],1)
+        self.assertNotIn('hlCommander.pRelUnwAcc',p)
+
+    def test_response_guard_limits_are_explicit_and_finite(self):
+        cfg=self.config();cfg['unwind_constraints']={'max_predicted_acceleration_deg_s2':800}
+        p=profile_parameters(cfg)
+        self.assertEqual(p['hlCommander.pRelUnwAMax'],800)
+        self.assertEqual(p['hlCommander.pRelUnwRate'],160)
+        for value in (True,float('nan'),0,2000):
+            cfg['unwind_constraints']={'max_predicted_acceleration_deg_s2':value}
+            with self.subTest(value=value),self.assertRaises(ValueError):profile_parameters(cfg)
+        for value in (None,[],{'unknown':1}):
+            cfg['unwind_constraints']=value
+            with self.subTest(value=value),self.assertRaises(ValueError):profile_parameters(cfg)
 
     def test_incompatible_modes_and_nonfinite_targets_are_rejected(self):
         for key,value in [('execution','position'),('feedback','roll_pitch_only'),('state_matched_start',True),

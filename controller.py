@@ -388,8 +388,8 @@ class Controller:
                 not (translation.get('level_coast') or {}).get('coasting_enabled',True)):
             # Direct hold never requests the new unwind API, even when a
             # stored S-curve profile contains the experiment's options.
-            for key in ('pRelUnwAuto','pRelUnwVer','pRelEndV'):
-                self._firmware_analytic_expected.pop('hlCommander.'+key,None)
+            self._firmware_analytic_expected={k:v for k,v in self._firmware_analytic_expected.items()
+                if not k.startswith('hlCommander.pRelUnw') and k!='hlCommander.pRelEndV'}
         if self._firmware_analytic_expected and (brake_mode != 'scurve' or
                 self.firmware_analytic_profile['execution'] != command_mode):
             raise ValueError('analytic_profile requires scurve and execution matching command_mode')

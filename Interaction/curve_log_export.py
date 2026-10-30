@@ -17,6 +17,17 @@ def delta_ms(a,b):
 
 def reconstruct_command(event,tick_ms):
     """Exact reference convention (including model inverse and joint clamp)."""
+    if event.get('reference_kind')=='automatic_command_unwind':
+        if event.get('phase')!='unwind' or not event.get('reference_valid'):return None
+        age=((event['applied_us_mod32']-event['plan_origin_us_mod32'])&0xffffffff)*1e-6
+        age+=delta_ms(tick_ms,event['cf_timestamp_ms'])*.001
+        if age<0 or any(age>=a['duration_s'] for a in event['axes']):return None
+        values=[]
+        for axis in event['axes']:
+            u=age/axis['duration_s'];value=0.
+            for coefficient in reversed(axis['coefficients'][0]):value=value*u+coefficient
+            values.append(value)
+        return [values[1],values[0]]  # body pitch/roll coefficients -> roll/pitch command
     if event.get('coefficient_units') in ('m/s','deg') or event.get('command_mode')=='velocity' or event.get('reference_kind')=='position_polynomial':return None
     if event['event'] not in ('initial','replan'):return None
     age=((event['applied_us_mod32']-event['plan_origin_us_mod32'])&0xffffffff)*1e-6

@@ -81,8 +81,8 @@ def mission_parameters(mission):
         raise ValueError('this packaging check requires an enabled S-curve mission')
     analytic = profile_parameters(brake['analytic_profile'])
     if config.get('behavior')=='level_coast' and not options.get('coasting_enabled',True):
-        analytic={k:v for k,v in analytic.items() if not k.startswith('mocapMarker.') and
-                  k not in ('hlCommander.pRelUnwAuto','hlCommander.pRelUnwVer','hlCommander.pRelEndV')}
+        analytic={k:v for k,v in analytic.items() if not k.startswith(('mocapMarker.','hlCommander.pRelUnw')) and
+                  k!='hlCommander.pRelEndV'}
     from Interaction.firmware_pid_reset import reset_parameters
     reset_required = {key for key, value in reset_parameters(brake).items() if not value}
     required = set(analytic) | reset_required | {

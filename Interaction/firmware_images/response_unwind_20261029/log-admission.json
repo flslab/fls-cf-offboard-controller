@@ -1,0 +1,83 @@
+{
+  "source": {
+    "source": "/Users/shuqinzhu/Documents/FLS_Research/lightbender/orchestrator/logs/translation_level_coast_old_model_validation_2026-10-29_14-51-57/lb11_translation_level_coast_old_model_validation_2026-10-29_14-51-57.json",
+    "sha256": "aa78d0fc9c75043f1ddbe0f3077a04272e9671724264c493eba2a29e2dc73e51",
+    "origin": 1793310796.47666,
+    "records": 56266
+  },
+  "interactions": [
+    {
+      "interaction": 1,
+      "cf_s": 64.363,
+      "signed_velocity_m_s": 0.5839084529598589,
+      "angle_pitch_roll_deg": [
+        0.15680322836031144,
+        1.2687951611146397
+      ],
+      "rate_pitch_roll_deg_s": [
+        -2.920099618750318,
+        6.645976582366661
+      ],
+      "sample_age_s": 0.0030000000000001137,
+      "admitted": true,
+      "reason": 0,
+      "predicted_minimum_m_s": 0.526644
+    },
+    {
+      "interaction": 2,
+      "cf_s": 67.523,
+      "signed_velocity_m_s": 0.8294995877791319,
+      "angle_pitch_roll_deg": [
+        -0.9577964503742327,
+        2.3763029806562814
+      ],
+      "rate_pitch_roll_deg_s": [
+        1.5097898251770765,
+        -0.5653768602719607
+      ],
+      "sample_age_s": 0.0030000000000001137,
+      "admitted": true,
+      "reason": 0,
+      "predicted_minimum_m_s": 0.750979
+    },
+    {
+      "interaction": 3,
+      "cf_s": 70.443,
+      "signed_velocity_m_s": 0.7469342099774949,
+      "angle_pitch_roll_deg": [
+        0.15456951743239472,
+        2.854751594391821
+      ],
+      "rate_pitch_roll_deg_s": [
+        -2.4376792175649036,
+        5.902994501036187
+      ],
+      "sample_age_s": 0.0030000000000001137,
+      "admitted": true,
+      "reason": 0,
+      "predicted_minimum_m_s": 0.64318
+    },
+    {
+      "interaction": 4,
+      "cf_s": 73.705,
+      "signed_velocity_m_s": 0.8171607071259578,
+      "angle_pitch_roll_deg": [
+        -1.4531582206276104,
+        1.562189124707518
+      ],
+      "rate_pitch_roll_deg_s": [
+        0.18587747365553642,
+        0.8031522044405341
+      ],
+      "sample_age_s": 0.0049999999999954525,
+      "admitted": true,
+      "reason": 0,
+      "predicted_minimum_m_s": 0.753412
+    }
+  ],
+  "limitations": [
+    "Admission replay only, not a closed-loop flight counterfactual.",
+    "50 Hz sampled commands; exact on-FC 500 Hz issued-command history unavailable.",
+    "Uses nearest previous compressed FC state; online residual correction not reconstructed."
+  ]
+}

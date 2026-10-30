@@ -1,0 +1,92 @@
+# Local review copy; not installed or active.
+name: translation_level_coast_old_model_validation
+drones:
+  lb11:
+    target:
+    - -0.8
+    - -0.5
+    - 1
+    interaction: single
+Interaction:
+  action: translation
+  config:
+    behavior: level_coast
+    detection_method: model
+    record_potentiometer: false
+    vicon_source_metadata: true
+    duration: 60
+    contact_validation_capture:
+      enabled: false
+      command_authority: false
+      profile_path: Interaction/profiles/contact_validation_lb11_20260930.json
+      profile_sha256: 7078ab9d78fa80543a26c17aff89b794113fc61ef89b1082482379f054f1a4b7
+      initial_no_touch_s: 10.0
+    grace_time: 1
+    level_coast:
+      command_mode: position
+      coast_command_mode: scurve
+      estimator_switch_at: detect
+      coasting_enabled: true
+      estimator_hover_xy: false
+      estimator_hover_xy_mode: auto
+      grace_start: release
+      follow_yaw: false
+      yaw_rate_damping: false
+      roll_diagnostics: false
+      stop_speed_m_s: 0.03
+      velocity:
+        onset_speed_m_s: 0.13
+        release_speed_m_s: 0.129
+        onset_dwell_s: 0.03
+        release_dwell_s: 0.05
+        max_sample_gap_s: 0.1
+    virtual_object:
+      contact_detection:
+        force_threshold_n: 0.18
+        onset_dwell_s: 0.03
+      release_behavior:
+        force_drop_n: 0.04
+        candidate_lead_drop_n: 0.005
+        decrease_rate_n_s: 0.05
+        unloaded_force_n: 0.17
+        unloaded_dwell_s: 0.05
+        max_sample_gap_s: 0.15
+        candidate_sensor_stale_timeout_s: 0.25
+        candidate_stall_timeout_s: 0.15
+        force_memory_s: 0.02
+    wrench_interaction_profile: level_coast
+    wrench_interaction:
+      firmware_auto_brake:
+        stop_deceleration_m_s2: 3.6
+        analytic_profile:
+          tail_s: 0.6
+          auto_unwind: true
+          end_velocity_m_s: 0.0
+          position_tracking_bandwidth: 0.0
+          marker_from_imu_m:
+          - 0.0
+          - 0.0
+          - 0.08
+          unwind_constraints:
+            max_command_rate_deg_s: 160.0
+            max_command_acceleration_deg_s2: 4000.0
+            max_command_jerk_deg_s3: 80000.0
+            min_response_frequency_scale: 0.65
+            response_delay_margin_s: 0.02
+            settle_gain_s_inv: 1.5
+            velocity_reserve_m_s: 0.08
+            max_predicted_rate_deg_s: 120.0
+            max_predicted_acceleration_deg_s2: 1000.0
+            settle_max_correction_deg: 6.0
+      force_estimator: specific_force
+      specific_force:
+        window_s: 0.08
+      impulse_estimator:
+        window_s: 0.08
+boundary_limits:
+  x_min: -1.5
+  x_max: 1.5
+  y_min: -1.5
+  y_max: 1.5
+  z_min: 0.3
+  z_max: 1.5

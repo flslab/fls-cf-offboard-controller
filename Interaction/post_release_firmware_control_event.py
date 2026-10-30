@@ -139,6 +139,8 @@ def firmware_brake_abort_message(brake_log):
         14: 'friction S-curve request is invalid or outside the existing time/acceleration envelope',
         15: 'distance/deceleration request requires supported fixed-curve execution',
         16: 'distance/deceleration request infeasible at curve activation; no executable initial curve',
+        17: 'automatic unwind state, limits, history or deadline invalid',
+        18: 'no feasible bounded unwind found for release state and queued commands; stopping not completed',
     }.get(reason, 'reason not reported' if reason is None else 'unknown reason')
     return 'firmware brake aborted (stage 6; %s; reason=%s)' % (
         description, 'unavailable' if reason is None else reason)

@@ -1,0 +1,140 @@
+{
+  "tag": "bolt-response-unwind-26102901",
+  "base_image": "bolt-flyback-auto-26102901",
+  "offboard_base": "dfcf26e1ead01f58c5d2542f6c6fd5a7caab0af2",
+  "offboard_branch": "codex/response-aware-unwind",
+  "binary_name": "bolt-response-unwind-26102901.bin",
+  "binary_sha256": "f507f4f99ddaa35cd4c3c86c8ea2588bd4056ad0ddbb6c3908d175e4a01beb89",
+  "binary_size": 390884,
+  "elf_sha256": "92f90c4e34e66da4e5aba885cb4e90fd4a4cfb057cd2522d0d7c1cb4ebd58c99",
+  "compiler": "arm-none-eabi-gcc 10.2.1 (GNU Arm Embedded 10-2020-q4-major)",
+  "source_fingerprints": {
+    "snapshot_version.json": {
+      "before_sha256": "e6cb8cacc9dc81ba8ff4c946d2161359f4644d73bc726b10a0727285210b5582",
+      "after_sha256": "669a082e44c2c590b421f197b58ca3c3493e41e74045d4f9319552758777f64a"
+    },
+    "src/config/config.h": {
+      "before_sha256": "a8cae57ede08a06d32a8c692c0b9dad5fcd90b34614fb43b41043ae7d7dee4b9",
+      "after_sha256": "3c7e2bb06d23f691b8660232f33ff8f34d9c7d19411d32a29a0c7464450d6007"
+    },
+    "src/modules/interface/kalman_core/post_release_auto_unwind.h": {
+      "before_sha256": "28fc587021964937a0446a386f218b26b01dd0200a5992a2d1442fe6c4e9be5e",
+      "after_sha256": "586fe092b59b1f91b59b6a256522c65e6fb87f8aae766745c5998a1ea52b7d91"
+    },
+    "src/modules/src/crtp_commander_high_level.c": {
+      "before_sha256": "07d9a041cc8f2de7d618ad72f8be2cd5d40f9e3e3291a56c524b8a4f487590dd",
+      "after_sha256": "6b635f469c1d90338ce2e603a714d007625f7b788082581055eede3ab76f8935"
+    },
+    "src/modules/src/post_release_velocity_runtime.inc": {
+      "before_sha256": "dd22d203a7e33e149fba7b509f65093bd7254386f2521de8f225a32707873797",
+      "after_sha256": "d2dca54d85159e3833424f8f92cc15f6fd1f3f7fe07b122e407a58997c54751f"
+    },
+    "src/modules/src/post_release_curve_log.inc": {
+      "before_sha256": "7cec2e3aadd09f2d4ff51f8264ca28e29c3d2930963dabf024e76427df14526b",
+      "after_sha256": "e06c580f38ca21871d1d60e73d3a27c1bdc50a29b2e80fd0875931602b46937d"
+    }
+  },
+  "host_source_sha256": {
+    "controller.py": "5d963d2cc6427e9ff749fa2153e803de15055b44df920c327356766b77e8980e",
+    "Interaction/firmware_analytic_profile.py": "1a41de5f1af08a8e2b92a9afa8a57c22781ac58cc4e63c6d7eb2a9b1bfe7d472",
+    "Interaction/firmware_image_contract.py": "34fc84770295e3d543bdf642fd0f1bcdccd6283cea50f6c6e639c762f91e78b2",
+    "Interaction/post_release_firmware_control_event.py": "5e0755dcad2cbcb67abc5c7a0d405aef1569d0a5b7ce6a89d51c4a39d9c43baf",
+    "Interaction/curve_logging.py": "9ee5cf20f0fba6da9f1d43a0d7f4b5ee41b2319e65683a77e87e3e1c5ab9b98f",
+    "Interaction/curve_log_export.py": "9bd98d1d7a6c4c3c9db02809f4bc7c18e5fc18bcefbe6dc4b2d455c0ced755d3"
+  },
+  "native_source_sha256": {
+    "tests/test_response_unwind.c": "86cf575d978dc5a870ed1d8c5d227c01f98fed3d4a92e71ca812671e06bf86b7",
+    "tests/audit_logged_admission.py": "24d2189e9e857cdc519c67721ad7ce041a89fe00851a76218b804bb0c1dfb65c",
+    "tests/include/post_release_adaptive_scurve.h": "f5b0c771555ad2b5ab9b1bd2ac7ff9cf494243802da140386a9617808c74a36f",
+    "tests/include/post_release_response.h": "9445c626203b9e18ed62c2b86c2eba65c541eba0fa1966d9ee96cf77e9812af1",
+    "tests/include/post_release_response_compensation.h": "a14a6a530ab4b4fecf1631e93092d5e7886e0acaf81c60211ce0177b16030654",
+    "tests/include/post_release_auto_unwind.h": "586fe092b59b1f91b59b6a256522c65e6fb87f8aae766745c5998a1ea52b7d91"
+  },
+  "linked_capability": {
+    "scUnwindCapability": 2
+  },
+  "native_validation": {
+    "cases": 23328,
+    "failed": 0,
+    "faults": 0,
+    "initially_admitted": 21384,
+    "rejected_before_new_commands": 1944,
+    "admitted_failed": 0,
+    "minimum_velocity_m_s": 0.0,
+    "maximum_flyback_m": 0.0,
+    "maximum_duration_s": 4.4,
+    "return_min_s": 0.15,
+    "return_max_s": 0.24,
+    "peak_command_deg": 7.144,
+    "peak_physical_rate_deg_s": 68.115,
+    "peak_physical_acceleration_deg_s2": 1466.648,
+    "late_release_rejected": true,
+    "cpu_s": 260.714
+  },
+  "offboard_unit_tests": {
+    "count": 331,
+    "passed": true
+  },
+  "legacy_package_validation_passed": true,
+  "memory": {
+    "Flash": {
+      "used": 390428,
+      "total": 1032192,
+      "free": 641764
+    },
+    "RAM": {
+      "used": 123264,
+      "total": 131072,
+      "free": 7808
+    },
+    "CCM": {
+      "used": 55144,
+      "total": 65536,
+      "free": 10392
+    }
+  },
+  "validation_status": {
+    "ARM_build": true,
+    "pure_C_ASan_UBSan": true,
+    "sampled_log_initial_admission": true,
+    "closed_loop_sitl": false,
+    "target_CPU_timing": false,
+    "runtime_stack_high_water": false,
+    "flight_validated": false
+  },
+  "deployment": {
+    "committed": false,
+    "pushed": false,
+    "pi_pulled": false,
+    "flashed": false,
+    "armed": false,
+    "active_mission_modified": false,
+    "accepted_calibration_modified": false
+  },
+  "packaged_at_utc": "2026-10-29T23:45:16.764886+00:00",
+  "package_sha256": {
+    "README.md": "981ae02d3b736a0f63a16be3881b79a962aa089b3ce20083239d5d2eb15fa9ea",
+    "bolt-response-unwind-26102901.bin": "f507f4f99ddaa35cd4c3c86c8ea2588bd4056ad0ddbb6c3908d175e4a01beb89",
+    "bolt.config": "39f78d3dc33d1b036af289ec6be2c9fea985636a8d8e5e64e0c098a54e778bb7",
+    "bolt.elf.gz": "816f77a8bd2fb9e51ed918541bd84474ee48b3c50f2d9e4624ecd665aa3f5bff",
+    "image-contract.json": "f5155bb822850de8333b882a7ff232e7b5c77143e6ea8a80231af434beb2af84",
+    "log-admission.json": "d66f5744d309ca13202f03afb62b289c05f4f5209bbe9c61eea3ed0d6bc6bfa6",
+    "mission-example.yaml": "d16d51a92ae7a3e1a142bcd65e817d36fc262b3f88d00d32ccab1d85f27a751e",
+    "mission-overrides.yaml": "635680fc7f4f99a8aace4fa5106cf3af2f5d6beaa03223f77c1623e0c5eacf5c",
+    "native-validation.json": "82a774a08de3ac1f49af0848dcd4c5ec73a9aa8af4f4bafafa5b7a94b708328c",
+    "patches/firmware.patch": "61e70fc2adca500cd8b338bec8d726667dfca8e85589370a7fa9833294168dc7",
+    "patches/hardware.patch": "e460544d56e5fbc88c670ef585c1fa23495ffba197eedef624894492f513bf02",
+    "patches/source.json": "ac70eb8b27328dca2a4718bd2aee943da616781fb12169f1439e8d3ce5d70811",
+    "resource-audit.json": "2274bc1eb0419de7e196710b3940c01e3e07ec41465b68e8fdceadb269c87ff3",
+    "tests/audit_logged_admission.py": "24d2189e9e857cdc519c67721ad7ce041a89fe00851a76218b804bb0c1dfb65c",
+    "tests/include/post_release_adaptive_scurve.h": "f5b0c771555ad2b5ab9b1bd2ac7ff9cf494243802da140386a9617808c74a36f",
+    "tests/include/post_release_auto_unwind.h": "586fe092b59b1f91b59b6a256522c65e6fb87f8aae766745c5998a1ea52b7d91",
+    "tests/include/post_release_response.h": "9445c626203b9e18ed62c2b86c2eba65c541eba0fa1966d9ee96cf77e9812af1",
+    "tests/include/post_release_response_compensation.h": "a14a6a530ab4b4fecf1631e93092d5e7886e0acaf81c60211ce0177b16030654",
+    "tests/test_response_unwind.c": "86cf575d978dc5a870ed1d8c5d227c01f98fed3d4a92e71ca812671e06bf86b7",
+    "validate.py": "2d9b290f9897529980fcbf27e3eaa5659031f40b2de7ec976d25d55af898b06a",
+    "deployment/check-device.py": "977efe40286dd1733535215e3488fe5215332a5d0782c140006758a9ba38ab4f",
+    "deployment/flash-and-readback.py": "aa6c97047f9c85d643d14305c647822157faf1236abfe250d2b4ca952cfad541",
+    "deployment/readback-recovery.py": "0e592fc0aed5685e7e61ff1b0ba3b19ce00b8fc650345853a23a958a7877e6e8"
+  }
+}

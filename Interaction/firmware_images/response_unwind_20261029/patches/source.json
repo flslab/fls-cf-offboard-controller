@@ -1,0 +1,62 @@
+{
+  "hardware": {
+    "baseline": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/flyback_adaptive_20261029/hardware",
+    "candidate": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/response_unwind_20261029/hardware",
+    "files": {
+      "snapshot_version.json": {
+        "before_sha256": "e6cb8cacc9dc81ba8ff4c946d2161359f4644d73bc726b10a0727285210b5582",
+        "after_sha256": "669a082e44c2c590b421f197b58ca3c3493e41e74045d4f9319552758777f64a"
+      },
+      "src/config/config.h": {
+        "before_sha256": "a8cae57ede08a06d32a8c692c0b9dad5fcd90b34614fb43b41043ae7d7dee4b9",
+        "after_sha256": "3c7e2bb06d23f691b8660232f33ff8f34d9c7d19411d32a29a0c7464450d6007"
+      },
+      "src/modules/interface/kalman_core/post_release_auto_unwind.h": {
+        "before_sha256": "28fc587021964937a0446a386f218b26b01dd0200a5992a2d1442fe6c4e9be5e",
+        "after_sha256": "586fe092b59b1f91b59b6a256522c65e6fb87f8aae766745c5998a1ea52b7d91"
+      },
+      "src/modules/src/crtp_commander_high_level.c": {
+        "before_sha256": "07d9a041cc8f2de7d618ad72f8be2cd5d40f9e3e3291a56c524b8a4f487590dd",
+        "after_sha256": "6b635f469c1d90338ce2e603a714d007625f7b788082581055eede3ab76f8935"
+      },
+      "src/modules/src/post_release_velocity_runtime.inc": {
+        "before_sha256": "dd22d203a7e33e149fba7b509f65093bd7254386f2521de8f225a32707873797",
+        "after_sha256": "d2dca54d85159e3833424f8f92cc15f6fd1f3f7fe07b122e407a58997c54751f"
+      },
+      "src/modules/src/post_release_curve_log.inc": {
+        "before_sha256": "7cec2e3aadd09f2d4ff51f8264ca28e29c3d2930963dabf024e76427df14526b",
+        "after_sha256": "e06c580f38ca21871d1d60e73d3a27c1bdc50a29b2e80fd0875931602b46937d"
+      }
+    }
+  },
+  "firmware": {
+    "baseline": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/flyback_adaptive_20261029/firmware",
+    "candidate": "/Users/shuqinzhu/Documents/FLS_Research/fls-cf-offboard-controller/autoresearch/response_unwind_20261029/firmware",
+    "files": {
+      "snapshot_version.json": {
+        "before_sha256": "e6cb8cacc9dc81ba8ff4c946d2161359f4644d73bc726b10a0727285210b5582",
+        "after_sha256": "669a082e44c2c590b421f197b58ca3c3493e41e74045d4f9319552758777f64a"
+      },
+      "src/config/config.h": {
+        "before_sha256": "fbc482787d2e2ee28bb7a6b9e2adbb64350bafdb4a6620b8a210e1d71ba1cd1f",
+        "after_sha256": "022d7c062b0aa9c1308190c10986301468374e34a8712aa67c04cbe87ccaa6c1"
+      },
+      "src/modules/interface/kalman_core/post_release_auto_unwind.h": {
+        "before_sha256": "28fc587021964937a0446a386f218b26b01dd0200a5992a2d1442fe6c4e9be5e",
+        "after_sha256": "586fe092b59b1f91b59b6a256522c65e6fb87f8aae766745c5998a1ea52b7d91"
+      },
+      "src/modules/src/crtp_commander_high_level.c": {
+        "before_sha256": "07d9a041cc8f2de7d618ad72f8be2cd5d40f9e3e3291a56c524b8a4f487590dd",
+        "after_sha256": "6b635f469c1d90338ce2e603a714d007625f7b788082581055eede3ab76f8935"
+      },
+      "src/modules/src/post_release_velocity_runtime.inc": {
+        "before_sha256": "dd22d203a7e33e149fba7b509f65093bd7254386f2521de8f225a32707873797",
+        "after_sha256": "d2dca54d85159e3833424f8f92cc15f6fd1f3f7fe07b122e407a58997c54751f"
+      },
+      "src/modules/src/post_release_curve_log.inc": {
+        "before_sha256": "7cec2e3aadd09f2d4ff51f8264ca28e29c3d2930963dabf024e76427df14526b",
+        "after_sha256": "e06c580f38ca21871d1d60e73d3a27c1bdc50a29b2e80fd0875931602b46937d"
+      }
+    }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "summary": {
+    "cases": 23328,
+    "failed": 0,
+    "faults": 0,
+    "initially_admitted": 21384,
+    "rejected_before_new_commands": 1944,
+    "admitted_failed": 0,
+    "minimum_velocity_m_s": 0.0,
+    "maximum_flyback_m": 0.0,
+    "maximum_duration_s": 4.4,
+    "return_min_s": 0.15,
+    "return_max_s": 0.24,
+    "peak_command_deg": 7.144,
+    "peak_physical_rate_deg_s": 68.115,
+    "peak_physical_acceleration_deg_s2": 1466.648,
+    "late_release_rejected": true,
+    "cpu_s": 260.714
+  },
+  "method": "Independent double-precision closed-form attitude plant plus nonlinear tilt acceleration; 100 Hz controller, 500 Hz plant; ASan and UBSan.",
+  "grid": {
+    "headings": 8,
+    "speeds_m_s": [
+      0.25,
+      0.6,
+      1.0
+    ],
+    "initial_along_tilt_deg": [
+      -5,
+      0,
+      5
+    ],
+    "initial_rate_deg_s": [
+      -20,
+      0,
+      20
+    ],
+    "frequency_scales": [
+      0.65,
+      0.8,
+      1.0,
+      1.1
+    ],
+    "damping_scales": [
+      0.8,
+      1.0,
+      1.15
+    ],
+    "gain_scales": [
+      0.9,
+      1.0,
+      1.1
+    ],
+    "delay_errors_s": [
+      -0.02,
+      0,
+      0.02
+    ]
+  },
+  "acceptance": {
+    "terminal_speed_m_s": 0.02,
+    "terminal_tilt_deg": 0.5,
+    "terminal_rate_deg_s": 5,
+    "maximum_flyback_m": 0.005,
+    "minimum_signed_velocity_m_s": -0.02
+  },
+  "interpretation": [
+    "Rejected initial states do not count as successful physical stops.",
+    "No visible reversal in admitted simulated cases; not a flight guarantee.",
+    "Physical acceleration above the design constraint can be an unavoidable initial queued transient.",
+    "Finite grid does not establish robustness for arbitrary disturbances, noisy state estimates, or changing yaw."
+  ],
+  "hardware_access": false,
+  "flight_validated": false
+}

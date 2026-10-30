@@ -12,6 +12,22 @@ DEFAULT_SCURVE_TILT_LIMIT_DEG = 40.0
 # Rounded down from g*tan(40 degrees); a reference limit, not measured braking.
 MAX_STOP_DECELERATION_M_S2 = 8.23
 
+# Command derivatives and predicted aircraft derivatives are distinct limits.
+# These are design settings, not certified actuator maxima. Firmware v2 latches
+# and validates the same settings with each accepted release.
+UNWIND_CONSTRAINTS = {
+    'max_command_rate_deg_s': ('pRelUnwRate', 20., 160., 160.),
+    'max_command_acceleration_deg_s2': ('pRelUnwAcc', 100., 8000., 4000.),
+    'max_command_jerk_deg_s3': ('pRelUnwJerk', 1000., 200000., 80000.),
+    'min_response_frequency_scale': ('pRelUnwSlow', .55, 1., .65),
+    'response_delay_margin_s': ('pRelUnwDly', 0., .04, .02),
+    'settle_gain_s_inv': ('pRelUnwGain', 1., 4., 1.5),
+    'velocity_reserve_m_s': ('pRelUnwRsv', .03, .20, .08),
+    'max_predicted_rate_deg_s': ('pRelUnwWMax', 20., 180., 120.),
+    'max_predicted_acceleration_deg_s2': ('pRelUnwAMax', 100., 1600., 1000.),
+    'settle_max_correction_deg': ('pRelUnwSet', 1., 12., 6.),
+}
+
 
 def default_tilt_limit(profile):
     profile = profile or {}
@@ -31,7 +47,8 @@ def profile_parameters(config):
                'attitude_kp', 'attitude_kv', 'rate_feedforward',
                'response_compensation', 'response_bandwidth', 'acceleration_residual',
                'state_matched_start', 'position_tracking_bandwidth', 'friction_from_interaction',
-               'max_tilt_deg', 'marker_from_imu_m', 'auto_unwind', 'end_velocity_m_s'}
+               'max_tilt_deg', 'marker_from_imu_m', 'auto_unwind', 'end_velocity_m_s',
+               'unwind_constraints'}
     if set(config) - allowed:
         raise ValueError('unknown analytic_profile fields: ' + ', '.join(sorted(set(config) - allowed)))
     def choice(key, choices):
@@ -83,6 +100,8 @@ def profile_parameters(config):
                          'state_matched_start: false, no friction/position tracking')
     if 'end_velocity_m_s' in config and not automatic:
         raise ValueError('end_velocity_m_s requires auto_unwind')
+    if 'unwind_constraints' in config and not automatic:
+        raise ValueError('unwind_constraints requires auto_unwind')
     result = {
         'hlCommander.pRelLite': 0,
         'hlCommander.pRelVelCmd': 1,
@@ -126,6 +145,22 @@ def profile_parameters(config):
     if 'auto_unwind' in config:
         result['hlCommander.pRelUnwAuto']=int(automatic)
     if automatic:
-        result['hlCommander.pRelUnwVer']=1
+        # Presence of this mapping explicitly selects the new paired runtime.
+        # Old saved profiles/packages retain their v1 contract.
+        guarded='unwind_constraints' in config
+        result['hlCommander.pRelUnwVer']=2 if guarded else 1
         result['hlCommander.pRelEndV']=number('end_velocity_m_s',0,.02,0)
+        if not guarded:
+            return result
+        constraints=config.get('unwind_constraints',{})
+        if not isinstance(constraints,dict):
+            raise ValueError('unwind_constraints must be a mapping')
+        unknown=set(constraints)-set(UNWIND_CONSTRAINTS)
+        if unknown:
+            raise ValueError('unknown unwind_constraints fields: '+', '.join(sorted(unknown)))
+        for name,(parameter,lo,hi,default) in UNWIND_CONSTRAINTS.items():
+            value=constraints.get(name,default)
+            if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not lo<=value<=hi:
+                raise ValueError(f'unwind_constraints.{name} must be finite in [{lo}, {hi}]')
+            result['hlCommander.'+parameter]=float(value)
     return result

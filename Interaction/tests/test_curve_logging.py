@@ -49,6 +49,17 @@ def state(group,tick=50000):
 
 
 class CurveLoggingTests(unittest.TestCase):
+    def test_guarded_unwind_coefficients_are_commands_not_physical_angles(self):
+        old=wire(kind=2);header=list(HEADER.unpack_from(old));values=list(FLOATS.unpack_from(old,HEADER.size))
+        header[-1]|=0x2000000|0x4000000|0x200000|(3<<19)
+        values[28]=2.;values[44]=3.
+        payload=HEADER.pack(*header)+FLOATS.pack(*values)+old[HEADER.size+FLOATS.size:-4]
+        decoded=decode_event(payload+struct.pack('<I',zlib.crc32(payload)))
+        self.assertEqual(decoded['reference_kind'],'automatic_command_unwind')
+        self.assertEqual(reconstruct_command(decoded,50000),[3.,2.])
+        self.assertIsNone(reconstruct_command(decoded,50500))
+        self.assertIsNone(reconstruct_velocity(decoded,50000))
+
     def test_automatic_unwind_records_degrees_and_does_not_invent_commands(self):
         def auto(kind,zero=False):
             old=wire(kind=kind);header=list(HEADER.unpack_from(old));values=list(FLOATS.unpack_from(old,HEADER.size))

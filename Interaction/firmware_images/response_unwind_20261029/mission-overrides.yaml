@@ -1,0 +1,20 @@
+# Merge into a paired mission only after target validation.
+Interaction:
+  config:
+    wrench_interaction:
+      firmware_auto_brake:
+        analytic_profile:
+          auto_unwind: true
+          end_velocity_m_s: 0.0
+          position_tracking_bandwidth: 0.0
+          unwind_constraints:
+            max_command_rate_deg_s: 160.0
+            max_command_acceleration_deg_s2: 4000.0
+            max_command_jerk_deg_s3: 80000.0
+            min_response_frequency_scale: 0.65
+            response_delay_margin_s: 0.02
+            settle_gain_s_inv: 1.5
+            velocity_reserve_m_s: 0.08
+            max_predicted_rate_deg_s: 120.0
+            max_predicted_acceleration_deg_s2: 1000.0
+            settle_max_correction_deg: 6.0

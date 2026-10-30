@@ -13,7 +13,7 @@ class AutomaticUnwindPreflightTests(unittest.TestCase):
         mission=resolve_mission_profiles({'Interaction':{'config':{'behavior':'level_coast','duration':60,
             'wrench_interaction_profile':'level_coast','level_coast':{'coast_command_mode':'scurve'},
             'wrench_interaction':{'firmware_auto_brake':{'analytic_profile':{
-                'auto_unwind':True,'end_velocity_m_s':0,'position_tracking_bandwidth':0,
+                'auto_unwind':True,'end_velocity_m_s':0,'position_tracking_bandwidth':0,'unwind_constraints':{},
                 'marker_from_imu_m':[0,0,.086]}}}}}})
         mode=mission['Interaction']['config']['wrench_interaction']['firmware_auto_brake']
         c=baseline.FirmwareAutoBrakePreflightTests().controller(mode);c.mission=mission;c.args.controller_type="pid";c.prepare_firmware_auto_brake()
@@ -41,11 +41,11 @@ class AutomaticUnwindPreflightTests(unittest.TestCase):
         self.assertNotIn('hlCommander.pRelUnwVer',[x.args[0] for x in p.set_value.call_args_list])
         self.assertIn('hlCommander.pRelUnwVer',p.requested)
         self.assertEqual(c._firmware_curve_expected['hlCommander.pRelUnwAuto'],1)
-        self.assertEqual(c._firmware_curve_capabilities['hlCommander.pRelUnwVer'],1)
+        self.assertEqual(c._firmware_curve_capabilities['hlCommander.pRelUnwVer'],2)
         self.assertEqual(p.set_value.call_args_list[-1].args,('hlCommander.pRelAuto','1'))
 
     def test_wrong_capability_cannot_enable_and_is_rechecked_before_arm(self):
-        c,p=self.fixture();self.setup(c);p.set_value.reset_mock();p.replies['hlCommander.pRelUnwVer']='0'
+        c,p=self.fixture();self.setup(c);p.set_value.reset_mock();p.replies['hlCommander.pRelUnwVer']='1'
         def quick(param,*,expected):return confirm_firmware_mode_parameters(param,expected=expected,timeout_s=.001)
         with patch('Interaction.firmware_parameter_confirmation.confirm_firmware_mode_parameters',side_effect=quick):
             with self.assertRaisesRegex(RuntimeError,'pRelUnwVer'):self.setup(c)
