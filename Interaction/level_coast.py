@@ -17,7 +17,7 @@ from Interaction.potentiometer_force_sensor import (
 from Interaction.position_follow import PositionVelocityFollower, validate_position_follow
 from Interaction.position_handoff import (
     PositionHandoff, validate_position_handoff, incoming_attitude_command,
-    smooth_hover_transition_enabled,
+    smooth_hover_transition_enabled, FreshAttitudeCommandUnavailable,
 )
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH, apply_detection_calibration,
@@ -26,6 +26,10 @@ from Interaction.wrench_model_calibration import (
 # Historical name: delay before the selected contact/coast command policy.
 # Keep the fixed position hold during this interval; 0.0 switches immediately.
 DETECTION_TO_ORI_DELAY_S = 0.0
+
+# The FC keeps its confirmed endpoint hold during this bounded, nonblocking
+# wait. Every accepted seed must still meet max_command_age_s (50 ms).
+HANDOFF_COMMAND_WAIT_S = .10
 
 
 def _number(value, name, *, positive=False):
@@ -416,6 +420,7 @@ def run_level_coast(owner, config):
                if handoff_enabled else None)
     handoff_restore_requested = False
     handoff_restore_ready_since = None
+    handoff_command_wait_started = None
     calibrated_config = apply_detection_calibration(
         deepcopy(config['wrench_interaction']), owner.drone_id,
         config.get('wrench_calibration_file', DEFAULT_CALIBRATION_PATH))
@@ -697,6 +702,29 @@ def run_level_coast(owner, config):
                 }
             sample_now = time.monotonic()
             curve_completed = curve.poll(sample_now) if curve is not None else False
+            curve_capture_incoming = None
+            if (curve_completed and handoff is not None and not handoff.active
+                    and cycle.phase == 'coast' and not started):
+                try:
+                    curve_capture_incoming = incoming_attitude_command(
+                        owner.log_manager, state['time'], time.time(),
+                        options['position_handoff']['max_command_age_s'],
+                        state_cf_timestamp_ms=state.get('cf_timestamp_ms'))
+                except FreshAttitudeCommandUnavailable:
+                    waiting_now = time.monotonic()
+                    if handoff_command_wait_started is None:
+                        handoff_command_wait_started = waiting_now
+                        owner._log_event('Level Coast Capture Waiting For Command', {
+                            'timeout_s': HANDOFF_COMMAND_WAIT_S,
+                            'max_command_age_s': options['position_handoff']['max_command_age_s'],
+                            'control_owner': 'firmware_endpoint_hold'})
+                    if waiting_now-handoff_command_wait_started >= HANDOFF_COMMAND_WAIT_S:
+                        raise
+                    # Do not cancel the FC hold, switch estimator, or emit an
+                    # LL packet. Retry from freshly checked state next loop.
+                    owner._safe_sleep(dt)
+                    continue
+                handoff_command_wait_started = None
             # Direct hold captures current FC XY instead of a projected endpoint.
             # The firmware curve and estimator-restoration acknowledgement still finish first.
             curve_hold = (curve.hold_notice['hold_position_m']
@@ -749,6 +777,7 @@ def run_level_coast(owner, config):
                 handoff.reset()
                 handoff_restore_requested = False
                 handoff_restore_ready_since = None
+                handoff_command_wait_started = None
             if (curve is not None and cycle.phase == 'coast' and cycle.level
                     and not curve.active and selector.ready(sample_now)):
                 # The event time is this confirmed release/dispatch epoch;
@@ -839,6 +868,8 @@ def run_level_coast(owner, config):
                         incoming = previous_position_status['position_nominal_pitch_roll_deg'][::-1]
                     elif previous_command_mode == 'level_zdistance':
                         incoming = [0., 0.]
+                    elif curve_capture_incoming is not None:
+                        incoming = curve_capture_incoming
                     else:
                         incoming = incoming_attitude_command(owner.log_manager, state['time'], time.time(),
                             options['position_handoff']['max_command_age_s'],

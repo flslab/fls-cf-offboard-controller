@@ -71,6 +71,10 @@ def add_handoff_logs(selected, mission):
         **{key: {'type': 'float', 'data': []} for key in ('controller.roll', 'controller.pitch')}}}
 
 
+class FreshAttitudeCommandUnavailable(RuntimeError):
+    """No command packet currently meets the unchanged capture seed limits."""
+
+
 def incoming_attitude_command(log_manager, state_time, now, max_age,
                               *, state_cf_timestamp_ms=None):
     if state_cf_timestamp_ms is None:
@@ -86,7 +90,7 @@ def incoming_attitude_command(log_manager, state_time, now, max_age,
     if (not packet or skew is None or not math.isfinite(skew) or abs(skew) > max_age
             or stamp is None or not math.isfinite(stamp) or not -.02 <= now-stamp <= max_age):
         age = None if stamp is None or not math.isfinite(stamp) else now-stamp
-        raise RuntimeError('Position handoff requires fresh controller roll/pitch commands '
+        raise FreshAttitudeCommandUnavailable('Position handoff requires fresh controller roll/pitch commands '
             f'(pair_clock={clock}, command_age_s={age}, state_skew_s={skew}, '
             f'max_age_s={max_age}, state_time={state_time}, command_time={stamp}, now={now})')
     rp = np.array([packet['controller.roll'], packet['controller.pitch']], dtype=float)

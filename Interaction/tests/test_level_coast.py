@@ -423,6 +423,84 @@ class LevelCoastLoopTests(unittest.TestCase):
                 speed_fn=lambda t:.12 if .08<=t<.20 else 0.)
             self.assertFalse(control._pid_15state_control_active)
 
+    def test_scurve_endpoint_keeps_ownership_while_waiting_for_fresh_command(self):
+        from Interaction.position_handoff import (
+            incoming_attitude_command, FreshAttitudeCommandUnavailable)
+        timing = {}
+
+        def command(logs, state_time, now, max_age, **kwargs):
+            t = round(now-1000., 6)
+            timing.setdefault('first', t)
+            if t < timing['first']+.06-1e-6:
+                raise FreshAttitudeCommandUnavailable('test command packet older than 50 ms')
+            timing.setdefault('ready', t)
+            return incoming_attitude_command(logs, state_time, now, max_age, **kwargs)
+
+        with patch('Interaction.level_coast.incoming_attitude_command', side_effect=command):
+            control, commands, phases, _ = self.run_scenario(
+                coast_command_mode='scurve', command_mode='position',
+                handoff_options={}, duration=1.2,
+                pressed_fn=lambda t:.08<=t<.16,
+                speed_fn=lambda t:.12 if .08<=t<.20 else 0.)
+        self.assertFalse(any(timing['first']-1e-6<=t<timing['ready']-1e-6
+                             for t,_,_ in commands))
+        capture=next(p for p in phases if p['phase']=='capture')
+        self.assertGreaterEqual(capture['elapsed_s'],timing['ready']-1e-6)
+        restore=next(t for t,v in control.curve_clock['requests']
+                     if v==2 and t>=timing['first'])
+        self.assertGreaterEqual(restore,timing['ready']-1e-6)
+        self.assertEqual(sum(c.args[0]=='Level Coast Capture Waiting For Command'
+                             for c in control._log_event.call_args_list),1)
+
+    def test_scurve_capture_command_wait_is_bounded(self):
+        from Interaction.position_handoff import FreshAttitudeCommandUnavailable
+        with patch('Interaction.level_coast.incoming_attitude_command',
+                   side_effect=FreshAttitudeCommandUnavailable('test command missing')) as reader:
+            with self.assertRaisesRegex(FreshAttitudeCommandUnavailable,'test command missing'):
+                self.run_scenario(coast_command_mode='scurve',
+                    command_mode='position', handoff_options={}, duration=1.2,
+                    pressed_fn=lambda t:.08<=t<.16,
+                    speed_fn=lambda t:.12 if .08<=t<.20 else 0.)
+        waited=reader.call_args_list[-1].args[2]-reader.call_args_list[0].args[2]
+        self.assertGreaterEqual(waited,.10-1e-6)
+        self.assertLessEqual(waited,.12)
+
+    def test_new_contact_preempts_scurve_capture_command_wait(self):
+        from Interaction.position_handoff import (
+            incoming_attitude_command, FreshAttitudeCommandUnavailable)
+        timing = {}
+
+        def command(logs, state_time, now, max_age, **kwargs):
+            t=round(now-1000.,6)
+            timing.setdefault('first',t)
+            if t<timing['first']+.08-1e-6:
+                raise FreshAttitudeCommandUnavailable('test short command gap')
+            return incoming_attitude_command(logs,state_time,now,max_age,**kwargs)
+
+        def pressed(t):
+            return (.08<=t<.16 or ('first' in timing
+                    and timing['first']+.02<=t<timing['first']+.10))
+
+        with patch('Interaction.level_coast.incoming_attitude_command',side_effect=command):
+            _,commands,phases,_=self.run_scenario(coast_command_mode='scurve',
+                command_mode='position',handoff_options={},duration=1.2,
+                grace_start='release',grace_time=.02,pressed_fn=pressed,
+                speed_fn=lambda t:.12 if pressed(t) else 0.)
+        contact=next(p for p in phases if p['previous']=='coast'
+                     and p['phase']=='contact')
+        self.assertLess(contact['elapsed_s'],timing['first']+.08)
+        self.assertFalse(any(timing['first']-1e-6<=t<contact['elapsed_s']-1e-6
+                             for t,_,_ in commands))
+
+    def test_scurve_capture_wait_does_not_hide_invalid_command_values(self):
+        with patch('Interaction.level_coast.incoming_attitude_command',
+                   side_effect=ValueError('Position handoff command is not finite')):
+            with self.assertRaisesRegex(ValueError,'not finite'):
+                self.run_scenario(coast_command_mode='scurve',
+                    command_mode='position', handoff_options={}, duration=1.2,
+                    pressed_fn=lambda t:.08<=t<.16,
+                    speed_fn=lambda t:.12 if .08<=t<.20 else 0.)
+
     def test_capture_refreshes_during_short_imu_pairing_gap(self):
         class Telemetry:
             config = {'max_sample_age_s': .1}

@@ -126,6 +126,12 @@ Duplicate Vicon frames cannot advance settling evidence; slower fresh Vicon
 streams can still accumulate a continuous dwell.
 Duplicate FC states may refresh a packet only within the command freshness bound.
 Capture has no settling timeout; it continues until settling or another mission transition.
+At a confirmed S-curve endpoint, a missing/stale capture seed may wait up to
+100 ms for a fresh controller roll/pitch packet. The FC retains endpoint hold;
+no low-level packet or estimator restoration is issued during this wait. New
+contacts can preempt it, and ordinary state/battery/operator checks continue.
+The accepted packet must still meet the 50 ms command-age/device-skew limits.
+If no valid seed arrives before the wait expires, the mission aborts normally.
 Missing/stale state or command data and infeasible offsets abort through
 the existing mission cleanup/landing path; they do not silently freeze a target.
 
