@@ -840,8 +840,9 @@ def run_level_coast(owner, config):
                     elif previous_command_mode == 'level_zdistance':
                         incoming = [0., 0.]
                     else:
-                        incoming = incoming_attitude_command(owner.log_manager, state['time'], now,
-                            options['position_handoff']['max_command_age_s'])
+                        incoming = incoming_attitude_command(owner.log_manager, state['time'], time.time(),
+                            options['position_handoff']['max_command_age_s'],
+                            state_cf_timestamp_ms=state.get('cf_timestamp_ms'))
                     owner._log_event('Level Coast Position Capture Started', {
                         'coast_command_mode': options['coast_command_mode'],
                         'incoming_roll_pitch_deg': list(incoming)})

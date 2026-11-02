@@ -144,10 +144,27 @@ class PositionHandoffTests(unittest.TestCase):
     def test_config_and_stale_command_rejected(self):
         for opts in ({'enabled':1},{'transition_s':0},{'max_vicon_skew_s':.1},{'unknown':1}):
             with self.assertRaises(ValueError):validate_position_handoff(opts)
-        lm=SimpleNamespace(get_nearest_group_log_data=Mock(return_value=({'controller.roll':1.,'controller.pitch':2.},0.)),
+        lm=SimpleNamespace(get_nearest_group_log_data=Mock(return_value=({'controller.roll':1.,'controller.pitch':2.,'time':1.},0.)),
             get_latest_group_log_time=Mock(return_value=1.))
         np.testing.assert_equal(incoming_attitude_command(lm,1.,1.01,.05),[1.,2.])
         with self.assertRaisesRegex(RuntimeError,'fresh'):incoming_attitude_command(lm,1.,1.2,.05)
+
+    def test_command_pairs_on_device_clock_and_checks_selected_packet_age(self):
+        packet={'controller.roll':1.,'controller.pitch':2.,'time':1.0}
+        lm=SimpleNamespace(
+            get_nearest_group_log_data=Mock(side_effect=AssertionError('host pairing')),
+            get_nearest_group_log_data_by_cf_timestamp=Mock(return_value=(packet,.01)),
+            get_latest_group_log_time=Mock(return_value=1.10))
+        np.testing.assert_equal(incoming_attitude_command(lm,.96,1.02,.05,
+            state_cf_timestamp_ms=1234),[1.,2.])
+        lm.get_nearest_group_log_data_by_cf_timestamp.assert_called_with('POSITION_HANDOFF',1234)
+        # A fresh latest callback cannot rescue the selected stale packet.
+        with self.assertRaisesRegex(RuntimeError,'command_age_s='):
+            incoming_attitude_command(lm,1.1,1.1,.05,state_cf_timestamp_ms=1234)
+        lm.get_nearest_group_log_data_by_cf_timestamp.return_value=(dict(packet,time=1.1),.06)
+        with self.assertRaisesRegex(RuntimeError,'state_skew_s=0.06'):
+            incoming_attitude_command(lm,1.1,1.1,.05,state_cf_timestamp_ms=1234)
+        lm.get_latest_group_log_time.assert_not_called()
 
     def test_delayed_plant_with_bias_switch_stops_without_centimeter_reverse(self):
         # Independent simple lagged planar plant, not flight validation.

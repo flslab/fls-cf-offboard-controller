@@ -893,7 +893,7 @@ class LevelCoastLoopTests(unittest.TestCase):
             original_nearest = control.log_manager.get_nearest_group_log_data
             original_latest = control.log_manager.get_latest_group_log_time
             control.log_manager.get_nearest_group_log_data = lambda group, stamp: (
-                ({'controller.roll': 0., 'controller.pitch': 0.}, 0.)
+                ({'controller.roll': 0., 'controller.pitch': 0., 'time': 1000.+clock['t']}, 0.)
                 if group == 'POSITION_HANDOFF' else original_nearest(group, stamp))
             control.log_manager.get_latest_group_log_time = lambda group: (
                 1000.+clock['t'] if group == 'POSITION_HANDOFF' else original_latest(group))

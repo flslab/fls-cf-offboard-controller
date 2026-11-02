@@ -71,12 +71,24 @@ def add_handoff_logs(selected, mission):
         **{key: {'type': 'float', 'data': []} for key in ('controller.roll', 'controller.pitch')}}}
 
 
-def incoming_attitude_command(log_manager, state_time, now, max_age):
-    packet, skew = log_manager.get_nearest_group_log_data('POSITION_HANDOFF', state_time)
-    stamp = log_manager.get_latest_group_log_time('POSITION_HANDOFF')
+def incoming_attitude_command(log_manager, state_time, now, max_age,
+                              *, state_cf_timestamp_ms=None):
+    if state_cf_timestamp_ms is None:
+        packet, skew = log_manager.get_nearest_group_log_data('POSITION_HANDOFF', state_time)
+        clock = 'host'
+    else:
+        packet, skew = log_manager.get_nearest_group_log_data_by_cf_timestamp(
+            'POSITION_HANDOFF', state_cf_timestamp_ms)
+        clock = 'firmware'
+    # Validate the packet actually selected, not a separately read latest time.
+    # A newer callback must not make an older command look fresh.
+    stamp = None if not packet else packet.get('time')
     if (not packet or skew is None or not math.isfinite(skew) or abs(skew) > max_age
             or stamp is None or not math.isfinite(stamp) or not -.02 <= now-stamp <= max_age):
-        raise RuntimeError('Position handoff requires fresh controller roll/pitch commands')
+        age = None if stamp is None or not math.isfinite(stamp) else now-stamp
+        raise RuntimeError('Position handoff requires fresh controller roll/pitch commands '
+            f'(pair_clock={clock}, command_age_s={age}, state_skew_s={skew}, '
+            f'max_age_s={max_age}, state_time={state_time}, command_time={stamp}, now={now})')
     rp = np.array([packet['controller.roll'], packet['controller.pitch']], dtype=float)
     if not np.isfinite(rp).all():
         raise ValueError('Position handoff command is not finite')
