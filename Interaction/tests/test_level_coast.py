@@ -423,6 +423,54 @@ class LevelCoastLoopTests(unittest.TestCase):
                 speed_fn=lambda t:.12 if .08<=t<.20 else 0.)
             self.assertFalse(control._pid_15state_control_active)
 
+    def test_capture_refreshes_during_short_imu_pairing_gap(self):
+        class Telemetry:
+            config = {'max_sample_age_s': .1}
+            diagnostics = {}
+            gap_end = .68
+
+            def __init__(self, config):
+                pass
+
+            def read(self, logs, state, now):
+                t = round(now - 1000., 6)
+                if .60 <= t < self.gap_end:
+                    return None
+                return dict(specific_force_body_m_s2=[0., 0., 9.81],
+                            gyro_body_rad_s=[0., 0., 0.], imu_timestamp=state['time'])
+
+        for coast in ('position', 'orientation', 'scurve'):
+            with self.subTest(coast=coast), patch(
+                    'Interaction.level_coast.SpecificForceTelemetry', Telemetry):
+                control, commands, _, _ = self.run_scenario('model',
+                    command_mode='position', coast_command_mode=coast,
+                    handoff_options={}, duration=1.2,
+                    duplicate_times=(.68,),
+                    pressed_fn=lambda t: .1 <= t < .2,
+                    speed_fn=lambda t: .12 if .1 <= t < .3 else 0.,
+                    force_config={'force_estimator': 'specific_force'})
+                refreshed = [c.args[1] for c in control._log_event.call_args_list
+                    if c.args[0] == 'Level Coast Capture Refreshed During IMU Wait']
+                self.assertTrue(refreshed)
+                self.assertTrue(any(.60 <= t < .68 for t, _, _ in commands))
+                self.assertFalse(any(.60 <= round(r['time']-1000., 6) < .68
+                    for r in control.log_manager.groups['wrench_observer']))
+                self.assertTrue(any(r['position_handoff_complete']
+                    for r in control.log_manager.groups['wrench_observer']
+                    if 'position_handoff_complete' in r))
+
+        # A prolonged detector outage must still abort instead of silently
+        # disabling contact sensing or widening any command/state age limit.
+        Telemetry.gap_end = .80
+        with patch('Interaction.level_coast.SpecificForceTelemetry', Telemetry):
+            with self.assertRaisesRegex(StaleLocalizationError,
+                    'specific_force requires fresh synchronized MODEL_IMU'):
+                self.run_scenario('model', command_mode='position',
+                    coast_command_mode='scurve', handoff_options={}, duration=1.2,
+                    pressed_fn=lambda t: .1 <= t < .2,
+                    speed_fn=lambda t: .12 if .1 <= t < .3 else 0.,
+                    force_config={'force_estimator': 'specific_force'})
+
     def test_stationary_rearm_uses_physical_motion_after_compensated_hover(self):
         for coast in ('position','orientation','scurve'):
             _,_,phases,_=self.run_scenario(coast_command_mode=coast,handoff_options={},

@@ -470,6 +470,31 @@ def run_level_coast(owner, config):
         'position_pid_velocity_source': 'crazyflie_state_estimate',
     }, name='Level Coast Config')
 
+    capture_status = {}
+
+    def capture_target(state, motion_position, motion_velocity, motion_time,
+                       sample_now, incoming=None):
+        nonlocal handoff_restore_ready_since, capture_status
+        # IMU pairing and position control run on independent streams. A state
+        # consumed while waiting for IMU must not advance capture twice when
+        # the matching detector sample arrives on a later loop.
+        if handoff.active and state['time'] == handoff.last_time:
+            return position_command, capture_status
+        allow_hold = selector is None or not switch_estimators
+        if selector is not None and handoff_restore_requested and selector.ready(sample_now):
+            if handoff_restore_ready_since is None:
+                handoff_restore_ready_since = state['time']
+            allow_hold = (state['time'] - handoff_restore_ready_since
+                          >= options['position_handoff']['max_sample_gap_s'])
+        target, capture_status = handoff.update(
+            position=state['position'], velocity=state['velocity'],
+            attitude_rpy=state['attitude_rpy'], angular_velocity=state['angular_velocity'],
+            motion_position=motion_position, motion_velocity=motion_velocity,
+            timestamp=state['time'], motion_time=motion_time, height=nominal[2],
+            incoming_rp_deg=incoming, allow_hold=allow_hold)
+        owner.check_interaction_boundary(target)
+        return target, capture_status
+
     def send():
         if curve is not None and curve.active:
             # An LL packet would stop the firmware's curve/terminal hold.
@@ -526,6 +551,18 @@ def run_level_coast(owner, config):
                                else imu_reader.config['max_sample_age_s'])
                     if time.monotonic() - imu_wait_since >= timeout:
                         raise StaleLocalizationError('specific_force requires fresh synchronized MODEL_IMU')
+                    if handoff is not None and handoff.active:
+                        sample_now = time.monotonic()
+                        if selector is not None:
+                            selector.ready(sample_now)
+                        motion_position, motion_velocity, motion_time, _ = (
+                            owner._vicon_motion_reference_for_onboard_state(
+                                state, max_time_skew_s=options['position_handoff']['max_vicon_skew_s']))
+                        position_command, position_status = capture_target(
+                            state, motion_position, motion_velocity, motion_time, sample_now)
+                        owner._log_event('Level Coast Capture Refreshed During IMU Wait', {
+                            'state_time': state['time'], 'motion_time': motion_time,
+                            **position_status})
                     send()
                     owner._safe_sleep(dt)
                     continue
@@ -808,20 +845,8 @@ def run_level_coast(owner, config):
                     owner._log_event('Level Coast Position Capture Started', {
                         'coast_command_mode': options['coast_command_mode'],
                         'incoming_roll_pitch_deg': list(incoming)})
-                allow_hold = selector is None or not switch_estimators
-                if selector is not None and handoff_restore_requested and selector.ready(sample_now):
-                    if handoff_restore_ready_since is None:
-                        handoff_restore_ready_since = state['time']
-                    # Consume new telemetry after the acknowledgement before
-                    # starting the dwell. Parameter ACK is not a state packet.
-                    allow_hold = state['time']-handoff_restore_ready_since >= options['position_handoff']['max_sample_gap_s']
-                position_command, position_status = handoff.update(
-                    position=state['position'], velocity=state['velocity'],
-                    attitude_rpy=state['attitude_rpy'], angular_velocity=state['angular_velocity'],
-                    motion_position=motion_position, motion_velocity=stop_velocity,
-                    timestamp=state['time'], motion_time=vicon_time, height=nominal[2],
-                    incoming_rp_deg=incoming, allow_hold=allow_hold)
-                owner.check_interaction_boundary(position_command)
+                position_command, position_status = capture_target(
+                    state, motion_position, stop_velocity, vicon_time, sample_now, incoming)
                 if handoff.complete and cycle.phase == 'capture':
                     owner.check_interaction_boundary(handoff.anchor)
                     changed = cycle.update(state['position'], state['velocity'], sample_now,
