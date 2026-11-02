@@ -451,13 +451,15 @@ class Controller:
                         and (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve')
         if level_scurve and self.args.controller_type != 'pid':
             raise ValueError('S-curve coast requires the PID controller')
+        full_pose_scurve = (brake_mode == 'scurve'
+                            and self.args.vicon_mode == 'rigidbody')
         if not (self.args.interaction and (self.args.sense or level_scurve) and self.args.vicon
                 and self.args.vicon_mode in ('rigidbody', 'pointcloud')
-                and not self.args.vicon_full_pose and self.args.log
+                and (not self.args.vicon_full_pose or full_pose_scurve) and self.args.log
                 and not self.args.crazysim and not self.args.ground_test):
             raise ValueError('firmware auto brake requires hardware --interaction '
                              '--log, --sense (unless using level_coast scurve), and rigidbody or pointcloud '
-                             'position-only Vicon')
+                             'position-only Vicon (rigidbody full pose is also supported for scurve)')
         if (wrench.get('contact_attitude_shadow_enabled', False) or
                 (wrench.get('post_release_estimator_control') or {}).get(
                     'enabled', False)):
@@ -4034,6 +4036,20 @@ class Controller:
         started = time.monotonic()
         self.cf.extpos.send_extpose(*frame['tvec'], *frame['quat'])
         self._finish_mocap_forward_timing(frame, started)
+        if getattr(self, 'firmware_auto_brake_enabled', False):
+            receive_s = (frame.get('mocap_timing') or {}).get(
+                'wait_return_monotonic_s')
+            try:
+                if receive_s is None:
+                    raise ValueError('Pi Vicon receive timestamp unavailable')
+                send_vicon_position_mirror(
+                    self.cf, frame['tvec'],
+                    pi_receive_monotonic_s=receive_s,
+                )
+                self._firmware_vicon_last_send_s = time.monotonic()
+                self._firmware_vicon_mirror_error = None
+            except (ValueError, OverflowError, OSError) as error:
+                self._firmware_vicon_mirror_error = str(error)
         self._log_mocap(frame)
 
     def _prepare_mocap_forward_timing(self, frame):
