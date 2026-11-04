@@ -1387,7 +1387,7 @@ class Controller:
         logger.debug("mocap activated")
 
     def setup_tracker(self):
-        if self.args.tracker:
+        if self.args.tracker or getattr(self.args, "save_tracker", False):
             with open(self.args.localizer_config) as config_file:
                 localizer_config = json.load(config_file)
             shm_name = localizer_config.get(
@@ -1410,6 +1410,7 @@ class Controller:
                     timeout=self.args.localizer_timeout,
                     yaw_correction=yaw_correction,
                     log_manager=self.log_manager,
+                    forward_to_fc=not getattr(self.args, "save_tracker", False),
                 )
             except Exception:
                 self.tracker_process.terminate()
@@ -1488,7 +1489,8 @@ class Controller:
 
         takeoff_speed = (self.mission or {}).get("takeoff_speed", 0.5)
         logger.info(f"Taking off to {self.args.takeoff_altitude}m at {takeoff_speed}m/s ...")
-        if getattr(self, "tracker", None):
+        if (getattr(self, "tracker", None)
+                and not getattr(self.args, "save_tracker", False)):
             self._takeoff_with_localizer(takeoff_speed)
             return
 
@@ -1641,7 +1643,8 @@ class Controller:
                 takeoff_speed = 0.5
             dt = self.args.takeoff_altitude / takeoff_speed
             height = 0.1 if self.args.vicon or self.use_flowdeck else 0.02
-            if getattr(self, "tracker", None):
+            if (getattr(self, "tracker", None)
+                    and not getattr(self.args, "save_tracker", False)):
                 self._land_with_localizer(commander, height, takeoff_speed)
                 self.flying = False
                 self._send_landing_confirmation(voltage)
@@ -1838,7 +1841,8 @@ class Controller:
             self.log_manager.start()
             if not self.args.droneless:
                 log_vars = dict(self.cfg.LOG_VARS)
-                if getattr(self.args, "tracker", False):
+                if (getattr(self.args, "tracker", False)
+                        or getattr(self.args, "save_tracker", False)):
                     log_vars[Tracker.ATTITUDE_LOG_GROUP] = {
                         **log_vars[Tracker.ATTITUDE_LOG_GROUP],
                         "log_period_ms": Tracker.ATTITUDE_LOG_PERIOD_MS,
@@ -1858,7 +1862,8 @@ class Controller:
             self.log_manager.start()
             if not self.args.droneless:
                 log_vars = dict(self.cfg.LOG_VARS)
-                if getattr(self.args, "tracker", False):
+                if (getattr(self.args, "tracker", False)
+                        or getattr(self.args, "save_tracker", False)):
                     log_vars[Tracker.ATTITUDE_LOG_GROUP] = {
                         **log_vars[Tracker.ATTITUDE_LOG_GROUP],
                         "log_period_ms": Tracker.ATTITUDE_LOG_PERIOD_MS,
@@ -2294,7 +2299,8 @@ class Controller:
         self._activate_kalman_estimator()
         if not getattr(self.args, 'crazysim', False):
             self._activate_tumble_check()
-        if self.args.vicon or self.args.tracker:
+        if (self.args.vicon or (self.args.tracker
+                and not getattr(self.args, "save_tracker", False))):
             self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
         if self.args.vicon:
             self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
@@ -4180,6 +4186,8 @@ if __name__ == '__main__':
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("--tracker", help="Enable the high-rate marker localizer",
                     action="store_true", default=False)
+    ap.add_argument("--save-tracker", action="store_true", default=False,
+                    help="Run and record the localizer without sending its position or yaw to the FC; overrides --tracker")
     ap.add_argument(
         "--localizer-bin",
         default="/home/fls/fls-marker-localization/high_rate_localizer/build/fls_localizer",

@@ -149,8 +149,9 @@ class Tracker:
     LOCALIZER = struct.Struct("<IIQd3f4f4fIH4B2xii3fB3xII16x")
 
     def __init__(self, controller, shm_name="/fls_localizer_v3", timeout=5.0,
-                 yaw_correction=None, log_manager=None):
+                 yaw_correction=None, log_manager=None, forward_to_fc=True):
         self.controller = controller
+        self._forward_to_fc = forward_to_fc
         self._lock = Lock()
         self._callback_lock = Lock()
         self._changed = Condition(self._lock)
@@ -296,12 +297,19 @@ class Tracker:
 
             with self._changed:
                 self._latest = output
+                if not getattr(self, "_forward_to_fc", True):
+                    # Advance the recording pipeline without changing the FC EKF.
+                    if (output.state == LocalizerState.INITIAL_POSE_READY
+                            and output.pose_valid
+                            and output.initial_pose_generation != 0):
+                        self._ack_generation = output.initial_pose_generation
                 acknowledged = (
                     output.initial_pose_generation != 0
                     and output.initial_pose_generation == self._ack_generation
                 )
                 send_position = (
-                    acknowledged and output.pose_valid
+                    getattr(self, "_forward_to_fc", True)
+                    and acknowledged and output.pose_valid
                     and output.pose_sequence != self._sent_pose_sequence
                     and all(math.isfinite(value) for value in output.position)
                 )
@@ -309,14 +317,17 @@ class Tracker:
                     self._sent_pose_sequence = output.pose_sequence
                 yaw_correction = self._yaw_correction_gate.consider(
                     output=output,
-                    acknowledged=acknowledged,
+                    acknowledged=(acknowledged
+                                  and getattr(self, "_forward_to_fc", True)),
                     tracking=(output.state == LocalizerState.HYPERGRID_TRACKING),
                     now=received_at,
                 )
                 self._changed.notify_all()
             if send_position:
                 self.controller._send_position_no_log({"tvec": output.position})
-            if yaw_correction is not None:
+            if not getattr(self, "_forward_to_fc", True):
+                self.controller._set_marker_grid_mode(output.mygrid_request)
+            if yaw_correction is not None and getattr(self, "_forward_to_fc", True):
                 self.controller._send_yaw_error(yaw_correction)
 
     def _clear_attitude_history(self):

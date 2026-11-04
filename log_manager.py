@@ -13,6 +13,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _imu_sensor_snapshot(cf):
+    values = getattr(getattr(cf, 'param', None), 'values', None)
+    return copy.deepcopy(values.get('imu_sensors')) if isinstance(values, dict) else None
+
+
 class IlluminationLogger(LogManager):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -28,6 +33,8 @@ class IlluminationLogger(LogManager):
         self._packet_context = local()
         self.cf_log_data = None
         self.cf_log_callbacks = {}
+        self._imu_cf = None
+        self._imu_parameters_before = None
         self._cf_log_callbacks_lock = Lock()
         self.verbose = kwargs.get('verbose', False)
 
@@ -77,6 +84,13 @@ class IlluminationLogger(LogManager):
             'source_time_monotonic_s_basis': 'FC device tick mapped onto host CLOCK_MONOTONIC; null when invalid',
             'other_groups': 'projected onto the reference group clock, not independently fitted',
         }
+        output_data['imu_runtime'] = {
+            'input_stream': 'firmware_processed_acc_gyro',
+            'imu_sensors_before': self._imu_parameters_before,
+            'imu_sensors_after': _imu_sensor_snapshot(self._imu_cf),
+            'offboard_intrinsics_applied': False,
+            'note': 'Logged acc/gyro retain the firmware processing; no static-profile correction is applied by this logger.',
+        }
 
         for group, entries in self.groups.items():
             output_data[group] = entries
@@ -99,6 +113,8 @@ class IlluminationLogger(LogManager):
         logger.info(f"Logs saved to {filename}")
 
     def init_cf_logger(self, cf, cf_log_vars, cf_log_period=100):
+        self._imu_cf = cf
+        self._imu_parameters_before = _imu_sensor_snapshot(cf)
         self.cf_log_data = copy.deepcopy(cf_log_vars)
         self._cf_clock_group = next((name for name in ('QUAT', 'QUATERNION')
                                     if name in self.cf_log_data), next(iter(self.cf_log_data), None))
