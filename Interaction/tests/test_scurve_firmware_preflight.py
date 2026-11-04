@@ -355,10 +355,13 @@ class SCurvePreflightTests(unittest.TestCase):
             confirm_firmware_mode_parameters(p,timeout_s=.001,expected=expected)
         p.get_value.assert_not_called();self.assertFalse(p.callbacks)
 
-    def test_pointcloud_and_rigidbody_supported_full_pose_rejected(self):
+    def test_full_pose_supported_only_for_rigidbody(self):
         for mode in ('pointcloud','rigidbody'):
             ctrl=self.controller();ctrl.args.vicon_mode=mode;ctrl.prepare_firmware_auto_brake()
             ctrl.args.vicon_full_pose=True
-            with self.assertRaises(ValueError):ctrl.prepare_firmware_auto_brake()
+            if mode == 'rigidbody':
+                ctrl.prepare_firmware_auto_brake()
+            else:
+                with self.assertRaises(ValueError):ctrl.prepare_firmware_auto_brake()
 
 if __name__=='__main__':unittest.main()

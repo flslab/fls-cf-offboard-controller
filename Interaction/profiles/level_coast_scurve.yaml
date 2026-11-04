@@ -6,6 +6,9 @@ firmware_auto_brake:
   command_mode: attitude
   response_time_s: 0.14
   hold_gate: false  # Complete at the curve endpoint; no measured-speed gate.
+  # F1 firmware reset policy; false requires the corresponding FC parameter.
+  reset_on_mode_change: true
+  reset_xy_on_scurve_transition: true
   response_model:
     enabled: true
     calibration_file: Interaction/attitude_response.json

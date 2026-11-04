@@ -284,6 +284,7 @@ class Controller:
     def start(self):
         self.check_deck()
         self.load_manifest()
+        self.configure_battery_threshold()
         self.setup_sockets()
         self.download_mission_config()
         self.prepare_mpc_mission()
@@ -360,6 +361,10 @@ class Controller:
         if type(enabled) is not bool:
             raise ValueError('firmware_auto_brake.enabled must be boolean')
         self.firmware_auto_brake_enabled = enabled
+        from Interaction.firmware_pid_reset import reset_parameters
+        self._firmware_reset_config = {key: mode[key] for key in (
+            'reset_on_mode_change', 'reset_xy_on_scurve_transition') if key in mode}
+        reset_parameters(self._firmware_reset_config)  # Validate before any writes.
         if not enabled:
             return
         brake_mode = mode.get('mode', 'two_phase')
@@ -446,19 +451,22 @@ class Controller:
                         and (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve')
         if level_scurve and self.args.controller_type != 'pid':
             raise ValueError('S-curve coast requires the PID controller')
+        full_pose_scurve = (brake_mode == 'scurve'
+                            and self.args.vicon_mode == 'rigidbody')
         if not (self.args.interaction and (self.args.sense or level_scurve) and self.args.vicon
                 and self.args.vicon_mode in ('rigidbody', 'pointcloud')
-                and not self.args.vicon_full_pose and self.args.log
+                and (not self.args.vicon_full_pose or full_pose_scurve) and self.args.log
                 and not self.args.crazysim and not self.args.ground_test):
             raise ValueError('firmware auto brake requires hardware --interaction '
                              '--log, --sense (unless using level_coast scurve), and rigidbody or pointcloud '
-                             'position-only Vicon')
+                             'position-only Vicon (rigidbody full pose is also supported for scurve)')
         if (wrench.get('contact_attitude_shadow_enabled', False) or
                 (wrench.get('post_release_estimator_control') or {}).get(
                     'enabled', False)):
             raise ValueError('firmware auto brake cannot share offboard EKF authority')
 
     def verify_firmware_auto_brake_ready(self):
+        self.verify_firmware_pid_reset_ready()
         if not getattr(self, 'firmware_auto_brake_enabled', False):
             return
         curve_recorder = getattr(getattr(self, 'log_manager', None), 'curve_recorder', None)
@@ -530,6 +538,41 @@ class Controller:
                            f'mirror={self._firmware_vicon_mirror_error}, '
                            f'last_send={self._firmware_vicon_last_send_s}')
 
+    def _setup_firmware_pid_reset_params(self):
+        """Set and freshly confirm PID reset policy independently of braking."""
+        if getattr(self.args, 'calibrate', False):
+            self._firmware_reset_expected = {}
+            return
+        if getattr(self, 'flying', False):
+            raise RuntimeError('PID reset policy must be configured while grounded')
+        from Interaction.firmware_pid_reset import reset_parameters
+        from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+        toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
+        expected = reset_parameters(getattr(self, '_firmware_reset_config', {}), toc)
+        missing = [key for key in expected
+                   if key.split('.')[1] not in toc.get(key.split('.')[0], {})]
+        if missing:
+            raise RuntimeError('connected Bolt lacks PID reset parameters: ' + ', '.join(missing))
+        self._firmware_reset_expected = expected
+        if not expected:
+            return
+        for key, value in expected.items():
+            self.cf.param.set_value(key, str(value))
+        confirm_firmware_mode_parameters(self.cf.param, expected=expected)
+        logger.info('Firmware PID reset policy confirmed: %s', expected)
+        add_log = getattr(getattr(self, 'log_manager', None), 'add_log_entry', None)
+        if callable(add_log):
+            add_log('configs', {
+                'time': time.time(), 'confirmed_parameters': dict(expected),
+                'firmware_auto_brake_enabled': getattr(self, 'firmware_auto_brake_enabled', False),
+            }, name='Firmware PID Reset Policy')
+
+    def verify_firmware_pid_reset_ready(self):
+        expected = getattr(self, '_firmware_reset_expected', {})
+        if expected:
+            from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
+            confirm_firmware_mode_parameters(self.cf.param, expected=expected)
+
     def _setup_firmware_auto_brake_params(self):
         """Opt-in event planner; never modify the shared position PID gains."""
         required = {
@@ -551,6 +594,8 @@ class Controller:
         if velocity_mode:
             required['hlCommander'] += ('pRelVelCmd', 'pRelAdapt')
         toc = getattr(getattr(self.cf.param, 'toc', None), 'toc', {})
+        from Interaction.firmware_pid_reset import reset_parameters
+        reset_expected = reset_parameters(getattr(self, '_firmware_reset_config', {}), toc)
         analytic = getattr(self, '_firmware_analytic_expected', {})
         curve_expected = dict(analytic)
         translation = (self.mission or {}).get('Interaction', {}).get('config', {})
@@ -591,7 +636,7 @@ class Controller:
             for name in ('pRelExec', 'pRelShape', 'pRelLite'):
                 if name in toc.get('hlCommander', {}):
                     curve_expected['hlCommander.' + name] = 0
-        for key in {**curve_expected, **capabilities}:
+        for key in {**curve_expected, **capabilities, **reset_expected}:
             group, name = key.split('.', 1)
             required[group] = required.get(group, ()) + (name,)
         missing=[group+'.'+name for group,names in required.items()
@@ -601,11 +646,12 @@ class Controller:
         if velocity_mode and not analytic and self.firmware_auto_brake_stop_distance_m > 0:
             raise ValueError('velocity curve requires free-stop distance 0')
         self._firmware_curve_expected = curve_expected
-        if velocity_mode:
+        if velocity_mode or reset_expected:
             self.cf.param.set_value('hlCommander.pRelAuto', '0')
         if capabilities:
             from Interaction.firmware_parameter_confirmation import confirm_firmware_mode_parameters
             confirm_firmware_mode_parameters(self.cf.param, expected=capabilities)
+        self._setup_firmware_pid_reset_params()
         self.firmware_build_info = {}
         for name in ('pRelSVer', 'pRelAdVer', 'pRelJVer'):
             if name in toc.get('hlCommander', {}):
@@ -689,6 +735,7 @@ class Controller:
                     firmware=self.firmware_build_info,
                     command_mode=execution,
                     analytic_profile=getattr(self, 'firmware_analytic_profile', None), confirmed_parameters=confirmed_curve,
+                    pid_reset_parameters=reset_expected,
                     velocity_source={1: 'ordinary_firmware_state', 2: 'unified_vicon15'}.get(
                         analytic.get('kalmanPRel.feedback'), 'firmware_configured'),
                     response_model_used=bool(analytic.get('hlCommander.pRelComp')),
@@ -1199,6 +1246,29 @@ class Controller:
             self.manifest = yaml.safe_load(f)
 
         logger.debug("loaded manifest")
+
+    def configure_battery_threshold(self):
+        """Use the manifest's whole-pack voltage, or the legacy 2S default."""
+        mission = (self.manifest or {}).get('mission') or {}
+        if not isinstance(mission, dict):
+            raise ValueError('manifest.mission must be a mapping')
+        threshold = self.cfg.MIN_LIHV_VOLT * 2
+        source = 'config.MIN_LIHV_VOLT * 2'
+        if 'battery_threshold' in mission:
+            threshold = mission['battery_threshold']
+            source = 'manifest.mission.battery_threshold'
+        if (isinstance(threshold, bool) or not isinstance(threshold, (int, float))
+                or not math.isfinite(threshold) or threshold <= 0):
+            raise ValueError(f'{source} must be a positive finite whole-pack voltage in V')
+        if getattr(self.args, 'crazysim', False):
+            self.min_voltage = 0.0
+            self.battery_threshold_source = 'simulation'
+        else:
+            self.min_voltage = float(threshold)
+            self.battery_threshold_source = source
+        logger.info('Low-battery landing threshold: %.2f V (%s; %d consecutive low samples)',
+                    self.min_voltage, self.battery_threshold_source,
+                    self.battery_critical_consecutive_samples)
 
     def download_mission_config(self):
         if (getattr(self.args, 'imu_validation_session', None)
@@ -2113,6 +2183,11 @@ class Controller:
             )
         if specific_force_requested:
             required[IMU_GROUP] = IMU_FIELDS
+        from Interaction.position_handoff import handoff_enabled
+        translation = self.mission.get('Interaction', {}).get('config', {})
+        if (handoff_enabled(translation) and
+                (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve'):
+            required['POSITION_HANDOFF'] = ('controller.roll', 'controller.pitch')
         run = getattr(self.args, 'contact_attitude_run', None)
         if run in (2, 3):
             required.update({
@@ -2255,13 +2330,14 @@ class Controller:
         import hashlib
         from Interaction.position_follow import PositionFollowPidContext
         from Interaction.level_coast import resolve_command_modes
+        from Interaction.position_handoff import handoff_enabled
         translation = (self.mission or {}).get('Interaction', {}).get('config', {})
         modes = (resolve_command_modes(translation.get('level_coast') or {})
                  if translation.get('behavior') == 'level_coast' else {})
         # Calibration uses the ordinary position PID even when the mission's
         # later interaction policy follows position. Still recover persisted
         # gains from an interrupted interaction before configuring calibration.
-        enabled = ('position' in modes.values()
+        enabled = (('position' in modes.values() or handoff_enabled(translation))
                    and not getattr(self.args, 'calibrate', False))
         identity = getattr(self.args, 'drone_id', None)
         if identity is None:
@@ -2350,9 +2426,12 @@ class Controller:
             if (translation.get('behavior') == 'level_coast'
                     and (translation.get('level_coast') or {}).get('coast_command_mode') == 'scurve'):
                 from Interaction.level_coast_scurve import ContactEstimatorSelector
-                selector = ContactEstimatorSelector(self.cf)
+                selector = ContactEstimatorSelector(self.cf, switching_enabled=(
+                    (translation.get('level_coast') or {}).get('estimator_switch_at', 'release') != 'never'))
                 selector.prepare()
                 self.cf._level_coast_estimator_selector = selector
+        else:
+            self._setup_firmware_pid_reset_params()
 
         self._prepare_offboard_yaw_damping()
         self._prepare_offboard_position_control()
@@ -2367,6 +2446,7 @@ class Controller:
         if self.args.ground_test or self.args.skip_arm:
             return
 
+        self.verify_firmware_pid_reset_ready()
         self.verify_contact_attitude_final_prearm_ready()
         position_pid = getattr(self, '_offboard_position_pid', None)
         if position_pid is not None:
@@ -3784,6 +3864,9 @@ class Controller:
                     "time": time.time(),
                     "name": "battery_critical",
                     "voltage": voltage,
+                    "threshold_v": self.min_voltage,
+                    "threshold_source": getattr(self, 'battery_threshold_source',
+                                                'config.MIN_LIHV_VOLT * 2'),
                     "consecutive_low_voltage_samples": (
                         self.low_voltage_sample_count
                     ),
@@ -3959,6 +4042,20 @@ class Controller:
         started = time.monotonic()
         self.cf.extpos.send_extpose(*frame['tvec'], *frame['quat'])
         self._finish_mocap_forward_timing(frame, started)
+        if getattr(self, 'firmware_auto_brake_enabled', False):
+            receive_s = (frame.get('mocap_timing') or {}).get(
+                'wait_return_monotonic_s')
+            try:
+                if receive_s is None:
+                    raise ValueError('Pi Vicon receive timestamp unavailable')
+                send_vicon_position_mirror(
+                    self.cf, frame['tvec'],
+                    pi_receive_monotonic_s=receive_s,
+                )
+                self._firmware_vicon_last_send_s = time.monotonic()
+                self._firmware_vicon_mirror_error = None
+            except (ValueError, OverflowError, OSError) as error:
+                self._firmware_vicon_mirror_error = str(error)
         self._log_mocap(frame)
 
     def _prepare_mocap_forward_timing(self, frame):

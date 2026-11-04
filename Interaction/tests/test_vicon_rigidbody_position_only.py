@@ -53,6 +53,30 @@ def controller_methods(*names):
     return namespace
 
 
+class FullPoseFirmwareMirrorTests(unittest.TestCase):
+    def test_pose_and_timestamped_position_are_both_forwarded(self):
+        methods = controller_methods('_send_position_orientation',
+            '_prepare_mocap_forward_timing', '_finish_mocap_forward_timing')
+        mirror = Mock()
+        methods['_send_position_orientation'].__globals__['send_vicon_position_mirror'] = mirror
+        instance = types.SimpleNamespace(cf=Mock(), firmware_auto_brake_enabled=True,
+            _log_mocap=Mock())
+        for name, fn in methods.items():
+            if callable(fn) and name.startswith('_'):
+                setattr(instance, name, types.MethodType(fn, instance))
+        frame = dict(tvec=[1.,2.,3.], quat=[0.,0.,0.,1.],
+                     mocap_timing={'wait_return_monotonic_s':9.9})
+        instance._send_position_orientation(frame)
+        instance.cf.extpos.send_extpose.assert_called_once_with(1.,2.,3.,0.,0.,0.,1.)
+        mirror.assert_called_once_with(instance.cf, frame['tvec'], pi_receive_monotonic_s=9.9)
+        self.assertIsNone(instance._firmware_vicon_mirror_error)
+        mirror.reset_mock()
+        frame['mocap_timing'] = {}
+        instance._send_position_orientation(frame)
+        mirror.assert_not_called()
+        self.assertIn('timestamp unavailable', instance._firmware_vicon_mirror_error)
+
+
 class RigidBodyPositionOnlyTests(unittest.TestCase):
     def test_single_option_selects_vicon_rigidbody_without_full_pose(self):
         args = parse_args([

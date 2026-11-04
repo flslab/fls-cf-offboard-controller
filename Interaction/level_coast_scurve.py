@@ -5,6 +5,7 @@ views of one running Kalman task. Switching between them does not reset it.
 Only the firmware's matching terminal notice can complete an accepted curve.
 """
 
+import errno
 import threading
 import time
 from uuid import uuid4
@@ -17,12 +18,15 @@ from Interaction.post_release_firmware_control_event import (
 
 
 class ContactEstimatorSelector:
+    """Select the FC output view; disabling writes leaves its curve predictor running."""
+
     DEFAULT = 2
     CONTACT = 3
     PARAMETER = 'stabilizer.estimator'
 
-    def __init__(self, cf):
+    def __init__(self, cf, *, switching_enabled=True):
         self.cf = cf
+        self.switching_enabled = switching_enabled
         self.prepared = False
         self._lock = threading.Lock()
         self._requested = self.DEFAULT
@@ -56,6 +60,7 @@ class ContactEstimatorSelector:
     def request(self, contact, now=None):
         if not self.prepared:
             raise RuntimeError('S-curve contact estimator was not prepared before takeoff')
+        contact = contact and self.switching_enabled
         requested = self.CONTACT if contact else self.DEFAULT
         calibration = getattr(self.cf, '_estimator_hover_xy', None)
         if contact and calibration is not None and not calibration.ready:
@@ -82,7 +87,8 @@ class ContactEstimatorSelector:
     def close(self):
         # No worker can enqueue a late contact write after this restoration.
         try:
-            self.cf.param.set_value(self.PARAMETER, str(self.DEFAULT))
+            if self.switching_enabled:
+                self.cf.param.set_value(self.PARAMETER, str(self.DEFAULT))
         finally:
             if self.prepared:
                 self.cf.param.remove_update_callback(group='stabilizer', name='estimator', cb=self._callback)
@@ -90,9 +96,10 @@ class ContactEstimatorSelector:
 
 
 class FirmwareSCurveCoast:
-    def __init__(self, owner, selector):
+    def __init__(self, owner, selector, *, defer_estimator_restore=False):
         self.owner = owner
         self.selector = selector
+        self.defer_estimator_restore = defer_estimator_restore
         self.session = uuid4().int & 0xFFFFFFFF
         self.sequence = 0
         self.completion = None
@@ -121,10 +128,20 @@ class FirmwareSCurveCoast:
                 pi_receive_monotonic_ns=int(round(release_monotonic_s * 1e9)),
                 firmware_auto_brake_armed=True)
         except FirmwareReleaseRejectedError as error:
-            packet, details = owner._capture_firmware_release_rejection(receipt)
+            packet, details = owner._capture_firmware_release_rejection(
+                receipt, baseline_reject_count=baseline.get('hlCommander.pRelAutoRej'))
             error.add_firmware_diagnostics(packet)
             owner._log_event('Firmware Release Event Rejected', details)
             self.cancel()
+            # Only a fresh, unambiguous low-speed refusal may skip braking.
+            # Combined bounds failures, missing diagnostics and other ACKs
+            # still propagate through the existing flight-safety path.
+            if (error.ack_errno == errno.ERANGE
+                    and details.get('fresh_post_release_packet') is True
+                    and (error.diagnostics.get('firmware_reject_reason'),
+                         error.diagnostics.get('firmware_reject_detail'))
+                    in ((7, 4), (4, 1))):
+                return False
             raise
         except Exception:
             self.cancel()
@@ -134,6 +151,7 @@ class FirmwareSCurveCoast:
         self.hold_notice = None
         owner._log_event('Firmware Post-Release Brake Handoff', {**event, 'brake_mode': 'scurve'})
         print('[interaction] coast: s-curve', flush=True)
+        return True
 
     def poll(self, now):
         if not self.active:
@@ -158,14 +176,16 @@ class FirmwareSCurveCoast:
                 self.completion.__exit__(None, None, None)
                 self.completion = None
                 self.hold_notice = notice
-                self.selector.request(False, now)
+                if not self.defer_estimator_restore:
+                    self.selector.request(False, now)
                 self.owner._log_event('Level Coast S-Curve Completed', {
                     **notice, 'completion_condition': 'firmware_curve_endpoint',
                     'velocity_threshold_used': False})
-                print('[interaction] s-curve done -> default estimator', flush=True)
+                print('[interaction] s-curve done -> position capture' if self.defer_estimator_restore
+                      else '[interaction] s-curve done -> default estimator', flush=True)
             elif now - self.started_at > self.timeout_s:
                 raise RuntimeError(f'S-curve did not report its completed endpoint within {self.timeout_s:g} s')
-        return self.hold_notice is not None and self.selector.ready(now)
+        return self.hold_notice is not None and (self.defer_estimator_restore or self.selector.ready(now))
 
     def cancel(self):
         # The next LL packet takes control and cancels the FC plan. Merely

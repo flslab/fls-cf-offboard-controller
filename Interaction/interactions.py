@@ -15594,22 +15594,36 @@ class InteractionsControl:
                 logger.exception('Optional release diagnostics could not be saved')
                 self._release_diagnostics_warned = True
 
-    def _capture_firmware_release_rejection(self, baseline_receipt_s):
-        """Wait briefly for the log packet written after a rejected ACK."""
-        deadline = time.monotonic() + 0.05
-        brake_log, receipt_s = self._firmware_brake_status_snapshot()
-        while (receipt_s == baseline_receipt_s and
-               time.monotonic() < deadline):
-            self._safe_sleep(0.005)
+    def _capture_firmware_release_rejection(self, baseline_receipt_s, *,
+                                            baseline_reject_count=None):
+        """Wait across the 100 ms status period for this request's rejection."""
+        started = time.monotonic()
+        deadline = started + 0.25
+        while True:
             brake_log, receipt_s = self._firmware_brake_status_snapshot()
-        fresh_packet = (receipt_s is not None and
-                        receipt_s != baseline_receipt_s)
+            new_packet = (receipt_s is not None and
+                          (baseline_receipt_s is None or receipt_s > baseline_receipt_s))
+            counter_advanced = None
+            if baseline_reject_count is not None:
+                try:
+                    counter_advanced = ((int(brake_log['hlCommander.pRelAutoRej'])
+                                         - int(baseline_reject_count)) % 256 == 1)
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    counter_advanced = False
+            reason = firmware_release_rejection_diagnostics(brake_log)['firmware_reject_reason']
+            fresh_packet = (new_packet and reason is not None and reason > 0
+                            and counter_advanced is not False)
+            if fresh_packet or time.monotonic() >= deadline:
+                break
+            self._safe_sleep(0.005)
         # The fields are sticky. Never attribute an earlier release's reason
-        # to this ACK when no post-release status packet arrived in time.
+        # to this ACK before the request's counter increment is observed.
         diagnostics = firmware_release_rejection_diagnostics(
             brake_log if fresh_packet else {})
         diagnostics['brake_log_receipt_s'] = receipt_s
         diagnostics['fresh_post_release_packet'] = fresh_packet
+        diagnostics['rejection_counter_advanced'] = counter_advanced
+        diagnostics['rejection_wait_s'] = time.monotonic() - started
         return brake_log if fresh_packet else {}, diagnostics
 
     def _check_firmware_hold_for_reinteraction(self, hold_started_s):
@@ -17387,6 +17401,11 @@ class InteractionsControl:
         self._log_event('Wrench Interaction Complete')
 
     def _vicon_velocity_reference_for_onboard_state(self, state, *, max_time_skew_s=0.035):
+        _, velocity, stamp, skew = self._vicon_motion_reference_for_onboard_state(
+            state, max_time_skew_s=max_time_skew_s)
+        return velocity, stamp, skew
+
+    def _vicon_motion_reference_for_onboard_state(self, state, *, max_time_skew_s=0.035):
         """Read Vicon KF near the state epoch; None disables the age limit."""
         frames = self.log_manager.groups.get(self.pos_group_name, [])
         if len(frames) < 10:
@@ -17424,7 +17443,7 @@ class InteractionsControl:
                  if max_time_skew_s is None else
                  'Vicon velocity is stale, invalid, or disagrees with position')
             )
-        return velocity, float(frame['time']), skew_s
+        return position.copy(), velocity.copy(), float(frame['time']), skew_s
 
     def _get_synchronized_onboard_wrench_state(self):
         """Return time-aligned Crazyflie state-estimate and actuator packets."""
@@ -22416,7 +22435,8 @@ class InteractionsControl:
                         except FirmwareReleaseRejectedError as error:
                             brake_log, diagnostics = (
                                 self._capture_firmware_release_rejection(
-                                    baseline_brake_receipt_s))
+                                    baseline_brake_receipt_s,
+                                    baseline_reject_count=baseline_brake_log.get('hlCommander.pRelAutoRej')))
                             error.add_firmware_diagnostics(brake_log)
                             self._log_event(
                                 'Firmware Release Event Rejected', {
