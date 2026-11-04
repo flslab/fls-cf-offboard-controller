@@ -100,6 +100,12 @@ the rigid-body quaternion in the mocap log. It rejects `--vicon-full-pose` and
 does not enable the separate `--contact-attitude-run 2` shadow experiment.
 Without this option, the existing Vicon route is unchanged.
 
+Use `--save-tracker` (or `save_tracker: true` in the swarm manifest) to run
+and record the high-rate localizer without forwarding position or yaw to the
+flight controller. This overrides `--tracker`, acknowledges localizer startup
+without resetting the FC estimator, and keeps normal takeoff and landing.
+The localizer writes its usual tagged video and JSON logs.
+
 The high-rate localizer can also send a dedicated yaw-error measurement to a
 compatible Crazyflie firmware build. Configure the `yaw_correction` object in
 the localizer JSON. The controller accepts only synchronized HyperGrid PnP
