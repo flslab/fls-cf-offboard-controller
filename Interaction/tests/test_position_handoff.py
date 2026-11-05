@@ -135,6 +135,19 @@ class PositionHandoffTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'offset'):
             self.update(PositionHandoff(parameters(),{},{}),0,v=(1.5,0,0))
 
+    def test_disabled_offset_limit_applies_to_capture_but_keeps_other_envelopes(self):
+        h = PositionHandoff(parameters(), {'max_offset_enabled': False}, {})
+        cmd, log = self.update(h, 0., v=(1.5, 0., 0.))
+        self.assertGreater(np.linalg.norm(cmd[:2]), .6)
+        self.assertAlmostEqual(h.kp[0] * cmd[0], 1.5)
+        np.testing.assert_allclose(log['position_handoff_acceleration_m_s2'], [0., 0.])
+        with self.assertRaisesRegex(ValueError, 'velocity limits'):
+            self.update(PositionHandoff(parameters(), {'max_offset_enabled': False}, {}),
+                        0., v=(3., 0., 0.))
+        with self.assertRaisesRegex(ValueError, 'envelope'):
+            self.update(PositionHandoff(parameters(), {'max_offset_enabled': False}, {}),
+                        0., incoming=(20., 0.))
+
     def test_slower_vicon_stream_advances_dwell_only_on_new_samples(self):
         h=PositionHandoff(parameters(), {}, {})
         for k in range(60):

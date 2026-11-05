@@ -29,6 +29,7 @@ DEFAULTS = {
     'coast_velocity_retention': 0.0,
     'coast_transition_s': 0.5,
     'max_brake_acceleration_m_s2': 0.8,
+    'max_offset_enabled': True,
     'max_offset_m': 0.6,
 }
 
@@ -40,7 +41,11 @@ def validate_position_follow(options):
     if unknown:
         raise ValueError('unknown position_control options: ' + ', '.join(sorted(unknown)))
     values = dict(DEFAULTS, **options)
+    if type(values['max_offset_enabled']) is not bool:
+        raise ValueError('position_control.max_offset_enabled must be boolean')
     for key, value in values.items():
+        if key == 'max_offset_enabled':
+            continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise ValueError(f'position_control.{key} must be finite')
         values[key] = float(value)
@@ -207,7 +212,8 @@ class PositionVelocityFollower:
         if np.any(np.abs(desired_body_velocity) > self.velocity_limit):
             raise ValueError('position-follow target exceeds confirmed FC velocity limit')
         offset = world_to_body.T @ (desired_body_velocity / self.kp)
-        if np.linalg.norm(offset) > self.options['max_offset_m']:
+        if (self.options['max_offset_enabled']
+                and np.linalg.norm(offset) > self.options['max_offset_m']):
             raise ValueError('position-follow target exceeds maximum lookahead distance')
         target = np.array([*(p[:2] + offset), height])
         return target, {

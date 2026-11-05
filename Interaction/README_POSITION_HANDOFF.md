@@ -120,6 +120,9 @@ Omission uses these defaults.
 
 The existing `position_control.max_brake_acceleration_m_s2` (0.8 m/s²) and
 `position_control.max_offset_m` (0.6 m) also constrain capture.
+`position_control.max_offset_enabled` defaults to `true`. Set it to `false`
+to disable only the offset-distance check in both position following and
+capture; set it back to `true` to restore `max_offset_m` without changing its value.
 These are nominal command limits, not measured acceleration guarantees.
 FC velocity limits, boundaries, battery/motor checks and operator abort remain active.
 Duplicate Vicon frames cannot advance settling evidence; slower fresh Vicon
