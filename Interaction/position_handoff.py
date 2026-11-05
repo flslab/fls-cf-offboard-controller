@@ -199,7 +199,8 @@ class PositionHandoff:
         if np.any(np.abs(desired_body_velocity) > self.velocity_limit):
             raise ValueError('Position handoff exceeds confirmed FC velocity limits')
         offset = rotation.T @ (desired_body_velocity/self.kp)
-        if np.linalg.norm(offset) > self.position_options['max_offset_m']:
+        if (self.position_options['max_offset_enabled']
+                and np.linalg.norm(offset) > self.position_options['max_offset_m']):
             raise ValueError('Position handoff exceeds maximum position offset')
         target = np.array([*(p[:2]+offset), height])
         self.last_time = timestamp

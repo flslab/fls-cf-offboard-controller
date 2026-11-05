@@ -131,6 +131,27 @@ class PositionFollowerTests(unittest.TestCase):
                                math.degrees(math.atan(.8 / 9.81)))
         np.testing.assert_allclose(correction, log['position_velocity_correction_m_s'], atol=1e-12)
 
+    def test_offset_limit_can_be_disabled_without_changing_position_following(self):
+        p, v = np.array([.1, -.2, 1.]), np.array([1.061, .521, .068])
+        with self.assertRaisesRegex(ValueError, 'lookahead distance'):
+            PositionVelocityFollower(parameters(), {}).target(p, v, 0., 1., 'contact', 1.)
+        f = PositionVelocityFollower(parameters(), {'max_offset_enabled': False})
+        target, log = f.target(p, v, 0., 1., 'contact', 1.)
+        self.assertGreater(np.linalg.norm(log['position_offset_m']), .6)
+        np.testing.assert_allclose(f.kp * (target[:2] - p[:2]), v[:2], atol=1e-12)
+        self.assertEqual(f.options['max_offset_m'], .6)
+        with self.assertRaisesRegex(ValueError, 'velocity limit'):
+            f.target(p, [3., 0., 0.], 0., 2., 'contact', 1.)
+        with self.assertRaisesRegex(ValueError, 'finite'):
+            f.target(p, [float('nan'), 0., 0.], 0., 3., 'contact', 1.)
+
+    def test_offset_switch_requires_a_boolean_and_retains_positive_limit(self):
+        for enabled in (0, 1, None, 'false'):
+            with self.subTest(enabled=enabled), self.assertRaisesRegex(ValueError, 'boolean'):
+                validate_position_follow({'max_offset_enabled': enabled})
+        with self.assertRaisesRegex(ValueError, 'positive'):
+            validate_position_follow({'max_offset_enabled': False, 'max_offset_m': 0})
+
     def test_invalid_state_history_integrals_and_limits_are_rejected(self):
         bad = parameters(); bad[SUPPRESSED_GAINS[0]] = .1
         with self.assertRaisesRegex(ValueError,'zero XY'): PositionVelocityFollower(bad,{})

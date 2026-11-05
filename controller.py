@@ -1698,14 +1698,43 @@ class Controller:
         voltage = self.voltage
         voltage_str = f"{voltage:.2f}V" if voltage is not None else "NA"
         logger.info(f"Landing... Battery: {voltage_str}")
-        current_x = current_y = current_z = None
+        def landing_position():
+            position = (None, None, None)
+            if self.log_manager:
+                position = tuple(self.log_manager.get_latest_cf_log_data(
+                    'VEL_POS', 'stateEstimate.' + axis) for axis in ('x', 'y', 'z'))
+                if all(v is not None and math.isfinite(v) for v in position):
+                    return position
+                # Interaction missions use compressed kinematics or POS_ACC,
+                # rather than the legacy VEL_POS subscription.
+                for group in ('FIRMWARE_KIN', 'POS_ACC'):
+                    stamp = self.log_manager.get_latest_group_log_time(group)
+                    if (not isinstance(stamp, (float, int)) or not math.isfinite(stamp)
+                            or not -.02 <= time.time() - stamp <= .1):
+                        continue
+                    packet, _ = self.log_manager.get_nearest_group_log_data(group, stamp)
+                    if not packet:
+                        continue
+                    try:
+                        if group == 'FIRMWARE_KIN':
+                            position = tuple(decode_kinematic_packet(packet)[0])
+                        else:
+                            position = tuple(packet['stateEstimate.' + axis]
+                                             for axis in ('x', 'y', 'z'))
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    if len(position) == 3 and all(math.isfinite(v) for v in position):
+                        return position
+            if getattr(self, 'mocap', None):
+                frame = self._get_latest_mocap_frame()
+                if (frame and isinstance(frame.get('time'), (int, float))
+                        and -.02 <= time.time() - frame['time'] <= .1):
+                    position = frame['tvec']
+                    if len(position) == 3 and all(math.isfinite(v) for v in position):
+                        return tuple(position)
+            return None, None, None
 
-        if self.log_manager:
-            current_x = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.x")
-            current_y = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.y")
-            current_z = self.log_manager.get_latest_cf_log_data("VEL_POS", "stateEstimate.z")
-        elif self.mocap:
-            current_x, current_y, current_z = self._get_latest_mocap_frame()["tvec"]
+        current_x, current_y, current_z = landing_position()
 
         if self.flying:
             takeoff_speed = (self.mission or {}).get("takeoff_speed", 0.5)
@@ -1720,43 +1749,21 @@ class Controller:
                 self.flying = False
                 self._send_landing_confirmation(voltage)
                 return
-            if (getattr(self, '_interaction_high_level_active', False) and
-                    (getattr(self.args, 'crazysim', False) or
-                     getattr(self, 'firmware_auto_brake_enabled', False))):
-                # This simulation has already transferred ownership to HLC
-                # and refreshed its fixed hold target. An acknowledged LL->HL
-                # transfer here is a second, unnecessary handoff; if its ACK
-                # is delayed the fallback low-level XY descent can interrupt
-                # the hold. Land at the current XY under the existing owner.
-                commander.land(height, dt)
-                logger.info(f"Landing duration: {dt} seconds")
-                time.sleep(dt + 1)
-                commander.stop()
-                if getattr(self.args, 'crazysim', False):
-                    self.cf.param.set_value('hlCommander.pRelVel', '0')
-                if getattr(self, 'firmware_auto_brake_enabled', False):
-                    self.cf.param.set_value('hlCommander.pRelAuto', '0')
-                self.flying = False
-                self._send_landing_confirmation(voltage)
-                return
+            # All stop reasons use an acknowledged return-to-takeoff plan.
+            # Disable further automatic release plans before handing ownership back.
             if getattr(self, 'firmware_auto_brake_enabled', False):
-                # An unconfirmed release leaves LL as the known owner. The
-                # HLC planner may still be anchored at the pre-contact hover
-                # point, so even a direct HLC land could pull XY backward.
-                # Keep LL priority and descend at the current measured XY.
-                self._land_with_low_level(
-                    low_level, current_x, current_y, current_z,
-                    height, dt,
-                )
                 self.cf.param.set_value('hlCommander.pRelAuto', '0')
-                self.flying = False
-                self._send_landing_confirmation(voltage)
-                return
+            if getattr(self.args, 'crazysim', False):
+                self.cf.param.set_value('hlCommander.pRelVel', '0')
             try:
                 if (self.init_coord is not None
                         and all(v is not None and math.isfinite(v)
                                 for v in (current_x, current_y, current_z))):
                     initial_x, initial_y, _ = self.init_coord
+                    if not all(math.isfinite(v) for v in (initial_x, initial_y)):
+                        raise HandoffError('Takeoff XY is invalid')
+                    logger.info('Returning to takeoff XY (%.3f, %.3f) at %.3f m before landing',
+                                initial_x, initial_y, current_z)
                     dist = ((initial_x - current_x) ** 2 + (initial_y - current_y) ** 2) ** 0.5
                     return_duration = max(1.0, 2 * dist + 0.1)
                     # Pre-arm the HLC plan and wait for its firmware ACK BEFORE
@@ -1776,10 +1783,7 @@ class Controller:
                 logger.exception('HLC handoff failed; using streamed low-level descent')
                 # A return-to-origin trajectory might already have completed.
                 # Do not reuse its entry XY for fallback position control.
-                if self.log_manager:
-                    current_x = self.log_manager.get_latest_cf_log_data('VEL_POS', 'stateEstimate.x')
-                    current_y = self.log_manager.get_latest_cf_log_data('VEL_POS', 'stateEstimate.y')
-                    current_z = self.log_manager.get_latest_cf_log_data('VEL_POS', 'stateEstimate.z')
+                current_x, current_y, current_z = landing_position()
                 self._land_with_low_level(
                     low_level, current_x, current_y, current_z, height, dt,
                 )
