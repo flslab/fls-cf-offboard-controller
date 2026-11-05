@@ -2,6 +2,7 @@ import argparse
 import threading
 import time
 import logging
+from types import SimpleNamespace
 import motioncapture
 import numpy as np
 
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class Mocap(threading.Thread):
     def __init__(self, mocap_system_type="vicon", host_name="192.168.1.39", mode="mixed",
-                 *, timing_callback=None, source_metadata=False):
+                 *, timing_callback=None, source_metadata=False, async_callbacks=False):
         """
         Args:
             mocap_system_type (str): Type of system (vicon, optitrack, etc).
@@ -30,6 +31,10 @@ class Mocap(threading.Thread):
         self.mode = mode.lower()
         self.timing_callback = timing_callback
         self.source_metadata = source_metadata
+        self.async_callbacks = bool(async_callbacks)
+        self._dispatcher = None
+        self._dispatch_previous_frame = None
+        self.dispatch_error = None
         if source_metadata and timing_callback is None:
             raise ValueError('Vicon source metadata requires a timing_callback')
         if source_metadata and not callable(getattr(
@@ -64,6 +69,11 @@ class Mocap(threading.Thread):
             callback_entry_monotonic_s=started,
             wait_return_to_callback_s=started-timing['wait_return_monotonic_s'],
         )
+        for name in ('callback_dispatch_mode', 'callback_queue_overwritten_total',
+                     'callback_frames_dispatched', 'local_frames_skipped_before_dispatch',
+                     'callback_dispatch_start_monotonic_s', 'receipt_to_dispatch_s'):
+            if name in timing:
+                frame['mocap_timing'][name] = timing[name]
         if 'source_metadata' in timing:
             frame['mocap_timing']['source_metadata'] = timing['source_metadata']
             frame['mocap_timing']['source_frame_delta'] = timing['source_frame_delta']
@@ -80,7 +90,11 @@ class Mocap(threading.Thread):
 
     def stop(self):
         self.running = False
-        self.join()
+        if self._dispatcher is not None:
+            self._dispatcher.close()
+        from_worker = (self._dispatcher is not None and threading.current_thread() is self._dispatcher.thread)
+        if self.is_alive() and threading.current_thread() is not self and not from_worker:
+            self.join()
 
     def _get_pointcloud_array(self, mc):
         """Fetches and formats the point cloud array if applicable."""
@@ -290,81 +304,124 @@ class Mocap(threading.Thread):
             self.running = False
             return
 
+        if self.async_callbacks:
+            from mocap_dispatch import LatestFrameDispatcher
+            self._dispatcher = LatestFrameDispatcher(self._dispatch_queued_frame, self._dispatch_failed)
         frame_count = 0
         previous_return = None
         previous_processing_end = None
         previous_source_frame = None
-        while self.running:
-            wait_started = time.monotonic()
-            try:
-                mc.waitForNextFrame()
-            except Exception as e:
-                logger.warning(f"Frame wait error: {e}")
-                continue
-
-            now = time.time()
-            wait_returned = time.monotonic()
-            if self.timing_callback is not None:
-                self._frame_timing = dict(
-                    frame_id=frame_count, time=now,
-                    frame_id_scope='local_loop', frame_time_scope='host_after_wait',
-                    source_capture_time_available=False,
-                    wait_return_monotonic_s=wait_returned,
-                    wait_duration_s=wait_returned-wait_started,
-                    local_loop_interval_s=(None if previous_return is None
-                                           else wait_returned-previous_return),
-                    between_processing_and_wait_s=(None if previous_processing_end is None
-                                                   else wait_started-previous_processing_end),
-                    callback_count=0, callback_duration_s=0.0,
-                    max_callback_duration_s=0.0,
-                )
-            if self.source_metadata:
-                metadata_started = time.monotonic()
+        try:
+            while self.running:
+                wait_started = time.monotonic()
                 try:
-                    metadata = dict(mc.frameMetadata())
-                    source_frame = metadata.get('frame_number')
-                    delta = None
-                    if isinstance(source_frame, int):
-                        if previous_source_frame is not None:
-                            delta = (source_frame-previous_source_frame) & 0xffffffff
-                        previous_source_frame = source_frame
-                    self._frame_timing['source_metadata'] = metadata
-                    self._frame_timing['source_frame_delta'] = delta
-                except Exception as error:
-                    # Optional diagnostics must not interrupt pose forwarding.
-                    self._frame_timing['source_metadata_error'] = str(error)
-                finally:
-                    self._frame_timing['source_metadata_read_duration_s'] = (
-                        time.monotonic()-metadata_started)
+                    mc.waitForNextFrame()
+                except Exception as e:
+                    logger.warning(f"Frame wait error: {e}")
+                    continue
 
-            # Grab references once per frame
+                now = time.time()
+                wait_returned = time.monotonic()
+                timing = None
+                if self.timing_callback is not None or self.async_callbacks:
+                    timing = dict(
+                        frame_id=frame_count, time=now,
+                        frame_id_scope='local_loop', frame_time_scope='host_after_wait',
+                        source_capture_time_available=False,
+                        wait_return_monotonic_s=wait_returned,
+                        wait_duration_s=wait_returned-wait_started,
+                        local_loop_interval_s=(None if previous_return is None
+                                               else wait_returned-previous_return),
+                        between_processing_and_wait_s=(None if previous_processing_end is None
+                                                       else wait_started-previous_processing_end),
+                        callback_count=0, callback_duration_s=0.0,
+                        max_callback_duration_s=0.0,
+                    )
+                if self.source_metadata:
+                    metadata_started = time.monotonic()
+                    try:
+                        metadata = dict(mc.frameMetadata())
+                        source_frame = metadata.get('frame_number')
+                        delta = None
+                        if isinstance(source_frame, int):
+                            if previous_source_frame is not None:
+                                delta = (source_frame-previous_source_frame) & 0xffffffff
+                            previous_source_frame = source_frame
+                        timing['source_metadata'] = metadata
+                        timing['source_frame_delta'] = delta
+                    except Exception as error:
+                        # Metadata failure is explicit; pose forwarding continues.
+                        timing['source_metadata_error'] = str(error)
+                    finally:
+                        timing['source_metadata_read_duration_s'] = time.monotonic()-metadata_started
+
+                if self.async_callbacks:
+                    snapshot = self._snapshot_capture(mc)
+                    timing['acquisition_snapshot_duration_s'] = time.monotonic()-wait_returned
+                    self._dispatcher.submit((snapshot, frame_count, now, timing))
+                    processing_end = time.monotonic()
+                else:
+                    processing_end = self._dispatch_frame(mc, frame_count, now, timing)
+                previous_return = wait_returned
+                previous_processing_end = processing_end
+                frame_count += 1
+        finally:
+            if self._dispatcher is not None:
+                self._dispatcher.close()
+
+    def _snapshot_capture(self, mc):
+        # Only the acquisition thread touches SDK state. Copy values before
+        # GetFrame can replace the SDK's current-frame storage.
+        bodies = {}
+        if self.mode in ('rigidbody', 'mixed'):
+            for name, body in mc.rigidBodies.items():
+                rotation = body.rotation
+                bodies[name] = SimpleNamespace(position=np.array(body.position, dtype=float, copy=True),
+                    rotation=SimpleNamespace(**{axis: float(getattr(rotation, axis)) for axis in ('x','y','z','w')}))
+        cloud = None
+        if self.mode in ('pointcloud', 'shape', 'mixed'):
+            value = mc.pointCloud
+            if value is not None:
+                cloud = np.array(value, dtype=float, copy=True)
+        return SimpleNamespace(rigidBodies=bodies, pointCloud=cloud)
+
+    def _dispatch_failed(self, error):
+        self.dispatch_error = str(error)
+        self.running = False
+        logger.error('Mocap callback worker stopped: %s', error)
+
+    def _dispatch_queued_frame(self, value, counts):
+        snapshot, frame_count, now, timing = value
+        previous = self._dispatch_previous_frame
+        self._dispatch_previous_frame = frame_count
+        timing.update(counts, callback_dispatch_mode='latest_snapshot_worker',
+                      local_frames_skipped_before_dispatch=0 if previous is None else max(0, frame_count-previous-1),
+                      callback_dispatch_start_monotonic_s=time.monotonic())
+        timing['receipt_to_dispatch_s'] = timing['callback_dispatch_start_monotonic_s']-timing['wait_return_monotonic_s']
+        self._dispatch_frame(snapshot, frame_count, now, timing)
+
+    def _dispatch_frame(self, mc, frame_count, now, timing):
+        self._frame_timing = timing
+        try:
             with self._write_lock:
                 anchor = self.anchor_data
-                current_targets_rb = list(self.objects_to_track)
-                current_targets_pc = list(self.points_to_track)
-                current_targets_ms = list(self.shapes_to_track)
-
-            # The loop logic is now clean and modular
-            cloud_arr = self._get_pointcloud_array(mc)
-            current_noise_offset = self._calculate_noise_offset(mc, anchor, cloud_arr)
-            self._process_rigid_bodies(mc, current_targets_rb, current_noise_offset, frame_count, now)
-            self._process_point_clouds(cloud_arr, current_targets_pc, current_noise_offset, frame_count, now)
-            self._process_marker_shapes(cloud_arr, current_targets_ms, current_noise_offset, frame_count, now)
-
+                targets_rb = list(self.objects_to_track)
+                targets_pc = list(self.points_to_track)
+                targets_ms = list(self.shapes_to_track)
+            cloud = self._get_pointcloud_array(mc)
+            offset = self._calculate_noise_offset(mc, anchor, cloud)
+            self._process_rigid_bodies(mc, targets_rb, offset, frame_count, now)
+            self._process_point_clouds(cloud, targets_pc, offset, frame_count, now)
+            self._process_marker_shapes(cloud, targets_ms, offset, frame_count, now)
             processing_end = time.monotonic()
-            if self._frame_timing is not None:
-                timing = self._frame_timing
-                timing['processing_duration_s'] = processing_end-wait_returned
-                timing['processing_excluding_callbacks_s'] = max(
-                    0.0, timing['processing_duration_s']-timing['callback_duration_s'])
-                # Emit even when tracking found no target. Its own cost is
-                # visible in the next between_processing_and_wait_s value.
-                self.timing_callback(dict(timing))
-                self._frame_timing = None
-            previous_return = wait_returned
-            previous_processing_end = processing_end
-
-            frame_count += 1
+            if timing is not None:
+                timing['processing_duration_s'] = processing_end-timing['wait_return_monotonic_s']
+                timing['processing_excluding_callbacks_s'] = max(0., timing['processing_duration_s']-timing['callback_duration_s']-timing.get('receipt_to_dispatch_s',0.))
+                if self.timing_callback is not None:
+                    self.timing_callback(dict(timing))
+            return processing_end
+        finally:
+            self._frame_timing = None
 
     def set_anchor_rigidbody(self, obj_name):
         with self._write_lock:

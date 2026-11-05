@@ -1431,7 +1431,8 @@ class Controller:
                            host_name=getattr(self.args, 'mocap_ip', '192.168.1.39'),
                            mode=self.args.vicon_mode,
                            timing_callback=timing_callback,
-                           source_metadata=getattr(self.args, 'vicon_source_metadata', False), **mocap_options)
+                           source_metadata=getattr(self.args, 'vicon_source_metadata', False),
+                           async_callbacks=getattr(self.args, 'vicon_async_callbacks', False), **mocap_options)
 
         if self.args.vicon_mode == "rigidbody":
             logger.info(f"Subscribing to RigidBody: {self.args.obj_name}")
@@ -4313,6 +4314,8 @@ if __name__ == '__main__':
                     help=("opt-in Vicon frame number, timecode and pipeline latency "
                           "diagnostics in mocap_timing; requires --log and a "
                           "patched motioncapture package"))
+    ap.add_argument("--vicon-async-callbacks", action="store_true",
+                    help="receive immutable Vicon snapshots continuously; callbacks consume only the latest snapshot")
     ap.add_argument("--vicon-full-pose", action="store_true",
                     help="if passed send both position and orientation otherwise send only position")
     ap.add_argument(
@@ -4410,6 +4413,8 @@ if __name__ == '__main__':
         args.vicon = True
         args.vicon_mode = 'rigidbody'
         args.obj_name = rigid_body_name
+    if args.vicon_async_callbacks and not (args.vicon or args.save_vicon):
+        ap.error('--vicon-async-callbacks requires Vicon capture')
     if args.vicon_source_metadata and not args.log:
         ap.error('--vicon-source-metadata requires --log')
     if args.vicon_source_metadata and not (args.vicon or args.save_vicon):
