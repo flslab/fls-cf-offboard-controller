@@ -96,8 +96,8 @@ class LoggingCleanupTests(unittest.TestCase):
         watch(controller, 4, {'pm.vbat': 6.6}, None)
         logs.add_log_entry.assert_called_once()
 
-    def test_crazysim_existing_hlc_owner_lands_in_place(self):
-        handoff = Mock(side_effect=AssertionError('unexpected second handoff'))
+    def test_crazysim_existing_hlc_owner_returns_before_landing(self):
+        handoff = Mock()
         namespace = methods({'land'}, time=Mock(), math=math, logger=Mock(),
                             CommandWrapper=CommandWrapper, HandoffError=HandoffError,
                             handoff_to_high_level=handoff)
@@ -113,15 +113,14 @@ class LoggingCleanupTests(unittest.TestCase):
             _send_landing_confirmation=Mock(),
         )
         namespace['land'](controller)
-        handoff.assert_not_called()
-        controller.ll_commander.send_position_setpoint.assert_not_called()
-        controller.hl_commander.go_to.assert_not_called()
-        controller.hl_commander.land.assert_called_once_with(.02, 2.)
+        self.assertEqual([call.args[2] for call in handoff.call_args_list], ['go_to', 'land'])
+        self.assertEqual(handoff.call_args_list[0].args[3:6], (0., -1., 1.))
+        controller.cf.param.set_value.assert_called_with('hlCommander.pRelVel', '0')
         controller.hl_commander.stop.assert_called_once_with()
         self.assertFalse(controller.flying)
         controller._send_landing_confirmation.assert_called_once_with(4.2)
 
-    def test_firmware_release_rejection_lands_without_return_goto(self):
+    def test_firmware_emergency_returns_before_landing(self):
         handoff = Mock()
         namespace = methods({'land'}, time=Mock(), math=math, logger=Mock(),
                             CommandWrapper=CommandWrapper, HandoffError=HandoffError,
@@ -139,12 +138,38 @@ class LoggingCleanupTests(unittest.TestCase):
             _land_with_low_level=Mock(),
             _send_landing_confirmation=Mock(),
         )
+        controller._emergency_landing_requested = True
         namespace['land'](controller)
-        handoff.assert_not_called()
-        controller._land_with_low_level.assert_called_once_with(
-            controller.ll_commander, 0.1, -0.2, 1.0, 0.1, 2.0)
-        controller.hl_commander.go_to.assert_not_called()
+        self.assertEqual([call.args[2] for call in handoff.call_args_list], ['go_to', 'land'])
+        self.assertEqual(handoff.call_args_list[0].args[3:6], (0., 0., 1.))
+        controller._land_with_low_level.assert_not_called()
+        controller.cf.param.set_value.assert_called_with('hlCommander.pRelAuto', '0')
         self.assertFalse(controller.flying)
+
+    def test_compressed_interaction_pose_is_used_for_return_and_stale_pose_is_not(self):
+        for age in (.01, .5):
+            with self.subTest(age=age):
+                handoff = Mock()
+                decode = Mock(return_value=([.1, .2, 1.1], None, None, None))
+                namespace = methods({'land'}, time=SimpleNamespace(time=lambda: 100., sleep=Mock()),
+                    math=math, logger=Mock(), CommandWrapper=CommandWrapper,
+                    HandoffError=HandoffError, handoff_to_high_level=handoff,
+                    decode_kinematic_packet=decode)
+                logs = Mock()
+                logs.get_latest_cf_log_data.return_value = None
+                logs.get_latest_group_log_time.side_effect = lambda group: 100.-age if group == 'FIRMWARE_KIN' else None
+                logs.get_nearest_group_log_data.return_value = ({'packet': True}, 0.)
+                controller = SimpleNamespace(
+                    args=SimpleNamespace(skip_landing=False, takeoff_altitude=1., init_yaw=0., vicon=True),
+                    hl_commander=Mock(), ll_commander=Mock(), cf=Mock(), log_manager=logs,
+                    voltage=7.4, init_coord=[-.5, -.8, .1], flying=True,
+                    mission={}, use_flowdeck=False, firmware_auto_brake_enabled=True,
+                    _send_landing_confirmation=Mock())
+                namespace['land'](controller)
+                commands = [call.args[2] for call in handoff.call_args_list]
+                self.assertEqual(commands, ['go_to', 'land'] if age < .1 else ['land'])
+                if age < .1:
+                    self.assertEqual(handoff.call_args_list[0].args[3:6], (-.5, -.8, 1.1))
 
     def test_emergency_prepare_never_touches_peripherals_or_flight_control(self):
         namespace = methods({'_prepare_for_emergency_landing'})
