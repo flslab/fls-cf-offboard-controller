@@ -1540,11 +1540,31 @@ class Controller:
             # this known spawn point; no host Vicon process is involved.
             self.init_coord = list(self.args.init_pos)
         elif self.mocap and not self.args.ground_test and not (self.args.skip_landing and self.args.skip_takeoff):
+            timeout = float(getattr(self.args, 'mocap_ready_timeout', 15.0))
+            deadline = time.monotonic() + timeout
+            subject = getattr(self.args, 'obj_name', None) or self.args.drone_id
+            logger.info("Waiting up to %.1fs for a tracked Vicon pose for %s", timeout, subject)
             while self.init_coord is None:
+                error = getattr(self.mocap, 'dispatch_error', None)
+                if error:
+                    raise RuntimeError(f'Vicon callback worker failed before readiness: {error}')
+                if getattr(self.mocap, 'running', True) is False:
+                    raise RuntimeError(f'Vicon receiver stopped before a valid pose for {subject}')
                 try:
-                    self.init_coord = self._get_latest_mocap_frame()["tvec"]
-                except:
-                    self._safe_sleep(1)
+                    frame = self._get_latest_mocap_frame()
+                    position = [float(v) for v in frame['tvec']]
+                    stamp = (frame.get('mocap_timing') or {}).get('wait_return_monotonic_s')
+                    fresh = stamp is None or 0 <= time.monotonic()-float(stamp) <= .5
+                    if len(position) == 3 and all(math.isfinite(v) for v in position) and fresh:
+                        self.init_coord = position
+                        break
+                except (KeyError, IndexError, TypeError, ValueError):
+                    pass
+                if time.monotonic() >= deadline:
+                    status = getattr(self.mocap, 'acquisition_status', {})
+                    raise TimeoutError(f'No valid tracked Vicon pose for {subject} within {timeout:g}s; '
+                                       f'receiver status={status}. Check object visibility/occlusion, rigid-body name and segment data in Vicon. Drone is not ready; takeoff is blocked.')
+                self._safe_sleep(min(.1, max(0., deadline-time.monotonic())))
         elif self.use_flowdeck:
             self.init_coord = self.args.init_pos
 
@@ -4320,6 +4340,8 @@ if __name__ == '__main__':
                           "patched motioncapture package"))
     ap.add_argument("--vicon-async-callbacks", action="store_true",
                     help="receive immutable Vicon snapshots continuously; callbacks consume only the latest snapshot")
+    ap.add_argument("--mocap-ready-timeout", type=float, default=15.0,
+                    help="maximum pre-arm wait for a fresh tracked Vicon pose")
     ap.add_argument("--vicon-full-pose", action="store_true",
                     help="if passed send both position and orientation otherwise send only position")
     ap.add_argument(
@@ -4577,6 +4599,8 @@ if __name__ == '__main__':
         ap.error('--sense timing values must be positive')
     if args.sense_power_poll_interval <= 0.0:
         ap.error('--sense-power-poll-interval must be positive')
+    if not math.isfinite(args.mocap_ready_timeout) or args.mocap_ready_timeout <= 0.0:
+        ap.error('--mocap-ready-timeout must be positive and finite')
     if not math.isfinite(args.localizer_timeout) or args.localizer_timeout <= 0.0:
         ap.error('--localizer-timeout must be positive and finite')
 

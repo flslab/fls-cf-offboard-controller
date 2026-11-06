@@ -35,6 +35,7 @@ class Mocap(threading.Thread):
         self._dispatcher = None
         self._dispatch_previous_frame = None
         self.dispatch_error = None
+        self.acquisition_status = {}
         if source_metadata and timing_callback is None:
             raise ValueError('Vicon source metadata requires a timing_callback')
         if source_metadata and not callable(getattr(
@@ -355,8 +356,12 @@ class Mocap(threading.Thread):
                     finally:
                         timing['source_metadata_read_duration_s'] = time.monotonic()-metadata_started
 
+                self.acquisition_status = {'received_frames': frame_count+1,
+                                           'receipt_monotonic_s': wait_returned}
                 if self.async_callbacks:
                     snapshot = self._snapshot_capture(mc)
+                    self.acquisition_status = {**self.acquisition_status,
+                                               'visible_rigid_bodies': list(snapshot.rigidBodies)}
                     timing['acquisition_snapshot_duration_s'] = time.monotonic()-wait_returned
                     self._dispatcher.submit((snapshot, frame_count, now, timing))
                     processing_end = time.monotonic()
