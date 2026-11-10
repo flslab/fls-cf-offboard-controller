@@ -3342,11 +3342,10 @@ class Controller:
             total_offset[2] -= 0.09
 
         if any(abs(v) > 1e-6 for v in total_offset):
-            for i in range(3):
-                target[i] += total_offset[i]
-            for j in range(len(waypoints)):
+            # Keep the initial target in the same corrected frame as the path.
+            for point in [target, *waypoints]:
                 for i in range(3):
-                    waypoints[j][i] += total_offset[i]
+                    point[i] += total_offset[i]
 
         if len(target) == 3:
             target.append(0.0)
