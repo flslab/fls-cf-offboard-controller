@@ -2802,8 +2802,10 @@ class Controller:
 
     def orchestrated_mission_interaction(self):
         mission_setting = self.mission['drones'][self.args.drone_id]
-        target = mission_setting['target']
-        waypoints = mission_setting.get('waypoints', [])
+        # YAML anchors can alias the target and waypoint rows. Give every
+        # execution point its own list before applying in-place corrections.
+        target = list(mission_setting['target'])
+        waypoints = [list(point) for point in mission_setting.get('waypoints', [])]
         position_offset = mission_setting.get('position_offset', None)
         low_level_setpoint = mission_setting.get('low_level_setpoint', [])
         rotation_test = mission_setting.get('rotation_test', [])
@@ -3303,8 +3305,8 @@ class Controller:
         mission = self.missions[mission_index]
         mission_setting = mission['drones'][self.args.drone_id]
         markers = mission.get('markers', [])
-        target = mission_setting['target']
-        waypoints = mission_setting.get('waypoints', [])
+        target = list(mission_setting['target'])
+        waypoints = [list(point) for point in mission_setting.get('waypoints', [])]
         position_offset = mission_setting.get('position_offset', None)
         low_level_setpoint = mission_setting.get('low_level_setpoint', [])
         velocity_commands = mission_setting.get('velocity_commands', [])
@@ -3826,16 +3828,21 @@ class Controller:
             raise LowBatteryException(f"Battery Critical: {self.voltage:.2f}V")
 
     def _prepare_for_emergency_landing(self):
-        """Mark the request without blocking or changing control ownership.
+        """Mark the request and show red without changing control ownership.
 
         The caller immediately raises into ``Controller.__exit__`` and
-        ``stop() -> land()``. Peripheral targets are handled once by stop().
+        ``stop() -> land()``. Servo targets are handled once by stop().
         Sleeping here used to leave the current LL
         setpoint unrefreshed for 0.6 s, then notify before any HLC plan existed.
         Both actions can destabilize the aircraft. The centralized landing
         path now owns the acknowledged HLC transfer or streamed LL fallback.
         """
         self._emergency_landing_requested = True
+        if self.led is not None:
+            try:
+                self.led.show_single_color(color=(255, 0, 0))
+            except Exception:
+                logger.exception('Emergency LED update failed; continuing emergency landing.')
 
     def _safe_sleep_orchestrated(self, duration):
         end_time = time.time() + duration
