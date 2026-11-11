@@ -2711,12 +2711,10 @@ class Controller:
             ]
             source = "legacy viewpoint"
 
-        light_module_offset = self.args.light_module_offset
         translation = affine_translation(
             camera,
             position_offset,
             yaw_offset,
-            light_module_offset,
         )
         logger.info(f"Camera correction source: {source}")
         logger.info(f"Authored camera position: {camera}")
@@ -2727,7 +2725,6 @@ class Controller:
             yaw_offset,
             math.degrees(yaw_offset),
         )
-        logger.info(f"Light module offset: {light_module_offset}")
         logger.info(
             "Reference affine translation (zero authored yaw): %s",
             translation,
@@ -2753,6 +2750,7 @@ class Controller:
         SFL yaw values are unwrapped radians.  Legacy per-drone
         ``position_offset`` values remain world-axis corrections and are
         returned for the caller to add after this global camera transform.
+        Authored positions already account for the lighting-module mount.
         """
         transform = self._compute_viewpoint_transform(mission)
         base_offset = list(position_offset or [0.0, 0.0, 0.0])
@@ -2770,8 +2768,6 @@ class Controller:
                 camera,
                 camera_offset,
                 camera_yaw,
-                self.args.light_module_offset,
-                light_module_yaw_rad=final_yaw,
             )
             if len(point) == 3:
                 point.append(final_yaw)
@@ -4410,7 +4406,6 @@ if __name__ == '__main__':
     )
     ap.add_argument("--reference", type=float, nargs=3, help="actual reference coordinates x y z which will be used to offset the waypoints", default=None)
     ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
-    ap.add_argument("--light-module-offset", type=float, nargs=3, help="light module offset from marker coordinates x y z", default=[0.0, 0.0, 0.0])
     ap.add_argument("--camera-offset", type=float, nargs=3, help="camera offset from marker coordinates x y z", default=[0, 0, 0])
     ap.add_argument("--marker-offset", type=float, nargs=3, help="marker offset from marker module coordinates x y z", default=[0.0, 0.0, 0])
     ap.add_argument("--controller-type", type=str, choices=["pid", "mellinger"], help="pid or mellinger", default="pid")
