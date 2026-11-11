@@ -169,6 +169,7 @@ class Controller:
         self.mocap = None
         self.servo = None
         self.led = None
+        self._led_update_callback = None
         self.tracker = None
         self.force_sensor = None
         self.rpi_power_monitor = None
@@ -2871,6 +2872,7 @@ class Controller:
         elif led_setting.get('mode') == 'expression':
             def update_led_cb():
                 self.update_led(pointers, led_setting)
+            self._led_update_callback = update_led_cb
             self.smooth_controller.add_update_callback(update_led_cb)
         elif led_color is not None:
             self.led.show_single_color(led_color)
@@ -3036,6 +3038,7 @@ class Controller:
 
         if not len(pointers) and led_setting.get('mode') == 'expression':
             self.smooth_controller.remove_update_callback(update_led_cb)
+            self._led_update_callback = None
 
         self.led.clear()
 
@@ -3388,6 +3391,7 @@ class Controller:
         elif led_setting.get('mode') == 'expression':
             def update_led_cb():
                 self.update_led(pointers, led_setting, mission_index)
+            self._led_update_callback = update_led_cb
             self.smooth_controller.add_update_callback(update_led_cb)
         elif led_color is not None:
             self.led.show_single_color(led_color)
@@ -3525,6 +3529,7 @@ class Controller:
             self.smooth_controller.remove_group("pointers")
         if not len(pointers) and led_setting.get('mode') == 'expression':
             self.smooth_controller.remove_update_callback(update_led_cb)
+            self._led_update_callback = None
 
         if self.led:
             self.led.clear()
@@ -3840,6 +3845,13 @@ class Controller:
         self._emergency_landing_requested = True
         if self.led is not None:
             try:
+                if self.smooth_controller is not None:
+                    # Removal waits for any active callback under the updater's
+                    # lock, so a pending animation cannot overwrite emergency red.
+                    self.smooth_controller.remove_group("pointers")
+                    if self._led_update_callback is not None:
+                        self.smooth_controller.remove_update_callback(self._led_update_callback)
+                        self._led_update_callback = None
                 self.led.show_single_color(color=(255, 0, 0))
             except Exception:
                 logger.exception('Emergency LED update failed; continuing emergency landing.')
