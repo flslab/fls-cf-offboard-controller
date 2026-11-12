@@ -1516,7 +1516,7 @@ class Controller:
 
         logger.debug("sockets opened")
 
-    def handshake(self):
+    def handshake(self, calibration_mission_index=None):
         if not self.args.orchestrated:
             return
 
@@ -1524,12 +1524,18 @@ class Controller:
         self.push_socket.send_json({"id": self.args.drone_id, "status": "READY", "battery": self.voltage})
 
         logger.info(f"[{self.args.drone_id}] Waiting for START...")
-        while True:
-            if self._safe_sleep(1):
-                break
-            # msg = self.sub_socket.recv_json()
-            # if msg.get('cmd') == 'START':
-            #     break
+        self._servo_calibration_phase = calibration_mission_index
+        self._servo_calibration_deadline = None
+        try:
+            while True:
+                deadline = self._servo_calibration_deadline
+                if deadline is not None and time.monotonic() >= deadline:
+                    self._prepare_for_emergency_landing()
+                    raise RuntimeError('servo calibration handshake timed out')
+                if self._safe_sleep(1):
+                    break
+        finally:
+            self._servo_calibration_phase = None
 
         delay = (int(self.args.drone_id.split('lb')[1]) - 1) * self.manifest['mission']['delta_t']
         logger.info(f"[{self.args.drone_id}] Launching in {delay}s...")
@@ -3372,7 +3378,7 @@ class Controller:
             self._safe_sleep(dt + 1)
 
         if self.manifest['mission']['require_handshake']:
-            self.handshake()
+            self.handshake(calibration_mission_index=mission_index)
 
         self.animation_start_times.append(time.time())
 
@@ -3879,6 +3885,9 @@ class Controller:
                         self.log_manager.add_log_entry("events", {"time": time.time(), "name": "emergency_stop"})
                         self._prepare_for_emergency_landing()
                         raise EmergencyStopException("Orchestrator requested Emergency Stop")
+                    elif msg.get('cmd') == 'SERVO_CALIBRATE':
+                        from servo_calibration import handle_command
+                        handle_command(self, msg)
                     elif msg.get('cmd') == 'START':
                         return True
                 except zmq.Again:
@@ -4406,8 +4415,6 @@ if __name__ == '__main__':
     )
     ap.add_argument("--reference", type=float, nargs=3, help="actual reference coordinates x y z which will be used to offset the waypoints", default=None)
     ap.add_argument("--anchor", type=float, nargs=3, help="actual anchor coordinates x y z", default=None)
-    ap.add_argument("--camera-offset", type=float, nargs=3, help="camera offset from marker coordinates x y z", default=[0, 0, 0])
-    ap.add_argument("--marker-offset", type=float, nargs=3, help="marker offset from marker module coordinates x y z", default=[0.0, 0.0, 0])
     ap.add_argument("--controller-type", type=str, choices=["pid", "mellinger"], help="pid or mellinger", default="pid")
     ap.add_argument(
         "--pid-attitude-source",

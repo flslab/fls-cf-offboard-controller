@@ -87,7 +87,7 @@ class CameraNode:
         return digest.hexdigest()
 
     def _status_message(self, status, **values):
-        message = {'id': 'CAM', 'status': status}
+        message = {'id': self.manifest.get('camera_node', {}).get('id', 'CAM'), 'status': status}
         run_id = getattr(self, 'run_id', None)
         if run_id is not None:
             message['run_id'] = run_id
@@ -475,6 +475,59 @@ class CameraNode:
             json.dump(payload, stream, indent=2)
         return payload
 
+    def _servo_calibration_command(self, message):
+        if message.get('run_id') != self.run_id:
+            return
+        request_id = message.get('request_id')
+        try:
+            config = self.manifest.get('servo_calibration', {})
+            if not config.get('enabled'):
+                raise ValueError('servo calibration is disabled')
+            if message['cmd'] == 'STOP_SERVO_CAMERA':
+                self._close_servo_camera()
+                self.push_socket.send_json(self._status_message(
+                    'SERVO_CAMERA_STOPPED', request_id=request_id))
+                return
+            cached = getattr(self, '_servo_measurement_reply', None)
+            if cached and cached.get('request_id') == request_id:
+                self.push_socket.send_json(cached)
+                return
+            if self.recording_process is not None:
+                raise RuntimeError('calibration requires exclusive camera access before recording')
+            if getattr(self, '_servo_camera', None) is None:
+                from servo_calibration_camera import CalibrationStream
+                self._servo_camera = CalibrationStream(self.recording_binary, self.args['params'], config,
+                                                       run_id=self.run_id)
+            self._servo_camera.request(message)
+        except Exception as error:
+            self._close_servo_camera()
+            self.push_socket.send_json(self._status_message(
+                'SERVO_CAMERA_FAILED', request_id=request_id, error=str(error)))
+
+    def _close_servo_camera(self):
+        stream = getattr(self, '_servo_camera', None)
+        if stream is not None:
+            try:
+                stream.close()
+            finally:
+                self._servo_camera = None
+
+    def _poll_servo_camera(self):
+        stream = getattr(self, '_servo_camera', None)
+        if stream is None:
+            return
+        try:
+            result = stream.poll()
+            if result is not None:
+                reply = self._status_message(**result)
+                self._servo_measurement_reply = reply
+                self.push_socket.send_json(reply)
+        except Exception as error:
+            request_id = stream.job.get('request_id') if stream.job else None
+            self._close_servo_camera()
+            self.push_socket.send_json(self._status_message(
+                'SERVO_CAMERA_FAILED', request_id=request_id, error=str(error)))
+
     def start_recording(self, request_id=None, acknowledge=True):
         if self.recording_process is None:
             # -t 0: Record indefinitely until signal.
@@ -576,6 +629,16 @@ class CameraNode:
             )
             return
 
+        calibration_config = self.manifest.get('servo_calibration', {})
+        if (calibration_config.get('enabled') and
+                self.manifest.get('camera_node', {}).get('id', 'CAM') == calibration_config.get('camera_id', 'CAM')):
+            try:
+                from servo_calibration_camera import validate_capture
+                validate_capture(self.args['params'], calibration_config)
+            except Exception as error:
+                self.push_socket.send_json(self._status_message('FAILED', error=str(error)))
+                return
+
         if self.pose_config.get('enabled', False):
             try:
                 pose = self.estimate_pose()
@@ -601,6 +664,7 @@ class CameraNode:
 
         try:
             while True:
+                self._poll_servo_camera()
                 if self.recording_process is not None:
                     return_code = self.recording_process.poll()
                     if return_code is not None:
@@ -619,7 +683,10 @@ class CameraNode:
                 msg = self.sub_socket.recv_json()
                 cmd = msg.get('cmd')
 
-                if cmd == 'START_CAMERA':
+                if cmd in ('MEASURE_SERVOS', 'STOP_SERVO_CAMERA'):
+                    self._servo_calibration_command(msg)
+
+                elif cmd == 'START_CAMERA':
                     if (
                         self.run_id is not None
                         and msg.get('run_id') != self.run_id
@@ -631,6 +698,9 @@ class CameraNode:
                         break
 
                 elif cmd == 'START':
+                    if (self.manifest.get('servo_calibration', {}).get('enabled')
+                            and self.recording_process is None):
+                        continue  # Explicit START_CAMERA follows calibration.
                     # Compatibility command. Explicit START_CAMERA performs
                     # the nonce-bound health acknowledgement; do not emit a
                     # duplicate RECORDING status here.
@@ -655,6 +725,8 @@ class CameraNode:
         except Exception as e:
             self.logger.error(f"Error: {e}")
             self.stop_recording()
+        finally:
+            self._close_servo_camera()
 
 
 if __name__ == "__main__":
