@@ -551,9 +551,6 @@ class CameraNode:
                 "--nopreview"
             ]
             cmd += self.args["params"]
-            # Verbose libav output exposes the input capture timestamp that
-            # anchors the MP4 PTS. Force it after user parameters.
-            cmd += ['--verbose', '2']
             self.logger.info(f"Starting Recording with these settings: {cmd}")
 
             try:
@@ -561,27 +558,24 @@ class CameraNode:
                             '--config', '-c', '--av-sync', '--save-pts', '--segment', '--circular', '--pause'}
                 if any(str(parameter).split('=', 1)[0] in reserved for parameter in self.args['params']):
                     raise ValueError('camera parameters cannot override the managed recording format, output, or timing')
-                if not shutil.which('ffprobe'):
-                    raise RuntimeError('ffprobe is required to save frame timing')
                 self.recording_timing = RecordingTiming(
                     OUTPUT_FILENAME, camera_id=self.manifest.get('camera_node', {}).get('id', 'CAM'),
                     run_id=self.run_id, request_id=request_id, command=cmd)
                 # Start process in new process group for clean termination
                 self.recording_process = subprocess.Popen(
                     cmd,
-                    preexec_fn=os.setsid, stderr=subprocess.PIPE, text=True
+                    preexec_fn=os.setsid
                 )
-                self.recording_timing.attach(self.recording_process)
-                first_frame = self.recording_timing.wait_first_frame(
-                    float(self.manifest.get('camera_node', {}).get('first_frame_timeout_s', 6)))
-                self.recording_timing.event('first_frame_ready', request_id=request_id)
+                self.recording_timing.started()
+                time.sleep(.25)
                 return_code = self.recording_process.poll()
                 if return_code is not None:
                     raise RuntimeError(
                         f"video process exited immediately with {return_code}"
                     )
+                self.recording_timing.confirmed()
                 if acknowledge:
-                    values = {'timing_schema_version': 1, **first_frame}
+                    values = {'timing_schema_version': 2, **self.recording_timing.acknowledgement()}
                     if request_id is not None:
                         values['request_id'] = request_id
                     self.push_socket.send_json(
@@ -613,7 +607,7 @@ class CameraNode:
             if acknowledge:
                 values = {}
                 if timing:
-                    values.update(timing_schema_version=1, **timing.wait_first_frame(0))
+                    values.update(timing_schema_version=2, **timing.acknowledgement())
                 if request_id is not None:
                     values['request_id'] = request_id
                 self.push_socket.send_json(
@@ -624,6 +618,9 @@ class CameraNode:
     def stop_recording(self):
         if self.recording_process:
             self.logger.info("Stopping Recording and Saving...")
+            timing = getattr(self, 'recording_timing', None)
+            if timing:
+                timing.stop_requested()
             # Send SIGINT (Ctrl+C) to the process group to close file gracefully
             returncode = self.recording_process.poll()
             if returncode is None:
