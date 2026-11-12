@@ -13,6 +13,7 @@ import tempfile
 import time
 from dataclasses import fields
 from log import LoggerFactory
+from video_timing import RecordingTiming
 
 
 MANIFEST_FILE = 'swarm_manifest.yaml'
@@ -550,23 +551,37 @@ class CameraNode:
                 "--nopreview"
             ]
             cmd += self.args["params"]
+            # Verbose libav output exposes the input capture timestamp that
+            # anchors the MP4 PTS. Force it after user parameters.
+            cmd += ['--verbose', '2']
             self.logger.info(f"Starting Recording with these settings: {cmd}")
 
             try:
+                reserved = {'-o', '--output', '--codec', '--libav-format', '--libav-video-codec',
+                            '--config', '-c', '--av-sync', '--save-pts', '--segment', '--circular', '--pause'}
+                if any(str(parameter).split('=', 1)[0] in reserved for parameter in self.args['params']):
+                    raise ValueError('camera parameters cannot override the managed recording format, output, or timing')
+                if not shutil.which('ffprobe'):
+                    raise RuntimeError('ffprobe is required to save frame timing')
+                self.recording_timing = RecordingTiming(
+                    OUTPUT_FILENAME, camera_id=self.manifest.get('camera_node', {}).get('id', 'CAM'),
+                    run_id=self.run_id, request_id=request_id, command=cmd)
                 # Start process in new process group for clean termination
                 self.recording_process = subprocess.Popen(
                     cmd,
-                    preexec_fn=os.setsid
+                    preexec_fn=os.setsid, stderr=subprocess.PIPE, text=True
                 )
-                time.sleep(0.25)
+                self.recording_timing.attach(self.recording_process)
+                first_frame = self.recording_timing.wait_first_frame(
+                    float(self.manifest.get('camera_node', {}).get('first_frame_timeout_s', 6)))
+                self.recording_timing.event('first_frame_ready', request_id=request_id)
                 return_code = self.recording_process.poll()
                 if return_code is not None:
-                    self.recording_process = None
                     raise RuntimeError(
                         f"video process exited immediately with {return_code}"
                     )
                 if acknowledge:
-                    values = {}
+                    values = {'timing_schema_version': 1, **first_frame}
                     if request_id is not None:
                         values['request_id'] = request_id
                     self.push_socket.send_json(
@@ -574,7 +589,14 @@ class CameraNode:
                     )
                 return True
             except Exception as error:
-                self.recording_process = None
+                self.stop_recording()
+                timing = getattr(self, 'recording_timing', None)
+                if timing:
+                    try:
+                        timing.finish(None)
+                    except Exception:
+                        pass  # invalid sidecar retains the cause
+                    self.recording_timing = None
                 self.logger.exception(f"Could not start recording: {error}")
                 values = {'error': str(error)}
                 if request_id is not None:
@@ -585,8 +607,13 @@ class CameraNode:
                 return False
         else:
             self.logger.info("Already recording.")
+            timing = getattr(self, 'recording_timing', None)
+            if timing:
+                timing.event('recording_health_check', request_id=request_id)
             if acknowledge:
                 values = {}
+                if timing:
+                    values.update(timing_schema_version=1, **timing.wait_first_frame(0))
                 if request_id is not None:
                     values['request_id'] = request_id
                 self.push_socket.send_json(
@@ -598,13 +625,25 @@ class CameraNode:
         if self.recording_process:
             self.logger.info("Stopping Recording and Saving...")
             # Send SIGINT (Ctrl+C) to the process group to close file gracefully
-            os.killpg(os.getpgid(self.recording_process.pid), signal.SIGINT)
-            try:
-                self.recording_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.recording_process.kill()
-
+            returncode = self.recording_process.poll()
+            if returncode is None:
+                os.killpg(os.getpgid(self.recording_process.pid), signal.SIGINT)
+                try:
+                    returncode = self.recording_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.recording_process.kill()
+                    returncode = self.recording_process.wait(timeout=5)
             self.recording_process = None
+            timing = getattr(self, 'recording_timing', None)
+            if timing:
+                try:
+                    timing.event('recording_stopped')
+                    timing.finish(returncode)
+                except Exception as error:
+                    self.logger.exception('Recording timing finalization failed')
+                    self.push_socket.send_json(self._status_message('CAMERA_RECORDING_FAILED', error=str(error)))
+                finally:
+                    self.recording_timing = None
             self.logger.info(f"[Camera] Saved to {OUTPUT_FILENAME}")
         else:
             self.logger.error("[Camera] No active recording to stop.")
@@ -671,7 +710,7 @@ class CameraNode:
                 if self.recording_process is not None:
                     return_code = self.recording_process.poll()
                     if return_code is not None:
-                        self.recording_process = None
+                        self.stop_recording()
                         error = (
                             "video process exited unexpectedly with "
                             f"{return_code}"
@@ -701,6 +740,8 @@ class CameraNode:
                         break
 
                 elif cmd == 'START':
+                    if getattr(self, 'recording_timing', None):
+                        self.recording_timing.event('animation_start_broadcast_received')
                     if (self.manifest.get('servo_calibration', {}).get('enabled')
                             and self.recording_process is None):
                         continue  # Explicit START_CAMERA follows calibration.

@@ -73,6 +73,8 @@ class IlluminationLogger(LogManager):
             "mission_duration": mission_duration,
             "start_times": start_times,
             "stop_times": end_times,
+            "animation_clock_samples": kwargs.get('animation_clock_samples', []),
+            "epoch_clock": kwargs.get('epoch_clock'),
             "viewpoint_offsets": viewpoint_offsets,
             "reference_offsets": reference_offsets,
             "args": args,

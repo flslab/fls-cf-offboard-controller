@@ -13,6 +13,7 @@ import subprocess
 import signal
 from threading import Event
 import time
+from video_timing import clock_sample, epoch_clock_status
 import traceback
 import urllib.request
 import urllib.error
@@ -189,6 +190,8 @@ class Controller:
         self.mission_duration = 0
         self.animation_start_times = []
         self.animation_stop_times = []
+        self.animation_clock_samples = []
+        self.epoch_clock = epoch_clock_status()
         self.viewpoint_offsets = []
         self.reference_offsets = []
         self.smooth_controller = None
@@ -1179,6 +1182,8 @@ class Controller:
                     tag=self.args.tag,
                     start_times=self.animation_start_times,
                     end_times=self.animation_stop_times,
+                    animation_clock_samples=getattr(self, 'animation_clock_samples', []),
+                    epoch_clock=getattr(self, 'epoch_clock', None),
                     viewpoint_offsets=self.viewpoint_offsets,
                     reference_offsets=self.reference_offsets,
                     mission_start_time=self.mission_start_time,
@@ -2863,6 +2868,10 @@ class Controller:
             self.handshake()
 
         self.animation_start_times.append(time.time())
+        if hasattr(self, 'animation_clock_samples'):
+            self.animation_clock_samples.append(dict(phase='start',
+                mission_index=len(self.animation_start_times)-1,
+                animation_epoch_s=self.animation_start_times[-1], **clock_sample()))
 
         if len(pointers):
             self.smooth_controller.register_group(
@@ -3037,6 +3046,10 @@ class Controller:
                 interact_sub.close()
 
         self.animation_stop_times.append(time.time())
+        if hasattr(self, 'animation_clock_samples'):
+            self.animation_clock_samples.append(dict(phase='stop',
+                mission_index=len(self.animation_stop_times)-1,
+                animation_epoch_s=self.animation_stop_times[-1], **clock_sample()))
 
         if not len(pointers) and led_setting.get('mode') == 'expression':
             self.smooth_controller.remove_update_callback(update_led_cb)
@@ -3381,6 +3394,10 @@ class Controller:
             self.handshake(calibration_mission_index=mission_index)
 
         self.animation_start_times.append(time.time())
+        if hasattr(self, 'animation_clock_samples'):
+            self.animation_clock_samples.append(dict(phase='start',
+                mission_index=len(self.animation_start_times)-1,
+                animation_epoch_s=self.animation_start_times[-1], **clock_sample()))
 
         if len(pointers):
             self.smooth_controller.register_group(
@@ -3526,6 +3543,10 @@ class Controller:
                 self.ll_commander.send_notify_setpoint_stop()
 
         self.animation_stop_times.append(time.time())
+        if hasattr(self, 'animation_clock_samples'):
+            self.animation_clock_samples.append(dict(phase='stop',
+                mission_index=len(self.animation_stop_times)-1,
+                animation_epoch_s=self.animation_stop_times[-1], **clock_sample()))
 
         if len(pointers):
             self.smooth_controller.remove_group("pointers")
