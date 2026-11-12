@@ -498,6 +498,7 @@ class CameraNode:
                 from servo_calibration_camera import CalibrationStream
                 self._servo_camera = CalibrationStream(self.recording_binary, self.args['params'], config,
                                                        run_id=self.run_id)
+                self._servo_recording_created = True
             self._servo_camera.request(message)
         except Exception as error:
             self._close_servo_camera()
@@ -635,6 +636,8 @@ class CameraNode:
             try:
                 from servo_calibration_camera import validate_capture
                 validate_capture(self.args['params'], calibration_config)
+                if not shutil.which('ffmpeg'):
+                    raise RuntimeError('ffmpeg is required to save calibration MP4 footage')
             except Exception as error:
                 self.push_socket.send_json(self._status_message('FAILED', error=str(error)))
                 return
@@ -727,6 +730,13 @@ class CameraNode:
             self.stop_recording()
         finally:
             self._close_servo_camera()
+            if getattr(self, '_servo_recording_created', False):
+                try:
+                    from servo_calibration_camera import finalize_recording
+                    output = finalize_recording(self.run_id)
+                    self.logger.info('Saved calibration video: %s', output)
+                except Exception:
+                    self.logger.exception('Calibration MP4 conversion failed; original MJPEG retained')
 
 
 if __name__ == "__main__":

@@ -147,6 +147,20 @@ def calibration_recording_paths(run_id):
     return video, video.with_suffix('.frames.jsonl')
 
 
+def finalize_recording(run_id):
+    """Encode after camera release; retain the original stream for recovery."""
+    video, _ = calibration_recording_paths(run_id)
+    output = video.with_suffix('.mp4')
+    temporary = video.with_suffix('.partial.mp4')
+    subprocess.run(['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+                    '-f', 'mjpeg', '-framerate', '30', '-i', str(video),
+                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20',
+                    '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(temporary)],
+                   check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    temporary.replace(output)
+    return output
+
+
 class CalibrationStream:
     """Nonblocking camera reader; the camera node retains command/emergency polling."""
     def __init__(self, binary, parameters, config, *, run_id):

@@ -4,6 +4,7 @@ import json
 import math
 import threading
 import tempfile
+import shutil
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
@@ -229,6 +230,26 @@ class ProtocolTests(unittest.TestCase):
 
 
 class CalibrationRecordingTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'FFmpeg is required for MP4 export')
+    def test_mp4_export_is_playable_and_retains_original_frames(self):
+        from servo_calibration_camera import finalize_recording
+        with tempfile.TemporaryDirectory() as directory:
+            video = Path(directory)/'run.mjpeg'
+            data = b''.join(self.jpeg(value) for value in (10, 100, 200))
+            video.write_bytes(data)
+            with patch('servo_calibration_camera.calibration_recording_paths',
+                       return_value=(video, video.with_suffix('.frames.jsonl'))):
+                output = finalize_recording('run')
+            self.assertEqual(output.suffix, '.mp4')
+            self.assertEqual(video.read_bytes(), data)
+            reader = cv2.VideoCapture(str(output))
+            try:
+                self.assertTrue(reader.isOpened())
+                self.assertEqual(int(reader.get(cv2.CAP_PROP_FRAME_COUNT)), 3)
+                self.assertTrue(reader.read()[0])
+            finally:
+                reader.release()
+
     def create_stream(self, directory):
         paths = Path(directory)/'run.mjpeg', Path(directory)/'run.frames.jsonl'
         process = Mock()
