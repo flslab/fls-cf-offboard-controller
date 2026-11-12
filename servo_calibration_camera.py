@@ -26,7 +26,7 @@ def camera_rotation(position, look_at):
     return rotation
 
 
-def measure_rods(image, calibration, reference, config):
+def measure_rods(image, calibration, reference, config, diagnostics=None):
     """Recover directed physical angles by intersecting rays with the rod plane.
 
     SFL angles are in degrees in the body YZ plane: (0, cos(a), -sin(a)).
@@ -49,17 +49,24 @@ def measure_rods(image, calibration, reference, config):
     # Hue intervals for red, cyan, green, blue; inactive white is excluded.
     hue_ranges = (((0, 10), (170, 179)), ((80, 100),), ((45, 75),), ((105, 135),))
     result = []
+    if diagnostics is not None:
+        diagnostics['rods'] = []
     for servo, angle in enumerate(reference['angles']):
+        detail = dict(servo_index=servo, target_deg=angle, status='missing_color')
+        if diagnostics is not None:
+            diagnostics['rods'].append(detail)
         direction = body_y*math.cos(math.radians(angle)) - np.array([0., 0., math.sin(math.radians(angle))])
         length = reference['led_count']//2 * config.get('led_pitch_m', .00624)
         world = hinge + np.array([.25, .75])[:, None]*length*direction
         camera_points = (world-position) @ rotation
         if np.any(camera_points[:, 2] <= .01):
+            detail['status'] = 'behind_camera'
             result.append(None)
             continue
         expected = cv2.projectPoints(camera_points, np.zeros(3), np.zeros(3),
                                      calibration.camera_matrix, calibration.distortion_coefficients)[0].reshape(2, 2)
         centers = []
+        color_components = []
         for half, color_index in enumerate((servo*2, servo*2+1)):
             mask = np.zeros(image.shape[:2], np.uint8)
             for low, high in hue_ranges[color_index]:
@@ -69,17 +76,38 @@ def measure_rods(image, calibration, reference, config):
                           if stats[i, cv2.CC_STAT_AREA] >= 2
                           and np.linalg.norm(centroids[i]-expected[half]) <= config.get('association_radius_px', 80.)]
             if not candidates or sum(stats[i, cv2.CC_STAT_AREA] for i in candidates) < config.get('min_color_pixels', 6):
+                detail.update(status='missing_color', color_index=color_index)
                 break
-            # Individual LEDs are often disconnected blobs. Accept a collinear
-            # group, but reject same-color distractors away from that line.
-            yy, xx = np.nonzero(np.isin(labels, candidates))
-            points = np.column_stack((xx, yy)).astype(float)
-            center = points.mean(axis=0)
-            _, _, axes = np.linalg.svd(points-center, full_matrices=False)
-            if np.max(np.abs((centroids[candidates]-center) @ axes[1])) > 3.:
-                break
+            # Bright LED cores clip to white, leaving disconnected colored
+            # halos on both sides. Tiny compression/sparkle blobs must not
+            # veto those legitimate components or pull the color centroid.
+            largest = max(stats[i, cv2.CC_STAT_AREA] for i in candidates)
+            candidates = [i for i in candidates if stats[i, cv2.CC_STAT_AREA] >= max(2., .1*largest)]
+            areas = stats[candidates, cv2.CC_STAT_AREA]
+            center = np.average(centroids[candidates], axis=0, weights=areas)
             centers.append(center)
+            color_components.append(centroids[candidates])
         if len(centers) != 2 or np.linalg.norm(centers[1]-centers[0]) < config.get('min_span_px', 8.):
+            if len(centers) == 2:
+                detail['status'] = 'too_short'
+            result.append(None)
+            continue
+        # Fit the complete directed rod, not either short color half alone:
+        # side halos can be wider than one color half, rotating that half's
+        # PCA axis by 90 degrees. Keep the ambiguity check relative to the
+        # full span, so off-rod distractors still reject the observation.
+        axis = centers[1]-centers[0]
+        span = np.linalg.norm(axis)
+        detail.update(span_px=float(span), centers_px=[c.tolist() for c in centers])
+        perpendicular = np.array([-axis[1], axis[0]])/span
+        components = np.concatenate(color_components)
+        if np.max(np.abs((components-centers[0]) @ perpendicular)) > max(3., .25*span):
+            detail['status'] = 'off_rod_color_components'
+            result.append(None)
+            continue
+        if any(np.max(np.abs((group-center) @ (axis/span))) > .5*span+2.
+               for group, center in zip(color_components, centers)):
+            detail['status'] = 'color_group_too_long'
             result.append(None)
             continue
         rays = cv2.undistortPoints(np.array(centers).reshape(-1, 1, 2),
@@ -87,6 +115,7 @@ def measure_rods(image, calibration, reference, config):
         rays = np.column_stack((rays, np.ones(2))) @ rotation.T
         denominator = rays @ normal
         if np.min(np.abs(denominator)) < .15 or denominator[0]*denominator[1] <= 0:
+            detail['status'] = 'edge_on'
             result.append(None)
             continue
         vector = rays[1]/denominator[1] - rays[0]/denominator[0]
@@ -94,6 +123,7 @@ def measure_rods(image, calibration, reference, config):
         vector *= np.sign((hinge-position) @ normal)
         measured = math.degrees(math.atan2(-vector[2], vector @ body_y))
         error = wrap(measured-angle)
+        detail['status'] = 'detected' if abs(error) <= config.get('max_correction_deg', 15.)+10. else 'angle_out_of_range'
         result.append(float(angle+error) if abs(error) <= config.get('max_correction_deg', 15.)+10. else None)
     return result
 
@@ -207,7 +237,9 @@ class CalibrationStream:
             # as temporal consensus after a servo movement.
             frame = cv2.imdecode(np.frombuffer(frames[-1], np.uint8), cv2.IMREAD_COLOR)
             if frame is not None:
-                angles = measure_rods(frame, self.calibration, job['reference'], self.config)
+                job['diagnostics'] = {}
+                angles = measure_rods(frame, self.calibration, job['reference'], self.config,
+                                      diagnostics=job['diagnostics'])
                 for samples, angle in zip(job['samples'], angles):
                     if angle is None:
                         samples.clear()
@@ -220,7 +252,8 @@ class CalibrationStream:
         if complete or time.monotonic() >= self.deadline:
             self.job = None
             return dict(status='SERVO_MEASURED', request_id=job['request_id'],
-                        angles=[float(np.median(v)) if len(v) >= required else None for v in job['samples']])
+                        angles=[float(np.median(v)) if len(v) >= required else None for v in job['samples']],
+                        diagnostics=dict(job.get('diagnostics', {}), consensus_counts=[len(v) for v in job['samples']]))
         return None
 
     def close(self):

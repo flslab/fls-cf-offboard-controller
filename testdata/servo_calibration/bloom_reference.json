@@ -1,0 +1,69 @@
+{
+  "calibration": {
+    "schema": "fls-rgb-camera-calibration",
+    "schema_version": 1,
+    "image_size": [
+      1920,
+      1080
+    ],
+    "camera_matrix": [
+      [
+        1484.7883111188967,
+        0.0,
+        962.5532837286495
+      ],
+      [
+        0.0,
+        1483.7447855545884,
+        529.8670480204106
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "distortion_coefficients": [
+      -0.037219167451627386,
+      0.17730124787723986,
+      0.00020779877920203455,
+      -9.703691316898524e-05,
+      -0.3579500384975326
+    ],
+    "capture": {
+      "lens_position": 0.5,
+      "camera_model": "Raspberry Pi Camera Module 3"
+    },
+    "provenance": {
+      "source": "https://github.com/flyinglightspeck/aruco-pose-estimation/tree/main/calibration/pi3/1080p",
+      "source_matrix_file": "mtx.npy",
+      "source_distortion_file": "dist.npy",
+      "source_focus_mode": "autofocus",
+      "deployment_lens_position_assumption": 0.5
+    }
+  },
+  "reference": {
+    "camera": [
+      2.3,
+      0,
+      1
+    ],
+    "look_at": [
+      0,
+      0,
+      1
+    ],
+    "target": [
+      0,
+      0,
+      1
+    ],
+    "yaw": 0,
+    "angles": [
+      90,
+      270
+    ],
+    "led_count": 50
+  },
+  "source": "lb7 first illumination handshake, 2026-11-11; unmodified JPEG frames from the failed calibration recording"
+}
