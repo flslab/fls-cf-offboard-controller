@@ -22,6 +22,7 @@ from Interaction.position_handoff import (
 from Interaction.wrench_model_calibration import (
     DEFAULT_CALIBRATION_PATH, apply_detection_calibration,
 )
+from Interaction.initial_y_motion import InitialYMotion, validate_initial_motion
 
 # Historical name: delay before the selected contact/coast command policy.
 # Keep the fixed position hold during this interval; 0.0 switches immediately.
@@ -74,6 +75,7 @@ def validate_level_coast(config, *, sensor_available):
     options['position_control'] = validate_position_follow(options.get('position_control', {}))
     options['position_handoff'] = validate_position_handoff(options.get('position_handoff', {}))
     options['smooth_hover_transition'] = smooth_hover_transition_enabled(options)
+    options['initial_motion'] = validate_initial_motion(options.get('initial_motion', {}))
     if 'detector' in options:
         raise ValueError('level_coast.detector was removed; use config.detection_method')
     detector = config.get('detection_method', 'potentiometer')
@@ -136,6 +138,9 @@ def validate_level_coast(config, *, sensor_available):
     if velocity['release_speed_m_s'] >= velocity['onset_speed_m_s']:
         raise ValueError('velocity release speed must be below onset speed')
     options['velocity'] = velocity
+    if (detector == 'vel' and options['initial_motion']['enabled']
+            and options['initial_motion']['speed_m_s'] >= velocity['onset_speed_m_s']):
+        raise ValueError('initial_motion speed must stay below the velocity onset threshold')
     return options
 
 
@@ -438,6 +443,9 @@ def run_level_coast(owner, config):
     # instead take a yaw rate, which always remains zero.
     yaw = None if options['follow_yaw'] else 0.
     owner.check_interaction_boundary(nominal)
+    initial_motion = InitialYMotion(nominal, options['initial_motion'],
+        y_max=None if owner.bounds is None else owner.bounds['y_max'])
+    initial_motion_status = {}
     cycle = LevelCoastCycle(nominal, options['stop_speed_m_s'], options['grace_s'],
                             options['grace_start'], options['detection_to_ori_delay_s'],
                             coast_command_mode=options['coast_command_mode'],
@@ -735,6 +743,18 @@ def run_level_coast(owner, config):
                 interaction_direction=direction, interaction_direction_source=direction_source,
                 stop_velocity=stop_velocity, curve_completed=curve_completed,
                 curve_hold_position=curve_hold)
+            # Calibration and arming have completed before the first ready
+            # sample. Only this initial ready interval may move the reference.
+            # Accepted contact permanently retires it, including delayed contact.
+            old_motion_state = initial_motion.state
+            initial_target, initial_motion_status = initial_motion.update(cycle.phase, state['time'])
+            if initial_target is not None:
+                owner.check_interaction_boundary(initial_target)
+                cycle.hold_position[:] = initial_target
+            if initial_motion.state != old_motion_state:
+                owner._log_event('Level Coast Initial Motion ' +
+                    ('Started' if initial_motion.state == 'moving' else 'Finished'),
+                    {**initial_motion_status, 'hold_position_m': cycle.hold_position.tolist()})
             if options.get('ram_trace') is not None:
                 from Interaction.estimator_ram_trace import interaction_step
                 interaction_step(owner, cycle.phase, released)
@@ -963,6 +983,7 @@ def run_level_coast(owner, config):
                 'yaw_target_deg': None if command_mode == 'level_zdistance' else yaw,
                 'yaw_rate_target_deg_s': 0. if command_mode == 'level_zdistance' else None,
                 **position_status,
+                **initial_motion_status,
                 'yaw_rate_damping': options['yaw_rate_damping'],
                 'yaw_rate_damping_active': options['yaw_rate_damping'] and yaw_ready,
                 **yaw_status,
