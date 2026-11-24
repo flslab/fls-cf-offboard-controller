@@ -54,7 +54,7 @@ class PipelineTests(unittest.TestCase):
                    specific_force_body_m_s2=[(.4/.17+.1)/2,0,9.81])
         np.testing.assert_allclose(o.raw_estimate.external_force,[0,0,-.4],atol=1e-10)
 
-    def test_gap_and_duplicate_never_finish_active_release(self):
+    def test_gap_and_duplicate_wait_for_recovery_then_release_without_dwell(self):
         p=OnboardMomentumWrenchPipeline(config())
         for i in range(50):step(p,i*.01,.4 if i<30 else 0)
         p.detector.translation.active=True
@@ -65,9 +65,13 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(p.detector.translation.active)
         self.assertEqual(p.detector.translation._release_elapsed,0)
         self.assertIsNone(step(p,.8).contacts)
-        for i in range(1,6):
+        for i in range(1,3):
             o=step(p,.8+i*.01)
-            if o.contacts:self.assertFalse(o.contacts.translation.ended)
+            self.assertIsNone(o.contacts)
+            self.assertTrue(p.detector.translation.active)
+        o=step(p,.83)
+        self.assertTrue(o.contacts.translation.ended)
+        self.assertFalse(p.detector.translation.active)
 
     def test_missing_raw_imu_cannot_fallback_to_compressed_acceleration(self):
         for change in ({'specific_force_body_m_s2':None},{'gyro_body_rad_s':None},
@@ -83,6 +87,71 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(o.calibrated)
         np.testing.assert_allclose(p.force_bias,[.03,0,0],atol=1e-10)
         np.testing.assert_allclose(o.estimate.external_force,0,atol=1e-10)
+        np.testing.assert_allclose(p.force_rate_filter.measurement_covariance,
+                                   np.eye(2)*1e-8,atol=1e-14)
+
+    def test_kf_ignores_legacy_window_length_and_confidence_settings(self):
+        a=OnboardMomentumWrenchPipeline(config(specific_force={'window_s':.02}))
+        b=OnboardMomentumWrenchPipeline(config(specific_force={'window_s':.2},
+            detection={'translation':{'confidence_sigma':1e9,'minimum_onset_duration_s':5.,
+                                     'release_time_s':5.,'evidence_leak':4.}}))
+        for i in range(100):
+            t=i*.01
+            force=.4 if .2<=t<.5 else 0.
+            left,right=step(a,t,force),step(b,t,force)
+            np.testing.assert_allclose(left.estimate.external_force,right.estimate.external_force)
+            self.assertEqual(left.contacts,right.contacts)
+        self.assertFalse(a.specific_force_observer.averaging)
+        self.assertEqual(a.last_impulse_window_s,0.)
+        self.assertFalse(b.detector.translation.use_confidence_gate)
+
+    def test_hover_noise_is_calibrated_before_kf_and_frozen_during_push(self):
+        from Interaction.force_rate_kalman_filter import measurement_covariance_from_hover
+        c=config();c.update(startup_bias_calibration_enabled=True,observer_settle_s=0.,
+                            bias_calibration_s=1.,minimum_bias_samples=30)
+        p=OnboardMomentumWrenchPipeline(c)
+        rng=np.random.default_rng(142)
+        for i in range(105):
+            step(p,i*.01,.03+rng.normal(0.,.005))
+        self.assertTrue(p.calibrated)
+        expected=measurement_covariance_from_hover(
+            np.asarray(p._force_samples)[:,:2],p._force_sample_times)
+        np.testing.assert_allclose(p.force_rate_filter.measurement_covariance,expected)
+        bias=p.force_bias.copy()
+        for i in range(105,160):step(p,i*.01,.4)
+        np.testing.assert_array_equal(p.force_rate_filter.measurement_covariance,expected)
+        np.testing.assert_array_equal(p.force_bias,bias)
+
+    def test_release_matches_first_filtered_threshold_crossing(self):
+        p=OnboardMomentumWrenchPipeline(config())
+        releases=[]
+        for i in range(100):
+            t=i*.01
+            active=p.detector.translation.active
+            o=step(p,t,.4 if .2<=t<.5 else 0.)
+            if active and o.contacts is not None:
+                qualifies=o.estimate.external_force[0]<=.066
+                self.assertEqual(o.contacts.translation.ended,qualifies)
+                if qualifies:releases.append(t)
+        self.assertEqual(len(releases),1)
+
+    def test_explicit_window_mode_retains_legacy_detector(self):
+        p=OnboardMomentumWrenchPipeline(config(specific_force={
+            'filter':'window','window_s':.02,'minimum_window_s':.02}))
+        self.assertIsNone(p.force_rate_filter)
+        self.assertTrue(p.specific_force_observer.averaging)
+        self.assertTrue(p.detector.translation.use_confidence_gate)
+        self.assertEqual(p.detector.translation.release_time_s,.15)
+
+    def test_bad_imu_clears_kf_and_evidence_without_releasing_contact(self):
+        p=OnboardMomentumWrenchPipeline(config())
+        for i in range(30):step(p,i*.01,.4)
+        self.assertTrue(p.detector.translation.active)
+        with self.assertRaises(ValueError):
+            step(p,.3,specific_force_body_m_s2=[float('nan'),0,9.81])
+        self.assertIsNone(p.force_rate_filter.last_timestamp)
+        self.assertEqual(p.detector.translation.evidence,0.)
+        self.assertTrue(p.detector.translation.active)
 
 
 class TelemetryTests(unittest.TestCase):
@@ -230,7 +299,7 @@ class LevelCoastRuntimeTests(unittest.TestCase):
         def sleep(dt):
             clock[0]=round(clock[0]+dt,6)
             self.assertLess(clock[0],2.)
-        owner=SimpleNamespace(cf=SimpleNamespace(_offboard_position_pid=SimpleNamespace(
+        owner=SimpleNamespace(bounds=None,cf=SimpleNamespace(_offboard_position_pid=SimpleNamespace(
                 prepared=True,parameters=parameters())),drone_id='lb11',ctrl_rate=100,
             mission={'drones':{'lb11':{'target':[0,0,1]}}},log_manager=logs,
             lo_commander=FakeCommander(),check_interaction_boundary=Mock(),_log_event=Mock(),

@@ -17,6 +17,10 @@ from Interaction.external_wrench_observer import WrenchEstimate, _as_vector
 from Interaction.wrench_interaction_pipeline import PipelineOutput, WrenchInteractionPipeline
 from Interaction.specific_force_contact_observer import SpecificForceContactObserver
 from Interaction.specific_force_runtime import force_estimator, validate_config
+from Interaction.force_rate_kalman_filter import (
+    ForceRateKalmanFilter, measurement_covariance_from_hover,
+)
+from Interaction.wrench_contact_detector import ContactChannelDetector
 
 
 DEFAULT_MOMENTUM_OBSERVER_CONFIG = {
@@ -522,12 +526,54 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
         self.force_estimator = force_estimator(self.config)
         self.config['force_estimator'] = self.force_estimator
         self.specific_force_observer = None
+        self.force_rate_filter = None
+        self._force_sample_times = []
+        self.force_filter_diagnostics = {}
         if self.force_estimator == 'specific_force':
             settings = validate_config(self.config)
             self.config['specific_force'] = settings
             self.specific_force_observer = SpecificForceContactObserver(
                 self.config['mass'], **{key: settings[key] for key in
-                ('window_s', 'minimum_window_s', 'max_dt_s', 'imu_from_com_m')})
+                ('window_s', 'minimum_window_s', 'max_dt_s', 'imu_from_com_m')},
+                averaging=settings['filter'] == 'window')
+            if settings['filter'] == 'force_rate_kf':
+                self.force_rate_filter = ForceRateKalmanFilter(
+                    **settings['force_rate_kf'], max_dt_s=settings['max_dt_s'])
+                translation = dict(self.config['detection']['translation'])
+                overrides = (config or {}).get('detection', {}).get('translation', {})
+                translation['component_thresholds'] = overrides.get(
+                    'component_thresholds', [.12, .12, .12])
+                translation.update(
+                    use_confidence_gate=False, onset_axes=[0, 1],
+                    release_projection_axes=[0, 1], release_time_s=0.,
+                    minimum_onset_duration_s=0., evidence_leak=1.,
+                    max_sample_gap_s=settings['max_dt_s'])
+                self.config['detection']['translation'] = translation
+                self.detector.translation = ContactChannelDetector(**translation)
+
+    def _update_bias(self, estimate):
+        """Collect instantaneous stationary observations and calibrate R_F once."""
+        if self.force_rate_filter is None:
+            return super()._update_bias(estimate)
+        previous_count = len(self._force_samples)
+        super()._update_bias(estimate)
+        if not self._force_samples:
+            self._force_sample_times.clear()
+        elif len(self._force_samples) > previous_count:
+            self._force_sample_times.append(estimate.timestamp)
+        if self.calibrated:
+            observations = np.asarray(self._force_samples)[:, :2] - self.force_bias[:2]
+            covariance = measurement_covariance_from_hover(observations, self._force_sample_times)
+            self.force_rate_filter.set_measurement_covariance(covariance)
+            self.config['specific_force']['force_rate_kf']['measurement_covariance'] = covariance.tolist()
+
+    def _invalidate_force_filter(self, timestamp):
+        if self.force_rate_filter is not None:
+            self.force_rate_filter.reset()
+        self.last_impulse_ready = False
+        self.force_filter_diagnostics = {}
+        for channel in (self.detector.translation, self.detector.yaw):
+            channel.invalidate_sample(timestamp if np.isfinite(timestamp) else None)
 
     def update(
             self,
@@ -612,10 +658,17 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
                     or imu_timestamp is None or not has_motor_data
                     or battery_voltage is None or not np.isfinite(battery_voltage)
                     or battery_voltage <= 0):
+                self._invalidate_force_filter(timestamp)
+                self.specific_force_observer.reset()
                 raise ValueError('specific_force requires raw IMU, sample time and live motor/battery data')
             settings = self.config['specific_force']
-            acc = (_as_vector(specific_force_body_m_s2, 3, 'raw IMU')
-                   * settings['accel_scale'] - settings['accel_bias_m_s2'])
+            try:
+                acc = (_as_vector(specific_force_body_m_s2, 3, 'raw IMU')
+                       * settings['accel_scale'] - settings['accel_bias_m_s2'])
+            except ValueError:
+                self._invalidate_force_filter(timestamp)
+                self.specific_force_observer.reset()
+                raise
             # Input RPY uses Crazyflie's legacy negative pitch convention.
             roll, pitch, yaw = attitude_rpy * [.5, -.5, .5]
             cr, cp, cy = np.cos([roll, pitch, yaw])
@@ -623,8 +676,12 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
             q = [sr*cp*cy-cr*sp*sy, cr*sp*cy+sr*cp*sy,
                  cr*cp*sy-sr*sp*cy, cr*cp*cy+sr*sp*sy]
             thrust = np.linalg.norm(expected_linear + [0., 0., 9.81]) * settings['thrust_scale']
-            force = self.specific_force_observer.update(
-                acc, q, thrust, imu_timestamp, gyro_body_rad_s)
+            try:
+                force = self.specific_force_observer.update(
+                    acc, q, thrust, imu_timestamp, gyro_body_rad_s)
+            except ValueError:
+                self._invalidate_force_filter(timestamp)
+                raise
             self.last_impulse_ready = force.ready
             self.last_impulse_window_s = force.window_s
             self.last_external_impulse = force.external_force * force.window_s
@@ -639,11 +696,33 @@ class OnboardMomentumWrenchPipeline(WrenchInteractionPipeline):
             external_force=raw.external_force - self.force_bias,
             external_torque=raw.external_torque - self.torque_bias,
         )
+        if self.force_rate_filter is not None:
+            if raw.measurement_rejected:
+                self._invalidate_force_filter(timestamp)
+            elif self.calibrated:
+                filtered = self.force_rate_filter.update(estimate.external_force[:2], imu_timestamp)
+                self.last_impulse_ready = filtered.ready
+                force = estimate.external_force.copy()
+                force[:2] = filtered.force_xy
+                covariance = estimate.force_covariance.copy()
+                covariance[:2, :2] = filtered.covariance
+                self.force_filter_diagnostics = {
+                    'force_filter': 'force_rate_kf',
+                    'force_observation_N': estimate.external_force.tolist(),
+                    'force_rate_xy_N_s': filtered.rate_xy.tolist(),
+                    'force_filter_covariance_N2': filtered.covariance.tolist(),
+                    'force_measurement_covariance_N2': self.force_rate_filter.measurement_covariance.tolist(),
+                    'force_filter_valid_span_s': filtered.valid_span_s,
+                }
+                estimate = replace(estimate, external_force=force, force_covariance=covariance,
+                                   measurement_rejected=not filtered.ready or filtered.rejected)
+            else:
+                self.last_impulse_ready = False
 
         contacts = None
         force_input = np.zeros(3)
         yaw_input = 0.0
-        if self.calibrated and (self.specific_force_observer is None or not raw.measurement_rejected):
+        if self.calibrated and (self.specific_force_observer is None or not estimate.measurement_rejected):
             contacts = self.detector.update(estimate)
             if not estimate.measurement_rejected:
                 force_input, yaw_input = self._response_inputs(estimate, contacts)

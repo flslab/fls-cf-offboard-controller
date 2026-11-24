@@ -46,8 +46,8 @@ impulse_estimator:
 detection:
   translation:
     component_thresholds:
-    - 0.08
-    - 0.08
+    - 0.12
+    - 0.12
     - 0.12
     covariance_floor:
     - 0.015

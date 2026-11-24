@@ -22,8 +22,11 @@ wrench_interaction_profile: level_coast
 wrench_interaction:
   force_estimator: specific_force  # momentum selects the original method
   specific_force:
-    window_s: 0.08
-    minimum_window_s: 0.05
+    filter: force_rate_kf
+    force_rate_kf:
+      tau_s: 0.010
+      process_noise_scale: 0.1
+      minimum_valid_span_s: 0.020
     max_dt_s: 0.05
     max_pair_skew_s: 0.009
     max_sample_age_s: 0.1
@@ -34,12 +37,26 @@ wrench_interaction:
 ```
 
 The shared profile supplies onboard state, motor model, startup stationary bias
-calibration, contact thresholds and release dwell. An inline-only mission must
+calibration and contact thresholds. An inline-only mission must
 supply its usual `state_source: onboard` and `shadow_mode: false` settings.
 
-The existing release threshold and dwell remain configuration-driven (the
-current level-coast profile uses 0.044 N along the locked direction and 150 ms).
-The new selector is supported only by the `level_coast` model path. With
+The default specific-force filter is the paper's horizontal force-rate KF.
+The shared profile uses 0.12 N for each horizontal push threshold. KID uses
+`r_F = norm(force_xy / thresholds_xy)` and accumulates `dt * max(r_F - 1, 0.25)`
+when `r_F >= 1`; otherwise evidence decreases by `dt`, down to zero. Push starts
+at 0.05 s of evidence. There is no confidence gate or additional onset dwell.
+At push onset the normalized horizontal force locks the interaction direction.
+Release occurs on the first new valid filtered sample whose signed projection
+is at or below `0.55 / norm(direction_xy / thresholds_xy)`: 0.066 N for the
+default thresholds. There is no release dwell. The previous confidence,
+minimum-onset-duration and release-time settings are ignored in KF mode.
+Thresholds, onset evidence and release ratio remain configurable.
+
+`filter: window` explicitly selects the archived averaging/detection behavior;
+only that mode uses `window_s`, `minimum_window_s`, confidence gating and
+release dwell. Old mission files containing window lengths still load, but
+those lengths do not add averaging to the default KF path.
+The selector is supported only by the `level_coast` model path. With
 potentiometer or velocity detection, `force_estimator` and `specific_force`
 settings are ignored: no `MODEL_IMU` stream or raw-IMU readiness check is added,
 and the existing momentum computation remains diagnostic. With model detection,
@@ -100,22 +117,42 @@ installed. The old momentum observer's velocity-alignment gain/delay calibration
 does not apply to this IMU path. Per-flight stationary external-force bias is
 still estimated by the existing calibration stage unless explicitly disabled.
 
-The body-force balance is rotated using the current onboard attitude and
-averaged over the causal 80 ms window. It is independent of KF velocity changes,
-but still depends on attitude and physical thrust/IMU calibration.
+The instantaneous body-force balance is rotated using the current onboard
+attitude and the fixed startup bias is subtracted before filtering. The KF
+state is `[Fx, Fy, tau_s*dFx/dt, tau_s*dFy/dt]`, with both blocks in newtons.
+For `h = dt/tau_s`, it uses `A = [[I, h*I], [0, I]]`, `H = [I, 0]`, and
+`Q = q * [[h^3*R/3, h^2*R/2], [h^2*R/2, h*R]]`. The first valid observation
+initializes force, zero rate, and covariance `diag(R, R)`.
+
+Startup hovering collects instantaneous force samples (by default at least
+30 samples over 1 s); their component-wise median fixes the force bias. Half
+the sample covariance of adjacent horizontal force differences gives `R`;
+only pairs with positive intervals at most 30 ms are used. Off-diagonal entries
+are multiplied by 0.95 and eigenvalues are floored at 1e-8 N². `R` is frozen
+for interaction. When startup calibration is explicitly disabled, the supplied
+`force_rate_kf.measurement_covariance` is used (default `diag(0.020², 0.020²)` N²).
+The 20 ms valid-span requirement applies only at initialization/recovery; it
+is not a sliding window or a release confirmation interval. KF history survives
+ordinary interaction rearming. Vertical force remains an instantaneous diagnostic;
+KID decisions use the horizontal components only. This path is independent of
+KF velocity changes but depends on attitude and physical thrust/IMU calibration.
 
 ## Missing data and diagnostics
 
 State/motor and IMU pairing uses the firmware's wrapping 24-bit log clock.
-The force window and model detection/dwell advance on the unwrapped IMU clock.
+The KF and model detection advance on the unwrapped IMU clock.
 Repeated IMU samples never advance detection. An incomplete pair briefly waits
 while refreshing the current command; sustained missing/stale data enters the
-existing abort/cleanup path. A sample gap exceeding `max_dt_s` restarts the force
-window and clears timing evidence while preserving active contact: a zero or
+existing abort/cleanup path. Invalid samples or gaps exceeding `max_dt_s`
+(default 50 ms) reset KF history and onset evidence while preserving active
+contact and its locked direction: a zero or
 unready estimate cannot signal release.
 
 `wrench_observer` records `force_estimator`, `force_estimator_ready`, `force_bias_N`,
 `imu_cf_timestamp_ms`, `imu_sample_time_s`, `imu_state_skew_s` and `imu_age_s`.
+KF records additionally include `force_filter`, bias-corrected `force_observation_N`,
+`force_rate_xy_N_s`, `force_filter_covariance_N2`,
+`force_measurement_covariance_N2`, and `force_filter_valid_span_s`.
 Raw `MODEL_IMU` packets and the resolved configuration are saved for a complete
 offline replay. `state_time` remains the host timestamp of the paired state;
 for specific-force detector timing, replay on `imu_sample_time_s`.

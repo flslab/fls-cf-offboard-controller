@@ -45,6 +45,8 @@ class ContactChannelDetector:
             release_projection_axes: Sequence[int] | None = None,
             release_direction_min_norm: float = 0.02,
             minimum_onset_duration_s: float = 0.0,
+            use_confidence_gate: bool = True,
+            max_sample_gap_s: float | None = None,
     ):
         self.thresholds = np.asarray(component_thresholds, dtype=float)
         self.covariance_floor = np.asarray(covariance_floor, dtype=float)
@@ -53,6 +55,14 @@ class ContactChannelDetector:
         if np.any(self.thresholds <= 0) or np.any(self.covariance_floor <= 0):
             raise ValueError("thresholds and covariance_floor must be positive")
         self.required_sigma = float(confidence_sigma)
+        if type(use_confidence_gate) is not bool:
+            raise ValueError('use_confidence_gate must be boolean')
+        self.use_confidence_gate = use_confidence_gate
+        self.max_sample_gap_s = max_sample_gap_s
+        if max_sample_gap_s is not None and (
+                isinstance(max_sample_gap_s, bool) or not math.isfinite(max_sample_gap_s)
+                or max_sample_gap_s <= 0):
+            raise ValueError('max_sample_gap_s must be finite and positive')
         self.onset_evidence_s = float(onset_evidence_s)
         self.release_time_s = float(release_time_s)
         self.release_ratio = float(release_ratio)
@@ -116,13 +126,13 @@ class ContactChannelDetector:
         self._projection_rearm_blocked = False
         self._release_candidate_active = False
 
-    def invalidate_sample(self, timestamp: float) -> None:
+    def invalidate_sample(self, timestamp: float | None) -> None:
         """Discard timing evidence across a gap without releasing contact."""
         self.evidence = 0.0
         self._significant_since = None
         self._release_elapsed = 0.0
         self._release_candidate_active = False
-        self._last_timestamp = float(timestamp)
+        self._last_timestamp = None if timestamp is None else float(timestamp)
 
     def _lock_release_direction(
             self,
@@ -182,7 +192,21 @@ class ContactChannelDetector:
         if value.shape != self.thresholds.shape or covariance.shape != (len(value), len(value)):
             raise ValueError("contact value/covariance dimensions do not match detector")
         timestamp = float(timestamp)
-        dt = 0.0 if self._last_timestamp is None else min(max(timestamp - self._last_timestamp, 0.0), 0.1)
+        if not np.isfinite(value).all() or not np.isfinite(covariance).all() or not math.isfinite(timestamp):
+            self.invalidate_sample(None)
+            raise ValueError('contact sample must contain finite values')
+        interval = None if self._last_timestamp is None else timestamp - self._last_timestamp
+        if self.max_sample_gap_s is not None and interval is not None and (
+                interval <= 0 or interval > self.max_sample_gap_s + 1e-12):
+            self.invalidate_sample(timestamp)
+            return ContactDecision(
+                active=self.active, started=False, ended=False,
+                magnitude=float(np.linalg.norm(value[list(self.onset_axes)])),
+                normalized_magnitude=0., confidence_sigma=0., evidence=0.,
+                release_direction=(None if self._release_direction is None else
+                                   tuple(self._release_direction)),
+                release_direction_source=self._release_direction_source)
+        dt = 0.0 if interval is None else min(max(interval, 0.0), 0.1)
         self._last_timestamp = timestamp
 
         if not self.enabled:
@@ -217,8 +241,9 @@ class ContactChannelDetector:
                 @ np.linalg.pinv(effective_covariance)
                 @ onset_value
             ),
-        ))
-        significant = normalized >= 1.0 and confidence >= self.required_sigma
+        )) if self.use_confidence_gate else 0.0
+        significant = normalized >= 1.0 and (
+            not self.use_confidence_gate or confidence >= self.required_sigma)
         if significant:
             if self._significant_since is None:
                 self._significant_since = timestamp
@@ -251,7 +276,7 @@ class ContactChannelDetector:
                     strength = min(
                         normalized,
                         confidence / max(self.required_sigma, 1e-6),
-                    )
+                    ) if self.use_confidence_gate else normalized
                     self.evidence += dt * max(
                         strength - self.evidence_leak, 0.25
                     )
