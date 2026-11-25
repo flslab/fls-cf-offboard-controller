@@ -1,3 +1,38 @@
+## Orchestrated rod servo calibration
+
+The LightBender orchestrator can enable `servo_calibration` in its runtime
+manifest for illumination missions. Deploy this repository's `controller.py`,
+`servo_calibration.py`, `camera_node.py`, and `servo_calibration_camera.py`
+together with the updated orchestrator. The camera uses NumPy/OpenCV from
+`requirements.txt` and its calibrated, fixed-focus front-camera intrinsics.
+See `lightbender/orchestrator/README.md` and `swarm_manifest_sample.yaml` for
+the full manifest options and launch command.
+
+At the first mission handshake, addressed `SERVO_CALIBRATE` commands apply
+absolute degree offsets, validate the entire batch against hardware limits,
+and illuminate color-coded inner/outer LED halves. Updates outside that
+handshake, for another drone, or with a different experiment tag are rejected
+or ignored. A watchdog starts with the first accepted calibration command;
+loss of the orchestrator eventually triggers the normal landing path.
+
+The camera accepts run-scoped `MEASURE_SERVOS` and `STOP_SERVO_CAMERA`
+commands, processes a nonblocking live MJPEG stream, and reports consistent
+angles or missing observations. Focus and image dimensions are checked
+against the calibration JSON before camera readiness. The stream releases
+the device before normal recording starts. When calibration is enabled,
+takeoff/calibration are omitted from `mission_footage.mp4`; recording begins
+at illumination. Calibration footage is retained separately as
+`logs/servo_calibration/<camera_run_id>.mjpeg`, preserving the original JPEG
+stream without re-encoding. Its `.frames.jsonl` sidecar indexes frames by
+byte position, monotonic receive time, and measurement request ID. Frames
+between measurements and queued at shutdown are retained, including after
+calibration fails. Cleanup downloads these to the experiment log directory
+as `<camera_id>_<tag>_servo_calibration.mjpeg` and `.frames.jsonl`. A camera
+capture restart appends to the same run's files. Adjusted offsets are session-only and appear in the final
+controller arguments and orchestrator `servo_calibration.json` report.
+
+Offline checks: `python -m unittest test_servo_calibration test_camera_node_pose`.
+
 ## Move a Raspberry Pi to a Wi-Fi network with the same SSID
 
 On a Pi using NetworkManager, `prepare_wifi_move.sh` replaces the saved
@@ -105,6 +140,29 @@ and record the high-rate localizer without forwarding position or yaw to the
 flight controller. This overrides `--tracker`, acknowledges localizer startup
 without resetting the FC estimator, and keeps normal takeoff and landing.
 The localizer writes its usual tagged video and JSON logs.
+
+Active native-localizer feedback uses `LOCALIZER_POSITION_STD_DEV = 0.005`
+(5 mm) for the FC's `locSrv.extPosStdDev`. Vicon feedback retains
+`POSITION_STD_DEV = 0.001` (1 mm); a recording-only tracker does not select the
+localizer uncertainty. These constants are in the normal and Interaction
+config modules. Five mm is a starting value for reducing the EKF's response
+to visual-position ripple, not a correction for systematic position bias.
+
+Illumination and hover runs default to `--cf-log-profile localization`. With
+`--log --cf-log-period 20`, this subscribes to `VEL_POS`, `ACC` and `GYRO` at
+50 Hz. `--tracker` and `--save-tracker` independently set `QUAT` to a 5 ms
+period (200 Hz), including the tracker-only fallback stream. The controller,
+motor and attitude tuning groups are disabled. Select `--cf-log-profile tuning`
+to restore those groups; tracker attitude remains at 200 Hz. Interaction mode
+keeps its own logging configuration.
+
+These rates assume the deployed firmware's millisecond interpretation of the
+legacy log command. The logger compensates for cflib's division by ten; do not
+apply that compensation to CLI arguments. Startup prints requested rates, and
+saved logs include `fc_logging.groups` with requested periods, packet counts,
+observed receipt rates and maximum receipt gaps. Confirm the measured rates
+on the drone after deployment. This change does not adjust the localizer's
+12 ms attitude-age gate or camera timestamp convention.
 
 The high-rate localizer can also send a dedicated yaw-error measurement to a
 compatible Crazyflie firmware build. Configure the `yaw_correction` object in

@@ -4,6 +4,9 @@ DEFAULT_URI = 'usb://0'
 
 # Mocap Settings
 POSITION_STD_DEV = 0.001
+# Shared-attitude visual position has millimeter-scale dynamic error. Give
+# these measurements less weight than Vicon in the FC estimator.
+LOCALIZER_POSITION_STD_DEV = 0.005
 ORIENTATION_STD_DEV = 0.06
 
 # Flight Settings

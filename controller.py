@@ -2425,7 +2425,7 @@ class Controller:
             self._activate_tumble_check()
         if (self.args.vicon or (self.args.tracker
                 and not getattr(self.args, "save_tracker", False))):
-            self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
+            self._set_position_sensitivity(self._external_position_std_dev())
         if self.args.vicon:
             self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
         if self.args.controller_type == "pid":
@@ -3498,7 +3498,7 @@ class Controller:
 
                 if relative_anchor["method"] == "ekf":
                     # self._set_ignore_external_z()
-                    self._set_position_sensitivity(self.cfg.POSITION_STD_DEV)
+                    self._set_position_sensitivity(self._external_position_std_dev())
                     self._set_orientation_sensitivity(self.cfg.ORIENTATION_STD_DEV)
                     self._initialize_ekf_relative_position()
 
@@ -4005,6 +4005,12 @@ class Controller:
 
     def _set_position_sensitivity(self, std_dev):
         self.cf.param.set_value('locSrv.extPosStdDev', std_dev)
+
+    def _external_position_std_dev(self):
+        if (self.args.tracker and not self.args.vicon
+                and not getattr(self.args, 'save_tracker', False)):
+            return self.cfg.LOCALIZER_POSITION_STD_DEV
+        return self.cfg.POSITION_STD_DEV
 
     def _set_ignore_external_z(self, val=1):
         self.cf.param.set_value("locSrv.extPosIgnoreZ", str(val))
