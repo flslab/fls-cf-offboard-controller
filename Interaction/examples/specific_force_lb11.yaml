@@ -30,7 +30,11 @@ Interaction:
     wrench_interaction:
       force_estimator: specific_force
       specific_force:
-        window_s: 0.08
+        filter: force_rate_kf
+        force_rate_kf:
+          tau_s: 0.010
+          process_noise_scale: 0.1
+          minimum_valid_span_s: 0.020
         accel_scale: [1.0, 1.0, 1.0]
         accel_bias_m_s2: [0.0, 0.0, 0.0]
         imu_from_com_m: [0.0, 0.0, 0.0]

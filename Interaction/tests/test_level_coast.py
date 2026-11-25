@@ -38,6 +38,13 @@ def configuration(detector='potentiometer'):
 
 
 class LevelCoastStateTests(unittest.TestCase):
+    def test_initial_motion_is_opt_in_and_stays_below_velocity_onset(self):
+        config=configuration('vel')
+        self.assertFalse(validate_level_coast(config, sensor_available=True)['initial_motion']['enabled'])
+        config['level_coast']['initial_motion']={'enabled':True,'speed_m_s':.10}
+        with self.assertRaisesRegex(ValueError, 'velocity onset threshold'):
+            validate_level_coast(config,sensor_available=True)
+
     def test_smooth_hover_transition_defaults_on_and_requires_boolean(self):
         config = configuration()
         self.assertTrue(validate_level_coast(config, sensor_available=True)['smooth_hover_transition'])
@@ -319,6 +326,66 @@ class LevelCoastStateTests(unittest.TestCase):
 
 
 class LevelCoastLoopTests(unittest.TestCase):
+    def test_initial_motion_only_before_first_contact_for_all_detectors(self):
+        for detector in ('model','potentiometer','vel'):
+            with self.subTest(detector=detector):
+                control,commands,phases,_=self.run_scenario(detector,
+                    command_mode='orientation',coasting_enabled=False,
+                    initial_motion_options=dict(enabled=True,ramp_s=.05,max_distance_m=.02),
+                    grace_start='release',grace_time=.03,
+                    pressed_fn=lambda t:.08<=t<.16 or .4<=t<.48,
+                    speed_fn=lambda t:.12 if .08<=t<.16 or .4<=t<.48 else 0.)
+                events=control._log_event.call_args_list
+                motion_started=[c for c in events if c.args[0]=='Level Coast Initial Motion Started']
+                motion_finished=[c for c in events if c.args[0]=='Level Coast Initial Motion Finished']
+                self.assertEqual(len(motion_started),1)
+                self.assertEqual(len(motion_finished),1)
+                self.assertEqual(motion_finished[0].args[1]['initial_motion_finished_reason'],'first_contact')
+                contacts=[p for p in phases if p['phase']=='contact']
+                self.assertEqual(len(contacts),2)
+                before=[args for t,name,args in commands if t<contacts[0]['elapsed_s']-1e-6 and name=='send_position_setpoint']
+                self.assertGreater(max(a[1] for a in before),0.)
+                np.testing.assert_allclose([a[0] for a in before],0.)
+                np.testing.assert_allclose([a[2] for a in before],1.)
+                rows=control.log_manager.groups['wrench_observer']
+                first_contact=next(i for i,r in enumerate(rows) if r['phase']=='contact')
+                self.assertTrue(all(r['initial_motion_state']=='finished' for r in rows[first_contact:]))
+                self.assertFalse(any(p['phase']=='capture' for p in phases))
+
+    def test_initial_motion_does_not_restart_after_completed_capture(self):
+        control,commands,phases,_=self.run_scenario('model',duration=1.6,
+            command_mode='position',coast_command_mode='position',handoff_options={},
+            initial_motion_options=dict(enabled=True,ramp_s=.05),
+            grace_start='release',grace_time=.03,
+            pressed_fn=lambda t:.08<=t<.16 or .9<=t<.98,
+            speed_fn=lambda t:.12 if .08<=t<.27 or .9<=t<1.09 else 0.)
+        self.assertTrue(any(p['previous']=='capture' and p['phase']=='ready' for p in phases))
+        self.assertEqual(sum(c.args[0]=='Level Coast Initial Motion Started' for c in control._log_event.call_args_list),1)
+        rows=control.log_manager.groups['wrench_observer']
+        contact=next(i for i,r in enumerate(rows) if r['phase']=='contact')
+        self.assertTrue(all(r['initial_motion_state']=='finished' for r in rows[contact:]))
+
+    def test_initial_motion_reaches_limit_then_holds_without_contact(self):
+        control,commands,_,_=self.run_scenario('model',
+            initial_motion_options=dict(enabled=True,ramp_s=.02,max_distance_m=.0006),
+            pressed_fn=lambda t:False,speed_fn=lambda t:0.,yaw_fn=lambda t:90.)
+        targets=[args for _,name,args in commands if name=='send_position_setpoint']
+        self.assertTrue(targets)
+        self.assertAlmostEqual(targets[-1][1],.0006)
+        self.assertTrue(all(0.<=p[1]<=.0006+1e-12 for p in targets))
+        np.testing.assert_allclose([p[0] for p in targets],0.)
+        finished=[c for c in control._log_event.call_args_list if c.args[0]=='Level Coast Initial Motion Finished']
+        self.assertEqual(len(finished),1)
+        self.assertEqual(finished[0].args[1]['initial_motion_finished_reason'],'max_distance')
+
+    def test_initial_motion_preserves_state_motor_boundary_and_battery_abort(self):
+        for fault in ('state','motor','boundary','battery'):
+            with self.subTest(fault=fault):
+                control,*_=self.run_scenario('model',fault=fault,
+                    initial_motion_options={'enabled':True},pressed_fn=lambda t:False,
+                    speed_fn=lambda t:0.)
+                self.assertFalse(control._pid_15state_control_active)
+
     def test_smooth_hover_switch_off_freezes_current_xy_for_all_release_modes(self):
         for push in ('position', 'orientation'):
             for coast in ('position', 'orientation', 'scurve'):
@@ -839,7 +906,8 @@ class LevelCoastLoopTests(unittest.TestCase):
                      vicon_velocity_fn=None, scurve_completion_s=.12, estimator_delay_s=0.,
                      curve_fault=None, estimator_switch_at=None, force_config=None,
                      coasting_enabled=None, handoff_options=None, release_rejection=None,
-                     release_rejection_delay_s=0., smooth_hover_transition=None):
+                     release_rejection_delay_s=0., smooth_hover_transition=None,
+                     initial_motion_options=None):
         config = configuration(detector)
         config['record_potentiometer'] = record_potentiometer
         config['duration'] = duration
@@ -848,6 +916,8 @@ class LevelCoastLoopTests(unittest.TestCase):
         config['level_coast']['follow_yaw'] = follow_yaw
         config['level_coast']['yaw_rate_damping'] = yaw_rate_damping
         config['level_coast']['command_mode'] = command_mode
+        if initial_motion_options is not None:
+            config['level_coast']['initial_motion']=initial_motion_options
         # These existing scenarios audit the explicit legacy comparison path.
         # New capture tests below opt into the new default separately.
         config['level_coast']['position_handoff'] = ({'enabled': False}

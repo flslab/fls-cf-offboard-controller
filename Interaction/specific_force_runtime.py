@@ -2,13 +2,15 @@
 from copy import deepcopy
 import math
 import numpy as np
+from Interaction.force_rate_kalman_filter import DEFAULTS as KF_DEFAULTS, ForceRateKalmanFilter
 
 IMU_GROUP = 'MODEL_IMU'
 IMU_FIELDS = tuple(f'{sensor}.{axis}' for sensor in ('acc', 'gyro') for axis in 'xyz')
 DEFAULTS = dict(window_s=.08, minimum_window_s=.05, max_dt_s=.05,
                 max_pair_skew_s=.009, max_sample_age_s=.1,
                 accel_scale=[1., 1., 1.], accel_bias_m_s2=[0., 0., 0.],
-                imu_from_com_m=[0., 0., 0.], thrust_scale=1.)
+                imu_from_com_m=[0., 0., 0.], thrust_scale=1.,
+                filter='force_rate_kf', force_rate_kf=KF_DEFAULTS)
 
 
 def force_estimator(config):
@@ -24,12 +26,19 @@ def validate_config(config):
     if not isinstance(overrides, dict) or set(overrides) - set(result):
         raise ValueError('specific_force has unknown settings or is not a mapping')
     result.update(overrides)
+    if result['filter'] not in ('force_rate_kf', 'window'):
+        raise ValueError('specific_force.filter must be force_rate_kf or window')
+    kf_overrides = result['force_rate_kf']
+    if not isinstance(kf_overrides, dict) or set(kf_overrides) - set(KF_DEFAULTS):
+        raise ValueError('specific_force.force_rate_kf has unknown settings or is not a mapping')
+    result['force_rate_kf'] = {**deepcopy(KF_DEFAULTS), **kf_overrides}
+    ForceRateKalmanFilter(**result['force_rate_kf'], max_dt_s=result['max_dt_s'])
     for key in ('window_s', 'minimum_window_s', 'max_dt_s', 'max_pair_skew_s',
                 'max_sample_age_s', 'thrust_scale'):
         value = result[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f'specific_force.{key} must be finite and positive')
-    if result['minimum_window_s'] > result['window_s']:
+    if result['filter'] == 'window' and result['minimum_window_s'] > result['window_s']:
         raise ValueError('specific_force window must cover minimum_window_s')
     if result['max_pair_skew_s'] >= .01:
         raise ValueError('specific_force pairing must be tighter than one 10 ms log cycle')
@@ -67,7 +76,7 @@ def add_imu_logs(selected, mission):
 
 
 class SpecificForceTelemetry:
-    """Pair on device time; unwrap IMU time; never reuse a sample for dwell."""
+    """Pair on device time; unwrap IMU time; never reuse a force sample."""
     def __init__(self, config):
         self.config = validate_config(config)
         self.last_tick = None
