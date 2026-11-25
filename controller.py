@@ -1947,7 +1947,11 @@ class Controller:
             self.log_manager = IlluminationLogger(verbose=self.args.verbose)
             self.log_manager.start()
             if not self.args.droneless:
-                log_vars = dict(self.cfg.LOG_VARS)
+                log_vars = dict(
+                    self.cfg.LOCALIZATION_LOG_VARS
+                    if getattr(self.args, 'cf_log_profile', 'localization') == 'localization'
+                    else self.cfg.TUNING_LOG_VARS
+                )
                 if (getattr(self.args, "tracker", False)
                         or getattr(self.args, "save_tracker", False)):
                     log_vars[Tracker.ATTITUDE_LOG_GROUP] = {
@@ -1968,7 +1972,11 @@ class Controller:
             self.log_manager = IlluminationLogger(verbose=self.args.verbose)
             self.log_manager.start()
             if not self.args.droneless:
-                log_vars = dict(self.cfg.LOG_VARS)
+                log_vars = dict(
+                    self.cfg.LOCALIZATION_LOG_VARS
+                    if getattr(self.args, 'cf_log_profile', 'localization') == 'localization'
+                    else self.cfg.TUNING_LOG_VARS
+                )
                 if (getattr(self.args, "tracker", False)
                         or getattr(self.args, "save_tracker", False)):
                     log_vars[Tracker.ATTITUDE_LOG_GROUP] = {
@@ -4349,6 +4357,12 @@ if __name__ == '__main__':
     ap.add_argument("--check-deck", type=str, help="check if deck is attached, bcFlow2, bcZRanger2")
     ap.add_argument("--log", help="Enable logging", action="store_true", default=False)
     ap.add_argument("--cf-log-period", type=int, default=20, help="log period of cf logger in millisecond")
+    ap.add_argument(
+        '--cf-log-profile', choices=('localization', 'tuning'), default='localization',
+        help=('FC log groups for illumination/hover: localization retains VEL_POS, '
+              'ACC, GYRO and QUAT; tuning adds controller and motor groups. '
+              '--cf-log-period sets non-tracker periods; tracker QUAT uses 5 ms.'),
+    )
     ap.add_argument("--log-dir", help="Log variables to the given directory", type=str, default="./logs")
     ap.add_argument("--tracker", help="Enable the high-rate marker localizer",
                     action="store_true", default=False)

@@ -538,6 +538,15 @@ TUNING_LOG_VARS = {
     'QUAT': QUAT,
 }
 
+# Ordinary localization flights retain position and processed/raw IMU evidence.
+# The controller supplies QUAT's independent, faster period when tracking.
+LOCALIZATION_LOG_VARS = {
+    'VEL_POS': VEL_POS,
+    'ACC': ACC,
+    'GYRO': GYRO,
+    'QUAT': QUAT,
+}
+
 LOG_VARS = TUNING_LOG_VARS
 # LOG_VARS = {
 #     'ATT_LOG_VARS': ATT_LOG_VARS,

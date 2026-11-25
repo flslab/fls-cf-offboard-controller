@@ -25,6 +25,7 @@ class IlluminationLogger(LogManager):
         self.cf_log_times = {}
         self.cf_log_monotonic_times = {}
         self.cf_log_timing = {}
+        self.cf_log_periods_ms = {}
         self._cf_clock = CrazyflieLogClockMapper()
         self._cf_clock_group = None
         self._cf_clock_lock = Lock()
@@ -86,6 +87,10 @@ class IlluminationLogger(LogManager):
             'source_time_monotonic_s_basis': 'FC device tick mapped onto host CLOCK_MONOTONIC; null when invalid',
             'other_groups': 'projected onto the reference group clock, not independently fitted',
         }
+        output_data['fc_logging'] = {
+            'period_basis': 'deployed firmware legacy log command uses milliseconds; cflib argument compensated by x10',
+            'groups': {},
+        }
         output_data['imu_runtime'] = {
             'input_stream': 'firmware_processed_acc_gyro',
             'imu_sensors_before': self._imu_parameters_before,
@@ -102,6 +107,21 @@ class IlluminationLogger(LogManager):
             # if a final in-flight callback races with logger shutdown.
             with self._cf_clock_lock:
                 for group_name, group_vars in self.cf_log_data.items():
+                    receipts = self.cf_log_monotonic_times[group_name]
+                    elapsed = receipts[-1] - receipts[0] if len(receipts) > 1 else 0.0
+                    period = self.cf_log_periods_ms[group_name]
+                    output_data['fc_logging']['groups'][group_name] = {
+                        'requested_period_ms': period,
+                        'cflib_period_in_ms': period * 10,
+                        'received_packets': len(receipts),
+                        'observed_rate_hz': ((len(receipts) - 1) / elapsed
+                                             if elapsed > 0.0 else None),
+                        'maximum_receipt_gap_ms': max(
+                            ((later - earlier) * 1000.0
+                             for earlier, later in zip(receipts, receipts[1:])),
+                            default=None,
+                        ),
+                    }
                     output_data[f"cf_{group_name}"] = {
                         "time": list(self.cf_log_times[group_name]),
                         "time_monotonic_s": list(self.cf_log_monotonic_times[group_name]),
@@ -122,10 +142,16 @@ class IlluminationLogger(LogManager):
                                     if name in self.cf_log_data), next(iter(self.cf_log_data), None))
 
         for group_name, group_vars in self.cf_log_data.items():
-            log_period = cf_log_period * 10
-            if "log_period_ms" in group_vars:
-                log_period = group_vars["log_period_ms"] * 10
-                group_vars.pop("log_period_ms")
+            period_ms = group_vars.pop('log_period_ms', cf_log_period)
+            if (isinstance(period_ms, bool) or not isinstance(period_ms, int)
+                    or not 1 <= period_ms <= 255):
+                raise ValueError('FC log period must be an integer from 1 to 255 ms')
+            # cflib encodes its period in 10 ms units, but deployed firmware
+            # treats that byte as milliseconds. Keep that compensation here.
+            log_period = period_ms * 10
+            self.cf_log_periods_ms[group_name] = period_ms
+            logger.info('FC log %s: target %.1f Hz (%s ms); cflib period %s ms',
+                        group_name, 1000.0 / period_ms, period_ms, log_period)
 
             cf_var_logger = LogConfig(name=group_name, period_in_ms=log_period)
             for par, conf in group_vars.items():

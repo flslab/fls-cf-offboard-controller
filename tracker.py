@@ -129,9 +129,10 @@ class Tracker:
     """Own the controller side of the version-3 localizer ABI."""
 
     ATTITUDE_LOG_GROUP = "QUAT"
-    # IlluminationLogger applies the deployed-firmware x10 compensation, so
-    # this produces the same LogConfig(period_in_ms=10) used by the old stream.
-    ATTITUDE_LOG_PERIOD_MS = 1
+    # Deployed firmware interprets the legacy log command in milliseconds.
+    # cflib divides LogConfig's period by ten; compensate on both launch paths.
+    # Five actual milliseconds targets 200 Hz, including recording-only mode.
+    ATTITUDE_LOG_PERIOD_MS = 5
     ATTITUDE_VARIABLES = tuple(
         f"stateEstimate.{name}" for name in ("qx", "qy", "qz", "qw")
     )
@@ -200,7 +201,10 @@ class Tracker:
         # Preserve tracker-only and interaction runs whose logger does not
         # expose the shared QUAT group yet.  Normal illumination/hover runs use
         # the manager path above and therefore allocate no duplicate log block.
-        attitude_log = LogConfig(name="LocalizerAttitude", period_in_ms=10)
+        attitude_log = LogConfig(
+            name="LocalizerAttitude",
+            period_in_ms=self.ATTITUDE_LOG_PERIOD_MS * 10,
+        )
         for name in self.ATTITUDE_VARIABLES:
             attitude_log.add_variable(name, "float")
         self.controller.cf.log.add_config(attitude_log)
