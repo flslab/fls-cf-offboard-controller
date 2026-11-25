@@ -1828,6 +1828,9 @@ class Controller:
         if latest is None or not latest.pose_valid or self.init_coord is None:
             logger.info("no valid localizer pose is available for landing")
             commander.land(height, 3)
+            time.sleep(4)
+            commander.stop()
+            return
 
         threshold = latest.acquisition_height
         initial_x, initial_y, _ = self.init_coord
