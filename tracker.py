@@ -132,7 +132,7 @@ class Tracker:
     # Deployed firmware interprets the legacy log command in milliseconds.
     # cflib divides LogConfig's period by ten; compensate on both launch paths.
     # Five actual milliseconds targets 200 Hz, including recording-only mode.
-    ATTITUDE_LOG_PERIOD_MS = 2
+    ATTITUDE_LOG_PERIOD_MS = 1
     ATTITUDE_VARIABLES = tuple(
         f"stateEstimate.{name}" for name in ("qx", "qy", "qz", "qw")
     )
